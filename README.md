@@ -21,21 +21,23 @@ Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated wi
 
 ### Quick install (Windows)
 
-With BeamNG.drive and BeamNG.Earth already installed, open PowerShell and run:
+With BeamNG.drive and BeamNG.Earth already installed, download **[CargoEarthSetup.exe](https://github.com/themazzy/cargo-earth/releases/latest/download/CargoEarthSetup.exe)** and double-click it. Choose 1 to install or update, 2 for the mod only, or 3 to remove Cargo Earth.
 
-```powershell
-irm https://raw.githubusercontent.com/themazzy/cargo-earth/main/install.ps1 | iex
-```
+It downloads the latest release, puts the mod ZIP in your BeamNG `mods` folder (older Cargo Earth ZIPs are moved to `cargo_earth_old_mods`), copies the helper to `%LOCALAPPDATA%\CargoEarth\helper`, installs its Python libraries and registers it with BeamNG.Earth. Career saves are never touched.
 
-It downloads the latest release, puts the mod ZIP in your BeamNG `mods` folder (older Cargo Earth ZIPs are moved to `cargo_earth_old_mods`), copies the helper to `%LOCALAPPDATA%\CargoEarth\helper`, installs its Python libraries and registers it with BeamNG.Earth. Career saves are never touched. Options, with a downloaded copy of [`install.ps1`](install.ps1):
+The installer is not code-signed, so Windows SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**. The source is in [`installer/`](installer/) and the release file is built from it by a GitHub workflow.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1 -UserFolder "D:\BeamNG\user"   # BeamNG user folder not found automatically
-powershell -ExecutionPolicy Bypass -File install.ps1 -Version 0.3.5                    # a specific release
-powershell -ExecutionPolicy Bypass -File install.ps1 -ModOnly                          # or -HelperOnly, -SkipPython
-powershell -ExecutionPolicy Bypass -File install.ps1 -ZipPath dist\cargo_earth_career_0.3.5.zip -HelperPath helper\cargo_earth_helper.py
-powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall                        # add -DryRun to any command to only show what it would do
-```
+Options, from a command prompt in the download folder (for example `CargoEarthSetup.exe -uninstall`):
+
+| Option | What it does |
+| --- | --- |
+| `-user-folder "D:\BeamNG\user"` | Use this BeamNG user folder when it is not found automatically |
+| `-version 0.3.5` | Install a specific release instead of the latest |
+| `-mod-only`, `-helper-only` | Install only one part |
+| `-skip-python` | Don't install the helper's Python libraries |
+| `-zip <file>`, `-helper <file>` | Use files you already downloaded |
+| `-uninstall` | Remove the mod, the helper and its BeamNG.Earth entry (saves are kept) |
+| `-dry-run` | Only show what would happen |
 
 ### Manual install
 
@@ -67,11 +69,15 @@ powershell -ExecutionPolicy Bypass -File tools/build.ps1
 node tools/payout-stats.cjs
 ```
 
+The Windows installer is a small Go program in `installer/` (`cd installer && GOOS=windows go build -o CargoEarthSetup.exe .`).
+
+To publish a release, create a GitHub release with a tag such as `v0.3.5` and attach the mod ZIP and `cargo_earth_helper_*.py`. A workflow then builds `CargoEarthSetup.exe` and adds it to the same release.
+
 `npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
-This is an early development build. Native crash/accelerometer behaviour, phone layout and full driving sessions need further verification. Public POIs are candidate stops rather than certified loading bays. Rigid/articulated site access is more restricted than van access. Parcel cargo has condition penalties; bulk/fluid condition is not yet modeled. Company contracts currently offer weak hourly pay because of return travel; the payout report documents that imbalance.
+This is an early development build. Native crash/accelerometer behaviour, phone layout and full driving sessions need further verification. Public POIs are candidate stops rather than certified loading bays. Rigid/articulated site access is more restricted than van access. Parcel cargo has condition penalties; bulk/fluid condition is not yet modeled. Company contracts pay for the return trip from 0.3.5; the payout report shows the hourly pay of each kind of work.
 
 The helper fetches public Overture source data; busy areas and first visits may take time to load. Python queries and connections are bounded, but real-world latency and coverage vary.
 

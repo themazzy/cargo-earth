@@ -15,3 +15,4 @@ settings/
 # Built mod ZIPs and helper copies go to GitHub Releases, not into git
 dist/
 .openai/
+*.exe
