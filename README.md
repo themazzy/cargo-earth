@@ -2,9 +2,9 @@
 
 A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight, work company contracts and build a garage at an address you choose.
 
-**Early development � mod 0.3.4 � helper 0.3.1**
+**Early development · mod 0.3.5 · helper 0.3.1**
 
-[Download the mod](dist/cargo_earth_career_0.3.4.zip) � [Download the helper](dist/cargo_earth_helper_0.3.1.py) � [Landing page source](website/index.html) � [Payout statistics](docs/research/payout-statistics-0.3.4/README.md)
+[Download the mod and helper (latest release)](https://github.com/themazzy/cargo-earth/releases/latest) · [Landing page](website/index.html) · [Payout statistics](docs/research/payout-statistics-0.3.5/README.md)
 
 ## What you can do
 
@@ -20,9 +20,9 @@ Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated wi
 ## Install
 
 1. Install and set up BeamNG.drive and BeamNG.Earth separately.
-2. Close the game. Put `cargo_earth_career_0.3.4.zip` in your active BeamNG user-folder `mods` directory. Keep only one Cargo Earth version enabled; do not unpack the ZIP for normal installation.
+2. Download `cargo_earth_career_0.3.5.zip` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest). Close the game. Put the ZIP in your active BeamNG user-folder `mods` directory. Keep only one Cargo Earth version enabled; do not unpack the ZIP for normal installation.
 3. For live geography, install Python 3 and the helper dependencies: `python -m pip install duckdb fsspec`.
-4. Run `python cargo_earth_helper_0.3.1.py`. It listens locally on `127.0.0.1:47820`. Keep it running while playing. The helper also needs internet access to fetch public geographic data.
+4. Run `python cargo_earth_helper_0.3.1.py` (also attached to the release), or add it to BeamNG.Earth as a companion add-on with [`helper/local.json.example`](helper/local.json.example) in `%LOCALAPPDATA%\beamng-earth\addons\local.json`. It listens locally on `127.0.0.1:47820`. Keep it running while playing. The helper also needs internet access to fetch public geographic data.
 5. Load BeamNG.Earth, add the **Cargo Earth: Phone** UI app, then start or resume your career in the phone.
 
 Phone sections: **Work**, **Garage**, **Home**, **Career**, **Settings**. Work separates Deliveries and Companies; Career separates Progress and Finances.
@@ -47,7 +47,7 @@ powershell -ExecutionPolicy Bypass -File tools/build.ps1
 node tools/payout-stats.cjs
 ```
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.3.4 notes](docs/CAREER_0.3.4.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.4/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
@@ -60,3 +60,7 @@ The helper fetches public Overture source data; busy areas and first visits may 
 Bundled Czech geography credits **OpenStreetMap contributors** and **Overture Maps Foundation**; the pack declares **ODbL-1.0**. Preserve the pack's attribution and licence metadata when redistributing the data. Live helper data retains its source metadata. No BeamNG game assets or proprietary runtime are included here.
 
 Report bugs through [GitHub Issues](https://github.com/themazzy/cargo-earth/issues), with mod/helper version, reproduction steps and the relevant error excerpt. Remove home coordinates and other personal data before sharing a save or log.
+
+## Licence
+
+Code: [MIT](LICENSE). Bundled geographic data: ODbL 1.0, © OpenStreetMap contributors and Overture Maps Foundation (see [LICENSE](LICENSE)).
