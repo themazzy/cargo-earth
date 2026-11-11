@@ -60,6 +60,7 @@ scope.closeHq()
 assert(!scope.hqOpen)
 scope.setCareerView('money')
 assert(directive.template.includes('!g.fuel.station.at || !g.fuel.fill || g.fuel.fill.canCost <= 0'), 'Fuel delivery stays available at a station you cannot pay')
+assert(directive.template.includes('Parcel route · stop'), 'Template is missing the parcel route card')
 for (const text of ['Open headquarters', 'Found the firm', 'Speed camera in', 'class="cehq"', 'Fill up']) {
   assert(directive.template.includes(text), 'Template is missing: ' + text)
 }

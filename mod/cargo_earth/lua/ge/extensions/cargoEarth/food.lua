@@ -223,6 +223,16 @@ local function addressesAround(idx, lat, lon, maxKm)
   return out
 end
 
+-- Every known customer address within about maxKm (rows as in the tiles), for parcel routes.
+function M.addressesNear(idx, lat, lon, maxKm)
+  local out = {}
+  if not idx or not lat or not lon then return out end
+  for _, rows in ipairs(addressesAround(idx, lat, lon, maxKm)) do
+    for _, a in ipairs(rows) do out[#out + 1] = a end
+  end
+  return out
+end
+
 -- Address picker shares the courier's bundled/streamed tiles. Called only on explicit search.
 function M.addresses(idx, lat, lon, query)
   if not idx or not lat or not lon then return {} end
