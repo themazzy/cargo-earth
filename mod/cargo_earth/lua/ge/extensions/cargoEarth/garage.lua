@@ -398,7 +398,7 @@ function M.buyCar(G, g, career, offer, opts)
   end
   if opts.keepCar then
     -- Without a home the same limit applies, or parked cars (and their drivers) could grow without end.
-    local limit = type(career.home) == 'table' and tonumber(career.home.capacity) or M.CAR_LIMIT
+    local limit = require('cargoEarth/firm').capacity(career)
     if M.ownedCount(g) >= limit then return false, 'Your garage is full. Trade in a car or sell one first.' end
   end
   if opts.keepCar and not captureCurrent(G, g) then return false, 'Could not save the current car configuration.' end

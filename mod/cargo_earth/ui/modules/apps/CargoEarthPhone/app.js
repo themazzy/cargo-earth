@@ -1,7 +1,8 @@
 // Cargo Earth phone: a UI app that shows the courier's phone. Asks the game for the phone's state 4 times a second
 // (cargoEarth_core.phoneState(): one small Lua call) and sends the buttons back (cargoEarth_core.phoneAction(name)).
 // Screens: error, offline, waiting, incoming (with a countdown), active (pickup / delivery), done (pay and tip).
-// Tabs: Work (deliveries / companies), Garage, Home, Career (progress / money) and Settings. Everything is
+// Tabs: Work (deliveries / companies), Garage, Home, Career (progress / money / map / firm) and Settings. The firm's
+// headquarters is a full-screen plan of the building (office, workshop, parts storage, yard, tank) opened from Career / Firm. Everything is
 // clicked here: the mod has no key bindings. The "–" button folds the phone to a small bar; a ringing order opens it.
 angular.module('beamng.apps')
 .directive('cargoEarthPhone', [function () {
@@ -120,6 +121,51 @@ angular.module('beamng.apps')
     '.cep-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}' +
     '.cep-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}'
 
+  var HQ_CSS =
+    '.cehq{position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:99999;display:flex;align-items:center;justify-content:center;' +
+    'background:rgba(10,14,18,.72);font-family:"Segoe UI",Roboto,system-ui,sans-serif;color:#e8eef2;pointer-events:auto}' +
+    '.cehq *{box-sizing:border-box}' +
+    '.cehq-panel{width:94vw;max-width:1180px;height:90vh;max-height:780px;display:flex;flex-direction:column;gap:12px;padding:20px 22px;' +
+    'border-radius:18px;background:#15202a;box-shadow:0 24px 60px rgba(0,0,0,.6),inset 0 0 0 1px #2b3c4a;overflow:hidden}' +
+    '.cehq-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-shrink:0}' +
+    '.cehq-head-right{display:flex;align-items:center;gap:10px}' +
+    '.cehq-kicker,.cehq-label{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7fb7d1}' +
+    '.cehq-label.small{font-size:10px;color:#8ea2b0}' +
+    '.cehq-title{font-size:26px;font-weight:800;line-height:1.15;color:#fff}' +
+    '.cehq-sub{font-size:13px;color:#9fb2bf;margin-top:2px}' +
+    '.cehq-money{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;text-align:right}' +
+    '.cehq-money small{display:block;font-size:11px;font-weight:600;color:#ff9c8a}' +
+    '.cehq-msg{flex-shrink:0;font-size:13px;padding:8px 12px;border-radius:10px;background:#22313d;color:#d6e2ea}' +
+    '.cehq-empty{margin:auto;max-width:520px;text-align:center}.cehq-empty p{font-size:14px;line-height:1.5;color:#b8c7d1}' +
+    '.cehq-btn{border:0;border-radius:10px;padding:9px 14px;font:inherit;font-size:13px;font-weight:700;cursor:pointer;background:#e8eef2;color:#15202a}' +
+    '.cehq-btn:hover{filter:brightness(1.1)}.cehq-btn.build{background:#e8452c;color:#fff}' +
+    '.cehq-btn.ghost{background:transparent;color:#e8eef2;box-shadow:inset 0 0 0 1.5px #3a4d5c}' +
+    '.cehq-btn.small{padding:6px 9px;font-size:12px}.cehq-btn[disabled]{opacity:.4;cursor:default;filter:none}' +
+    '.cehq-plan{flex:1;min-height:0;display:grid;grid-template-columns:1.15fr 1fr 1fr;grid-template-rows:auto minmax(240px,1fr);gap:0;' +
+    'border:3px solid #7fb7d1;border-radius:6px;background:#101921;overflow:auto}' +
+    '.cehq-room{display:flex;flex-direction:column;gap:7px;padding:14px 16px;border-right:3px solid #7fb7d1;border-bottom:3px solid #7fb7d1;' +
+    'background-image:linear-gradient(#1a2733 1px,transparent 1px),linear-gradient(90deg,#1a2733 1px,transparent 1px);background-size:22px 22px}' +
+    '.cehq-room.stores{border-right:0}.cehq-room.tank{border-right:0;border-bottom:0;grid-column:3;grid-row:2}' +
+    '.cehq-yard{grid-column:1 / span 2;grid-row:2;padding:14px 16px;border-right:3px solid #7fb7d1;background:#232a31;overflow:auto}' +
+    '.cehq-stat{font-size:30px;font-weight:800;line-height:1;color:#fff}.cehq-stat small{font-size:12px;font-weight:600;color:#9fb2bf;margin-left:6px}' +
+    '.cehq-note{font-size:12px;line-height:1.4;color:#9fb2bf}.cehq-note.warn{color:#ffb86b}' +
+    '.cehq-sep{height:1px;background:#2b3c4a;margin:3px 0}' +
+    '.cehq-level{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#e8eef2}' +
+    '.cehq-pips{display:flex;gap:3px}.cehq-pips i{width:14px;height:6px;border-radius:2px;background:#2b3c4a}.cehq-pips i.on{background:#7fd19b}' +
+    '.cehq-rename{display:flex;gap:6px}.cehq-rename input{flex:1;min-width:0;border:1.5px solid #3a4d5c;border-radius:10px;padding:7px 10px;font:inherit;' +
+    'font-size:13px;background:#101921;color:#e8eef2}' +
+    '.cehq-shelf{display:flex;flex-wrap:wrap;gap:5px}.cehq-shelf span{font-size:11px;padding:3px 7px;border-radius:5px;background:#22313d;color:#d6e2ea}' +
+    '.cehq-bays{display:flex;flex-wrap:wrap;margin-top:10px}' +
+    '.cehq-bay{flex:1 1 128px;max-width:176px;min-height:196px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 8px;text-align:center;' +
+    'border-left:3px dashed #e8eef2;border-bottom:3px solid transparent}.cehq-bay:last-child{border-right:3px dashed #e8eef2}' +
+    '.cehq-bay-name{font-size:13px;font-weight:700;color:#fff;overflow-wrap:anywhere}' +
+    '.cehq-bay-free{margin-top:38px;font-size:13px;font-weight:700;color:#8ea2b0}' +
+    '.cehq-yard-head{display:flex;justify-content:space-between;align-items:center;gap:10px}' +
+    '.cehq-bay-actions{display:flex;flex-direction:column;gap:5px;margin-top:auto;width:100%}' +
+    '.cehq-car{width:44px;height:80px;flex-shrink:0}.cehq-car rect{fill:#c9d4dc}.cehq-car .glass{fill:#15202a;stroke:#15202a;stroke-width:3;stroke-linecap:round}' +
+    '.cehq-bay.current .cehq-car rect{fill:#e8452c}.cehq-bay.out .cehq-car{opacity:.3}' +
+    '.cehq-foot{flex-shrink:0;display:flex;justify-content:flex-end}'
+
   function money(n) { return (Math.round(n || 0)).toLocaleString('cs-CZ') + ' Kč' }
   function dist(m) {
     if (m === null || m === undefined) return { v: '–', u: '' }
@@ -135,7 +181,83 @@ angular.module('beamng.apps')
 
   return {
     template:
-      '<div style="width:100%;height:100%"><style>' + CSS + '</style>' +
+      '<div style="width:100%;height:100%"><style>' + CSS + HQ_CSS + '</style>' +
+      '<div class="cehq" ng-show="hqOpen" role="dialog" aria-label="Headquarters">' +
+      '<div class="cehq-panel" ng-if="hqOpen">' +
+        '<div class="cehq-head">' +
+          '<div><div class="cehq-kicker">Headquarters</div>' +
+            '<div class="cehq-title">{{ hq.name || "Your firm" }}</div>' +
+            '<div class="cehq-sub" ng-if="hq.hq">{{ hq.hq.name }}<span ng-if="hq.hq.town"> · {{ hq.hq.town }}</span> · {{ hq.hq.here ? "you are here" : fmt.num(hq.hq.km) + " km away" }}</div>' +
+            '<div class="cehq-sub" ng-if="hq.founded && !hq.hq">No headquarters chosen yet</div></div>' +
+          '<div class="cehq-head-right">' +
+            '<div class="cehq-money" ng-if="hq.founded">{{ fmt.money(hq.money) }}<small ng-if="hq.debt > 0">debt {{ fmt.money(hq.debt) }}</small></div>' +
+            '<button class="cehq-btn ghost" ng-if="hq.hq && !hq.hq.here" ng-click="hdo(\'gpsHq\')">Route here</button>' +
+            '<button class="cehq-btn" ng-click="closeHq()">Close</button></div></div>' +
+        '<div class="cehq-msg" ng-if="!hq">Loading the headquarters…</div>' +
+        '<div class="cehq-msg" ng-if="hq.msg">{{ hq.msg }}</div>' +
+        '<div class="cehq-msg" ng-if="hq && !hq.founded">Start a firm first: phone, Career, Firm.</div>' +
+        '<div class="cehq-empty" ng-if="hq.founded && !hq.hq">' +
+          '<div class="cehq-title">Choose where the firm lives</div>' +
+          '<p>Drive to a yard or warehouse you like, or to your home garage, and park. The first choice is free; moving later costs {{ fmt.money(hq.moveFee) }}.</p>' +
+          '<p ng-if="hq.place">You are at <strong>{{ hq.place.name }}</strong>.</p>' +
+          '<p ng-if="!hq.place">There is no yard, warehouse or home garage where you are parked.</p>' +
+          '<button class="cehq-btn build" ng-disabled="!hq.place || !hq.parked" ng-click="hdo(\'setHq\')">Set the headquarters here</button></div>' +
+        '<div class="cehq-plan" ng-if="hq.hq">' +
+          '<div class="cehq-room office"><div class="cehq-label">Office</div>' +
+            '<div class="cehq-stat">{{ hq.drivers.count }}<small>{{ hq.drivers.count === 1 ? "driver" : "drivers" }} on the road</small></div>' +
+            '<div class="cehq-note">Each brings in {{ fmt.money(hq.drivers.pay) }} per {{ hq.drivers.shiftMinutes }} minutes you are working.<span ng-if="hq.drivers.earned > 0"> So far: {{ fmt.money(hq.drivers.earned) }}.</span></div>' +
+            '<div class="cehq-sep"></div><div class="cehq-label small">Dispatch</div>' +
+      '<div class="cehq-level"><span class="cehq-pips"><i ng-repeat="on in pips(up(\'office\')) track by $index" ng-class="{on: on}"></i></span>' +
+        '<span>{{ up(\'office\').now || "Not built" }}</span></div>' +
+      '<button class="cehq-btn build" ng-if="up(\'office\').cost" ng-disabled="!up(\'office\').can" ng-click="hdo(\'upgrade\', \'office\')">{{ up(\'office\').level ? "Extend" : "Build" }} · {{ fmt.money(up(\'office\').cost) }}</button>' +
+      '<div class="cehq-note" ng-if="up(\'office\').next">{{ up(\'office\').next }}</div>' +
+            '<div class="cehq-sep"></div>' +
+            '<div class="cehq-rename"><input maxlength="28" aria-label="Firm name" placeholder="{{ hq.name }}" ng-model="names.firm">' +
+              '<button class="cehq-btn ghost" ng-disabled="!names.firm" ng-click="hdo(\'rename\', names.firm); names.firm = \'\'">Rename</button></div></div>' +
+          '<div class="cehq-room workshop"><div class="cehq-label">Workshop</div>' +
+      '<div class="cehq-level"><span class="cehq-pips"><i ng-repeat="on in pips(up(\'workshop\')) track by $index" ng-class="{on: on}"></i></span>' +
+        '<span>{{ up(\'workshop\').now || "Not built" }}</span></div>' +
+      '<button class="cehq-btn build" ng-if="up(\'workshop\').cost" ng-disabled="!up(\'workshop\').can" ng-click="hdo(\'upgrade\', \'workshop\')">{{ up(\'workshop\').level ? "Extend" : "Build" }} · {{ fmt.money(up(\'workshop\').cost) }}</button>' +
+      '<div class="cehq-note" ng-if="up(\'workshop\').next">{{ up(\'workshop\').next }}</div>' +
+            '<div class="cehq-sep"></div>' +
+            '<div class="cehq-note" ng-if="hq.repair.cost <= 0">The car you drive needs no repair.</div>' +
+            '<button class="cehq-btn" ng-if="hq.repair.cost > 0" ng-disabled="!hq.hq.here || hq.company" ng-click="hdo(\'repair\')">Repair your car · {{ fmt.money(hq.repair.cost * hq.repair.factor) }}</button>' +
+            '<div class="cehq-note" ng-if="hq.repair.cost > 0 && !hq.hq.here">Bring the car here to use the workshop.</div></div>' +
+          '<div class="cehq-room stores"><div class="cehq-label">Parts storage</div>' +
+            '<div class="cehq-stat">{{ hq.parts.count }}<small>spare {{ hq.parts.count === 1 ? "part" : "parts" }}</small></div>' +
+            '<div class="cehq-shelf"><span ng-repeat="p in hq.parts.items track by $index">{{ p.name }}<b ng-if="p.count > 1"> × {{ p.count }}</b></span>' +
+              '<span ng-if="hq.parts.kinds > hq.parts.items.length">and {{ hq.parts.kinds - hq.parts.items.length }} more</span></div>' +
+            '<div class="cehq-note" ng-if="!hq.parts.count">Parts you take off a car are kept here. Fit or sell them in Garage on the phone.</div></div>' +
+          '<div class="cehq-yard"><div class="cehq-yard-head"><div class="cehq-label">Yard · {{ hq.bays.length }} of {{ hq.capacity }} bays taken</div>' +
+        '<button class="cehq-btn small build" ng-if="up(\'bays\').cost" ng-disabled="!up(\'bays\').can" ng-click="hdo(\'upgrade\', \'bays\')" title="{{ up(\'bays\').next }}">Build more bays · {{ fmt.money(up(\'bays\').cost) }}</button></div>' +
+            '<div class="cehq-bays">' +
+              '<div class="cehq-bay" ng-repeat="b in hq.bays track by $index" ng-class="{current: b.current, out: b.driver}">' +
+                '<svg class="cehq-car" viewBox="0 0 60 110" aria-hidden="true"><rect x="8" y="4" width="44" height="102" rx="14"/><path class="glass" d="M14 30h32l-4 16H18zM18 78h24l4 12H14z"/><path class="glass" d="M10 50v24M50 50v24"/></svg>' +
+                '<div class="cehq-bay-name">{{ b.name }}</div>' +
+                '<div class="cehq-note">{{ fmt.int(b.km) }} km · {{ b.current ? "you drive it" : (b.driver ? "driver earned " + fmt.money(b.driver.earned) : "parked") }}</div>' +
+                '<div class="cehq-note warn" ng-if="b.repair > 0">Needs {{ fmt.money(b.repair) }} in repairs</div>' +
+                '<div class="cehq-bay-actions" ng-if="!b.current">' +
+                  '<button class="cehq-btn small" ng-if="!b.driver" ng-disabled="hq.busy || hq.company" ng-click="hdo(\'switchCar\', b.id)">Drive</button>' +
+                  '<button class="cehq-btn small ghost" ng-if="!b.driver && hq.drivers.can" ng-disabled="b.repair > 0 || hq.debt > 0 || hq.money < hq.drivers.hireFee || hq.company" ng-click="hdo(\'hireDriver\', b.id)">Hire driver · {{ fmt.money(hq.drivers.hireFee) }}</button>' +
+                  '<button class="cehq-btn small ghost" ng-if="b.driver" ng-disabled="hq.company" ng-click="hdo(\'releaseDriver\', b.id)">Release driver</button></div></div>' +
+              '<div class="cehq-bay free" ng-repeat="n in range(hq.free) track by $index"><div class="cehq-bay-free">Free bay</div>' +
+                '<div class="cehq-note">Buy a car and keep your current one to fill it.</div></div>' +
+            '</div></div>' +
+          '<div class="cehq-room tank"><div class="cehq-label">Fuel tank</div>' +
+      '<div class="cehq-level"><span class="cehq-pips"><i ng-repeat="on in pips(up(\'tank\')) track by $index" ng-class="{on: on}"></i></span>' +
+        '<span>{{ up(\'tank\').now || "Not built" }}</span></div>' +
+      '<button class="cehq-btn build" ng-if="up(\'tank\').cost" ng-disabled="!up(\'tank\').can" ng-click="hdo(\'upgrade\', \'tank\')">{{ up(\'tank\').level ? "Extend" : "Build" }} · {{ fmt.money(up(\'tank\').cost) }}</button>' +
+      '<div class="cehq-note" ng-if="up(\'tank\').next">{{ up(\'tank\').next }}</div>' +
+            '<div class="cehq-sep" ng-if="up(\'tank\').level"></div>' +
+            '<div ng-if="up(\'tank\').level">' +
+              '<div class="cehq-note" ng-if="hq.fuel.kind === \'electric\'">The tank holds petrol and diesel; your car charges at public chargers.</div>' +
+              '<div class="cehq-note" ng-if="hq.fuel.station.hq">{{ fmt.num(hq.fuel.station.price) }} Kč per litre here.</div>' +
+              '<button class="cehq-btn" ng-if="hq.fuel.station.hq && hq.fuel.fill" ng-disabled="hq.fuel.busy || hq.fuel.fill.canCost <= 0" ng-click="hdo(\'refuel\')">Fill up · {{ fmt.money(hq.fuel.fill.canCost) }}</button>' +
+              '<div class="cehq-note" ng-if="hq.fuel && hq.fuel.kind !== \'electric\' && !(hq.fuel.station.hq && hq.fuel.fill)">Park the car here to fill up.</div></div></div>' +
+        '</div>' +
+        '<div class="cehq-foot" ng-if="hq.hq && !hq.hq.here && hq.place && hq.parked">' +
+          '<button class="cehq-btn ghost" ng-disabled="hq.busy || hq.company" ng-click="moveHq()">{{ moveAsk ? "Press again to move · " + fmt.money(hq.moveFee) : "Move the headquarters to " + hq.place.name }}</button></div>' +
+      '</div></div>' +
       '<div class="cep-pill" ng-if="min" ng-click="fold(false)"><span>Cargo<b>Earth</b></span>' +
         '<span>{{ s.online ? "● online" : "" }} {{ fmt.money(s.money) }} ▴</span></div>' +
       '<div class="cep" ng-if="!min"><div class="cep-screen">' +
@@ -152,7 +274,8 @@ angular.module('beamng.apps')
       '<nav class="cep-subtabs" aria-label="Career views" ng-if="tab === \'career\' && s.screen !== \'resume\'">' +
         '<button ng-class="{on: careerView === \'progress\'}" ng-attr-aria-pressed="{{ careerView === \'progress\' }}" ng-click="setCareerView(\'progress\')">Progress</button>' +
         '<button ng-class="{on: careerView === \'money\'}" ng-attr-aria-pressed="{{ careerView === \'money\' }}" ng-click="setCareerView(\'money\')">Finances</button>' +
-        '<button ng-class="{on: careerView === \'map\'}" ng-attr-aria-pressed="{{ careerView === \'map\' }}" ng-click="setCareerView(\'map\')">Map</button></nav>' +
+        '<button ng-class="{on: careerView === \'map\'}" ng-attr-aria-pressed="{{ careerView === \'map\' }}" ng-click="setCareerView(\'map\')">Map</button>' +
+        '<button ng-class="{on: careerView === \'firm\'}" ng-attr-aria-pressed="{{ careerView === \'firm\' }}" ng-click="setCareerView(\'firm\')">Firm</button></nav>' +
       '<button class="cep-live" ng-if="showLiveShortcut()" ng-click="openLiveWork()">' +
         '<i class="cep-dot-live"></i><span><strong>{{ liveTitle() }}</strong><small>{{ liveDetail() }}</small></span><b aria-hidden="true">&rsaquo;</b></button>' +
 
@@ -330,6 +453,31 @@ angular.module('beamng.apps')
         '</div></div>' +
         '<button class="cep-btn ok" ng-click="act(\'dismiss\')">Done</button></div>' +
 
+      '<div class="cep-body" ng-if="tab === \'career\' && careerView === \'firm\' && s.screen !== \'resume\'">' +
+        '<div class="cep-sub" ng-if="!firm">Loading your firm…</div>' +
+        '<div class="cep-scroll" ng-if="firm">' +
+          '<div class="cep-msg" ng-if="firm.msg">{{ firm.msg }}</div>' +
+          '<div class="cep-card" ng-if="!firm.founded"><div class="cep-label">Your own firm</div>' +
+            '<div class="cep-big">Start a firm</div>' +
+            '<div class="cep-sub">A firm has a headquarters at a real place, with parking bays, a workshop, a fuel tank and a dispatch office. Only a firm can hire drivers.</div>' +
+            '<div class="cep-keyval" ng-repeat="r in firm.requirements track by r.id" style="margin-top:6px;font-size:13px">' +
+              '<span><span ng-style="{color: r.done ? \'var(--ok)\' : \'var(--muted)\'}">{{ r.done ? "✓" : "○" }}</span> {{ r.label }}</span>' +
+              '<span class="cep-sub">{{ r.detail }}</span></div>' +
+            '<div class="cep-row" style="margin-top:10px"><input class="cep-input" maxlength="28" aria-label="Firm name" placeholder="{{ firm.suggested }}" ng-model="names.firm"></div>' +
+            '<button class="cep-btn go" ng-disabled="!firm.ready" ng-click="fdo(\'found\', names.firm)">Found the firm · {{ fmt.money(firm.fee) }}</button></div>' +
+          '<div class="cep-card" ng-if="firm.founded"><div class="cep-label">Your firm</div>' +
+            '<div class="cep-big">{{ firm.name }}</div>' +
+            '<div class="cep-sub" ng-if="firm.hq">Headquarters · {{ firm.hq.name }}<span ng-if="firm.hq.town"> · {{ firm.hq.town }}</span></div>' +
+            '<div class="cep-sub" ng-if="firm.hq">{{ firm.hq.here ? "You are at the headquarters." : fmt.num(firm.hq.km) + " km away." }} Room for {{ firm.capacity }} vehicles.</div>' +
+            '<button class="cep-btn go" ng-click="openHq()">Open headquarters</button>' +
+            '<button class="cep-sm ghost" ng-if="firm.hq && !firm.hq.here" ng-click="fdo(\'gpsHq\')">Route to headquarters</button></div>' +
+          '<div class="cep-card" ng-if="firm.founded && !firm.hq"><div class="cep-label">Choose the headquarters</div>' +
+            '<div class="cep-sub">Drive to a yard or warehouse you like, or to your home garage, park there and set it as the headquarters. The first choice is free; moving later costs {{ fmt.money(firm.moveFee) }}.</div>' +
+            '<div class="cep-sub" ng-if="firm.place">You are at <strong>{{ firm.place.name }}</strong>.</div>' +
+            '<div class="cep-sub" ng-if="!firm.place">No yard, warehouse or home garage here.</div>' +
+            '<button class="cep-btn ok" ng-disabled="!firm.place || !firm.parked" ng-click="fdo(\'setHq\')">Set the headquarters here</button></div>' +
+        '</div></div>' +
+
       // career
       '<div class="cep-body" ng-if="tab === \'career\' && careerView === \'progress\' && s.screen !== \'resume\'">' +
         '<div class="cep-sub" ng-if="!career">Loading career…</div>' +
@@ -366,7 +514,7 @@ angular.module('beamng.apps')
               '<span class="cep-sub" ng-if="goal.complete" style="color:var(--ok)">Completed</span></div>' +
             '<div class="cep-sub">{{ goal.detail }}</div></div>' +
           '<div class="cep-card" ng-if="career.driverRank"><div class="cep-label">Hire drivers</div>' +
-            '<div class="cep-sub" ng-if="!career.driverUnlocked">Unlocks at {{ career.driverRank }} rank · {{ career.driverAt }} deliveries</div>' +
+            '<div class="cep-sub" ng-if="!career.driverUnlocked">Drivers are hired by your own firm. {{ career.firm.founded ? "Choose its headquarters first." : "Start one in Career → Firm." }}</div>' +
             '<div class="cep-sub" ng-if="career.driverUnlocked">Available in Garage → My cars.</div></div>' +
           '<div class="cep-card" ng-if="career.trucking"><div class="cep-label">Trucking</div>' +
             '<div class="cep-name">{{ career.trucking.label }}</div>' +
@@ -431,7 +579,7 @@ angular.module('beamng.apps')
           '<div ng-if="tab === \'home\'" style="display:flex;flex-direction:column;gap:8px">' +
           '<div class="cep-card" ng-if="places.home"><div class="cep-label">Home garage</div>' +
             '<div class="cep-name" style="white-space:normal">{{ places.home.name }}</div><div class="cep-sub">{{ places.home.town }}</div>' +
-            '<div class="cep-sub">{{ places.used }} / {{ places.home.capacity }} owned vehicles. {{ places.atHome ? "You are home." : fmt.num(places.homeKm) + " km away." }}</div>' +
+            '<div class="cep-sub">{{ places.used }} / {{ places.capacity || places.home.capacity }} owned vehicles. {{ places.atHome ? "You are home." : fmt.num(places.homeKm) + " km away." }}</div>' +
             '<button class="cep-sm ghost" ng-disabled="places.busy || places.shift" ng-click="pdo(\'homeGps\')">Route home</button></div>' +
           '<div class="cep-label">{{ places.home ? "Change home address" : "Choose your home garage" }}</div>' +
           '<div class="cep-sub">Search addresses within 3 km of your car. Select one, drive there and park in a safe spot to confirm it.</div>' +
@@ -609,7 +757,7 @@ angular.module('beamng.apps')
           '<div class="cep-card" ng-if="g.car"><div class="cep-name">{{ g.car }}</div>' +
             '<div class="cep-sub">Active car · {{ fmt.int(g.km) }} km</div></div>' +
           '<div class="cep-card"><div class="cep-label">Drivers</div>' +
-            '<div class="cep-sub" ng-if="!g.fleet.unlocked">Hiring unlocks at {{ g.fleet.rank }} rank · {{ g.fleet.at }} deliveries.</div>' +
+            '<div class="cep-sub" ng-if="!g.fleet.unlocked">Only a firm with a headquarters hires drivers. See Career → Firm.</div>' +
             '<div class="cep-sub" ng-if="g.fleet.unlocked">Hire a driver for a parked car. Each earns {{ fmt.money(g.fleet.pay) }} per {{ g.fleet.shiftMinutes }} minutes of active play.</div>' +
             '<div class="cep-sub" ng-if="g.fleet.earned > 0">Total earned by drivers · {{ fmt.money(g.fleet.earned) }}</div></div>' +
           '<div class="cep-sub" ng-if="!g.fleet.cars.length">Buy another car and keep your current one to build your fleet.</div>' +
@@ -714,7 +862,7 @@ angular.module('beamng.apps')
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="var(--card)"/><circle cx="15" cy="12" r="2" fill="var(--card)"/><circle cx="9" cy="18" r="2" fill="var(--card)"/></svg>Settings</button></nav>' +
       '</div></div></div>',
     replace: true,
-    link: function (scope) {
+    link: function (scope, element) {
       'use strict'
       scope.s = null
       scope.cancelAsk = false
@@ -844,6 +992,7 @@ angular.module('beamng.apps')
       function loadGarage() { page('garageState', 'g') }
       function loadCareer() {
         if (scope.careerView === 'map') { page('mapState', 'mapData', drawMap); return }
+        if (scope.careerView === 'firm') { page('firmState', 'firm'); return }
         page('careerState', 'career')
       }
       function loadPlaces() { page('placesState', 'places') }
@@ -877,7 +1026,7 @@ angular.module('beamng.apps')
         if (view === 'companies') loadPlaces()
       }
       scope.setCareerView = function (view) {
-        if (view !== 'progress' && view !== 'money' && view !== 'map') return
+        if (view !== 'progress' && view !== 'money' && view !== 'map' && view !== 'firm') return
         scope.careerView = view
         loadCareer()
       }
@@ -931,6 +1080,47 @@ angular.module('beamng.apps')
         scope.endCompanyAsk = true
         setTimeout(function () { scope.$evalAsync(function () { scope.endCompanyAsk = false }) }, 5000)
       }
+      // the firm (Career / Firm) and its full-screen headquarters
+      scope.firm = null; scope.hq = null; scope.hqOpen = false; scope.moveAsk = false
+      scope.names = {firm: ''}
+      function loadHq() { page('hqState', 'hq') }
+      scope.fdo = function (name, a) {
+        var args = [name]
+        if (a !== undefined) args.push(a)
+        lua('firmDo', args, function (r) { if (r && !r._phoneError) { scope.firm = r; if (name === 'found' && r.founded) scope.names.firm = '' } poll() })
+      }
+      scope.hdo = function (name, a, b) {
+        var args = [name]
+        if (a !== undefined) args.push(a)
+        if (b !== undefined) args.push(b)
+        scope.moveAsk = false
+        lua('hqDo', args, function (r) { if (r && !r._phoneError) scope.hq = r; poll() })
+      }
+      scope.openHq = function () { scope.hqOpen = true; scope.moveAsk = false; loadHq() }
+      scope.closeHq = function () { scope.hqOpen = false; if (scope.tab === 'career') loadCareer() }
+      scope.up = function (id) {
+        var list = (scope.hq && scope.hq.upgrades) || []
+        for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]
+        return {}
+      }
+      scope.pips = function (u) {
+        var out = []
+        for (var i = 0; i < (u.max || 0); i++) out.push(i < u.level)
+        return out
+      }
+      scope.range = function (n) { return new Array(Math.max(0, Math.min(12, n || 0))) }
+      // moving costs money: the first press asks, the second moves
+      scope.moveHq = function () {
+        if (scope.moveAsk) { scope.hdo('setHq'); return }
+        scope.moveAsk = true
+        setTimeout(function () { scope.$evalAsync(function () { scope.moveAsk = false }) }, 5000)
+      }
+      // The headquarters covers the whole screen, so it lives on the page body, outside the phone's own box.
+      var overlay = element && element[0] && element[0].querySelector && element[0].querySelector('.cehq')
+      if (overlay && typeof document !== 'undefined' && document.body) {
+        document.body.appendChild(overlay)
+        scope.$on('$destroy', function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay) })
+      }
       scope.sdo = function (name, a, b) {
         var args = [name]
         if (a !== undefined) args.push(a)
@@ -944,6 +1134,7 @@ angular.module('beamng.apps')
         if (v === 'parts') { scope.min = false; scope.setTab('garage') }
       })
       var slow = setInterval(function () {
+        if (scope.hqOpen) loadHq()
         if (scope.min || (scope.s && (scope.s.hidden || scope.s.screen === 'resume'))) return
         if (scope.tab === 'garage') loadGarage()
         if (scope.tab === 'career') loadCareer()

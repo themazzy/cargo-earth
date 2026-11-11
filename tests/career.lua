@@ -1102,4 +1102,118 @@ test('a speed camera fines the driver and costs a star on the order on board', f
   assert(s.career.money == 5000 and not core.phoneState().camera)
 end)
 
+local firm = require('cargoEarth/firm')
+local fleet = require('cargoEarth/fleet')
+
+local function established()
+  local c = {money = 20000, delivered = 30, home = {town = 'Brno', g = {50, 14}, capacity = 3}}
+  for _ = 1, 5 do rating.add(c, 'courier', 5) end
+  return c
+end
+
+test('a firm needs rank, reputation, no debt and the fee', function()
+  local c = {money = 20000, delivered = 29}
+  local list, ok = firm.requirements(c, 0)
+  assert(not ok and not list[1].done and not list[2].done and list[3].done and list[4].done)
+  assert(not firm.found(c, 'Early'))
+  c = established()
+  assert(not firm.found(c, 'Owing', 50) and c.money == 20000, 'a debt blocks founding')
+  c.money = firm.FEE - 1
+  assert(not firm.found(c, 'Poor'))
+  c.money = 20000
+  local okFound = firm.found(c, '  <b>Rychlá   kola</b> s. r. o. a velmi dlouhý název  ')
+  assert(okFound and c.money == 20000 - firm.FEE and #c.firm.name <= firm.NAME_MAX and not c.firm.name:find('[<>]'))
+  assert(c.accounts.history[1].category == 'firm')
+  assert(not firm.found(c, 'Again') and c.money == 20000 - firm.FEE, 'only one firm')
+  local empty = established()
+  assert(firm.found(empty, '') and empty.firm.name == 'Brno Cargo', 'no name: one is suggested')
+end)
+
+test('headquarters, upgrades and what they change', function()
+  local c = established()
+  assert(firm.found(c, 'Kola'))
+  assert(not firm.upgrade(c, 'bays', 0), 'no upgrades before a headquarters')
+  local yard = {id = 'd1', n = 'Sklad Sever', town = 'Brno', g = {50.01, 14}}
+  assert(not firm.setHq(c, yard, {lat = 50.01, lon = 14, speed = 10}), 'must be parked')
+  assert(not firm.setHq(c, nil, {lat = 50.3, lon = 14, speed = 0}), 'must be at a real place')
+  assert(firm.setHq(c, yard, {lat = 50.0101, lon = 14.0001, speed = 0}))
+  assert(c.firm.hq.n == 'Sklad Sever' and c.firm.hq.g[1] == 50.0101, 'the parking point is the gate')
+  assert(firm.atHq(c, {lat = 50.0103, lon = 14.0001}) and not firm.atHq(c, {lat = 50.02, lon = 14}))
+  local before = c.money
+  assert(firm.capacity(c) == 3 and firm.driverFactor(c) == 1 and firm.repairFactor(c, {lat = 50.0101, lon = 14.0001}) == 1)
+  assert(not firm.upgrade(c, 'bays', 10), 'a debt blocks upgrades')
+  assert(firm.upgrade(c, 'bays', 0) and firm.capacity(c) == 5 and c.money == before - 4000)
+  assert(firm.upgrade(c, 'workshop', 0) and firm.repairFactor(c, {lat = 50.0101, lon = 14.0001}) == 0.85)
+  assert(firm.repairFactor(c, {lat = 50.2, lon = 14}) == 1, 'the workshop only works at the headquarters')
+  c.money = 100
+  assert(not firm.upgrade(c, 'office', 0))
+  c.money = 50000
+  assert(firm.upgrade(c, 'office', 0) and firm.upgrade(c, 'office', 0) and not firm.upgrade(c, 'office', 0))
+  assert(firm.driverFactor(c) == 1.3)
+  local moved = c.money
+  assert(firm.setHq(c, {id = 'home', n = 'Home office', g = {50, 14}}, {lat = 50, lon = 14, speed = 0}) and c.money == moved - firm.MOVE_FEE)
+  local state = firm.state(c, {lat = 50, lon = 14}, 0)
+  assert(state.founded and state.hq.here and state.capacity == 5 and state.upgrades[1].level == 1 and state.upgrades[4].cost == nil)
+  -- a damaged save is repaired, not trusted
+  c.firm.upgrades = {bays = 99, bogus = 2, tank = 'x'}
+  c.firm.hq = {g = {500, 14}}
+  firm.restore(c)
+  assert(c.firm.upgrades.bays == 3 and c.firm.upgrades.bogus == nil and c.firm.upgrades.tank == nil and c.firm.hq == nil)
+end)
+
+test('drivers are hired by a firm with a headquarters; the office raises what they bring in', function()
+  local c = established()
+  local g = {parked = {{fleetId = 1, name = 'Van', model = 'van'}}, debt = 0}
+  local ok, why = fleet.hire(g, c, 1)
+  assert(not ok and why:find('Start a firm'))
+  assert(firm.found(c, 'Kola'))
+  ok, why = fleet.hire(g, c, 1)
+  assert(not ok and why:find('headquarters'))
+  assert(firm.setHq(c, {id = 'home', n = 'Home office', g = {50, 14}}, {lat = 50, lon = 14, speed = 0}))
+  assert(fleet.hire(g, c, 1))
+  assert(fleet.advance(g, fleet.SHIFT_S, firm.driverFactor(c)) == fleet.NET_PER_SHIFT)
+  c.money = 50000
+  assert(firm.upgrade(c, 'office', 0))
+  assert(fleet.advance(g, fleet.SHIFT_S, firm.driverFactor(c)) == math.floor(fleet.NET_PER_SHIFT * 1.15 + 0.5))
+  -- a driver from before 0.4 keeps working without a firm
+  local old = {parked = {{fleetId = 1, name = 'Van', model = 'van', driver = {elapsed = 0, earned = 0}}}}
+  assert(fleet.advance(old, fleet.SHIFT_S) == fleet.NET_PER_SHIFT)
+end)
+
+test('the firm in the game: founded from the phone, headquarters at a real yard, bays lift the car limit', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  local c = s.career
+  c.garage.debt, c.money, c.delivered = 0, 30000, 30
+  for _ = 1, 5 do rating.add(c, 'freight', 5) end
+  local state = core.careerState().firm
+  assert(not state.founded and state.ready and state.fee == firm.FEE)
+  state = core.firmDo('found', 'Kola')
+  assert(state.founded and state.name == 'Kola' and not state.hq and c.money == 30000 - firm.FEE)
+  local yard = idx.depots[1]
+  pose.lat, pose.lon = yard.g[1] + 0.0003, yard.g[2]
+  state = core.firmState()
+  assert(state.place and state.place.name == yard.n, 'the yard beside the car is offered')
+  pose.lat = yard.g[1] + 0.3
+  assert(not core.firmDo('setHq').hq, 'nowhere near a real place')
+  pose.lat = yard.g[1] + 0.0003
+  state = core.firmDo('setHq')
+  assert(state.hq and state.hq.name == yard.n and state.hq.here)
+  assert(core.garageState().capacity == 3)
+  state = core.firmDo('upgrade', 'bays')
+  assert(core.garageState().capacity == 5 and state.upgrades[1].level == 1)
+  local hq = core.hqState()
+  assert(#hq.bays == 1 and hq.bays[1].current and hq.free == 4 and hq.drivers.can and hq.drivers.count == 0)
+  -- the workshop repairs for less at the headquarters
+  core.firmDo('upgrade', 'workshop')
+  core.G.repair = function() end
+  c.garage.repair = 1000
+  local money = c.money
+  hq = core.hqDo('repair')
+  assert(c.money == money - 850 and c.garage.repair == 0 and hq.msg:find('workshop'), tostring(hq.msg))
+  -- it survives a save and a reload
+  package.loaded['cargoEarth/core'] = nil
+  assert(disk['/settings/cargoEarth/career.json'].firm.hq.n == yard.n)
+end)
+
 print(string.format('%d career tests passed', total))

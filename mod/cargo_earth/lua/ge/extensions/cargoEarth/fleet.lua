@@ -8,12 +8,14 @@ M.HIRE_FEE = 350
 M.NET_PER_SHIFT = 45
 M.KM_PER_SHIFT = 3
 
+-- Only a firm with a headquarters employs drivers. (Drivers hired before 0.4 keep working.)
 function M.unlocked(career)
-  return (tonumber(career.delivered) or 0) >= progress.DRIVER_AT
+  return type(career.firm) == 'table' and career.firm.hq ~= nil
 end
 
 function M.hire(g, career, id)
-  if not M.unlocked(career) then return false, 'Driver hiring unlocks at ' .. progress.DRIVER_RANK .. ' rank.' end
+  if not career.firm then return false, 'Start a firm before hiring drivers (Career → Firm).' end
+  if not M.unlocked(career) then return false, 'Choose your firm’s headquarters before hiring drivers.' end
   local car = garage.parkedCar(g, id)
   if not car then return false, 'Choose a parked car for the driver.' end
   if car.loaner then return false, 'Drivers need a car you own.' end
@@ -33,15 +35,17 @@ function M.release(g, id)
   return true, car.name .. ' is available to drive.'
 end
 
-function M.advance(g, dt)
+-- factor: what the firm's dispatch office adds to each shift (1 = nothing).
+function M.advance(g, dt, factor)
   local income = 0
+  local pay = math.floor(M.NET_PER_SHIFT * (tonumber(factor) or 1) + 0.5)
   if dt <= 0 then return income end
   for _, car in ipairs(g.parked or {}) do
     local driver = car.driver
     if driver then
       local elapsed = (driver.elapsed or 0) + dt
       local shifts = math.floor(elapsed / M.SHIFT_S)
-      local earned = shifts * M.NET_PER_SHIFT
+      local earned = shifts * pay
       driver.elapsed = elapsed - shifts * M.SHIFT_S
       driver.earned = (driver.earned or 0) + earned
       car.km = (car.km or 0) + shifts * M.KM_PER_SHIFT
@@ -52,9 +56,10 @@ function M.advance(g, dt)
   return income
 end
 
-function M.state(g, career)
-  local out = { cars = {}, hireFee = M.HIRE_FEE, pay = M.NET_PER_SHIFT, shiftMinutes = M.SHIFT_S / 60,
-    rank = progress.DRIVER_RANK, at = progress.DRIVER_AT, unlocked = M.unlocked(career), earned = g.driverEarnings or 0 }
+function M.state(g, career, factor)
+  local out = { cars = {}, hireFee = M.HIRE_FEE, pay = math.floor(M.NET_PER_SHIFT * (tonumber(factor) or 1) + 0.5),
+    shiftMinutes = M.SHIFT_S / 60, rank = progress.DRIVER_RANK, at = progress.DRIVER_AT, unlocked = M.unlocked(career),
+    firm = career.firm ~= nil, earned = g.driverEarnings or 0 }
   for _, car in ipairs(g.parked or {}) do
     local driver = car.driver
     out.cars[#out.cars + 1] = { id = car.fleetId, name = car.name, km = math.floor(car.km or 0), condition = car.condition,

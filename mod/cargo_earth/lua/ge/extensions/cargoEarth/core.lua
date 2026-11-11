@@ -29,6 +29,7 @@ local rating = require('cargoEarth/rating')
 local fuel = require('cargoEarth/fuel')
 local records = require('cargoEarth/stats')
 local cameras = require('cargoEarth/cameras')
+local firm = require('cargoEarth/firm')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
 local SAVE = '/settings/cargoEarth/career.json'
@@ -357,6 +358,7 @@ local function loadCareer(c)
   progress.restore(c)
   rating.restore(c)
   records.restore(c)
+  firm.restore(c)
   if type(c.garage) ~= 'table' then c.garage = garage.new() end
   c.garage.inventory = c.garage.inventory or {}
   if (c.garage.owed or 0) > 0 then c.garage.debt = (c.garage.debt or 0) + c.garage.owed end   -- older saves
@@ -1074,6 +1076,7 @@ end
 function M.careerState()
   local state = progress.state(S.career)
   state.driverRank, state.driverAt, state.driverUnlocked = progress.DRIVER_RANK, progress.DRIVER_AT, fleet.unlocked(S.career)
+  state.firm = M.firmState()
   state.trucking = haul.state(S.career)
   state.drivenKm = math.floor((S.career.drivenKm or 0) * 10 + 0.5) / 10
   local shift = S.career.employment
@@ -1110,6 +1113,7 @@ function M.placesState()
     discovery = helper.status() }
   if c.home then
     out.atHome, out.used = home.near(c, p), home.count(c.employment and c.employment.personalGarage or c.garage)
+    out.capacity = firm.capacity(c)
     out.homeKm = p and jobs.km(p.lat, p.lon, c.home.g[1], c.home.g[2]) or nil
   end
   for _, offer in ipairs(S.companyBoard or {}) do
@@ -1910,7 +1914,16 @@ function M.garageStart(model)
   return garageSay(ok, msg)
 end
 function M.garageSell(part) return garageSay(garage.sell(M.G, S.career.garage, S.career, part)) end
-function M.garageRepair() return garageSay(garage.repairCar(M.G, S.career.garage, S.career)) end
+function M.garageRepair()
+  local ok, msg, cost = garage.repairCar(M.G, S.career.garage, S.career)
+  -- the firm's workshop does the work for less at the headquarters
+  local back = ok and math.floor((cost or 0) * (1 - firm.repairFactor(S.career, earth.pose())) / 5 + 0.5) * 5 or 0
+  if back > 0 then
+    S.career.money = S.career.money + back
+    msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved)', cost - back, back)
+  end
+  return garageSay(ok, msg)
+end
 function M.garagePayDebt() return garageSay(garage.payDebt(S.career.garage, S.career)) end
 function M.garageBuy(offer)
   if S.job then return false, 'Finish the order first' end
@@ -1940,7 +1953,11 @@ function M.garageFreightLoaner()
 end
 local function garageSwitchCar(id)
   if S.job then return false, 'Finish your current orders before switching cars.' end
-  if S.career.home and not home.near(S.career, earth.pose()) then return false, 'Return to your home garage to switch cars.' end
+  local here = earth.pose()
+  if S.career.home and not home.near(S.career, here) and not firm.atHq(S.career, here) then
+    return false, S.career.firm and S.career.firm.hq and 'Return to your home garage or headquarters to switch cars.'
+      or 'Return to your home garage to switch cars.'
+  end
   local ok, why = garage.switchCar(M.G, S.career.garage, tonumber(id))
   if ok then
     releaseStorage()
@@ -2089,7 +2106,8 @@ function M.garageState()
     return out
   end
   if not g.started then return out end
-  out.fleet = fleet.state(g, S.career)
+  out.fleet = fleet.state(g, S.career, firm.driverFactor(S.career))
+  out.capacity = firm.capacity(S.career)
   out.car = g.car and g.car.name or nil
   out.loaner = g.car and g.car.loaner or nil
   out.km = g.car and math.floor(g.car.km or 0) or nil
@@ -2135,8 +2153,9 @@ function M.garageBuyListing(id, keepCar)
   local g = S.career.garage
   local keeping = keepCar == true
   if g.preview then keeping = g.preview.keepCar == true end
-  if keeping and S.career.home and home.count(g) >= S.career.home.capacity then
-    return garageSay(false, 'Your home garage is full. Trade in a car or sell one first.')
+  if keeping and home.count(g) >= firm.capacity(S.career) then
+    return garageSay(false, S.career.firm and 'Every parking bay is taken. Build more bays, trade in a car or sell one first.'
+      or 'Your garage is full. Trade in a car or sell one first.')
   end
   local ok, msg = garage.buyListing(M.G, S.career.garage, S.career, tonumber(id), keepCar == true)
   if ok then
@@ -2193,6 +2212,111 @@ function M.garageDo(name, a, b)
   end
   S.garageMsg = msg
   return M.garageState()
+end
+
+------------------------------------------------------------------------------------------ the firm and its headquarters
+
+local function personalGarage()
+  local shift = S.career.employment
+  return shift and shift.personalGarage or S.career.garage
+end
+
+-- The real place the car is parked at that can become the headquarters: the nearest known yard or warehouse,
+-- else the home garage.
+local function hqPlace(p)
+  if not p or not p.lat then return nil end
+  local best, bestM
+  for _, d in ipairs(S.idx and S.idx.depots or {}) do
+    if d.g and math.abs(d.g[1] - p.lat) < 0.002 then
+      local m = jobs.km(p.lat, p.lon, d.g[1], d.g[2]) * 1000
+      if m <= firm.PLACE_RADIUS and (not bestM or m < bestM) then best, bestM = d, m end
+    end
+  end
+  if best then return { id = best.id, n = best.n, town = best.town, g = best.g } end
+  local h = S.career.home
+  if h and home.near(S.career, p) then return { id = 'home', n = 'Home office', town = h.town, g = h.g } end
+end
+
+function M.firmState()
+  local c, p = S.career, earth.status() == 'ok' and earth.pose() or nil
+  local out = firm.state(c, p, personalGarage().debt or 0)
+  out.msg = S.firmMsg
+  if out.founded then
+    local place = p and not p.camera and hqPlace(p)
+    out.place = place and { name = place.n, town = place.town } or nil
+    out.parked = p ~= nil and not p.camera and (p.speed or 0) <= M.STOP_SPEED
+  end
+  return out
+end
+
+-- The full-screen headquarters: the firm, every parking bay with its car and driver, the workshop, tank and stores.
+function M.hqState()
+  local c, g = S.career, personalGarage()
+  local out = M.firmState()
+  if not out.founded then return out end
+  out.bays = {}
+  local function bay(car, current)
+    out.bays[#out.bays + 1] = { id = car.fleetId, name = car.name, current = current or nil, loaner = car.loaner or nil,
+      km = math.floor(car.km or 0), condition = car.condition, repair = not current and car.parkedRepair or nil,
+      driver = car.driver and { earned = car.driver.earned or 0 } or nil }
+  end
+  if g.car and not g.car.loaner then bay(g.car, true) end
+  for _, car in ipairs(g.parked or {}) do if not car.loaner then bay(car, false) end end
+  out.free = math.max(0, out.capacity - #out.bays)
+  local drivers = 0
+  for _, b in ipairs(out.bays) do if b.driver then drivers = drivers + 1 end end
+  local f = fleet.state(g, c, firm.driverFactor(c))
+  out.drivers = { count = drivers, pay = f.pay, shiftMinutes = f.shiftMinutes, hireFee = f.hireFee, earned = f.earned,
+    can = fleet.unlocked(c) }
+  local parts, kinds = 0, 0
+  out.parts = { items = {} }
+  local okSpares, spares = pcall(garage.spares, M.G, g)   -- (names the parts as the shop does)
+  for _, row in ipairs(okSpares and spares or {}) do
+    parts, kinds = parts + (tonumber(row.count) or 0), kinds + 1
+    if #out.parts.items < 12 then out.parts.items[#out.parts.items + 1] = { name = row.name, count = row.count } end
+  end
+  out.parts.count, out.parts.kinds = parts, kinds
+  if not c.employment then out.fuel = fuelState() end
+  out.repair = { cost = g.repair or 0, factor = firm.repairFactor(c, earth.pose()) }
+  out.debt, out.busy, out.company = g.debt or 0, S.job ~= nil, c.employment ~= nil
+  return out
+end
+
+-- name: found (a = name), rename (a = name), setHq, gpsHq, upgrade (a = id). Returns the firm for the phone.
+function M.firmDo(name, a)
+  if S.pendingCareer then return M.firmState() end
+  local c, p = S.career, earth.status() == 'ok' and earth.pose() or nil
+  local debt = personalGarage().debt or 0
+  local ok, msg = false, 'Unknown action'
+  if name == 'found' then ok, msg = firm.found(c, a, debt)
+  elseif name == 'rename' then ok, msg = firm.rename(c, a)
+  elseif name == 'setHq' then
+    if S.job or c.employment then ok, msg = false, 'Finish your current work first.'
+    else ok, msg = firm.setHq(c, p and hqPlace(p), p) end
+  elseif name == 'gpsHq' then
+    if c.firm and c.firm.hq then ok, msg = earth.gps(c.firm.hq.g[1], c.firm.hq.g[2], c.firm.name), 'Route set to your headquarters.'
+    else msg = 'Choose the headquarters first.' end
+  elseif name == 'upgrade' then ok, msg = firm.upgrade(c, a, debt)
+  end
+  S.firmMsg = msg
+  if ok and name ~= 'gpsHq' then
+    S.fuelNear, fuelNearAt = nil, 0
+    say(msg)
+    saveCareer()
+  end
+  return M.firmState()
+end
+
+-- The same actions from the headquarters screen, plus the garage's (repair, switchCar, hireDriver, releaseDriver,
+-- refuel): returns the headquarters.
+function M.hqDo(name, a, b)
+  if name == 'found' or name == 'rename' or name == 'setHq' or name == 'gpsHq' or name == 'upgrade' then
+    M.firmDo(name, a)
+  else
+    local allowed = { repair = true, switchCar = true, hireDriver = true, releaseDriver = true, refuel = true, paydebt = true }
+    if allowed[name] then S.firmMsg = M.garageDo(name, a, b).msg end
+  end
+  return M.hqState()
 end
 
 ------------------------------------------------------------------------------------------ settings for the phone
@@ -2406,7 +2530,7 @@ function M.onUpdate(dtReal, dtSim)
       -- Hired drivers belong to the personal garage, also while the player drives a company van.
       local shift = S.career.employment
       local fg = shift and shift.personalGarage or g
-      local income = fleet.advance(fg, driverDt)
+      local income = fleet.advance(fg, driverDt, firm.driverFactor(S.career))
       if income > 0 then
         local c = S.career
         local debtPaid = garage.takeForDebt(fg, income)
