@@ -19,6 +19,26 @@ Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated wi
 
 ## Install
 
+### Quick install (Windows)
+
+With BeamNG.drive and BeamNG.Earth already installed, open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/themazzy/cargo-earth/main/install.ps1 | iex
+```
+
+It downloads the latest release, puts the mod ZIP in your BeamNG `mods` folder (older Cargo Earth ZIPs are moved to `cargo_earth_old_mods`), copies the helper to `%LOCALAPPDATA%\CargoEarth\helper`, installs its Python libraries and registers it with BeamNG.Earth. Career saves are never touched. Options, with a downloaded copy of [`install.ps1`](install.ps1):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -UserFolder "D:\BeamNG\user"   # BeamNG user folder not found automatically
+powershell -ExecutionPolicy Bypass -File install.ps1 -Version 0.3.5                    # a specific release
+powershell -ExecutionPolicy Bypass -File install.ps1 -ModOnly                          # or -HelperOnly, -SkipPython
+powershell -ExecutionPolicy Bypass -File install.ps1 -ZipPath dist\cargo_earth_career_0.3.5.zip -HelperPath helper\cargo_earth_helper.py
+powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall                        # add -DryRun to any command to only show what it would do
+```
+
+### Manual install
+
 1. Install and set up BeamNG.drive and BeamNG.Earth separately.
 2. Download `cargo_earth_career_0.3.5.zip` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest). Close the game. Put the ZIP in your active BeamNG user-folder `mods` directory. Keep only one Cargo Earth version enabled; do not unpack the ZIP for normal installation.
 3. For live geography, install Python 3 and the helper dependencies: `python -m pip install duckdb fsspec`.
