@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,10 +40,11 @@ var buildVersion = "dev"
 type options struct {
 	version, userFolder, zipPath, helperPath   string
 	modOnly, helperOnly, skipPython, uninstall bool
-	dryRun, noPause                            bool
+	dryRun, noPause, deleteSave, yes           bool
 }
 
 var opt options
+var stdin = bufio.NewReader(os.Stdin)
 var local string // %LOCALAPPDATA%
 
 func say(format string, a ...any)  { fmt.Printf("  "+format+"\n", a...) }
@@ -69,10 +71,12 @@ func main() {
 	flag.BoolVar(&opt.uninstall, "uninstall", false, "remove the mod ZIP, the helper and its add-on entry (saves are kept)")
 	flag.BoolVar(&opt.dryRun, "dry-run", false, "show what would happen, change nothing")
 	flag.BoolVar(&opt.noPause, "no-pause", false, "don't wait for Enter before closing")
+	flag.BoolVar(&opt.deleteSave, "delete-save", false, "delete the Cargo Earth career save and its backups (asks first)")
+	flag.BoolVar(&opt.yes, "yes", false, "with -delete-save: don't ask for confirmation")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Cargo Earth installer %s\n\nDouble-click to choose from a menu, or use options:\n\n", buildVersion)
 		flag.PrintDefaults()
-		fmt.Fprintln(os.Stderr, "\nExamples:\n  CargoEarthSetup.exe\n  CargoEarthSetup.exe -version 0.3.5\n  CargoEarthSetup.exe -uninstall\n  CargoEarthSetup.exe -zip cargo_earth_career_0.3.5.zip -helper cargo_earth_helper.py")
+		fmt.Fprintln(os.Stderr, "\nExamples:\n  CargoEarthSetup.exe\n  CargoEarthSetup.exe -version 0.3.5\n  CargoEarthSetup.exe -uninstall\n  CargoEarthSetup.exe -delete-save\n  CargoEarthSetup.exe -zip cargo_earth_career_0.3.5.zip -helper cargo_earth_helper.py")
 	}
 	flag.Parse()
 
@@ -88,7 +92,7 @@ func main() {
 	}
 	if interactive && !opt.noPause {
 		fmt.Print("\nPress Enter to close this window.")
-		bufio.NewReader(os.Stdin).ReadString('\n')
+		stdin.ReadString('\n')
 	}
 	if err != nil {
 		os.Exit(1)
@@ -101,15 +105,18 @@ func menu() bool {
 	fmt.Println("  1  Install or update Cargo Earth (mod and helper)")
 	fmt.Println("  2  Install or update only the mod")
 	fmt.Println("  3  Remove Cargo Earth (career saves are kept)")
-	fmt.Println("  4  Close")
+	fmt.Println("  4  Delete the Cargo Earth career save (start a new career)")
+	fmt.Println("  5  Close")
 	fmt.Print("\nType a number and press Enter: ")
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line, _ := stdin.ReadString('\n')
 	switch strings.TrimSpace(line) {
 	case "1", "":
 	case "2":
 		opt.modOnly = true
 	case "3":
 		opt.uninstall = true
+	case "4":
+		opt.deleteSave = true
 	default:
 		return false
 	}
@@ -120,6 +127,14 @@ func run() error {
 	local = os.Getenv("LOCALAPPDATA")
 	if local == "" {
 		return errors.New("LOCALAPPDATA is not set. Run this on Windows.")
+	}
+	if opt.deleteSave {
+		user, err := findUserFolder()
+		if err != nil {
+			return err
+		}
+		say("BeamNG user folder: %s", user)
+		return deleteSave(user)
 	}
 	if opt.modOnly && opt.helperOnly {
 		return errors.New("use -mod-only or -helper-only, not both")
@@ -650,6 +665,72 @@ func removeHelper() error {
 			return err
 		}
 		say("Removed the helper from BeamNG.Earth's add-on list.")
+	}
+	return nil
+}
+
+// ------------------------------------------------------------------ the career save
+
+// saveFiles lists career.json and the copies the mod keeps beside it
+// (.pending, .backup1, .backup2, .legacy). config.json is a setting, not progress, and stays.
+func saveFiles(user string) []string {
+	dir := filepath.Join(user, "settings", "cargoEarth")
+	var found []string
+	for _, name := range []string{"career.json", "career.json.pending", "career.json.backup1", "career.json.backup2", "career.json.legacy"} {
+		if p := filepath.Join(dir, name); fileExists(p) {
+			found = append(found, p)
+		}
+	}
+	return found
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// gameRunning reports whether BeamNG.drive is open; it would write the save again when it closes.
+func gameRunning() bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	out, err := exec.Command("tasklist", "/NH", "/FO", "CSV").Output()
+	return err == nil && strings.Contains(strings.ToLower(string(out)), "beamng.drive")
+}
+
+func deleteSave(user string) error {
+	step("Career save")
+	files := saveFiles(user)
+	if len(files) == 0 {
+		say("No Cargo Earth career save found in %s.", filepath.Join(user, "settings", "cargoEarth"))
+		return nil
+	}
+	if gameRunning() {
+		return errors.New("BeamNG.drive is running. Close the game first, or it saves the career again when it exits")
+	}
+	for _, f := range files {
+		say("%s", f)
+	}
+	say("This deletes your whole Cargo Earth career: money, cars, home, reputation and progress.")
+	say("It cannot be undone. Settings (config.json) are kept.")
+	if !opt.yes && !opt.dryRun {
+		fmt.Print("\n  Type DELETE and press Enter to confirm: ")
+		line, _ := stdin.ReadString('\n')
+		if strings.TrimSpace(line) != "DELETE" {
+			say("Nothing was deleted.")
+			return nil
+		}
+	}
+	for _, f := range files {
+		if err := doIt("delete "+f, func() error { return os.Remove(f) }); err != nil {
+			return fmt.Errorf("could not delete %s: %v", f, err)
+		}
+	}
+	fmt.Println()
+	if opt.dryRun {
+		fmt.Println("Dry run finished. Nothing was changed.")
+	} else {
+		fmt.Println("Done. The career save was deleted. The next time you open the phone, Cargo Earth starts a new career.")
 	}
 	return nil
 }

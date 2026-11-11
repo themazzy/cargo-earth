@@ -21,7 +21,7 @@ Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated wi
 
 ### Quick install (Windows)
 
-With BeamNG.drive and BeamNG.Earth already installed, download **[CargoEarthSetup.exe](https://github.com/themazzy/cargo-earth/releases/latest/download/CargoEarthSetup.exe)** and double-click it. Choose 1 to install or update, 2 for the mod only, or 3 to remove Cargo Earth.
+With BeamNG.drive and BeamNG.Earth already installed, download **[CargoEarthSetup.exe](https://github.com/themazzy/cargo-earth/releases/latest/download/CargoEarthSetup.exe)** and double-click it. Choose 1 to install or update, 2 for the mod only, 3 to remove Cargo Earth, or 4 to delete your career save and start over.
 
 It downloads the latest release, puts the mod ZIP in your BeamNG `mods` folder (older Cargo Earth ZIPs are moved to `cargo_earth_old_mods`), copies the helper to `%LOCALAPPDATA%\CargoEarth\helper`, installs its Python libraries and registers it with BeamNG.Earth. Career saves are never touched.
 
@@ -37,6 +37,7 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | `-skip-python` | Don't install the helper's Python libraries |
 | `-zip <file>`, `-helper <file>` | Use files you already downloaded |
 | `-uninstall` | Remove the mod, the helper and its BeamNG.Earth entry (saves are kept) |
+| `-delete-save` | Delete the career save and its backups (asks you to type DELETE; add `-yes` to skip). Close the game first |
 | `-dry-run` | Only show what would happen |
 
 ### Manual install
