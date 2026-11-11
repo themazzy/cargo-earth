@@ -1711,7 +1711,10 @@ function M.onCargoEarthFuel(id, token, report)
     else
       local seen, taken = fuel.clean(report) or {}, true
       for name, level in pairs(pending.levels) do
-        if not seen[name] or seen[name].ratio < level - 0.02 then taken = false end
+        -- half of what was bought, at most 2 %: an unchanged tank can never confirm a small paid refill
+        local added = level - (pending.before[name] or 0)
+        local slack = math.min(0.02, math.max(0, added) / 2)
+        if not seen[name] or seen[name].ratio < level - slack then taken = false end
       end
       if taken then
         fuelPending = nil

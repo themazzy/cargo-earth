@@ -996,6 +996,23 @@ test('a refill the game does not take is refunded', function()
   assert(s.career.money == money and s.career.garage.car.fuel.tanks.mainTank.ratio == 0.5)
 end)
 
+test('a tiny refill the game does not take is refunded too', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  withStation(s, 50, 14)
+  tank.ratio = 0.99
+  advance(core, 2)
+  fuelReport(core)
+  takesFuel = false
+  local money = s.career.money
+  core.garageDo('refuel')
+  assert(s.career.money < money, 'a 0.4 l top-up is charged')
+  fuelReport(core)
+  advance(core, 14)
+  fuelReport(core)
+  assert(s.career.money == money, 'an unchanged gauge must not confirm a top-up smaller than 2 %')
+end)
+
 test('a loaner fills up on the company fuel card', function()
   local core, s = fresh()
   fuelAdapter(core)
