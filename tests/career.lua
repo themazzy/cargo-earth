@@ -1136,6 +1136,20 @@ test('a parcel route loads the van, empties the containers stop by stop and pays
   local i, job
   for k, offer in ipairs(s.offers) do if offer.route then i, job = k, offer break end end
   assert(job, 'a parcel route is offered in a van')
+  -- the phone rings with it although three ordinary offers come first
+  local generate, random = core.generate, math.random
+  core.generate = function()
+    generate()
+    for n = 1, 3 do table.insert(s.offers, 1, { id = 'x' .. n, kind = 'cargo', cargoName = 'Pallets', from = { id = 'x' .. n, n = 'Yard' } }) end
+  end
+  math.random = function(a, b) if b then return random(a, b) end return a end   -- always the last candidate
+  s.phone.online, s.phone.incoming, s.phone.nextPingAt = true, nil, 0
+  advance(core)
+  core.generate, math.random = generate, random
+  assert(s.phone.incoming and s.phone.incoming.job.route, 'a parcel route reaches the phone')
+  s.phone.incoming = nil
+  core.generate()
+  for k, offer in ipairs(s.offers) do if offer.route then i, job = k, offer break end end
   local stops = #job.route.stops
   core.take(i)
   assert(s.job == job and s.phase == 'toPickup')
