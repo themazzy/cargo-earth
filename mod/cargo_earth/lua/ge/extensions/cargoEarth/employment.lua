@@ -55,13 +55,28 @@ function M.board(idx, pose)
   return board
 end
 
+-- Board offers are reused while the board is open, so a shift gets its own copy without
+-- the runtime fields a previous acceptance wrote (payment, condition, shift id).
+local RUNTIME = { companyShift = true, paymentId = true, cargoCondition = true }
+local function copy(v, top)
+  if type(v) ~= 'table' then return v end
+  local out = {}
+  for k, x in pairs(v) do if not (top and RUNTIME[k]) then out[k] = copy(x) end end
+  return out
+end
+function M.copyJobs(list)
+  local out = {}
+  for i, j in ipairs(list) do out[i] = copy(j, true) end
+  return out
+end
+
 function M.begin(c, offer, personal, companyGarage, mode, independent)
   if c.employment then return false, 'Finish or end your company contract first.' end
   if not offer or #offer.jobs ~= 2 then return false, 'Refresh the company board.' end
   local reputation = c.companies and c.companies[offer.id] and c.companies[offer.id].reputation or 0
   if independent and reputation < M.INDEPENDENT_REP then return false, 'Build 20 reputation with this company to unlock independent contracts.' end
   local shift = { id = economy.nextId(c, 'shift'), companyId = offer.id, companyName = offer.name, yard = offer.yard,
-    jobs = offer.jobs, index = 1, completed = 0, failed = 0, quality = 0, vehicleDamage = 0, gross = 0, phase = independent and 'working' or 'preparing',
+    jobs = M.copyJobs(offer.jobs), index = 1, completed = 0, failed = 0, quality = 0, vehicleDamage = 0, gross = 0, phase = independent and 'working' or 'preparing',
     personalGarage = personal, previousMode = mode, ownerOperator = independent == true, share = independent and 1 or M.SHARE }
   c.employment = shift
   return true

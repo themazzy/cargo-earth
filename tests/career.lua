@@ -144,6 +144,21 @@ test('early termination pays only completed work once and preserves personal deb
   assert(c.companies[offer.id].reputation == 0)
 end)
 
+test('accepting the same board offer twice starts from clean job copies', function()
+  local offer = employment.board(idx, {lat = 50, lon = 14})[1]
+  local c = {money = 0}
+  assert(employment.begin(c, offer, {}, {}, 'courier'))
+  c.employment.phase = 'working'
+  local j = employment.nextJob(c)
+  j.paymentId, j.cargoCondition = 'delivery:1', 40
+  assert(not offer.jobs[1].companyShift and not offer.jobs[1].paymentId and not offer.jobs[1].cargoCondition)
+  c.employment = nil
+  assert(employment.begin(c, offer, {}, {}, 'courier'))
+  local again = c.employment.jobs[1]
+  assert(again ~= j and not again.paymentId and not again.cargoCondition and not again.companyShift)
+  assert(again.id == j.id and again.haul.tier == j.haul.tier)
+end)
+
 -- Integration: real core/job/garage code with isolated game, Earth and filesystem adapters.
 local pose, vehicle, boxes, spawnFailure, ready, payWrites = nil, nil, nil, nil, true, 0
 local damageValue, impactToken = 0, nil
@@ -310,6 +325,34 @@ test('failed checkpoint blocks equipment replacement and can be retried', functi
   failPath = nil
   start(core)
   assert(s.career.employment)
+end)
+
+test('a personal van does not overwrite the company van configuration before it spawns', function()
+  local core, s = fresh()
+  vehicle.model = 'van'
+  s.career.garage.car.model = 'van'
+  spawnFailure = 'van'
+  local board = core.placesDo('refreshCompanies')
+  core.placesDo('startCompany', board.companies[1].id)
+  local saved = disk['/settings/cargoEarth/career.json']
+  assert(saved.employment and saved.garage.car.company)
+  assert(saved.garage.car.config.parts.load == 'box')
+  assert(saved.employment.personalGarage.car.config.parts.body == 'van')
+end)
+
+test('hired drivers in the personal garage keep earning during company work', function()
+  local core, s = fresh()
+  local fleet = require('cargoEarth/fleet')
+  s.career.garage.debt = 0
+  s.career.garage.parked = {{fleetId = 'car:1', name = 'Spare', model = 'pigeon', km = 0, driver = {elapsed = 0}}}
+  start(core)
+  local personal = s.career.employment.personalGarage
+  local money = s.career.money
+  pose.speed = 10
+  for _ = 1, math.ceil(fleet.SHIFT_S / 0.5) + 10 do core.onUpdate(0.5, 0.5) end
+  pose.speed = 0
+  assert(personal.parked[1].driver.earned == fleet.NET_PER_SHIFT)
+  assert(s.career.money >= money + fleet.NET_PER_SHIFT)
 end)
 
 test('garage capacity applies when buying a preview that keeps the old car', function()

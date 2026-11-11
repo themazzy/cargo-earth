@@ -300,7 +300,8 @@ local function saveCareer()
   if S.pendingCareer then return end
   local c = S.career
   if earth.status() == 'ok' then rememberLocation(earth.pose()) end
-  if c.garage.car and not c.garage.pendingUsed and not S.parts then
+  -- S.skipCapture: the company van is not spawned yet, so the live car is still the personal one.
+  if c.garage.car and not c.garage.pendingUsed and not S.parts and not S.skipCapture then
     local ok, err = pcall(garage.remember, M.G, c.garage)
     if not ok then log('W', 'cargoEarth', 'Could not capture the career car: ' .. tostring(err)) end
   end
@@ -1148,7 +1149,10 @@ local function companyStart(id, independent)
   c.garage = companyGarage
   c.location = { lat = p.lat, lon = p.lon }
   -- Commit the personal-car snapshot before any spawn can replace it.
-  if not saveCareer() then c.garage, c.employment = g, nil return false, S.saveError end
+  S.skipCapture = true
+  local saved = saveCareer()
+  S.skipCapture = nil
+  if not saved then c.garage, c.employment = g, nil return false, S.saveError end
   releaseStorage()
   local spawned, err = spawnCareerCar(companyGarage)
   if not spawned then
@@ -2024,10 +2028,13 @@ function M.onUpdate(dtReal, dtSim)
     local ready = worldReady
     if ready then refreshStorage() else releaseStorage() end
     if ready then
-      local income = fleet.advance(g, driverDt)
+      -- Hired drivers belong to the personal garage, also while the player drives a company van.
+      local shift = S.career.employment
+      local fg = shift and shift.personalGarage or g
+      local income = fleet.advance(fg, driverDt)
       if income > 0 then
         local c = S.career
-        local debtPaid = garage.takeForDebt(g, income)
+        local debtPaid = garage.takeForDebt(fg, income)
         economy.post(c, income - debtPaid, 'drivers', economy.nextId(c, 'drivers'), 'Fleet shift')
         say(string.format('Drivers earned %d CZK%s.', income,
           debtPaid > 0 and string.format(' (%d CZK toward debt)', debtPaid) or ''))
