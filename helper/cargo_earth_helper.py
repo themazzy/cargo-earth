@@ -12,10 +12,15 @@ and prints what it found.
 
 API (GET, JSON):
   /v1/info                    {"app": "cargo-earth-helper", "version", "release"}
+  /v1/cameras?lat=..&lon=..   speed cameras around the point, from OpenStreetMap (Overpass API, one request per
+                              0.5 degree cell, kept for 30 days): {"state": "ready" | "loading" | "failed",
+                              "cells": [...], "cameras": [[id, lat, lon, limit km/h (0 = unknown), road class], ...]}
   /v1/near?lat=..&lon=..      the 3 x 3 areas around the point: {"ready": ["r_c", ...], "loading": n, "failed": n,
-                              "errors": [...], "grocers": true, "depots": true}; builds missing areas nearest first
+                              "errors": [...], "grocers": true, "depots": true, "fuel": true}; builds missing areas
+                              nearest first
   /v1/area?key=r_c            one ready area: {"key", "restaurants": [[id, lat, lon, curbLat, curbLon, name, cat, town],
-                              ...], "grocers": [rows in the same format], "tiles": {"row_col":
+                              ...], "grocers": [rows in the same format],
+                              "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...], "tiles": {"row_col":
                               [[lat, lon, curbLat, curbLon, label, town], ...]}, "houses": bool,
                               "depots": [{id, n, g: [lat, lon], t: "yard" | "shop", town, source, access}, ...]}
 Areas are AREA x AREA degrees (r = floor(lat / AREA), c = floor(lon / AREA)); address tiles inside are TILE degrees,
@@ -23,6 +28,7 @@ the same keys as the mod's own data pack (food_CZ/a/<row>_<col>.json).
 
 Data: Overture Maps Foundation, places (CDLA-Permissive-2.0), addresses (sources' licences), buildings (ODbL and
 others); https://docs.overturemaps.org/attribution/
+Speed cameras: (c) OpenStreetMap contributors, ODbL; https://www.openstreetmap.org/copyright
 """
 import argparse
 import datetime
@@ -38,8 +44,8 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.3.1"
-AREA_CACHE_VERSION = "3"  # include local workplaces; retain existing downloaded Parquet blocks
+VERSION = "0.4.0"
+AREA_CACHE_VERSION = "4"  # include fuel stations and chargers; retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
 STAC_ROOT = "https://stac.overturemaps.org"
@@ -54,6 +60,8 @@ WORKERS = 2                # areas built at once
 MAX_AREA_BYTES = 8 * 1024 * 1024
 NETWORK = {"requests": 0, "bytes": 0, "range_requests": 0}
 NETWORK_LOCK = threading.Lock()
+FUEL = {"gas_station": "f", "truck_gas_station": "f", "ev_charging_station": "e"}   # place category -> what it sells
+FUEL_MIN_CONF = 0.5        # a filling station is a plain fact; fewer false ones than among restaurants
 FOOD = {"restaurant", "fast_food_restaurant", "casual_eatery", "cafe", "coffee_shop", "food_truck_stand", "food_court"}
 CATS = [  # (category id, regex on the place's taxonomy); the same as the mod's Czech pack (depot-builder/build_food.py)
     ("pizza", r"pizza"), ("burger", r"burger"),
@@ -462,26 +470,37 @@ class Builder:
         con, paths = self._con("places/place", box)
         if not paths:
             con.close()
-            return [], []
+            return [], [], []
         food = ", ".join(f"'{c}'" for c in sorted(FOOD))
         # Overture groups grocery subtypes under food_and_beverage_store at the basic level.
         grocer = """(list_contains(taxonomy.hierarchy, 'grocery_store')
                      OR taxonomy.primary IN ('grocery_store', 'supermarket', 'hypermarket'))"""
         depot = ("regexp_matches(lower(concat_ws(' ', basic_category, taxonomy.primary, "
                  f"array_to_string(taxonomy.hierarchy, ' '))), '{DEPOT_SQL_RX}')")
+        kinds = ", ".join(f"'{c}'" for c in sorted(FUEL))
+        fuel = f"(coalesce(basic_category IN ({kinds}), false) OR coalesce(taxonomy.primary IN ({kinds}), false))"
         q = f"""SELECT id, names.primary, basic_category, taxonomy.primary, array_to_string(taxonomy.hierarchy, ' '),
                        (bbox.ymin + bbox.ymax) / 2, (bbox.xmin + bbox.xmax) / 2, addresses[1].locality,
                        coalesce({grocer}, false) AS is_grocer
                 FROM read_parquet({paths!r}, union_by_name = true)
-                WHERE {self._where(box)} AND (basic_category IN ({food}) OR {grocer} OR {depot}) AND confidence >= {MIN_CONF}
-                  AND coalesce(operating_status, 'open') = 'open' AND names.primary IS NOT NULL"""
+                WHERE {self._where(box)} AND coalesce(operating_status, 'open') = 'open'
+                  AND (({fuel} AND confidence >= {FUEL_MIN_CONF})
+                       OR ((basic_category IN ({food}) OR {grocer} OR {depot}) AND confidence >= {MIN_CONF}
+                           AND names.primary IS NOT NULL))"""
         try:
             rows = con.execute(q).fetchall()
         finally:
             con.close()
         out, depots = [], []
+        stations = []
         for pid, name, basic, prim, hier, lat, lon, town, is_grocer in rows:
-            name = name.strip()
+            name = (name or "").strip()
+            sells = FUEL.get(prim) or FUEL.get(basic)
+            if sells:
+                stations.append([f"o{pid[:16]}", round(lat, 6), round(lon, 6),
+                                 name or ("Charging station" if sells == "e" else "Filling station"), sells,
+                                 (town or "").strip()])
+                continue
             if name:
                 town = (town or "").strip()
                 if is_grocer or basic in FOOD:
@@ -492,8 +511,7 @@ class Builder:
                 if kind:
                     depots.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)],
                                    "t": kind, "town": town, "source": "Overture", "access": "candidate"})
-        return out, depots
-
+        return out, depots, stations
     def addresses(self, box):
         con, paths = self._con("addresses/address", box)
         if not paths:
@@ -539,7 +557,8 @@ class Builder:
         t0 = time.time()
         fut = POOL.submit(self.places, box)
         addr = self.addresses(box)
-        places, depots = fut.result()
+        found = fut.result()
+        places, depots, stations = found[0], found[1], (found[2] if len(found) > 2 else [])
         houses = False
         if len(addr) < HOUSES_BELOW:
             try:
@@ -575,10 +594,17 @@ class Builder:
             if box[1] <= row[1] < box[3] and box[0] <= row[2] < box[2]:
                 (grocers if row[6] == "grocery" else restaurants).append(row)
         depots = [d for d in depots if box[1] <= d["g"][0] < box[3] and box[0] <= d["g"][1] < box[2]]
+        if kept:
+            for row in stations:
+                if not row[5]:
+                    row[5] = min(kept[:: max(1, len(kept) // 2000)],
+                                 key=lambda a: (a[0] - row[1]) ** 2 + (a[1] - row[2]) ** 2)[3]
+        stations = [s for s in stations if box[1] <= s[1] < box[3] and box[0] <= s[2] < box[2]]
         log(f"area {r}_{c}: {len(restaurants)} restaurants, {len(grocers)} grocery stores, "
-            f"{len(depots)} workplaces, {sum(len(v) for v in tiles.values())} customers"
+            f"{len(depots)} workplaces, {len(stations)} fuel stations, {sum(len(v) for v in tiles.values())} customers"
             f"{' (with houses)' if houses else ''} in {time.time() - t0:.1f} s")
-        return {"key": f"{r}_{c}", "restaurants": restaurants, "grocers": grocers, "depots": depots, "tiles": tiles, "houses": houses,
+        return {"key": f"{r}_{c}", "restaurants": restaurants, "grocers": grocers, "depots": depots, "fuel": stations,
+                "tiles": tiles, "houses": houses,
                 "release": self.index.release}
 
 
@@ -602,8 +628,12 @@ def valid_area(data, key, release):
             return False
         if any(not isinstance(row, list) or len(row) < 5 or not coordinates(row, 0) or not isinstance(row[4], str) for row in rows):
             return False
-    if not isinstance(data.get("depots"), list):
+    if not isinstance(data.get("fuel"), list) or not isinstance(data.get("depots"), list):
         return False
+    for row in data["fuel"]:
+        if not isinstance(row, list) or len(row) < 5 or not isinstance(row[0], str) or not coordinates(row[1:3] * 2, 0) \
+                or not isinstance(row[3], str) or row[4] not in ("f", "e"):
+            return False
     for depot in data["depots"]:
         if not isinstance(depot, dict) or not isinstance(depot.get("id"), str) or not isinstance(depot.get("n"), str) or depot.get("t") not in ("yard", "shop"):
             return False
@@ -661,7 +691,7 @@ class Areas:
         r0, c0 = int(math.floor(lat / AREA)), int(math.floor(lon / AREA))
         keys = [f"{r0 + dr}_{(c0 + dc + 1800) % 3600 - 1800}" for dr in (0, -1, 1) for dc in (0, -1, 1)
                 if -900 <= r0 + dr < 900]
-        out = {"ready": [], "loading": 0, "failed": 0, "errors": [], "grocers": True, "depots": True,
+        out = {"ready": [], "loading": 0, "failed": 0, "errors": [], "grocers": True, "depots": True, "fuel": True,
                "release": self.builder.index.release, "areaFormat": AREA_CACHE_VERSION, "cellSize": AREA}
         with self.cv:
             self.last = (lat, lon)
@@ -753,7 +783,156 @@ class Areas:
         return body
 
 
-def serve(areas, release, port, host="127.0.0.1"):
+######################################################################################## speed cameras (OpenStreetMap)
+
+OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
+CAMERA_CELL = 0.5          # one Overpass request covers this many degrees
+CAMERA_REACH = 0.15        # cells this close to the player are fetched too, degrees
+CAMERA_DAYS = 30           # a cached cell is asked for again after this long
+CAMERA_ROAD_M = 30         # a camera beside the road belongs to a road this close
+CAMERA_ROADS = "motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street"
+MAX_CAMERA_BYTES = 4 * 1024 * 1024
+
+
+def parse_speed(text):
+    """An OpenStreetMap maxspeed value in km/h, or None ('50', '30 mph', '50;30' -> the lowest; 'signals' -> None)."""
+    best = None
+    for part in re.split(r"[;,|]", str(text or "")):
+        m = re.fullmatch(r"\s*(\d{1,3})(?:\.\d+)?\s*(km/h|kmh|kph|mph|knots)?\s*", part.lower())
+        if not m:
+            continue
+        value = float(m.group(1)) * {"mph": 1.609344, "knots": 1.852}.get(m.group(2), 1)
+        if 5 <= value <= 200 and (best is None or value < best):
+            best = value
+    return best and int(round(best))
+
+
+def _metres(lat, lon, a, b):
+    """Distance from a point to the segment a-b ((lat, lon) pairs)."""
+    k = math.cos(math.radians(lat))
+    ax, ay, bx, by = (a[1] - lon) * k, a[0] - lat, (b[1] - lon) * k, b[0] - lat
+    dx, dy = bx - ax, by - ay
+    t = 0 if dx == dy == 0 else max(0, min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy)))
+    return math.hypot(ax + t * dx, ay + t * dy) * 111320
+
+
+def camera_rows(data):
+    """Overpass JSON -> [[id, lat, lon, limit km/h (0 = not known), road class]]. The limit comes from the camera,
+    its enforcement relation, or the nearest road, in that order."""
+    nodes, relations, ways = [], {}, []
+    for e in data.get("elements", []) if isinstance(data, dict) else []:
+        tags = e.get("tags") or {}
+        if e.get("type") == "node" and tags.get("highway") == "speed_camera":
+            nodes.append(e)
+        elif e.get("type") == "relation" and tags.get("enforcement", "maxspeed") == "maxspeed":
+            limit = parse_speed(tags.get("maxspeed"))
+            for m in e.get("members", []):
+                if limit and m.get("type") == "node" and m.get("role") == "device":
+                    relations[m.get("ref")] = limit
+        elif e.get("type") == "way" and isinstance(e.get("geometry"), list):
+            ways.append(e)
+    rows = []
+    for n in nodes:
+        lat, lon = n.get("lat"), n.get("lon")
+        if not all(type(x) in (int, float) and math.isfinite(x) for x in (lat, lon)) or abs(lat) > 90 or abs(lon) > 180:
+            continue
+        limit = parse_speed(n["tags"].get("maxspeed")) or relations.get(n.get("id"))
+        best, cls, road_limit = CAMERA_ROAD_M, "", None
+        for w in ways:
+            pts = [(p["lat"], p["lon"]) for p in w["geometry"] if p]
+            d = min((_metres(lat, lon, a, b) for a, b in zip(pts, pts[1:])), default=best)
+            if d < best:
+                best, cls = d, str(w["tags"].get("highway", "")).replace("_link", "")
+                road_limit = parse_speed(w["tags"].get("maxspeed"))
+        if cls and not limit:
+            limit = road_limit
+        rows.append([f"n{n.get('id')}", round(lat, 6), round(lon, 6), limit or 0, cls])
+    return rows
+
+
+class Cameras:
+    """Speed cameras around the player, from OpenStreetMap through the Overpass API; one small request per cell,
+    kept on disk."""
+
+    def __init__(self, cache_dir, fetch=None):
+        self.dir = os.path.join(cache_dir, "cameras")
+        os.makedirs(self.dir, exist_ok=True)
+        self.fetch = fetch or self._overpass
+        self.state, self.fail_at = {}, {}
+        self.lock = threading.Lock()
+
+    def path(self, key):
+        return os.path.join(self.dir, key + ".json")
+
+    def _overpass(self, box):
+        s, w, n, e = box
+        q = (f'[out:json][timeout:25];node["highway"="speed_camera"]({s},{w},{n},{e})->.c;.c out body;'
+             f'rel(bn.c)["type"="enforcement"];out body;'
+             f'way(around.c:{CAMERA_ROAD_M})["highway"~"^({CAMERA_ROADS})(_link)?$"];out tags geom;')
+        err = None
+        for base in OVERPASS:
+            try:
+                return json.loads(http_get(base + "?data=" + urllib.parse.quote(q), tries=1))
+            except Exception as e2:  # noqa: BLE001 - the next mirror
+                err = e2
+        raise err
+
+    def _load(self, key):
+        try:
+            with open(self.path(key), "rb") as f:
+                data = json.loads(f.read(MAX_CAMERA_BYTES))
+            if time.time() - data["at"] < CAMERA_DAYS * 86400 and isinstance(data["cameras"], list):
+                return data["cameras"]
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return None
+
+    def _work(self, key):
+        r, c = map(int, key.split("_"))
+        try:
+            rows = camera_rows(self.fetch((r * CAMERA_CELL, c * CAMERA_CELL, (r + 1) * CAMERA_CELL, (c + 1) * CAMERA_CELL)))
+            tmp = self.path(key) + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"at": time.time(), "cameras": rows}, f, separators=(",", ":"))
+            os.replace(tmp, self.path(key))
+            log(f"cameras {key}: {len(rows)}")
+            with self.lock:
+                self.state[key] = rows
+        except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
+            log(f"cameras {key} failed:", repr(e))
+            with self.lock:
+                self.state.pop(key, None)
+                self.fail_at[key] = time.time()
+
+    def near(self, lat, lon):
+        if not math.isfinite(lat) or not math.isfinite(lon) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise ValueError("coordinates must be finite WGS84 latitude/longitude")
+        keys = sorted({f"{int(math.floor((lat + a) / CAMERA_CELL))}_{int(math.floor((lon + b) / CAMERA_CELL))}"
+                       for a in (-CAMERA_REACH, 0, CAMERA_REACH) for b in (-CAMERA_REACH, 0, CAMERA_REACH)
+                       if abs(lat + a) < 90 and abs(lon + b) < 180})
+        out = {"state": "ready", "cells": keys, "cameras": []}
+        for key in keys:
+            with self.lock:
+                rows = self.state.get(key)
+                if rows is None:
+                    rows = self._load(key)
+                    if rows is not None:
+                        self.state[key] = rows
+                    elif time.time() - self.fail_at.get(key, 0) < 300:
+                        rows = "failed"
+                    else:
+                        rows = self.state[key] = "loading"
+                        threading.Thread(target=self._work, args=(key,), daemon=True).start()
+                for old in [k for k in self.state if k not in keys and self.state[k] != "loading"]:
+                    del self.state[old]
+            if isinstance(rows, list):
+                out["cameras"] += rows
+            elif out["state"] != "loading":
+                out["state"] = rows
+        return out
+
+
+def serve(areas, release, port, host="127.0.0.1", cameras=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -775,7 +954,10 @@ def serve(areas, release, port, host="127.0.0.1"):
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
+                                            "cameras": cameras is not None,
                                             "network": network, "cache": areas.budget.stats})
+                if u.path == "/v1/cameras" and cameras:
+                    return self._send(200, cameras.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/near":
                     return self._send(200, areas.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/area":
@@ -825,13 +1007,14 @@ def main():
         for x in d["restaurants"]:
             cats[x[6]] = cats.get(x[6], 0) + 1
         print(json.dumps({"area": d["key"], "restaurants": len(d["restaurants"]), "grocers": len(d["grocers"]), "depots": len(d["depots"]), "cats": cats,
+                          "fuel": len(d["fuel"]), "fuelExamples": d["fuel"][:3],
                           "customers": sum(len(v) for v in d["tiles"].values()), "houses": d["houses"],
                           "grocerExamples": d["grocers"][:3], "depotExamples": d["depots"][:3],
                           "examples": d["restaurants"][:3] + [next(iter(d["tiles"].values()), [None])[0]]},
                          ensure_ascii=False, indent=1))
         budget.prune(force=True)
         return
-    serve(Areas(builder, a.cache, budget), release, a.port)
+    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache))
 
 
 if __name__ == "__main__":

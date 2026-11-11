@@ -346,6 +346,8 @@ angular.module('beamng.apps')
             '<div class="cep-sub">{{ career.reputation.freight.rated ? "Average of your last " + career.reputation.freight.rated + " freight and company jobs." : "No ratings yet. Van, truck and company jobs are rated here." }}' +
               '<span ng-if="career.reputation.freight.payFactor > 1"> Preferred carrier: freight pays {{ fmt.pct(career.reputation.freight.payFactor - 1) }} more.</span>' +
               '<span ng-if="career.reputation.freight.payFactor < 1" style="color:var(--tomato)"> Freight pays {{ fmt.pct(1 - career.reputation.freight.payFactor) }} less until it recovers.</span></div></div>' +
+          '<div class="cep-card" ng-if="career.fines.count"><div class="cep-label">Speed cameras</div>' +
+            '<div class="cep-keyval"><span>Fines</span><strong>{{ career.fines.count }} · {{ fmt.money(career.fines.paid) }}</strong></div></div>' +
           '<div class="cep-card"><div class="cep-label">Delivery rank</div>' +
             '<div class="cep-big">{{ career.rank }}</div>' +
             '<div ng-if="career.nextRank">' +
@@ -664,12 +666,22 @@ angular.module('beamng.apps')
         '<div class="cep-li" ng-if="st.mode === \'courier\'" ng-click="sdo(\'autoReach\', !st.autoReach)">' +
           '<div><div class="cep-name">Look further in the countryside</div><small>Wider search where restaurants are few</small></div>' +
           '<b>{{ st.autoReach ? "On" : "Off" }}</b></div>' +
+        '<div class="cep-li" ng-if="st.cameras" ng-click="sdo(\'cameras\', !st.cameras.on)">' +
+          '<div><div class="cep-name">Speed cameras</div><small>{{ !st.cameras.on ? "Off: no fines, no stars lost" : ' +
+            '(st.cameras.helper === "off" ? "Needs the Cargo Earth helper 0.4 running" : ' +
+            '(st.cameras.helper === "loading" ? "Loading cameras around you…" : ' +
+            '(st.cameras.helper === "failed" ? "Could not load cameras; trying again" : st.cameras.known + " real cameras around you (OpenStreetMap)"))) }}</small></div>' +
+          '<b>{{ st.cameras.on ? "On" : "Off" }}</b></div>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'reset\')">Back to the defaults</button>' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'window\')">{{ st.window ? "Close" : "Open" }} the debug window</button>' +
       '</div></div>' +
 
       '<div class="cep-msg" role="alert" ng-if="s.saveError">{{ s.saveError }}</div>' +
+      '<div class="cep-msg" role="alert" ng-if="s.flash">Speed camera: {{ s.flash.speed }} km/h, limit {{ s.flash.limit }}. Fine {{ fmt.money(s.flash.fine) }}' +
+        '<span ng-if="s.flash.owed > 0"> ({{ fmt.money(s.flash.owed) }} added to your debt)</span>' +
+        '<span ng-if="s.flash.stars > 0">. One star off the order on board</span>.</div>' +
+      '<div class="cep-impact-note" ng-if="s.camera && !s.flash">Speed camera in {{ s.camera.m }} m · limit {{ s.camera.limit }} km/h</div>' +
       '<div class="cep-impact-note" ng-if="s.companyDamage > 0">Vehicle damage recorded. Check Work / Companies for the reputation impact.</div>' +
       '<div class="cep-foot"><div class="cep-storage cep-storage-wrap" ng-if="tab === \'orders\' && workView === \'deliveries\' && s.storage">' +
         '<div class="cep-storage-line">' +

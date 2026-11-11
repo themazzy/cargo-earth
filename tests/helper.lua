@@ -13,7 +13,9 @@ end
 local received = 0
 local function response(path)
   local data
-  if path:find('/v1/near', 1, true) then
+  if path:find('/v1/cameras', 1, true) then
+    data = {state = 'ready', cells = {'100_28'}, cameras = {{'n1', 50, 14, 50, 'primary'}}}
+  elseif path:find('/v1/near', 1, true) then
     local lat, lon = path:match('lat=([%d%.%-]+)&lon=([%d%.%-]+)')
     local key = math.floor(tonumber(lat) / 0.1) .. '_' .. math.floor(tonumber(lon) / 0.1)
     data = {ready = {key}, loading = 0, failed = 0, grocers = true, depots = true, release = dataset, areaFormat = '3'}
@@ -96,6 +98,19 @@ test('helper can be re-enabled and invalid ports do not replace the working port
   client.configure({helper = true, helperPort = 99999})
   tick(1); tick(1.5); tick(2)
   assert(#requests == 1 and client.PORT == 47820)
+end)
+
+test('speed cameras are asked for once a minute, alone where the data pack covers the rest', function()
+  local got = 0
+  for i = 0, 260 do
+    client.tick(50, 14, i / 2, function() callbacks = callbacks + 1 end, function(data)
+      got = got + 1
+      assert(data.cameras[1][1] == 'n1')
+    end, true)
+  end
+  assert(got == 3 and #requests == 3 and callbacks == 0, got .. ' camera replies, ' .. #requests .. ' requests')
+  for _, request in ipairs(requests) do assert(request:find('/v1/cameras?lat=50.00000&lon=14.00000', 1, true)) end
+  assert(client.status().cameras == 'ready')
 end)
 
 client._reset()

@@ -28,6 +28,7 @@ local persistence = require('cargoEarth/persistence')
 local rating = require('cargoEarth/rating')
 local fuel = require('cargoEarth/fuel')
 local records = require('cargoEarth/stats')
+local cameras = require('cargoEarth/cameras')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
 local SAVE = '/settings/cargoEarth/career.json'
@@ -77,6 +78,8 @@ local carSeenAt = 0
 local conditionAt, usedAt, previewAt
 local fuelWatch, fuelToken, fuelPending, fuelNearAt = nil, 0, nil, 0
 local forceWatch, forceToken = nil, 0
+local cams = cameras.index()
+local function camerasOn() return S.career.garage.started and not S.career.camerasOff end
 
 function M.elapsed(job) return careerClock.elapsed(S.career, job) end
 
@@ -1083,6 +1086,7 @@ function M.careerState()
     state.ledger[i] = row
   end
   state.reputation = rating.state(S.career)
+  state.fines = S.career.fines
   return state
 end
 
@@ -1327,6 +1331,11 @@ function M.phoneState()
   if gauge then
     out.fuel = { pct = math.floor(gauge.share * 100 + 0.5), low = gauge.low, empty = gauge.empty, rangeKm = gauge.rangeKm }
   end
+  if camerasOn() then
+    local p = earth.pose()
+    if p and not p.camera then out.camera = cameras.ahead(cams, p.lat, p.lon, (p.speed or 0) > M.STOP_SPEED and p.heading or nil) end
+    if ph.flash and S.clock < ph.flash.untilT then out.flash = ph.flash else ph.flash = nil end
+  end
   if S.mode == 'courier' and out.status == 'ok' then
     local plan = storagePlan()
     if plan then
@@ -1521,8 +1530,49 @@ local function wantsGroceryData()
   return false
 end
 
+------------------------------------------------------------------------------------------ speed cameras
+
+local function onHelperCameras(data)
+  if type(data) ~= 'table' or type(data.cameras) ~= 'table' then return end
+  cameras.set(cams, data.cameras, data.state)
+end
+M.onHelperCameras = onHelperCameras
+
+-- Every frame: a camera measures the career car that passes it. The fine is paid at once (what the wallet cannot
+-- cover is owed), and each order on board loses a star.
+local function cameraTick(p)
+  if not p or p.camera or S.parts or not camerasOn() or not garage.inOwnCar(M.G, S.career.garage) then
+    cameras.clear(cams)
+    return
+  end
+  local flash = cameras.pass(cams, p.lat, p.lon, (p.speed or 0) * 3.6, S.clock)
+  if not flash then return end
+  local c = S.career
+  local shift = c.employment
+  local g = shift and shift.personalGarage or c.garage
+  local paid = math.max(0, math.min(flash.fine, math.floor(c.money or 0)))
+  local detail = string.format('Speed camera: %d km/h, limit %d', flash.speed, flash.limit)
+  if paid > 0 then economy.post(c, -paid, 'fine', economy.nextId(c, 'fine'), detail) end
+  if paid < flash.fine then g.debt = (g.debt or 0) + flash.fine - paid end
+  local rated = 0
+  local function mark(job)
+    if type(job) == 'table' and not job.starPenalty then job.starPenalty, rated = cameras.STAR_PENALTY, rated + 1 end
+  end
+  for _, order in ipairs(S.orders) do if order.phase == 'toDelivery' then mark(order.job) end end
+  if S.job and S.phase == 'toDelivery' then mark(S.job) end
+  c.fines = { count = ((c.fines or {}).count or 0) + 1, paid = ((c.fines or {}).paid or 0) + flash.fine }
+  S.phone.flash = { speed = flash.speed, limit = flash.limit, fine = flash.fine, owed = flash.fine - paid, stars = rated,
+    untilT = S.clock + 10 }
+  phoneSound('cancelled')
+  say(string.format('Speed camera: %d km/h where the limit is %d. Fine %d CZK%s%s', flash.speed, flash.limit, flash.fine,
+    paid < flash.fine and ' (added to your debt)' or '',
+    rated > 0 and '. The customer takes a star off.' or '.'), 8)
+  saveCareer()
+end
+
 local function helperTick(p)
   if not p then return end
+  if camerasOn() then cameras.refresh(cams, p.lat, p.lon) end
   if S.clock >= helperCheckAt then
     helperCheckAt = S.clock + M.HELPER_CHECK_S
     helperWanted = packRestaurantsNear(p.lat, p.lon) < M.HELPER_MIN
@@ -1532,8 +1582,10 @@ local function helperTick(p)
       and fuel.nearest(S.fuelIdx, p.lat, p.lon, 'fuel', M.HELPER_NEAR_KM) == nil
   end
   local places = S.placesRequestedAt and S.clock - S.placesRequestedAt < 30
-  if (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData() then
-    helper.tick(p.lat, p.lon, S.clock, onHelperArea)
+  local areas = (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
+  local wantCameras = camerasOn() and onHelperCameras or nil
+  if areas or wantCameras then
+    helper.tick(p.lat, p.lon, S.clock, onHelperArea, wantCameras, not areas)
   end
 end
 
@@ -2171,6 +2223,8 @@ function M.settingsState()
     local v = math.max(min, math.min(max, opts[key] or default))
     out.items[#out.items + 1] = { key = key, label = d[2], step = step, min = min, max = max, unit = d[6], value = v }
   end
+  out.cameras = { on = not S.career.camerasOff, known = #cams.list,
+    helper = cams.state or (helper.status().cameras == 'off' and 'off' or nil) }
   if S.mode == 'courier' then
     out.autoReach = S.opts.autoReach
     if out.autoReach == nil then out.autoReach = food.defaults.autoReach end
@@ -2195,6 +2249,9 @@ function M.settingsDo(name, a, b)
       end
     end
   elseif name == 'autoReach' then S.opts.autoReach = a and true or false
+  elseif name == 'cameras' then
+    S.career.camerasOff = (not a) or nil
+    cameras.clear(cams)
   elseif name == 'reset' then M.resetOptions()
   elseif name == 'window' then M.toggleWindow() end
   if name ~= 'window' then
@@ -2300,6 +2357,11 @@ function M.onUpdate(dtReal, dtSim)
   -- Hired drivers work while you do: on an order or contract, or driving. Standing idle earns nothing.
   if S.job or S.career.employment or (pose and not pose.camera and (pose.speed or 0) > M.STOP_SPEED) then
     S.driverTick = (S.driverTick or 0) + activeDt
+  end
+  if worldReady then
+    if pose and camerasOn() and marker.drawCameras then marker.drawCameras(pose, cams.near, S.clock) end
+    local okC, errC = pcall(cameraTick, pose)
+    if not okC and not S.cameraErr then S.cameraErr = tostring(errC) log('W', 'cargoEarth', 'cameras: ' .. S.cameraErr) end
   end
   local measured
   S.odometerPose, measured = careerClock.distance(S.odometerPose, pose, activeDt)

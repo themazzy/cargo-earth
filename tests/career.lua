@@ -1046,4 +1046,60 @@ test('a ruined company load costs freight reputation', function()
   assert(rep.rated == 1 and rep.score == 1)
 end)
 
+local cameras = require('cargoEarth/cameras')
+
+test('camera rules: tolerance, fine bands, assumed limits and one fine per pass', function()
+  local idx = cameras.index()
+  assert(cameras.set(idx, {{'a', 50, 14, 50, 'primary'}, {'b', 50.1, 14, 0, 'residential'}, {'c', 50.2, 14, 0, ''},
+    {'bad', 500, 14, 50, ''}}, 'ready') == 2, 'a camera with no limit and no road class is left out')
+  assert(cameras.refresh(idx, 49.999, 14) == 1)
+  assert(cameras.fine(7) == 200 and cameras.fine(20) == 500 and cameras.fine(21) == 1500 and cameras.fine(80) == 3000)
+  local function drive(kmh, t)
+    local flash
+    for step = -5, 5 do flash = cameras.pass(idx, 50 + step * 0.0001, 14, kmh, t + step) or flash end
+    return flash
+  end
+  assert(not drive(56, 0), 'six over is let go')
+  local flash = drive(72, 100)
+  assert(flash and flash.speed == 72 and flash.limit == 50 and flash.over == 22 and flash.fine == 1500 and not flash.assumed)
+  assert(not drive(90, 130), 'the same camera does not fine again at once')
+  assert(drive(90, 300).fine == 1500)
+  local ahead = cameras.ahead(idx, 49.998, 14, 0)
+  assert(ahead and ahead.limit == 50 and ahead.m == 220, 'a camera ahead is named')
+  assert(not cameras.ahead(idx, 49.998, 14, 180), 'a camera behind is not')
+  cameras.refresh(idx, 50.1, 14)
+  for step = -5, 5 do flash = cameras.pass(idx, 50.1 + step * 0.0001, 14, 75, 500 + step) or flash end
+  assert(flash.limit == 60 and flash.assumed and flash.fine == 500)
+end)
+
+test('a speed camera fines the driver and costs a star on the order on board', function()
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  core.onHelperCameras({state = 'ready', cameras = {{'n1', 50.001, 14, 50, 'primary'}}})
+  advance(core, 2)
+  s.job = {id = 'j1', kind = 'food', from = {g = {50, 14}}, to = {g = {50.05, 14}}, pay = 100, minutes = 30}
+  s.phase = 'toDelivery'
+  s.orders[1] = {job = s.job, phase = 'toDelivery'}
+  pose.speed, pose.heading = 80 / 3.6, 0
+  assert(core.phoneState().camera.limit == 50)
+  for step = 0, 20 do
+    pose.lat = 50 + step * 0.0001
+    core.onUpdate(0.1, 0.1)
+  end
+  assert(s.career.money == 1000 - 1500 + 500 and s.career.garage.debt == 500, 'the wallet pays what it has; the rest is owed')
+  assert(s.job.starPenalty == 1 and s.career.fines.count == 1 and s.career.fines.paid == 1500)
+  local flash = core.phoneState().flash
+  assert(flash and flash.speed == 80 and flash.fine == 1500 and flash.owed == 500 and flash.stars == 1)
+  assert(rating.stars(10, 30, 100, s.job.starPenalty) == 4)
+  -- switched off in the settings: nothing is measured
+  assert(core.settingsDo('cameras', false).cameras.on == false)
+  s.career.money = 5000
+  pose.lat = 49.999
+  for step = 0, 30 do
+    pose.lat = 49.999 + step * 0.0001
+    core.onUpdate(0.1, 0.1)
+  end
+  assert(s.career.money == 5000 and not core.phoneState().camera)
+end)
+
 print(string.format('%d career tests passed', total))

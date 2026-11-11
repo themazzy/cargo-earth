@@ -5,6 +5,8 @@
 --
 --   helper.tick(lat, lon, now, onArea)   every frame or tick; onArea(data) gets each new area once
 --   helper.status()                      { state = 'off' | 'searching' | 'loading' | 'ready' | 'error', loading, ready, msg }
+-- tick also takes onCameras(data) (speed cameras around the player, asked for now and then) and onlyCameras (true
+-- where the mod's own data pack covers everything else).
 local M = {}
 
 M.HOST, M.PORT = '127.0.0.1', 47820
@@ -14,12 +16,16 @@ M.RETRY_S = 15             -- helper not answering: try again after this long
 M.TIMEOUT_S = 20           -- a request that takes longer is dropped
 M.MAX_RESPONSE = 8 * 1024 * 1024 + 8192
 M.READ_CHUNKS = 8          -- at most 512 KiB of socket work in one game tick
+M.CAMERAS_S = 60           -- ask for the speed cameras around the player this often
+M.CAMERAS_LOADING_S = 4    -- ... and this often while the helper is still fetching them
+M.CAMERAS_OLD_S = 600      -- a helper without cameras (before 0.4): look again after this long
 
 local socket
 local req = nil            -- { sock, phase = 'connect' | 'send' | 'recv', out, buf, t0, what, key }
 local st = { state = 'off', loading = 0, ready = 0, msg = nil }
 local nextAsk, wanted, got = 0, {}, {}
 local nearCell
+local nextCameras = 0
 M.enabled = true
 
 function M.configure(cfg)
@@ -113,6 +119,17 @@ end
 local function finish(data, err, now, lat, lon, onArea)
   local r = req
   close()
+  if r.what == 'cameras' then
+    if data then
+      st.cameras = data.state
+      nextCameras = now + (data.state == 'loading' and M.CAMERAS_LOADING_S or M.CAMERAS_S)
+      if r.on then r.on(data) end
+    else
+      st.cameras = 'off'
+      nextCameras = now + (err == 'HTTP 404' and M.CAMERAS_OLD_S or M.RETRY_S)
+    end
+    return
+  end
   if not data then
     st.state, st.msg = 'off', 'Cargo Earth helper unavailable (' .. tostring(err) .. ')'
     wanted = {}
@@ -130,6 +147,9 @@ local function finish(data, err, now, lat, lon, onArea)
     st.supportsDepots = supportsDepots
     if st.supportsGrocers == false and supportsGrocers then got, wanted = {}, {} end
     st.supportsGrocers = supportsGrocers
+    local supportsFuel = data.fuel == true
+    if st.supportsFuel == false and supportsFuel then got, wanted = {}, {} end
+    st.supportsFuel = supportsFuel
     st.loading, st.ready = data.loading or 0, #(data.ready or {})
     st.msg = (data.failed or 0) > 0 and data.errors and data.errors[1] or nil
     st.state = (data.loading or 0) > 0 and 'loading' or ((data.failed or 0) > 0 and st.ready == 0 and 'error' or 'ready')
@@ -152,7 +172,7 @@ local function finish(data, err, now, lat, lon, onArea)
   end
 end
 
-function M.tick(lat, lon, now, onArea)
+function M.tick(lat, lon, now, onArea, onCameras, onlyCameras)
   if not M.enabled then close() return end
   if type(lat) ~= 'number' or type(lon) ~= 'number' or lat ~= lat or lon ~= lon or math.abs(lat) > 90 or math.abs(lon) > 180 then return end
   if req then
@@ -160,6 +180,12 @@ function M.tick(lat, lon, now, onArea)
     if data or err then finish(data, err, now, lat, lon, onArea) end
     return
   end
+  if onCameras and now >= nextCameras then
+    local ok = start(string.format('/v1/cameras?lat=%.5f&lon=%.5f', lat, lon), 'cameras', nil, now)
+    if ok then req.on = onCameras else st.cameras, nextCameras = 'off', now + M.RETRY_S end
+    return
+  end
+  if onlyCameras then return end
   local here = cell(lat, lon)
   -- Fetch the new neighbourhood before any queued cell from the previous location.
   if here ~= nearCell and st.state ~= 'off' then nextAsk = 0 wanted = {} end
@@ -183,7 +209,7 @@ function M._reset()
   close()
   st = { state = 'off', loading = 0, ready = 0 }
   nextAsk, wanted, got = 0, {}, {}
-  nearCell, socket = nil, nil
+  nearCell, socket, nextCameras = nil, nil, 0
   M.enabled, M.PORT = true, 47820
 end
 
