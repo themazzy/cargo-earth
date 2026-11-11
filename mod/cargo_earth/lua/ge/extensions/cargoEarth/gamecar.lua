@@ -44,6 +44,30 @@ function M.watchForces(id, token)
   return true
 end
 
+-- Fuel: the vehicle side (lua/vehicle/extensions/cargoEarth/fuel.lua) reports its tanks through the
+-- onCargoEarthFuel hook and sets their level on request.
+function M.watchFuel(id, token)
+  local v = getObjectByID and getObjectByID(id)
+  if not v then return false end
+  v:queueLuaCommand(string.format(
+    'extensions.load("cargoEarth_fuel"); if extensions.cargoEarth_fuel then extensions.cargoEarth_fuel.watch(%d) end', token))
+  return true
+end
+
+function M.setFuel(id, levels)
+  local v = getObjectByID and getObjectByID(id)
+  if not v then return false end
+  local parts = {}
+  for name, ratio in pairs(levels) do
+    if type(name) == 'string' and type(ratio) == 'number' and ratio == ratio then
+      parts[#parts + 1] = string.format('[%q]=%.5f', name, math.max(0, math.min(1, ratio)))
+    end
+  end
+  if #parts == 0 then return false end
+  v:queueLuaCommand('if extensions.cargoEarth_fuel then extensions.cargoEarth_fuel.set({' .. table.concat(parts, ',') .. '}) end')
+  return true
+end
+
 local function vehData(id)
   local vm = extensions and extensions.core_vehicle_manager or core_vehicle_manager
   if not vm then return nil end

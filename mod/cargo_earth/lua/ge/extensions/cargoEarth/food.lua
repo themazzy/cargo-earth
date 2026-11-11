@@ -10,7 +10,7 @@ local M = {}
 
 M.ROAD_FACTOR = 1.35   -- city streets wind more than the trucking network
 M.BASE = 49            -- CZK per order
-M.PER_KM = 14          -- CZK per road km
+M.PER_KM = 16          -- CZK per road km (0.4: +2 for the fuel the courier now pays, about 6 L/100 km)
 M.SPEED_KMH = 24       -- planning speed in town
 M.SLACK_MIN = 4        -- minutes added to every time limit
 M.TIP_MAX = 0.25       -- largest tip as a share of pay, for delivering at once

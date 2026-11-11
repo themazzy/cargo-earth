@@ -52,13 +52,17 @@ class HelperTests(unittest.TestCase):
             ("full-warehouse-id-123456789", " Warehouse ", "industrial", "warehouse", "industrial warehouse", 42.65, 23.35, "Sofia", False),
             ("full-grocery-id", "Grocer", "food_and_beverage_store", "grocery_store", "retail grocery_store", 42.66, 23.35, "Sofia", True),
             ("full-food-id", "Cafe", "cafe", "cafe", "food cafe", 42.67, 23.35, "Sofia", False),
+            ("full-station-id-0123456789", "Petrol", "gas_station", "gas_station", "automotive gas_station", 42.68, 23.35, None, False),
+            ("full-charger-id-0123456789", None, "ev_charging_station", "ev_charging_station", "automotive", 42.69, 23.35, "Sofia", False),
         ]
         con = Connection(rows)
         builder = object.__new__(helper.Builder)
         builder._con = lambda *args: (con, ["local.parquet"])
-        food, depots = builder.places((23.3, 42.6, 23.4, 42.7))
+        food, depots, stations = builder.places((23.3, 42.6, 23.4, 42.7))
         self.assertEqual(len(food), 2)
         self.assertEqual(len(depots), 2)
+        self.assertEqual([s[3:5] for s in stations], [["Petrol", "f"], ["Charging station", "e"]])
+        self.assertEqual(stations[0][0], "ofull-station-id-")
         self.assertEqual(depots[0]["id"], "overture:full-warehouse-id-123456789")
         self.assertEqual(depots[0]["access"], "candidate")
         self.assertIn("regexp_matches", con.query)
@@ -71,10 +75,13 @@ class HelperTests(unittest.TestCase):
         builder.places = lambda box: ([], [
             {"id": "yard", "n": "Yard", "g": [42.65, 23.35], "t": "yard"},
             {"id": "out", "n": "Outside", "g": [0, 0], "t": "yard"},
-        ])
+        ], [["oa", 42.66, 23.36, "Petrol", "f", ""], ["ob", 1, 1, "Far", "f", ""]])
         builder.addresses = lambda box: [[42.65, 23.35, "Street 12", "Sofia"]] * 31
         data = builder.build(426, 233)
         self.assertEqual([d["id"] for d in data["depots"]], ["yard"])
+        self.assertEqual(data["fuel"], [["oa", 42.66, 23.36, "Petrol", "f", "Sofia"]])
+        self.assertTrue(helper.valid_area(data, "426_233", "fixture"))
+        self.assertFalse(helper.valid_area(dict(data, fuel=[["oa", 420, 23, "Petrol", "f"]]), "426_233", "fixture"))
         with patch.object(helper, "WORKERS", 0), patch.object(helper.os, "makedirs"), patch.object(helper.os.path, "isfile", return_value=False):
             areas = helper.Areas(builder, "test-cache")
             near = areas.near(42.65, 23.35)
@@ -202,7 +209,7 @@ class NetworkAndStorageTests(unittest.TestCase):
             self.assertIn(key, areas.queue)
 
     def test_area_validation_rejects_bad_nested_coordinates_and_tile_rows(self):
-        data = {"key": "1_1", "release": "test", "restaurants": [], "grocers": [], "depots": [], "tiles": {"1_1": [[50, 14, 50, 14, "Street 12"]]}}
+        data = {"key": "1_1", "release": "test", "restaurants": [], "grocers": [], "depots": [], "fuel": [], "tiles": {"1_1": [[50, 14, 50, 14, "Street 12"]]}}
         self.assertTrue(helper.valid_area(data, "1_1", "test"))
         data["tiles"]["1_1"][0][0] = float("nan")
         self.assertFalse(helper.valid_area(data, "1_1", "test"))
@@ -235,6 +242,70 @@ class NetworkAndStorageTests(unittest.TestCase):
                  patch.object(helper.os.path, "realpath", side_effect=resolve), patch.object(helper.os, "unlink") as remove:
                 budget.prune(force=True)
                 remove.assert_not_called()
+
+    def test_speed_values_and_camera_limits(self):
+        self.assertEqual(helper.parse_speed("50"), 50)
+        self.assertEqual(helper.parse_speed("30 mph"), 48)
+        self.assertEqual(helper.parse_speed("80;60"), 60)
+        self.assertIsNone(helper.parse_speed("signals"))
+        self.assertIsNone(helper.parse_speed(None))
+        road = {"type": "way", "tags": {"highway": "primary_link", "maxspeed": "70"},
+                "geometry": [{"lat": 50.0, "lon": 14.0}, {"lat": 50.0, "lon": 14.01}]}
+        rows = helper.camera_rows({"elements": [
+            {"type": "node", "id": 1, "lat": 50.0001, "lon": 14.005, "tags": {"highway": "speed_camera", "maxspeed": "50"}},
+            {"type": "node", "id": 2, "lat": 50.0001, "lon": 14.006, "tags": {"highway": "speed_camera"}},
+            {"type": "node", "id": 3, "lat": 50.0001, "lon": 14.007, "tags": {"highway": "speed_camera"}},
+            {"type": "node", "id": 4, "lat": 50.2, "lon": 14.007, "tags": {"highway": "speed_camera"}},
+            {"type": "node", "id": 5, "lat": 500, "lon": 14.007, "tags": {"highway": "speed_camera"}},
+            {"type": "node", "id": 6, "lat": 50.0, "lon": 14.0, "tags": {"highway": "traffic_signals"}},
+            {"type": "relation", "id": 9, "tags": {"type": "enforcement", "enforcement": "maxspeed", "maxspeed": "60"},
+             "members": [{"type": "node", "ref": 3, "role": "device"}, {"type": "node", "ref": 2, "role": "from"}]},
+            road]})
+        self.assertEqual(rows, [["n1", 50.0001, 14.005, 50, "primary"], ["n2", 50.0001, 14.006, 70, "primary"],
+                                ["n3", 50.0001, 14.007, 60, "primary"], ["n4", 50.2, 14.007, 0, ""]])
+
+    def test_cameras_are_fetched_once_per_cell_and_cached(self):
+        calls = []
+        def fetch(box):
+            calls.append(box)
+            return {"elements": [{"type": "node", "id": 7, "lat": box[0] + 0.1, "lon": box[1] + 0.1,
+                                  "tags": {"highway": "speed_camera", "maxspeed": "50"}}]}
+        with cache_dir() as cache:
+            cameras = helper.Cameras(str(cache), fetch)
+            first = cameras.near(50.25, 14.25)
+            self.assertEqual(first["state"], "loading")
+            for _ in range(100):
+                if cameras.near(50.25, 14.25)["state"] == "ready":
+                    break
+                time.sleep(0.01)
+            ready = cameras.near(50.25, 14.25)
+            self.assertEqual((ready["state"], ready["cells"], len(ready["cameras"]), len(calls)), ("ready", ["100_28"], 1, 1))
+            later = []
+            again = helper.Cameras(str(cache), lambda box: later.append(box) or {"elements": []})
+            self.assertEqual(again.near(50.25, 14.25)["cameras"], ready["cameras"])
+            self.assertEqual(later, [])
+            self.assertEqual(len(again.near(50.49, 14.49)["cells"]), 4)
+            for _ in range(200):
+                if again.near(50.49, 14.49)["state"] == "ready":
+                    break
+                time.sleep(0.01)
+            with self.assertRaises(ValueError):
+                cameras.near(float("nan"), 14)
+
+    def test_failed_camera_request_is_reported_and_not_hammered(self):
+        calls = []
+        def fetch(box):
+            calls.append(box)
+            raise OSError("offline")
+        with cache_dir() as cache:
+            cameras = helper.Cameras(str(cache), fetch)
+            cameras.near(50.25, 14.25)
+            for _ in range(100):
+                if cameras.near(50.25, 14.25)["state"] == "failed":
+                    break
+                time.sleep(0.01)
+            self.assertEqual(cameras.near(50.25, 14.25)["state"], "failed")
+            self.assertEqual(len(calls), 1)
 
     def test_browser_requests_cannot_trigger_data_downloads(self):
         captured = []

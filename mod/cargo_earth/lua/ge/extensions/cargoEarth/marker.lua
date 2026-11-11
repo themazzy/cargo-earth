@@ -190,6 +190,42 @@ function M.draw(p, stop, phase, courier, radius, inZone, now)
   end
 end
 
-function M.reset() pickup, delivery, depot, warned = {}, {}, {}, false end
+-- Speed cameras near the car: a grey pole with a yellow box, and the limit above it.
+local CAMERA_RANGE = 300
+local poles = {}
+
+local function drawCameras(p, list, now)
+  if poles.anchorLat ~= p.anchorLat or poles.anchorLon ~= p.anchorLon then
+    poles = { anchorLat = p.anchorLat, anchorLon = p.anchorLon }
+  end
+  for _, cam in ipairs(list) do
+    if math.abs(cam.lat - p.lat) < 0.004 and jobs.km(p.lat, p.lon, cam.lat, cam.lon) * 1000 <= CAMERA_RANGE then
+      local x, y = earth.worldXY(p, { cam.lat, cam.lon })
+      if x and p.z then
+        local pole = poles[cam.id] or { nextGround = 0 }
+        poles[cam.id] = pole
+        if not pole.z and now >= pole.nextGround then
+          pole.z, pole.nextGround = groundZ(x, y, p.z, 30, 150), now + REFRESH_S
+        end
+        local z = pole.z or p.z
+        debugDrawer:drawCylinder(vec3(x, y, z), vec3(x, y, z + 3.2), 0.09, ColorF(0.45, 0.45, 0.48, 1))
+        debugDrawer:drawCylinder(vec3(x, y, z + 3.2), vec3(x, y, z + 3.9), 0.28, ColorF(1, 0.8, 0.1, 1))
+        debugDrawer:drawTextAdvanced(vec3(x, y, z + 4.4), String('Speed camera ' .. cam.limit), ColorF(1, 1, 1, 1), true,
+          false, ColorI(40, 40, 40, 220))
+      end
+    end
+  end
+end
+
+function M.drawCameras(p, list, now)
+  if not (p and p.lat and list and #list > 0 and debugDrawer and vec3 and ColorF) then return end
+  local ok, err = pcall(drawCameras, p, list, now)
+  if not ok and not warned then
+    warned = true
+    if log then log('W', 'cargoEarth', 'camera marker draw failed: ' .. tostring(err)) end
+  end
+end
+
+function M.reset() pickup, delivery, depot, poles, warned = {}, {}, {}, {}, false end
 
 return M
