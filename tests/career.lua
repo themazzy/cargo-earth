@@ -779,4 +779,271 @@ test('independent parcel work also receives condition-based pay while retaining 
   assert(s.career.garage.repair == repair and repair > 0)
 end)
 
+------------------------------------------------------------------------------------------ 0.4: ratings, fuel, records
+
+local rating = require('cargoEarth/rating')
+local fuel = require('cargoEarth/fuel')
+local stats = require('cargoEarth/stats')
+
+test('stars follow lateness, cargo condition and penalties, never outside 1 to 5', function()
+  assert(rating.stars(10, 20, 100) == 5)
+  assert(rating.stars(20, 20, 100) == 5)
+  assert(rating.stars(22, 20, 100) == 4, 'up to 20% late costs one star')
+  assert(rating.stars(30, 20, 100) == 2)
+  assert(rating.stars(200, 20, 100) == 2, 'lateness alone costs at most three stars')
+  assert(rating.stars(10, 20, 85) == 4 and rating.stars(10, 20, 60) == 3)
+  assert(rating.stars(200, 20, 0) == 1)
+  assert(rating.stars(10, 20, 100, 1) == 4 and rating.stars(10, 20, 100, 9) == 1)
+  assert(rating.stars(0/0, 0, nil) >= 1)
+end)
+
+test('courier and freight reputations are separate, bounded and unlock their own rewards', function()
+  local c = {}
+  local score, n = rating.score(c, 'courier')
+  assert(score == rating.NEW_SCORE and n == 0 and not rating.premium(c) and rating.pingFactor(c) == 1)
+  assert(rating.track({kind = 'food'}) == 'courier' and rating.track({haul = {}}) == 'freight')
+  for _ = 1, 12 do rating.add(c, 'courier', 5) end
+  assert(rating.premium(c) and select(1, rating.score(c, 'freight')) == rating.NEW_SCORE)
+  for _ = 1, 60 do rating.add(c, 'courier', 1) end
+  score, n = rating.score(c, 'courier')
+  assert(score == 1 and n == rating.KEEP.courier and c.reputation.courier.count == 72)
+  assert(not rating.premium(c) and rating.pingFactor(c) > 1)
+  for _ = 1, 5 do rating.add(c, 'freight', 5) end
+  assert(rating.freightPay(c) == rating.PREFERRED_PAY)
+  for _ = 1, 30 do rating.add(c, 'freight', 2) end
+  assert(rating.freightPay(c) == rating.POOR_PAY)
+  assert(rating.add(c, 'nothing', 5) == nil)
+  local job = {kind = 'food', pay = 100, minutes = 20, sizeBonus = 20}
+  rating.makePremium(job)
+  rating.makePremium(job)
+  assert(job.pay == 130 and job.minutes == 17 and job.premium)
+end)
+
+test('fuel books follow the game level, count use and undo free refills', function()
+  local car = {}
+  assert(fuel.observe(car, {}) == nil and car.fuel == nil)
+  assert(fuel.observe(car, {mainTank = {ratio = 0.8, cap = 50, kind = 'gasoline'}}, 0) == nil)
+  assert(car.fuel.tanks.mainTank.ratio == 0.8)
+  fuel.observe(car, {mainTank = {ratio = 0.75, cap = 50, kind = 'gasoline'}}, 4)
+  local set, used = fuel.observe(car, {mainTank = {ratio = 0.7, cap = 50, kind = 'gasoline'}}, 4)
+  assert(not set and math.abs(used - 2.5) < 1e-9 and car.fuel.km == 8)
+  fuel.observe(car, {mainTank = {ratio = 0.7, cap = 50, kind = 'gasoline'}}, 900)
+  assert(car.fuel.km == 8, 'a teleport is not driven distance')
+  -- a reset in the game refills the tank: the remembered level goes back
+  set = fuel.observe(car, {mainTank = {ratio = 1, cap = 50, kind = 'gasoline'}}, 0)
+  assert(set and math.abs(set.mainTank - 0.7) < 1e-9 and car.fuel.tanks.mainTank.ratio == 0.7)
+  local st = fuel.state(car)
+  assert(st.kind == 'gasoline' and st.unit == 'L' and st.have == 35 and st.per100 == 62.5 and st.rangeKm == 56)
+  -- a bigger tank fitted in the parts shop starts no fuller than the old one
+  set = fuel.observe(car, {bigTank = {ratio = 1, cap = 80, kind = 'gasoline'}}, 0)
+  assert(set and math.abs(set.bigTank - 0.7) < 1e-9 and not car.fuel.tanks.mainTank)
+  -- broken reports change nothing
+  assert(fuel.observe(car, {bigTank = {ratio = 0/0, cap = 80}}, 0) == nil and car.fuel.tanks.bigTank.ratio == 0.7)
+end)
+
+test('a used car starts with what its last owner left and batteries accept regeneration', function()
+  local car = {fuel = {start = 0.3}}
+  local set = fuel.observe(car, {mainTank = {ratio = 1, cap = 40, kind = 'diesel'}}, 0)
+  assert(car.fuel.tanks.mainTank.ratio == 0.3)
+  set = fuel.observe(car, {mainTank = {ratio = 1, cap = 40, kind = 'diesel'}}, 0)
+  assert(set and set.mainTank == 0.3)
+  local ev = {}
+  fuel.observe(ev, {battery = {ratio = 0.5, cap = 60, kind = 'electric'}}, 0)
+  assert(fuel.observe(ev, {battery = {ratio = 0.505, cap = 60, kind = 'electric'}}, 0) == nil)
+  assert(ev.fuel.tanks.battery.ratio == 0.505 and fuel.state(ev).unit == 'kWh')
+  assert(fuel.stationKind(fuel.state(ev).kind) == 'electric')
+end)
+
+test('refill quotes respect the pump, the amount asked for and the money at hand', function()
+  local car = {}
+  fuel.observe(car, {mainTank = {ratio = 0.5, cap = 40, kind = 'gasoline'}}, 0)
+  local full = fuel.quote(car, fuel.sells('fuel'), 1)
+  assert(full.units.gasoline == 20 and full.cost == 20 * fuel.PRICE.gasoline and full.full and full.levels.mainTank == 1)
+  assert(fuel.quote(car, fuel.sells('electric'), 1) == nil, 'a charger does not sell petrol')
+  local some = fuel.quote(car, fuel.sells('fuel'), 1, 10)
+  assert(some.units.gasoline == 10 and not some.full and some.levels.mainTank == 0.75)
+  local poor = fuel.quote(car, fuel.sells('fuel'), 1, nil, 190)
+  assert(poor.units.gasoline == 5 and poor.cost == 190 and not poor.full)
+  assert(fuel.quote(car, fuel.sells('fuel'), 1, nil, 0) == nil)
+  assert(fuel.quote(car, fuel.sells('fuel'), 1, nil, nil, true).cost == 0, 'a company card pays nothing')
+  fuel.apply(car, full)
+  assert(car.fuel.tanks.mainTank.ratio == 1 and car.fuel.bought == full.cost)
+  assert(fuel.quote(car, fuel.sells('fuel'), 1) == nil, 'a full tank has nothing to buy')
+  local a, b = fuel.stationFactor('s1'), fuel.stationFactor('s1')
+  assert(a == b and a >= 1 - fuel.STATION_SPREAD and a <= 1 + fuel.STATION_SPREAD)
+end)
+
+test('stations are found by kind and distance and streamed areas can be replaced', function()
+  local idx = fuel.index()
+  assert(fuel.addPack(idx, {stations = {
+    {'a', 50, 14, 'Near pump', 'f', 'Town'}, {'b', 50.2, 14, 'Far pump', 'f', ''}, {'c', 50.001, 14, 'Charger', 'e', ''},
+    {'a', 50, 14, 'Duplicate', 'f', ''}, {'bad', 500, 14, 'Nowhere', 'f', ''}, 'junk'}}) == 3)
+  local s, km = fuel.nearest(idx, 50.0005, 14, 'fuel', 30)
+  assert(s.id == 'a' and km < 0.1)
+  assert(fuel.nearest(idx, 50.0005, 14, 'electric', 30).id == 'c')
+  assert(fuel.nearest(idx, 50.1, 14, 'fuel', 5) == nil)
+  assert(fuel.nearest(idx, 50.19, 14, 'fuel', 30).id == 'b')
+  assert(fuel.addArea(idx, '500_140', {{'x', 50.05, 14.05, 'Streamed', 'f', ''}}) == 1 and idx.count == 4)
+  assert(fuel.addArea(idx, '500_140', {{'y', 50.06, 14.05, 'Replaced', 'f', ''}}) == 1 and idx.count == 4)
+  assert(fuel.nearest(idx, 50.06, 14.05, 'fuel', 1).id == 'y')
+  fuel.dropArea(idx, '500_140')
+  assert(idx.count == 3 and fuel.nearest(idx, 50.06, 14.05, 'fuel', 1) == nil)
+end)
+
+test('delivery records keep a bounded trail and only improve', function()
+  local c = {}
+  local job = {kind = 'food', km = 3.24, minutes = 20, cargoName = 'Pizza', to = {n = 'Street 1', g = {50.1, 14.1}}}
+  local set = stats.record(c, job, {pay = 100, tip = 20, minutes = 10, stars = 5, date = '2026-11-11', earnedToday = 120})
+  assert(#set >= 4 and c.records.longest.value == 3.2 and c.records.bestPay.value == 120 and c.records.quickest.value == 50)
+  set = stats.record(c, job, {pay = 90, tip = 0, minutes = 19, stars = 4, date = '2026-11-11', earnedToday = 210})
+  assert(#set == 1 and set[1] == 'bestDay' and c.records.streak == 0 and c.records.bestStreak == 1)
+  for _ = 1, stats.TRAIL + 20 do stats.record(c, job, {pay = 1, tip = 0, minutes = 30, stars = 5, date = '2026-11-11'}) end
+  assert(#c.trail == stats.TRAIL and c.records.bestStreak == stats.TRAIL + 20)
+  stats.broken(c)
+  assert(c.records.streak == 0 and c.records.bestStreak == stats.TRAIL + 20)
+  stats.record(c, {kind = 'cargo', km = 1, minutes = 5, to = {n = 'Bad', g = {999, 0}}}, {pay = 1, stars = 5})
+  assert(#c.trail == stats.TRAIL, 'a delivery without a valid point leaves no dot')
+  local map = stats.state(c, {g = {50.2, 14.2}})
+  assert(#map.dots == stats.TRAIL and map.marks[1].k == 'home' and map.spanKm > 0)
+  for _, d in ipairs(map.dots) do assert(d.x >= 0 and d.x <= 100 and d.y >= 0 and d.y <= 100) end
+  assert(#stats.state({}).dots == 0)
+end)
+
+-- The fuel adapter: the "vehicle" reports its tank through the real hook, as the vehicle extension does.
+local tank, fuelToken, fuelSets, takesFuel = nil, nil, 0, true
+local function fuelAdapter(core)
+  tank, fuelToken, fuelSets, takesFuel = {ratio = 0.5, cap = 40, kind = 'gasoline'}, nil, 0, true
+  core.G.part = function(_, name) return {information = {name = name, value = 200}} end
+  core.G.watchFuel = function(_, token) fuelToken = token return true end
+  core.G.setFuel = function(_, levels)
+    fuelSets = fuelSets + 1
+    if takesFuel and levels.mainTank then tank.ratio = levels.mainTank end
+    return true
+  end
+end
+local function fuelReport(core)
+  core.onCargoEarthFuel(vehicle.id, fuelToken, {mainTank = copy(tank)})
+end
+local function withStation(s, lat, lon)
+  s.fuelIdx = fuel.index()
+  fuel.addPack(s.fuelIdx, {stations = {{'pump', lat, lon, 'Test pump', 'f', 'Town'}}})
+end
+
+test('refuelling at a station charges the ledger once and fills the real tank', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  withStation(s, 50, 14)
+  advance(core, 2)
+  assert(fuelToken, 'the career car is watched')
+  fuelReport(core)
+  local state = core.garageState().fuel
+  assert(state.have == 20 and state.station.at and state.fill.cost > 0 and state.delivery)
+  assert(core.phoneState().fuel.pct == 50)
+  local money, cost = s.career.money, state.fill.cost
+  local page = core.garageDo('refuel')
+  assert(page.msg:find('Filled') and tank.ratio == 1 and s.career.money == money - cost)
+  assert(s.career.accounts.history[1].category == 'fuel' and s.career.accounts.history[1].amount == -cost)
+  fuelReport(core)
+  assert(core.garageState().fuel.have == 40 and not core.garageState().fuel.fill)
+  assert(core.garageDo('refuel').msg == 'The tank is full.' and s.career.money == money - cost)
+end)
+
+test('a tank refilled by a game reset is put back and costs nothing', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  advance(core, 2)
+  fuelReport(core)
+  tank.ratio = 0.4
+  fuelReport(core)
+  assert(s.career.garage.car.fuel.tanks.mainTank.ratio == 0.4)
+  tank.ratio = 1
+  fuelReport(core)
+  assert(tank.ratio == 0.4 and fuelSets == 1 and s.career.money == 1000)
+end)
+
+test('refuelling away from a station is refused; delivery works anywhere and can go on debt', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  withStation(s, 50.2, 14)
+  advance(core, 2)
+  fuelReport(core)
+  assert(not core.garageState().fuel.station.at)
+  assert(core.garageDo('refuel').msg:find('Park at a station') and tank.ratio == 0.5)
+  pose.speed = 10
+  assert(core.garageDo('fuelDelivery').msg == 'Stop the car first.')
+  pose.speed = 0
+  s.career.money, s.career.garage.debt = 20, 0
+  local page = core.garageDo('fuelDelivery')
+  assert(page.msg:find('added to your debt') and tank.ratio == 0.75)
+  assert(s.career.money == 20 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.DELIVERY_FACTOR)) + fuel.DELIVERY_FEE)
+  assert(core.garageDo('fuelGps').msg:find('Test pump') and gps and math.abs(gps.lat - 50.2) < 1e-9)
+end)
+
+test('a refill the game does not take is refunded', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  withStation(s, 50, 14)
+  advance(core, 2)
+  fuelReport(core)
+  takesFuel = false
+  local money = s.career.money
+  core.garageDo('refuel')
+  assert(s.career.money < money)
+  fuelReport(core)
+  assert(core.garageDo('refuel').msg == 'Refuelling…', 'no second charge while the first is checked')
+  advance(core, 14)
+  fuelReport(core)
+  assert(s.career.money == money and s.career.garage.car.fuel.tanks.mainTank.ratio == 0.5)
+end)
+
+test('a loaner fills up on the company fuel card', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  withStation(s, 50, 14)
+  s.career.garage.car.loaner = true
+  advance(core, 2)
+  fuelReport(core)
+  assert(core.garageState().fuel.free and core.garageState().fuel.fill.cost == 0)
+  assert(core.garageDo('refuel').msg:find('company fuel card') and tank.ratio == 1 and s.career.money == 1000)
+end)
+
+test('deliveries are rated, feed the right reputation and leave a dot on the map', function()
+  local marker = package.loaded['cargoEarth/marker']
+  marker.PICKUP_RADIUS, marker.PICKUP_RANGE, marker.pickupDistance = 5, 250, function() return nil end
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function() return {{50.02, 14, 50.02, 14, 'Street 5', 'Town'}} end)
+  advance(core, 2)
+  core.phoneAction('online')
+  for _ = 1, 40 do
+    advance(core, 2)
+    if core.phoneState().screen == 'incoming' then break end
+  end
+  assert(core.phoneState().screen == 'incoming', 'an order rings')
+  core.phoneAction('accept')
+  local job = s.job
+  assert(job and job.kind == 'food')
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  local done = core.phoneState().done
+  assert(done and done.stars == 5 and done.track == 'courier' and done.note ~= '')
+  local rep = core.careerState().reputation
+  assert(rep.courier.rated == 1 and rep.courier.score == 5 and rep.freight.rated == 0)
+  assert(s.career.history[1].stars == 5 and core.mapState().count == 1 and core.mapState().records.bestPay.value > 0)
+end)
+
+test('a ruined company load costs freight reputation', function()
+  local core, s = fresh()
+  start(core)
+  local j = s.job
+  pose.lat, pose.lon = j.from.g[1], j.from.g[2]
+  advance(core)
+  core.onCargoEarthShock(vehicle.id, impactToken, 30)
+  local rep = core.careerState().reputation.freight
+  assert(rep.rated == 1 and rep.score == 1)
+end)
+
 print(string.format('%d career tests passed', total))

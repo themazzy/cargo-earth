@@ -10,6 +10,9 @@ M.tiers = {
 }
 -- Pay per hour (0.3.5, Jan): courier ~450 CZK, van ~590, rigid ~850, semi ~1,250-1,700. Car prices follow courier pay,
 -- so trucks are the reward for progressing without making cars nearly free.
+-- A loaner runs on the company's fuel card. In your own vehicle you buy the fuel, so the job pays this much
+-- more per road km (about 9, 22 and 32 L/100 km of diesel).
+M.FUEL_ALLOWANCE = { van = 3, rigid = 8, semi = 12 }
 M.VAN_GOAL, M.RIGID_GOAL = 5, 10
 M.loaners = {
   van = { model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', label = 'van' },
