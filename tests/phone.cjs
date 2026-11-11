@@ -59,6 +59,7 @@ assert(scope.moveAsk, 'Moving the headquarters asks first')
 scope.closeHq()
 assert(!scope.hqOpen)
 scope.setCareerView('money')
+assert(directive.template.includes('!g.fuel.station.at || !g.fuel.fill || g.fuel.fill.canCost <= 0'), 'Fuel delivery stays available at a station you cannot pay')
 for (const text of ['Open headquarters', 'Found the firm', 'Speed camera in', 'class="cehq"', 'Fill up']) {
   assert(directive.template.includes(text), 'Template is missing: ' + text)
 }

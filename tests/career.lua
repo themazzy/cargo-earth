@@ -1211,6 +1211,13 @@ test('the firm in the game: founded from the phone, headquarters at a real yard,
   local money = c.money
   hq = core.hqDo('repair')
   assert(c.money == money - 850 and c.garage.repair == 0 and hq.msg:find('workshop'), tostring(hq.msg))
+  -- the discounted price is what has to be affordable
+  c.garage.repair, c.money = 1000, 900
+  hq = core.hqDo('repair')
+  assert(c.money == 50 and c.garage.repair == 0, tostring(hq.msg))
+  c.garage.repair, c.money = 1000, 800
+  core.hqDo('repair')
+  assert(c.money == 800 and c.garage.repair == 1000, 'not enough even after the discount')
   -- it survives a save and a reload
   package.loaded['cargoEarth/core'] = nil
   assert(disk['/settings/cargoEarth/career.json'].firm.hq.n == yard.n)

@@ -1917,12 +1917,12 @@ function M.garageStart(model)
 end
 function M.garageSell(part) return garageSay(garage.sell(M.G, S.career.garage, S.career, part)) end
 function M.garageRepair()
-  local ok, msg, cost = garage.repairCar(M.G, S.career.garage, S.career)
-  -- the firm's workshop does the work for less at the headquarters
-  local back = ok and math.floor((cost or 0) * (1 - firm.repairFactor(S.career, earth.pose())) / 5 + 0.5) * 5 or 0
-  if back > 0 then
-    S.career.money = S.career.money + back
-    msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved)', cost - back, back)
+  -- the firm's workshop does the work for less at the headquarters: the discount counts before the money check
+  local g = S.career.garage
+  local full, factor = g.repair or 0, firm.repairFactor(S.career, earth.pose())
+  local ok, msg, cost = garage.repairCar(M.G, g, S.career, factor)
+  if ok and factor < 1 then
+    msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved)', cost, full - cost)
   end
   return garageSay(ok, msg)
 end

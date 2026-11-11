@@ -254,9 +254,10 @@ function M.trackDamage(g, damage)
   return nil
 end
 
-function M.repairCar(G, g, career)
-  local cost = g.repair or 0
-  if cost <= 0 then return false, 'Nothing to repair' end
+-- factor: share of the bill actually charged (a firm's workshop at the headquarters), 1 when omitted.
+function M.repairCar(G, g, career, factor)
+  if (g.repair or 0) <= 0 then return false, 'Nothing to repair' end
+  local cost = round5((g.repair or 0) * math.max(0, math.min(1, tonumber(factor) or 1)))
   if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK)', cost) end
   M.expectFix(g)
   local ok, err = pcall(G.repair)
