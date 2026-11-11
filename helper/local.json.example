@@ -1,0 +1,6 @@
+{"format": 1, "addons": [{"id": "cargo-earth-helper", "name": "Cargo Earth helper", "author": "themazzy",
+  "repo": "themazzy/cargo-earth", "kind": "companion",
+  "summary": "Restaurants, shops, workplaces and customer addresses anywhere in the world for the Cargo Earth mod.",
+  "licence": "MIT", "asset": "^cargo_earth_helper.*\\.py$",
+  "local": {"file": "C:\\Users\\YOU\\Documents\\cargo_earth_helper_0.3.1.py", "tag": "v0.3.5"},
+  "run": {"args": [], "port": 47820}}]}

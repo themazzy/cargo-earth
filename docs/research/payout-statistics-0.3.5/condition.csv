@@ -1,0 +1,11 @@
+"kind","condition_percent","pay_on_1000_czk_order"
+"food",100,1000
+"food",75,900
+"food",50,800
+"food",25,700
+"food",0,0
+"parcel",100,1000
+"parcel",75,750
+"parcel",50,500
+"parcel",25,250
+"parcel",0,0

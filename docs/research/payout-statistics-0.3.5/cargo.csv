@@ -1,0 +1,52 @@
+"tier","cargo_id","cargo_name","cargo_multiplier","pay_at_20_road_km_czk","adr"
+"van","pallets_general","Mixed pallets",1,300,0
+"van","consumer_goods","Consumer goods",1.05,315,0
+"van","electronics","Electronics",1.4,420,0
+"van","furniture","Furniture",1.1,330,0
+"van","car_parts","Car parts",1.2,360,0
+"van","bricks","Bricks",0.95,285,0
+"van","glassware","Glassware and crystal",1.45,435,0
+"van","food_dry","Packaged food",1.05,315,0
+"van","beer","Beer kegs and crates",1.1,330,0
+"rigid","pallets_general","Mixed pallets",1,420,0
+"rigid","consumer_goods","Consumer goods",1.05,440,0
+"rigid","electronics","Electronics",1.4,590,0
+"rigid","furniture","Furniture",1.1,460,0
+"rigid","car_parts","Car parts",1.2,505,0
+"rigid","chemicals","Chemicals",1.5,725,1
+"rigid","fertilizer","Fertilizer",1.1,460,0
+"rigid","plastics","Plastic granulate",1.05,440,0
+"rigid","fuel","Fuel (diesel, petrol)",1.55,750,1
+"rigid","wood_chips","Wood chips",0.8,335,0
+"rigid","gravel","Gravel",0.75,315,0
+"rigid","sand","Sand",0.75,315,0
+"rigid","cement","Cement",1,420,0
+"rigid","bricks","Bricks",0.95,400,0
+"rigid","glassware","Glassware and crystal",1.45,610,0
+"rigid","grain","Grain",0.9,380,0
+"rigid","milk","Milk",1.1,460,0
+"rigid","animal_feed","Animal feed",0.95,400,0
+"rigid","food_dry","Packaged food",1.05,440,0
+"rigid","beer","Beer kegs and crates",1.1,460,0
+"rigid","malt","Malt",0.95,400,0
+"semi","pallets_general","Mixed pallets",1,740,0
+"semi","consumer_goods","Consumer goods",1.05,775,0
+"semi","electronics","Electronics",1.4,1035,0
+"semi","furniture","Furniture",1.1,815,0
+"semi","car_parts","Car parts",1.2,890,0
+"semi","chemicals","Chemicals",1.5,1275,1
+"semi","fertilizer","Fertilizer",1.1,815,0
+"semi","plastics","Plastic granulate",1.05,775,0
+"semi","fuel","Fuel (diesel, petrol)",1.55,1320,1
+"semi","wood_chips","Wood chips",0.8,590,0
+"semi","gravel","Gravel",0.75,555,0
+"semi","sand","Sand",0.75,555,0
+"semi","cement","Cement",1,740,0
+"semi","bricks","Bricks",0.95,705,0
+"semi","glassware","Glassware and crystal",1.45,1075,0
+"semi","grain","Grain",0.9,665,0
+"semi","milk","Milk",1.1,815,0
+"semi","animal_feed","Animal feed",0.95,705,0
+"semi","food_dry","Packaged food",1.05,775,0
+"semi","beer","Beer kegs and crates",1.1,815,0
+"semi","malt","Malt",0.95,705,0

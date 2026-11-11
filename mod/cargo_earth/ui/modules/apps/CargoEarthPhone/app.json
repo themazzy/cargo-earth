@@ -1,0 +1,20 @@
+{
+  "domElement": "<cargo-earth-phone></cargo-earth-phone>",
+  "name": "Cargo Earth: Phone",
+  "types": [
+    "ui.apps.categories.gameplay"
+  ],
+  "description": "Your career phone: deliveries, company contracts, home garage, vehicles, progress and finances.",
+  "css": {
+    "bottom": "60px",
+    "right": "20px",
+    "height": "560px",
+    "width": "290px"
+  },
+  "author": "Cargo Earth",
+  "version": "1.1",
+  "directive": "cargoEarthPhone",
+  "appName": "cargoEarthPhone",
+  "category": "Cargo Earth",
+  "isAuxiliary": false
+}

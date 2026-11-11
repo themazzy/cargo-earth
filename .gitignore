@@ -1,0 +1,18 @@
+node_modules/
+__pycache__/
+*.pyc
+helper/cache/
+cache/
+.env
+.env.*
+!.env.example
+*.log
+*.pending
+*.backup1
+*.backup2
+*.legacy
+settings/
+# Built mod ZIPs and helper copies go to GitHub Releases, not into git
+dist/
+.openai/
+*.exe
