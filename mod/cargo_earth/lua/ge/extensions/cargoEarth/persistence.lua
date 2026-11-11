@@ -1,5 +1,5 @@
 -- Atomic JSON checkpoints. Validate before vehicle restoration and verify the entire written snapshot.
-local M = { VERSION = 3 }
+local M = { VERSION = 4 }
 
 local function finite(n) return type(n) == 'number' and n == n and math.abs(n) < math.huge end
 local function optional(t, key, kind) return t[key] == nil or type(t[key]) == kind end

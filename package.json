@@ -1,6 +1,6 @@
 {
   "name": "cargo-earth-dev",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "private": true,
   "description": "Development checks for the Cargo Earth BeamNG add-on",
   "scripts": { "test": "node tests/run.cjs" },

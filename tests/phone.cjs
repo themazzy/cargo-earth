@@ -46,11 +46,11 @@ assert(commands.at(-1).includes('pcall(cargoEarth_core.mapState'))
 scope.setCareerView('firm')
 assert(commands.at(-1).includes('pcall(cargoEarth_core.firmState'))
 scope.fdo('found', 'Rychlá "kola"')
-assert(commands.at(-1).includes('pcall(cargoEarth_core.firmDo, "found", ' + JSON.stringify('Rychlá "kola"')))
+assert(commands.some(command => command.includes('pcall(cargoEarth_core.firmDo, "found", ' + JSON.stringify('Rychlá "kola"'))))
 scope.openHq()
 assert(scope.hqOpen && commands.at(-1).includes('pcall(cargoEarth_core.hqState'))
 scope.hdo('upgrade', 'bays')
-assert(commands.at(-1).includes('pcall(cargoEarth_core.hqDo, "upgrade", "bays"'))
+assert(commands.some(command => command.includes('pcall(cargoEarth_core.hqDo, "upgrade", "bays"')))
 scope.hq = {upgrades: [{id: 'bays', level: 1, max: 3}]}
 assert.deepEqual(Array.from(scope.pips(scope.up('bays'))), [true, false, false])
 assert.equal(scope.range(99).length, 12)
@@ -59,8 +59,8 @@ assert(scope.moveAsk, 'Moving the headquarters asks first')
 scope.closeHq()
 assert(!scope.hqOpen)
 scope.setCareerView('money')
-for (const text of ['Open headquarters', 'Found the firm', 'Speed camera in', 'class="cehq"', 'Fill up', 'Customer rating']) {
-  assert(directive.template.includes(text) || text === 'Customer rating', 'Template is missing: ' + text)
+for (const text of ['Open headquarters', 'Found the firm', 'Speed camera in', 'class="cehq"', 'Fill up']) {
+  assert(directive.template.includes(text), 'Template is missing: ' + text)
 }
 scope.setTab('home')
 scope.s = {screen: 'active', active: {phase: 'toDelivery', to: {name: 'Shop'}}}

@@ -1545,12 +1545,14 @@ M.onHelperCameras = onHelperCameras
 -- Every frame: a camera measures the career car that passes it. The fine is paid at once (what the wallet cannot
 -- cover is owed), and each order on board loses a star.
 local function cameraTick(p)
-  if not p or p.camera or S.parts or not camerasOn() or not garage.inOwnCar(M.G, S.career.garage) then
+  if not p or p.camera or S.parts or not camerasOn() then
     cameras.clear(cams)
     return
   end
+  if #cams.near == 0 then return end
   local flash = cameras.pass(cams, p.lat, p.lon, (p.speed or 0) * 3.6, S.clock)
-  if not flash then return end
+  -- (who is driving is only looked up when a camera fires: it is not a per-frame question)
+  if not flash or not garage.inOwnCar(M.G, S.career.garage) then return end
   local c = S.career
   local shift = c.employment
   local g = shift and shift.personalGarage or c.garage
@@ -2242,8 +2244,8 @@ function M.firmState()
   local out = firm.state(c, p, personalGarage().debt or 0)
   out.msg = S.firmMsg
   if out.founded then
-    local place = p and not p.camera and hqPlace(p)
-    out.place = place and { name = place.n, town = place.town } or nil
+    local spot = p and not p.camera and hqPlace(p)
+    out.place = spot and { name = spot.n, town = spot.town } or nil
     out.parked = p ~= nil and not p.camera and (p.speed or 0) <= M.STOP_SPEED
   end
   return out
