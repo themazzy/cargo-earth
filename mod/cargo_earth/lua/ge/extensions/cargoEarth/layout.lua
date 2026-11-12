@@ -40,8 +40,8 @@ function M.ensure(api, flag)
   if not hasApp(target) then
     local placement = {}
     for k, v in pairs(M.PLACEMENT) do placement[k] = v end
-    local added = pcall(api.addApp, target.filename, M.APP, placement)
-    if not added then return nil end
+    local okAdd, added = pcall(api.addApp, target.filename, M.APP, placement)
+    if not okAdd or added == false then return nil end     -- tried again next time
     result = 'added'
     -- the layout on screen is this one: show the phone now, not after a reload
     local okCur, cur = pcall(api.current)

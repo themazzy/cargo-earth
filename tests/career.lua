@@ -1933,5 +1933,9 @@ do
   written = nil
   assert(layout.ensure({layouts = function() return {layouts[1]} end}, flag) == 'none' and written == nil)
   assert(layout.ensure(nil, flag) == nil)
+  written = nil
+  local refuse = {layouts = function() return {{type = 'beamngEarth', filename = 'x/beamngEarth.uilayout.json', apps = {}}} end,
+    addApp = function() return false end, current = function() return nil end, setCurrent = function() end}
+  assert(layout.ensure(refuse, flag) == nil and written == nil, 'a refused insert is not recorded as done')
   print('PASS the phone goes into the .Earth layout above the speedometer, once')
 end
