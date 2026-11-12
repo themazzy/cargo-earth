@@ -103,9 +103,11 @@ scope.setTab('radio')
 assert.equal(scope.tab, 'radio')
 assert(commands.at(-1).includes('pcall(cargoEarth_core.radioState'))
 const stations = [{id: 'a', name: 'Rádio Jih', url: 'http://a/stream', codec: 'MP3', kbps: 128}, {id: 'b', name: 'Two', url: 'https://b/s', codec: 'OGG'}]
-scope.rs = {country: 'CZ', countryName: 'Czechia', state: 'ready', top: stations, near: []}
+const STREAM = 'http://127.0.0.1:47820/v1/stream?id='
+scope.rs = {country: 'CZ', countryName: 'Czechia', state: 'ready', top: stations, near: [], stream: STREAM}
 scope.radioPlay(stations[0], stations)
 assert.equal(scope.radio.status, 'loading')
+assert.equal(audios[0].src, STREAM + 'a', 'The game plays the station through the helper, not straight from the web')
 assert.equal(scope.radio.station.country, 'CZ')
 assert(commands.some(command => command.includes('pcall(cargoEarth_core.radioDo, "played", "a"')))
 scope.radioSkip(1)
@@ -122,19 +124,31 @@ assert.equal(scope.radio.status, 'idle')
 scope.radioPlay(stations[0], stations)
 audios[0].error = {code: 4}
 audios[0].on.error()
-assert.equal(scope.radio.via, 'helper', 'A stream the page cannot play goes to the helper')
+assert.equal(scope.radio.via, 'page', 'One station the game cannot play does not change the setting')
+assert(scope.radio.alone, 'but the helper plays that one')
 assert(commands.some(command => command.includes('pcall(cargoEarth_core.radioDo, "helperPlay", "a", 0.8')))
-scope.rs = {country: 'CZ', top: stations, near: [], player: {playing: true, secs: 3, player: 'powershell'}}
+scope.rs = {country: 'CZ', top: stations, near: [], stream: STREAM, player: {playing: true, sound: false, secs: 0, player: 'powershell'}}
+scope.setTab('orders'); scope.setTab('radio')
+assert.equal(scope.radio.status, 'loading', 'No sound from the helper yet: still tuning in, not "playing"')
 scope.radioVol(-1)
 assert(commands.some(command => command.includes('"helperVolume", 0.7')))
 pending.length = 0; hold = true
 scope.setTab('radio')
-pending.shift()({country: 'CZ', top: stations, near: [], player: {playing: false, error: null}})
+pending.shift()({country: 'CZ', top: stations, near: [], stream: STREAM, player: {playing: false, error: null}})
 hold = false
 assert.equal(scope.radio.status, 'idle', 'A player that stopped by itself shows as stopped, so Play works again')
 scope.radioPlay(stations[0], stations)
 scope.radioStop()
 assert(commands.at(-1).includes('"helperStop"'))
+assert(!scope.radio.alone)
+scope.radioPlay(stations[1], stations)
+assert(!audios[0].paused)
+scope.radioPlay({id: 'c', name: 'AAC', url: 'http://c/s', codec: 'AAC+'}, stations)
+assert(scope.radio.alone, 'The game has no AAC: the helper plays those')
+assert(audios[0].paused && !audios[0].src, 'The station the game played stops when the helper takes over')
+scope.radioStop()
+scope.radioVia('helper')
+assert.equal(scope.radio.via, 'helper')
 scope.radioVia('page')
 assert.equal(scope.radio.via, 'page')
 scope.radioPlay({id: 'x', name: 'Bad', url: 'javascript:alert(1)'})

@@ -1977,6 +1977,8 @@ function M.radioState()
     state = not helper.enabled and 'disabled' or (not radio.cc and (p and 'nowhere' or 'noworld')) or radio.state or 'loading' }
   if radio.data then out.near, out.top = radio.data.near, radio.data.top end
   out.player = radio.player
+  -- the phone's <audio> plays the station through the helper: the game's UI refuses web streams, not local ones
+  if helper.enabled then out.stream = string.format('http://%s:%d/v1/stream?id=', helper.HOST, helper.PORT) end
   return out
 end
 
