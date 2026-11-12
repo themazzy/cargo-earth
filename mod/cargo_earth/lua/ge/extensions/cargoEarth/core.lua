@@ -1207,21 +1207,27 @@ local function phoneTick()
   local plan = storagePlan()
   if S.mode == 'courier' and (not plan or plan.free < 1 or plan.overflow > 0) then return end
   M.generate()
-  -- one grocery basket and one parcel route get a place beside the first three offers
+  -- one grocery basket, one parcel route and one tow job get a place beside the first three offers
   local fresh, groceryIncluded, routeIncluded, anyRoute = {}, false, false, false
-  for _, j in ipairs(S.offers) do if j.route then anyRoute = true break end end
+  local towIncluded, anyTow = false, false
+  for _, j in ipairs(S.offers) do
+    if j.route then anyRoute = true end
+    if j.tow then anyTow = true end
+  end
   for _, j in ipairs(S.offers) do
     local seen = false
     for _, id in ipairs(ph.declined) do if id == j.id or (j.from.id and id:find(j.from.id .. '>', 1, true) == 1) then seen = true break end end
     if not seen and j.kind == 'food' and not cargo.fit(plan, j) then seen = true end
     if not seen and S.job and not batchFits(j) then seen = true end
-    if not seen and (#fresh < 3 or (j.orderType == 'grocery' and not groceryIncluded) or (j.route and not routeIncluded)) then
+    if not seen and (#fresh < 3 or (j.orderType == 'grocery' and not groceryIncluded) or (j.route and not routeIncluded)
+      or (j.tow and not towIncluded)) then
       fresh[#fresh + 1] = j
       if j.orderType == 'grocery' then groceryIncluded = true end
       if j.route then routeIncluded = true end
+      if j.tow then towIncluded = true end
     end
     if #fresh >= 3 and (groceryIncluded or not plan or plan.maxFree < food.GROCERY_SLOTS)
-      and (routeIncluded or not anyRoute) then break end
+      and (routeIncluded or not anyRoute) and (towIncluded or not anyTow) then break end
   end
   if #fresh == 0 then ph.nextPingAt = S.clock + M.PHONE.retryS return end
   local j = fresh[math.random(#fresh)]

@@ -1806,6 +1806,20 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     local i, job
     for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
     assert(job and job.to.n == 'Workshop at Test pump', 'a tow job to the workshop at a fuel station')
+    -- the phone rings with it although three ordinary offers come first
+    local generate, random = core.generate, math.random
+    core.generate = function()
+      generate()
+      for n = 1, 3 do table.insert(s.offers, 1, { id = 'x' .. n, kind = 'cargo', cargoName = 'Pallets', from = { id = 'x' .. n, n = 'Yard' } }) end
+    end
+    math.random = function(a, b) if b then return random(a, b) end return a end   -- always the last candidate
+    s.phone.online, s.phone.incoming, s.phone.nextPingAt = true, nil, 0
+    advance(core)
+    core.generate, math.random = generate, random
+    assert(s.phone.incoming and s.phone.incoming.job.tow, 'a tow job reaches the phone')
+    s.phone.incoming, s.phone.online = nil, false
+    core.generate()
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
     core.take(i)
     assert(s.job == job)
     damage = 500                    -- the damage it broke down with
