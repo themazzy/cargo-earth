@@ -36,6 +36,8 @@ local resupply = require('cargoEarth/resupply')
 local tow = require('cargoEarth/tow')
 local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
+local borders = require('cargoEarth/borders')
+local currency = require('cargoEarth/currency')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
 local SAVE = '/settings/cargoEarth/career.json'
@@ -46,6 +48,7 @@ M.RULES = {
   courier = { arriveM = 30, stopS = 5, cancelFee = 50 },
   trucking = { arriveM = 35, stopS = 3, cancelFee = 2000 },
 }
+M.COUNTRY_S = 5   -- seconds between border checks
 M.TOW_RULES = { arriveM = 30, stopS = 3, cancelFee = 200 }
 M.TOW_RELOAD_FEE = 150  -- putting a car that slid off back on the trailer
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
@@ -119,6 +122,7 @@ local function phoneSound(name)
 end
 
 local function say(text, seconds)
+  text = currency.localize(text, S.career and S.career.currency)
   table.insert(S.log, 1, os.date('%H:%M:%S') .. '  ' .. text)
   while #S.log > 30 do table.remove(S.log) end
   earth.notify(text, seconds or 6)
@@ -314,6 +318,9 @@ local function loadPacks()
       break
     end
   end
+  -- country borders, for the local money
+  local b = jsonReadFile(DATA_DIR .. 'borders.json')
+  if type(b) == 'table' then S.borders = borders.index(b) end
   -- fuel stations and chargers: every fuel_<CC>.json (more arrive from the helper)
   S.fuelIdx = fuel.index()
   local ff = FS:findFiles(DATA_DIR, 'fuel_*.json', 0, false, false) or {}
@@ -975,7 +982,7 @@ local function finishDelivery(force)
     minutes = math.floor(minutes + 0.5), late = math.floor(late + 0.5), batched = j.batched or nil, orderType = j.orderType,
     cargoCondition = condition < 100 and condition or nil, stars = stars })
   while #c.history > 50 do table.remove(c.history) end
-  say(string.format('Delivered to %s: %s%d CZK%s%s', j.to.n, j.companyShift and 'held ' or '+', pay, tip > 0 and string.format(' + %d tip', tip) or '',
+  say(string.format('Delivered to %s: %s%d CZK%s%s', j.to.n, j.companyShift and 'held ' or '+', pay, tip > 0 and string.format(' + %d CZK tip', tip) or '',
     late > 0 and string.format(' (%d min late)', late) or '') .. (toDebt > 0 and string.format(', %d CZK to your debt', toDebt) or ''), 8)
   local free = dropOrder(j)
   saveCareer()
@@ -1121,6 +1128,28 @@ local function distToTarget(p)
     if d[k] then best = math.min(best, jobs.km(p.lat, p.lon, d[k][1], d[k][2]) * 1000) end
   end
   return best
+end
+
+-- The country the player drives in sets the currency; crossing a border exchanges the money for free.
+-- The money's currency for the phone: { code, rate, symbol, prefix, decimals, country }.
+-- Before a saved career is resumed, the phone shows the save's money in the save's currency.
+local function moneyInfo()
+  local c = type(S.pendingCareer) == 'table' and S.pendingCareer or S.career
+  local info = currency.info(c.currency)
+  info.country = c.country and currency.name(c.country)
+  return info
+end
+
+local function countryTick(p)
+  if not S.borders or not p or p.camera or S.clock < (S.countryAt or 0) then return end
+  S.countryAt = S.clock + M.COUNTRY_S
+  S.countryTrack = S.countryTrack or {}
+  local c = S.career
+  local change = currency.observe(c, S.countryTrack, borders.find(S.borders, p.lat, p.lon))
+  if change then
+    say(currency.welcome(change, c.money or 0), 8)
+    saveCareer()
+  end
 end
 
 local function tick(dt)
@@ -1553,7 +1582,8 @@ function M.phoneState()
   local out = { mode = S.mode, online = ph.online, money = c.money or 0, todayEarned = today.earned,
     todayCount = today.count, status = earth.status(), clock = os.date('%H:%M'), hidden = S.phoneHidden,
       helper = M.helperInfo(), saveError = S.saveError, company = c.employment and c.employment.companyName,
-      companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator }
+      companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
+      currency = moneyInfo() }
   if S.pendingCareer then
     out.screen, out.money = 'resume', S.pendingCareer.money or 0
     local savedGarage = S.pendingCareer.garage
@@ -2445,7 +2475,8 @@ end
 function M.garageState()
   local g, G = S.career.garage, M.G
   local out = { started = g.started, money = S.career.money or 0, startMoney = garage.START_MONEY,
-    starter = S.config.starterModel or garage.STARTER_MODEL, busy = S.job ~= nil, msg = S.garageMsg }
+    starter = S.config.starterModel or garage.STARTER_MODEL, busy = S.job ~= nil, msg = S.garageMsg,
+    currency = moneyInfo() }
   if S.parts then
     local quote, why = quoteParts()
     if quote then why = partsProblem(quote) end
@@ -2614,6 +2645,7 @@ end
 function M.hqState()
   local c, g = S.career, personalGarage()
   local out = M.firmState()
+  out.currency = moneyInfo()
   if not out.founded then return out end
   out.bays = {}
   local workshop = firm.value(c, 'workshop') or 1
@@ -2975,6 +3007,7 @@ function M.onUpdate(dtReal, dtSim)
       end
     end
     if ready then helperTick(earth.pose()) end
+    if ready then countryTick(earth.pose()) end
     -- Returning a saved company vehicle must not depend on the geographic data cache.
     if ready and activeDt > 0 and S.career.employment then M.companyTick(dt) end
     if modeReady() and ready then

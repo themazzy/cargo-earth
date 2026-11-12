@@ -25,6 +25,7 @@ A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight,
 - Special cargo: fragile, chilled and oversize loads that pay more and need care.
 - Tow broken-down cars to a workshop on a car trailer or a flatbed.
 - Tanker runs that resupply real fuel stations.
+- Get paid in the money of the country you drive in. Crossing a border exchanges it for free.
 - Discover nearby restaurants, stores, workplaces and addresses through the local helper. Bundled Czech geography provides fallback coverage.
 
 Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated with BeamNG or the RLS Career Overhaul project.
@@ -86,7 +87,7 @@ The Windows installer is a small Go program in `installer/` (`cd installer && GO
 
 To publish a release, create a GitHub release with a tag such as `v0.6.0` and attach the mod ZIP and `cargo_earth_helper_*.py`. A workflow then builds `CargoEarthSetup.exe` and adds it to the same release.
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [local money notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
@@ -96,7 +97,7 @@ The helper fetches public Overture source data; busy areas and first visits may 
 
 ## Data attribution
 
-Bundled Czech geography credits **OpenStreetMap contributors** and **Overture Maps Foundation**; the pack declares **ODbL-1.0**. Preserve the pack's attribution and licence metadata when redistributing the data. Live helper data retains its source metadata. No BeamNG game assets or proprietary runtime are included here.
+Bundled Czech geography credits **OpenStreetMap contributors** and **Overture Maps Foundation**; the pack declares **ODbL-1.0**. Preserve the pack's attribution and licence metadata when redistributing the data. Live helper data retains its source metadata. Country borders (`data/borders.json`, for the local currency) are simplified from **Natural Earth** 1:10m admin 0 countries, which is in the public domain. No BeamNG game assets or proprietary runtime are included here.
 
 Report bugs through [GitHub Issues](https://github.com/themazzy/cargo-earth/issues), with mod/helper version, reproduction steps and the relevant error excerpt. Remove home coordinates and other personal data before sharing a save or log.
 

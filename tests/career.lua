@@ -1851,4 +1851,55 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   assert(ok, err)
 end)
 
+test('local money: country borders, exchange rates and free exchange at the border', function()
+  local borders, currency = require('cargoEarth/borders'), require('cargoEarth/currency')
+  -- two square countries side by side; the second has a hole (a lake) and an island
+  local idx = borders.index({ scale = 1000, countries = {
+    { 'CZ', { 12000, 48000, 14000, 50000 }, { { 12000, 48000, 14000, 48000, 14000, 50000, 12000, 50000 } } },
+    { 'DE', { 14000, 48000, 18000, 52000 }, { { 14000, 48000, 16000, 48000, 16000, 50000, 14000, 50000 },
+      { 14500, 48500, 15000, 48500, 15000, 49000, 14500, 49000 }, { 17000, 51000, 18000, 51000, 18000, 52000, 17000, 52000 } } },
+  } })
+  assert(borders.find(idx, 49, 13) == 'CZ' and borders.find(idx, 49, 15.5) == 'DE' and borders.find(idx, 51.5, 17.5) == 'DE')
+  assert(borders.find(idx, 48.7, 14.7) == nil, 'a lake inside a country is not land')
+  assert(borders.find(idx, 30, 13) == nil and borders.find(nil, 49, 13) == nil)
+  -- conversion: amounts are kept in the base unit
+  assert(currency.of('DE') == 'EUR' and currency.of('CZ') == 'CZK' and currency.of('US') == 'USD' and currency.name('DE') == 'Germany')
+  assert(currency.format(12400, 'CZK') == '12 400 Kč', currency.format(12400, 'CZK'))
+  local eur = currency.format(12400, 'EUR')
+  assert(eur == '€508.20' and currency.format(100000, 'USD'):match('^%$4,%d%d%d%.%d%d$'), eur)
+  assert(currency.format(-300, 'USD'):match('^%-%$%d+%.%d%d$'), currency.format(-300, 'USD'))
+  assert(currency.info('XXX').code == currency.DEFAULT and currency.info('JPY').decimals == 0)
+  assert(currency.localize('Fine 300 CZK (-200 CZK)', 'CZK') == 'Fine 300 Kč (-200 Kč)')
+  assert(not currency.localize('Fine 300 CZK', 'EUR'):find('CZK'))
+  -- the border: two readings in a row before the money changes, and the exchange is free
+  local c, track = { money = 24400 }, {}
+  assert(currency.observe(c, track, nil) == nil)
+  assert(currency.observe(c, track, 'CZ') == nil, 'one reading is not enough')
+  local first = currency.observe(c, track, 'CZ')
+  assert(first and first.from == nil and c.currency == 'CZK' and c.country == 'CZ')
+  assert(currency.observe(c, track, 'DE') == nil and currency.observe(c, track, 'CZ') == nil, 'a blip on a border road')
+  assert(currency.observe(c, track, 'DE') == nil)
+  local change = currency.observe(c, track, 'DE')
+  assert(change and change.from == 'CZK' and change.to == 'EUR' and c.money == 24400, 'free: the value stays')
+  assert(currency.welcome(change, c.money):find('Germany', 1, true))
+  -- in the game: the phone shows the currency, messages are converted
+  local core, s = fresh()
+  s.borders = idx
+  pose.lat, pose.lon = 49, 15.5
+  advance(core, 30)
+  assert(s.career.currency == 'EUR' and s.career.country == 'DE')
+  local state = core.phoneState()
+  assert(state.currency.code == 'EUR' and state.currency.country == 'Germany' and state.money == s.career.money)
+  assert(s.log[1]:find('Money is shown in EUR', 1, true), s.log[1])
+  pose.lat, pose.lon = 49, 13
+  advance(core, 30)
+  assert(s.career.currency == 'CZK' and s.log[1]:find('exchanged for free', 1, true) and s.log[1]:find('Kč', 1, true), s.log[1])
+  assert(currency.localize('+244 CZK + 24 CZK tip', 'EUR') == '+€10.00 + €0.98 tip')
+  -- a saved career waiting to be resumed shows its money in its own currency
+  s.pendingCareer = { money = 500, currency = 'USD', country = 'US' }
+  state = core.phoneState()
+  assert(state.screen == 'resume' and state.currency.code == 'USD' and state.currency.country == 'United States of America')
+  s.pendingCareer = nil
+end)
+
 print(string.format('%d career tests passed', total))
