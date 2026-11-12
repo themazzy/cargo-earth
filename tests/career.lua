@@ -1252,6 +1252,11 @@ test('speed limit from the road graph: bends do not lower it, a change ahead is 
   -- a short posted 30 between stretches of 50 is a real limit, not a bend
   local zone = straightRoad(function(i) return (i >= 0 and i <= 1) and 8.33 or 13.89 end)
   assert(speedlimit.at(zone, 'n0', 'n1') == 30 and speedlimit.at(zone, 'n1', 'n2') == 30)
+  -- a bend whose road around it is not in the graph: shown, but not a posted limit
+  local short = straightRoad(function(i) return (i == 0) and 8 or 0 end)
+  local kmh, _, _, sure = speedlimit.at(short, 'n0', 'n1')
+  assert(kmh == 29 and sure == false)
+  assert(select(4, speedlimit.at(bend, 'n0', 'n1')) == true)
   -- 50 now, 90 from x = 0 on
   local change = straightRoad(function(i) return i < 0 and 13.89 or 25 end)
   assert(speedlimit.at(change, 'n-1', 'n0') == 50 and speedlimit.at(change, 'n0', 'n1') == 90)
@@ -1285,6 +1290,15 @@ test('the phone shows the limit under the car, red when too fast, and a camera w
   near = 3
   advance(core, 6)
   assert(core.phoneState().camera.limit == 50, 'the road graph gives the camera its limit')
+  -- a camera in a bend the graph cannot resolve yet keeps the default and is asked again
+  local bendOnly = straightRoad(function(i) return (i == 0) and 8 or 0 end)
+  core.G.road = function() return bendOnly, 'n0', 'n1', 3 end
+  core.onHelperCameras({state = 'ready', cameras = {{'n8', 50.001, 14, 0, 'primary'}}})
+  advance(core, 6)
+  assert(core.phoneState().camera.limit == 100, 'a bend speed never fines')
+  core.G.road = function() return road, 'n0', 'n1', 3 end
+  advance(core, 6)
+  assert(core.phoneState().camera.limit == 50, 'learned once the road is known')
   pose.x, pose.y, pose.z = nil, nil, nil
 end)
 

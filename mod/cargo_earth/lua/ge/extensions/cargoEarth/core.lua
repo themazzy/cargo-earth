@@ -1657,8 +1657,12 @@ local function learnCameraLimits(p)
       local x, y = earth.worldXY(p, { cam.lat, cam.lon })
       local graph, a, b, d
       if x then graph, a, b, d = M.G.road(x, y, p.z) end
-      -- (a road farther than ROAD_M: the graph does not reach the camera yet; asked again later)
-      if graph and d <= M.ROAD_M then cameras.learn(cam, speedlimit.at(graph, a, b)) end
+      -- Only a posted limit fines anyone: a road farther than ROAD_M (the graph does not reach the camera yet) or a
+      -- bend speed not yet resolved by the road around it keeps the default and is asked again later.
+      if graph and d <= M.ROAD_M then
+        local kmh, _, _, sure = speedlimit.at(graph, a, b)
+        if kmh == nil or sure then cameras.learn(cam, kmh) end
+      end
     end
   end
 end

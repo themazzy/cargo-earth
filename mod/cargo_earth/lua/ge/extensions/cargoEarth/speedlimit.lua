@@ -61,7 +61,8 @@ local function walk(nodes, from, at)
 end
 
 -- km/h of the road edge a-b, then what its sign says and in which unit ('km/h', or 'mph' where the limit is a whole
--- number of mph and not of km/h, as in the US or the UK), or nil when the graph has no limit there.
+-- number of mph and not of km/h, as in the US or the UK), and whether it is a posted limit (false: a bend speed the
+-- graph around it could not resolve yet); nil when the graph has no limit there.
 function M.at(graph, a, b)
   local nodes = type(graph) == 'table' and graph.nodes
   if type(nodes) ~= 'table' or a == nil or b == nil then return nil end
@@ -75,12 +76,13 @@ function M.at(graph, a, b)
   local five = math.floor(kmh / 5 + 0.5) * 5
   local mph = ms / 0.44704
   local fiveMph = math.floor(mph / 5 + 0.5) * 5
+  local sure = posted(ms)
   if math.abs(kmh - five) > 0.2 and math.abs(mph - fiveMph) <= 0.1 then
-    return math.floor(kmh + 0.5), fiveMph, 'mph'
+    return math.floor(kmh + 0.5), fiveMph, 'mph', sure
   end
   if math.abs(kmh - five) <= 1 then kmh = five end    -- a posted limit, not the rounding of m/s
   kmh = math.floor(kmh + 0.5)
-  return kmh, kmh, 'km/h'
+  return kmh, kmh, 'km/h', sure
 end
 
 return M
