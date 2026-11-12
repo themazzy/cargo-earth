@@ -840,7 +840,7 @@ angular.module('beamng.apps')
           '<div class="cep-row"><button class="cep-btn" ng-click="openFleet()">My cars</button>' +
             '<button class="cep-btn" ng-click="openCars()">Used cars</button></div>' +
           '<div class="cep-li" ng-if="g.own"><div><div class="cep-name">Damage</div>' +
-            '<small>{{ g.repair > 0 ? "About " + fmt.hrs(g.repairHours) + " of deliveries" + (g.repairCapped ? " (a wreck: capped at 3/4 of the car\'s value)" : "") + ". Repair here, or the menu repair goes on your debt" : "The car is in one piece" }}</small></div>' +
+            '<small>{{ g.repair > 0 ? "About " + fmt.hrs(g.repairHours) + " of deliveries" + (g.repairCapped ? " (a wreck: capped at half the car\'s value)" : "") + ". Repair here, or the menu repair goes on your debt" : "The car is in one piece" }}</small></div>' +
             '<button class="cep-sm go" ng-disabled="!(g.repair > 0)" ng-click="gdo(\'repair\')">{{ g.repair > 0 ? "Repair " + fmt.money(g.repair) : "No damage" }}</button></div>' +
           '<div class="cep-card" ng-if="g.breakdown" role="alert" style="box-shadow:inset 0 0 0 1.5px var(--tomato)"><div class="cep-label" style="color:var(--tomato)">Breakdown</div>' +
             '<div class="cep-sub">{{ fmt.text(g.breakdown.text) }}</div>' +

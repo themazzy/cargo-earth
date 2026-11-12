@@ -31,7 +31,7 @@ M.VALUE_PER_HOUR = 2000      -- an hour of deliveries buys this much BeamNG valu
 M.REPAIR_SHARE = 0.18        -- a repair: this share of the value rate per unit of the game's damage
 M.START_HOURS = 1.5          -- money at the start of a career
 M.MIN_PART_HOURS = 0.02      -- the cheapest part (about a minute of deliveries)
-M.REPAIR_CAP = 0.75          -- a repair never costs more than this share of the car's parts value (a wreck is a write-off)
+M.REPAIR_CAP = 0.5           -- a repair never costs more than this share of the car's parts value (a wreck is a write-off)
 M.PRICE_V = 2                -- prices' version in saves (1: the first fixed prices)
 
 local function round5(x) return math.floor(x / 5 + 0.5) * 5 end
