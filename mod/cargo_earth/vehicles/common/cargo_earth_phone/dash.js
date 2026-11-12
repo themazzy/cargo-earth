@@ -67,6 +67,46 @@
     target.click()
   }
 
+
+  // Scrolling: a cockpit trigger can only press, not drag, so long pages (Settings, Garage) get two arrow buttons on
+  // the right edge while something on the screen can scroll. They sit over grid column 6, rows 5-6 and 7-8.
+  function scroller() {
+    var best = null
+    var list = document.querySelectorAll('.cep-scroll')
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i]
+      if (!el.getClientRects().length || el.scrollHeight <= el.clientHeight + 2) continue
+      if (!best || el.clientHeight > best.clientHeight) best = el
+    }
+    return best
+  }
+  var arrows = null
+  function makeArrows() {
+    if (arrows || !document.body) return
+    arrows = {}
+    ;[['up', -1, '\u25B2', 380], ['down', 1, '\u25BC', 570]].forEach(function (a) {
+      var b = document.createElement('button')
+      b.className = 'cep-arrow'
+      b.textContent = a[2]
+      b.style.top = a[3] + 'px'
+      b.addEventListener('click', function () {
+        var el = scroller()
+        if (el) el.scrollTop += a[1] * Math.round(el.clientHeight * 0.7)
+        showArrows()
+      })
+      document.body.appendChild(b)
+      arrows[a[0]] = b
+    })
+  }
+  function showArrows() {
+    makeArrows()
+    if (!arrows) return
+    var el = scroller()
+    arrows.up.style.display = el && el.scrollTop > 2 ? 'block' : 'none'
+    arrows.down.style.display = el && el.scrollTop + el.clientHeight < el.scrollHeight - 2 ? 'block' : 'none'
+  }
+  setInterval(showArrows, 400)
+
   window.bngApi = { engineLua: engineLua, serializeToLua: toLua }
-  window.cargoEarthDash = { tap: tap, reply: reply, page: true }
+  window.cargoEarthDash = { tap: tap, reply: reply, page: true, scroller: scroller, showArrows: showArrows }
 }())
