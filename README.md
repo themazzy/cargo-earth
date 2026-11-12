@@ -2,7 +2,7 @@
 
 A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight, work company contracts and build a garage at an address you choose.
 
-**Early development · mod 0.7.0 · helper 0.7.0**
+**Early development · mod 0.8.0 · helper 0.8.0**
 
 [Download the mod and helper (latest release)](https://github.com/themazzy/cargo-earth/releases/latest) · [Landing page](website/index.html) · [Payout statistics](docs/research/payout-statistics-0.3.5/README.md)
 
@@ -46,7 +46,7 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | Option | What it does |
 | --- | --- |
 | `-user-folder "D:\BeamNG\user"` | Use this BeamNG user folder when it is not found automatically |
-| `-version 0.7.0` | Install a specific release instead of the latest |
+| `-version 0.8.0` | Install a specific release instead of the latest |
 | `-mod-only`, `-helper-only` | Install only one part |
 | `-skip-python` | Don't install the helper's Python libraries |
 | `-zip <file>`, `-helper <file>` | Use files you already downloaded |
@@ -57,9 +57,9 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 ### Manual install
 
 1. Install and set up BeamNG.drive and BeamNG.Earth separately.
-2. Download `cargo_earth_career_0.7.0.zip` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest). Close the game. Put the ZIP in your active BeamNG user-folder `mods` directory. Keep only one Cargo Earth version enabled; do not unpack the ZIP for normal installation.
+2. Download `cargo_earth_career_0.8.0.zip` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest). Close the game. Put the ZIP in your active BeamNG user-folder `mods` directory. Keep only one Cargo Earth version enabled; do not unpack the ZIP for normal installation.
 3. For live geography, install Python 3 and the helper dependencies: `python -m pip install duckdb fsspec`.
-4. Run `python cargo_earth_helper_0.7.0.py` (also attached to the release), or add it to BeamNG.Earth as a companion add-on with [`helper/local.json.example`](helper/local.json.example) in `%LOCALAPPDATA%\beamng-earth\addons\local.json`. It listens locally on `127.0.0.1:47820`. Keep it running while playing. The helper also needs internet access to fetch public geographic data.
+4. Run `python cargo_earth_helper_0.8.0.py` (also attached to the release), or add it to BeamNG.Earth as a companion add-on with [`helper/local.json.example`](helper/local.json.example) in `%LOCALAPPDATA%\beamng-earth\addons\local.json`. It listens locally on `127.0.0.1:47820`. Keep it running while playing. The helper also needs internet access to fetch public geographic data.
 5. Load BeamNG.Earth, add the **Cargo Earth: Phone** UI app, then start or resume your career in the phone.
 
 Phone sections: **Work**, **Garage**, **Home**, **Career**, **Settings**. Work separates Deliveries and Companies; Career separates Progress, Finances, Map and Firm. The firm's headquarters opens as a full-screen plan of the building.
@@ -86,13 +86,13 @@ node tools/payout-stats.cjs
 
 The Windows installer is a small Go program in `installer/` (`cd installer && GOOS=windows go build -o CargoEarthSetup.exe .`).
 
-To publish a release, create a GitHub release with a tag such as `v0.7.0` and attach the mod ZIP and `cargo_earth_helper_*.py`. A workflow then builds `CargoEarthSetup.exe` and adds it to the same release.
+To publish a release, create a GitHub release with a tag such as `v0.8.0` and attach the mod ZIP and `cargo_earth_helper_*.py`. A workflow then builds `CargoEarthSetup.exe` and adds it to the same release.
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
-This is an early development build. Fuel, the headquarters screen and speed cameras (0.4), the firm's trucks, drivers and upkeep (0.5), special cargo, tow jobs and fuel resupply (0.6), local money (0.7) and the VR dashboard screen (0.8) still need in-game verification; the payout report describes 0.3.5, before fuel costs. Native crash/accelerometer behaviour, phone layout and full driving sessions need further verification. Public POIs are candidate stops rather than certified loading bays. Rigid/articulated site access is more restricted than van access. Parcel cargo has condition penalties; bulk/fluid condition is not yet modeled. Company contracts pay for the return trip from 0.3.5; the payout report shows the hourly pay of each kind of work.
+This is an early development build. Fuel, the headquarters screen and speed cameras (0.4), the firm's trucks, drivers and upkeep (0.5), special cargo, tow jobs and fuel resupply (0.6), local money (0.7), and the regional radio and VR dashboard screen (0.8) still need in-game verification; the payout report describes 0.3.5, before fuel costs. Native crash/accelerometer behaviour, phone layout and full driving sessions need further verification. Public POIs are candidate stops rather than certified loading bays. Rigid/articulated site access is more restricted than van access. Parcel cargo has condition penalties; bulk/fluid condition is not yet modeled. Company contracts pay for the return trip from 0.3.5; the payout report shows the hourly pay of each kind of work.
 
 The helper fetches public Overture source data; busy areas and first visits may take time to load. Python queries and connections are bounded, but real-world latency and coverage vary.
 

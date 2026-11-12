@@ -1,6 +1,9 @@
-# Cargo Earth 0.8 (in progress)
+# Cargo Earth 0.8
 
-Two features so far: regional radio on the phone, and a phone screen on the dashboard for VR.
+Regional radio on the phone, and a phone screen on the dashboard for VR. Also two phone fixes: the online/offline switch
+is now on the delivery screen too (a courier on a delivery kept getting new orders), and the speed limit sign uses the
+country's unit (BeamNG.Earth's 35 mph fallback showed as a 35 mph sign in Czechia; a speed that is no posted limit in the
+country now shows no sign).
 
 ## Regional radio
 
