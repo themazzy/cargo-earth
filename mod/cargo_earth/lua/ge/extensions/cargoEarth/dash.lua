@@ -1,21 +1,26 @@
--- cargoEarth/dash: the phone on the dashboard in cockpit view.
--- The phone stays the UI app; in a cockpit camera the app draws it in perspective where the centre of the dash is,
--- so the 3D world needs no extra object, texture or browser. Each update the game places a phone-sized rectangle in
--- the car (from the driver's seat, toward the middle of the car, below the eyes, facing the driver), works out where
--- its corners fall in the camera and sends those four points to the app (hook CargoEarthDash). The app bends the
--- phone onto them with one CSS matrix, so every button stays clickable with the mouse.
--- In VR the game shows the UI on a floating panel that is not tied to the car, so the dash phone turns itself off.
--- Position and size are kept per vehicle model; everything is changed by clicking in the phone's Settings.
+-- cargoEarth/dash: a phone screen on the dashboard, for VR.
+-- In VR, BeamNG shows the UI on a floating panel that is not tied to the car. So for VR the mod puts a small phone
+-- screen in the 3D world, at the centre of the dash: a Skia billboard (WorldBillboardRenderer, the engine's own path
+-- for name tags and world icons). It is not a browser view, and nothing is drawn per frame in Lua.
+--   * Each frame only its position is set: ahead of the driver's seat, below the eyes, most of the way to the middle
+--     of the car. A billboard always faces the camera, so it always faces the driver's head.
+--   * Its picture is rebuilt only when what it shows changes, at most once a second: the current order, distance,
+--     time left, pay, an incoming order with its countdown, the speed limit, the clock and the money.
+--   * It shows information only. Buttons stay on the normal phone, which still works on the floating panel.
+-- Settings (on the phone): show it in VR only (default), always (also on a monitor, handy for placing it) or never;
+-- move it and resize it. Every car model keeps its own place (settings/cargoEarth/dash.json).
 local M = {}
 
 M.FILE = '/settings/cargoEarth/dash.json'
-M.ASPECT = 290 / 560 -- width / height of the phone app, as drawn by app.js
-M.HEIGHT = 0.2       -- metres, at size 1
+M.HEIGHT = 0.16      -- metres, at size 1
 M.FORWARD = 0.55     -- metres ahead of the driver's eyes
 M.DROP = -0.14       -- metres below the eyes
 M.CENTRE = 0.85      -- share of the way from the driver's seat to the middle of the car
-M.RATES = { 15, 30, 60 }
+M.SHOWS = { 'vr', 'always', 'off' }
 M.LIMITS = { x = { -0.6, 0.6, 0.03 }, y = { -0.4, 0.4, 0.03 }, z = { -0.4, 0.4, 0.03 }, size = { 0.5, 2, 0.1 } }
+M.CANVAS = { 360, 640 } -- pixels of the picture
+M.REFRESH = 1           -- seconds between rebuilding the picture (only when it changed)
+M.RENDERER = 'cargoEarthDashPhone'
 
 ------------------------------------------------------------------------------------------ vector maths (plain tables)
 
@@ -36,13 +41,12 @@ M.vec = { v = v, add = add, sub = sub, mul = mul, dot = dot, cross = cross, unit
 
 local function clamp(x, lo, hi) return math.max(lo, math.min(hi, x)) end
 
-function M.defaults() return { on = true, rate = 30, models = {} } end
+function M.defaults() return { show = 'vr', models = {} } end
 
 function M.fit(p)
   local out = M.defaults()
   if type(p) ~= 'table' then return out end
-  if p.on == false then out.on = false end
-  for _, r in ipairs(M.RATES) do if p.rate == r then out.rate = r end end
+  for _, s in ipairs(M.SHOWS) do if p.show == s then out.show = s end end
   for model, m in pairs(type(p.models) == 'table' and p.models or {}) do
     if type(model) == 'string' and type(m) == 'table' then
       local fitted = {}
@@ -62,13 +66,12 @@ function M.placement(p, model)
   return { x = m.x or 0, y = m.y or 0, z = m.z or 0, size = m.size or 1 }
 end
 
--- what = on | rate | reset | x | y | z | size; dir = +1 | -1 for the steps
+-- what = show | reset | x | y | z | size; dir = +1 | -1 for the steps
 function M.adjust(p, model, what, dir)
-  if what == 'on' then p.on = not p.on return p end
-  if what == 'rate' then
+  if what == 'show' then
     local i = 1
-    for k, r in ipairs(M.RATES) do if r == p.rate then i = k end end
-    p.rate = M.RATES[i % #M.RATES + 1]
+    for k, s in ipairs(M.SHOWS) do if s == p.show then i = k end end
+    p.show = M.SHOWS[i % #M.SHOWS + 1]
     return p
   end
   if not model then return p end
@@ -83,48 +86,150 @@ function M.adjust(p, model, what, dir)
   return p
 end
 
------------------------------------------------------------------------------------------- placing and projecting
+-- should it be drawn now?
+function M.wanted(p, vr, cockpit)
+  if not cockpit or p.show == 'off' then return false end
+  return p.show == 'always' or vr
+end
 
--- seat: the driver's eyes; fwd, up: the car's axes; centre: middle of the car. Returns the phone's four corners
--- (top left, top right, bottom right, bottom left) facing the seat.
-function M.corners(seat, fwd, up, centre, place)
+------------------------------------------------------------------------------------------ where it sits
+
+-- seat: the driver's eyes; fwd, up: the car's axes; centre: middle of the car. Returns the centre of the phone.
+function M.spot(seat, fwd, up, centre, place)
   fwd, up = unit(fwd), unit(up)
   if not fwd or not up then return nil end
   local right = unit(cross(fwd, up))
   if not right then return nil end
   up = cross(right, fwd)
   local lateral = dot(sub(seat, centre), right) -- where the driver sits across the car (negative: left)
-  local p = add(add(add(seat, mul(fwd, M.FORWARD + place.y)), mul(right, place.x - lateral * M.CENTRE)), mul(up, M.DROP + place.z))
-  local look = unit(sub(p, seat))
-  if not look then return nil end
-  local pUp = unit(sub(up, mul(look, dot(up, look))))
-  if not pUp then return nil end
-  local pRight = cross(look, pUp)
-  local h = M.HEIGHT * place.size
-  local hw, hh = mul(pRight, h * M.ASPECT / 2), mul(pUp, h / 2)
-  return { sub(add(p, hh), hw), add(add(p, hh), hw), sub(add(p, hw), hh), sub(sub(p, hw), hh) }
+  return add(add(add(seat, mul(fwd, M.FORWARD + place.y)), mul(right, place.x - lateral * M.CENTRE)), mul(up, M.DROP + place.z))
 end
 
--- cam = { pos, fwd, right, up, fov (vertical, radians) }. Returns the corners as screen units of half the screen
--- height from the centre ({u1, v1, ... u4, v4}, v up), or nil when a corner is behind the camera.
-function M.project(corners, cam)
-  local t = math.tan(cam.fov / 2)
-  if not corners or t <= 0 then return nil end
-  local out = {}
-  for i, c in ipairs(corners) do
-    local d = sub(c, cam.pos)
-    local z = dot(d, cam.fwd)
-    if z < 0.05 then return nil end
-    out[2 * i - 1] = math.floor(dot(d, cam.right) / (z * t) * 10000 + 0.5) / 10000
-    out[2 * i] = math.floor(dot(d, cam.up) / (z * t) * 10000 + 0.5) / 10000
+------------------------------------------------------------------------------------------ what it shows
+
+local function clockOf(s)
+  s = math.max(0, math.floor((tonumber(s) or 0) + 0.5))
+  return string.format('%d:%02d', math.floor(s / 60), s % 60)
+end
+
+local function distOf(m)
+  m = tonumber(m)
+  if not m then return '–' end
+  if m >= 1000 then
+    local km = m / 1000
+    return (km < 10 and string.format('%.1f', km) or tostring(math.floor(km + 0.5))):gsub('%.', ',') .. ' km'
   end
-  return out
+  return tostring(m < 100 and math.floor(m + 0.5) or math.floor(m / 10 + 0.5) * 10) .. ' m'
+end
+
+local function name(p) return type(p) == 'table' and (p.name or p.n) or nil end
+
+-- The phone state (core.phoneState) as a few lines for the dash. money(n) formats an amount in local money.
+-- Returns { clock, money, limit, over, label, title, big, sub, note, tone }.
+function M.card(s, money)
+  local fmt = money or function(n) return tostring(math.floor(n + 0.5)) end
+  money = function(n) return fmt(tonumber(n) or 0) end
+  local c = { clock = s and s.clock or '', money = s and money(s.money) or '', tone = 'idle' }
+  if not s then
+    c.title = 'Cargo Earth'
+    c.sub = 'Starting…'
+    return c
+  end
+  if s.limit then c.limit, c.over = tostring(s.limit.sign), s.limit.over == true end
+  local screen = s.screen
+  if screen == 'incoming' and s.incoming then
+    local i = s.incoming
+    c.tone, c.label = 'ring', 'New order · ' .. tostring(math.max(0, math.floor(i.leftS or 0))) .. ' s'
+    c.title = name(i.from) or i.cargo or 'Order'
+    c.big = money(i.pay)
+    c.sub = (name(i.to) and ('to ' .. name(i.to)) or '') .. (i.km and (' · ' .. tostring(i.km):gsub('%.', ',') .. ' km') or '')
+    c.note = 'Accept on the phone'
+  elseif screen == 'active' and s.active then
+    local a = s.active
+    local pickup = a.phase == 'toPickup'
+    c.tone, c.label = pickup and 'pickup' or 'drop', pickup and 'Pick up' or 'Drop off'
+    c.title = name(pickup and a.from or a.to) or ''
+    c.big = distOf(a.distM)
+    c.sub = (a.leftS and a.leftS < 0 and ('late ' .. clockOf(-a.leftS)) or ('time left ' .. clockOf(a.leftS))) .. ' · ' .. money(a.pay)
+    c.late = a.leftS ~= nil and a.leftS < 0
+    if a.stop and a.stop.inZone then c.note = a.stop.stopping and 'Hold still…' or 'Stop here' end
+  elseif screen == 'done' and s.done then
+    c.tone, c.label, c.title = 'done', 'Delivered', name(s.done) or s.done.to or ''
+    c.big = money((s.done.pay or 0) + (s.done.tip or 0))
+    if (s.done.tip or 0) > 0 then c.sub = 'with a tip of ' .. money(s.done.tip) end
+  elseif screen == 'waiting' then
+    c.label, c.title, c.sub = 'Online', 'Waiting for orders', 'Today ' .. money(s.todayEarned)
+  elseif screen == 'offline' then
+    c.label, c.title, c.sub = 'Offline', 'Go online on the phone', 'Today ' .. money(s.todayEarned)
+  elseif screen == 'company' then
+    c.label, c.title, c.sub = 'Company work', s.company or 'Contract', 'Details on the phone'
+  elseif screen == 'resume' then
+    c.title, c.sub = 'Career paused', 'Resume it on the phone'
+  else
+    c.title, c.sub = 'Cargo Earth', s.error and tostring(s.error):sub(1, 60) or 'Open the phone'
+  end
+  return c
+end
+
+-- a string that changes only when the picture would change
+function M.signature(c)
+  return table.concat({ c.clock or '', c.money or '', c.limit or '', tostring(c.over), c.label or '', c.title or '',
+    c.big or '', c.sub or '', c.note or '', c.tone or '', tostring(c.late) }, '|')
+end
+
+local TONES = { idle = '#7b726a', ring = '#e8452c', pickup = '#e8452c', drop = '#1d1b19', done = '#2f8f5b' }
+
+local function text(t, size, color, extra)
+  local n = { type = 'text', text = t, fontSize = size, color = color, fit = 'shrink', style = { width = '100%', height = size * 1.3 } }
+  for k, val in pairs(extra or {}) do n[k] = val end
+  return n
+end
+
+-- The Skia template (see BeamNG's template reference: box, group, text, flex style) for one card.
+function M.template(c, font)
+  local W, H = M.CANVAS[1], M.CANVAS[2]
+  local f = font and { font = font } or nil
+  local function t(s, size, color, align)
+    local extra = { textAlign = align }
+    if f then extra.font = f.font end
+    return text(s, size, color, extra)
+  end
+  local top = { type = 'group', style = { flexDirection = 'row', justifyContent = 'space-between', alignItems = 'center',
+    width = '100%', height = 44, paddingHorizontal = 22 }, children = {
+      t(c.clock or '', 22, '#1d1b19', 'left'), t(c.money or '', 22, '#1d1b19', 'right') } }
+  top.children[1].style.width, top.children[2].style.width = '45%', '55%'
+  local body = { type = 'group', style = { flexDirection = 'column', justifyContent = 'center', alignItems = 'center',
+    flexGrow = 1, width = '100%', paddingHorizontal = 22, gap = 8 }, children = {} }
+  local kids = body.children
+  if c.label then
+    kids[#kids + 1] = { type = 'box', color = TONES[c.tone] or TONES.idle, radius = 16,
+      style = { paddingHorizontal = 16, height = 34, justifyContent = 'center', alignItems = 'center', minWidth = 120 },
+      children = { t(c.label, 20, '#ffffff') } }
+  end
+  if c.title then kids[#kids + 1] = t(c.title, 30, '#1d1b19') end
+  if c.big then kids[#kids + 1] = t(c.big, 64, c.late and '#e8452c' or '#1d1b19') end
+  if c.sub then kids[#kids + 1] = t(c.sub, 22, c.late and '#e8452c' or '#7b726a') end
+  if c.note then kids[#kids + 1] = t(c.note, 22, '#c98a10') end
+  local screen = { type = 'box', color = '#fbf7f2', radius = 30,
+    style = { flexDirection = 'column', width = '100%', height = '100%', paddingVertical = 14, alignItems = 'center' },
+    children = { top, body } }
+  if c.limit then
+    screen.children[#screen.children + 1] = { type = 'box', color = c.over and '#d62d20' or '#ffffff', radius = '50%',
+      stroke = '#d62d20', strokeWidth = 9, style = { width = 92, height = 92, justifyContent = 'center', alignItems = 'center',
+      marginBottom = 18 }, children = { t(c.limit, 36, c.over and '#ffffff' or '#111111') } }
+  end
+  return {
+    type = 'skiaIcon', size = { W, H }, -- the same template shape the game's world icons use
+    root = { type = 'box', color = '#141312', radius = 44, style = { width = W, height = H, padding = 12 }, children = { screen } },
+  }
 end
 
 ------------------------------------------------------------------------------------------ game adapter
 
 local prefs, loaded = nil, false
-local acc, sent, last = 0, false, nil
+local renderer, rid, sig, nextBuild = nil, nil, nil, 0
+local font, fontRead = nil, false
+local hidden = true
 
 function M.prefs()
   if not loaded then
@@ -154,58 +259,84 @@ end
 
 local function xyz(a) return v(a.x, a.y, a.z) end
 
--- the four projected corners, or nil when the camera is not in the cabin
-local function frame()
-  if not core_camera or not be or vrOn() then return nil end
-  local veh = playerCar()
-  if not veh then return nil end
-  local camPos = core_camera.getPosition()
-  if not core_camera.isCameraInside or core_camera.isCameraInside(0, camPos) ~= 1 then return nil end
+-- the game's own label font, the one its world icons use
+local function gameFont()
+  if not fontRead then
+    fontRead = true
+    local cfg = jsonReadFile and jsonReadFile('ui/ui-vue/src/assets/fonts/bngIcons/iconMarkerConfig.json')
+    font = type(cfg) == 'table' and type(cfg.label) == 'table' and cfg.label.path or nil
+  end
+  return font
+end
+
+-- the live renderer, made on first use and found again after a level change
+local function getRenderer()
+  if renderer and renderer.create then return renderer end
+  rid, sig = nil, nil
+  local live = scenetree and scenetree[M.RENDERER]
+  if live then renderer = live return live end
+  if not (WorldBillboardRenderer and scenetree and scenetree.MissionGroup) then renderer = nil return nil end
+  local r = WorldBillboardRenderer()
+  if not r then return nil end
+  r:registerObject(M.RENDERER)
+  scenetree.MissionGroup:addObject(r)
+  renderer = r
+  return r
+end
+
+local function hide()
+  if hidden then return end
+  hidden = true
+  if renderer and rid then pcall(function() renderer:update(rid, vec3(0, 0, -10000), 0, false) end) end
+end
+
+-- rebuild the picture when what it shows has changed
+local function build(r, phoneState, money, now)
+  if rid and now < nextBuild then return end
+  local c = M.card(phoneState(), money)
+  local s = M.signature(c)
+  if rid and s == sig then nextBuild = now + M.REFRESH return end
+  local id = r:create(jsonEncode(M.template(c, gameFont())), false)
+  if not id or id == 0 then return end
+  r:render(id, '{}')
+  if rid then local old = rid pcall(function() r:destroy(old) end) end
+  rid, sig, nextBuild = id, s, now + M.REFRESH
+end
+
+local function spotNow(veh)
   local node = core_camera.getDriverData(veh)
   if not node then return nil end
-  local id = veh:getId()
   local seat = v(veh:getNodeAbsPositionXYZ(node))
-  local centre = v(be:getObjectOOBBCenterXYZ(id))
-  local corners = M.corners(seat, xyz(veh:getDirectionVector()), xyz(veh:getDirectionVectorUp()), centre,
-    M.placement(M.prefs(), modelOf(veh)))
-  return M.project(corners, { pos = xyz(camPos), fwd = xyz(core_camera.getForward()), right = xyz(core_camera.getRight()),
-    up = xyz(core_camera.getUp()), fov = core_camera.getFovRad() })
+  local centre = v(be:getObjectOOBBCenterXYZ(veh:getId()))
+  local place = M.placement(M.prefs(), modelOf(veh))
+  return M.spot(seat, xyz(veh:getDirectionVector()), xyz(veh:getDirectionVectorUp()), centre, place), place
 end
 
-local function same(a, b)
-  if not a or not b then return false end
-  for i = 1, 8 do if math.abs(a[i] - b[i]) > 0.0005 then return false end end
-  return true
-end
-
--- called every frame before drawing
-function M.tick(dt)
-  local p = M.prefs()
-  acc = acc + (dt or 0)
-  if acc < 1 / p.rate then return end
-  acc = 0
-  local ok, c = pcall(function() return p.on and frame() or nil end)
+local clock = 0
+-- every frame before drawing. phoneState() and money(n) come from core.
+function M.tick(dt, phoneState, money)
+  clock = clock + (dt or 0)
+  local ok, err = pcall(function()
+    local veh = core_camera and be and playerCar()
+    local cockpit = veh and core_camera.isCameraInside and core_camera.isCameraInside(0, core_camera.getPosition()) == 1
+    if not veh or not M.wanted(M.prefs(), vrOn(), cockpit) then hide() return end
+    local pos, place = spotNow(veh)
+    local r = pos and getRenderer()
+    if not r then hide() return end
+    build(r, phoneState, money, clock)
+    if not rid then return end
+    r:update(rid, vec3(pos.x, pos.y, pos.z), M.HEIGHT * place.size, true)
+    hidden = false
+  end)
   if not ok then
-    if not M.err then M.err = tostring(c) log('W', 'cargoEarth', 'dash phone: ' .. M.err) end
-    c = nil
-  end
-  if c then
-    -- compare with what was last sent, so slow drifts add up and are sent once they cross the threshold
-    if not same(c, last) then
-      guihooks.trigger('CargoEarthDash', { on = true, c = c })
-      last = c
-    end
-    sent = true
-  elseif sent then
-    guihooks.trigger('CargoEarthDash', { on = false })
-    sent, last = false, nil
+    hide()
+    if not M.err then M.err = tostring(err) log('W', 'cargoEarth', 'dash phone: ' .. M.err) end
   end
 end
 
--- a phone app that just mounted asks for the current place, which is otherwise sent only when it moves
-function M.resend()
-  last = nil
-  acc = 1
+-- the level is going away and takes the renderer with it
+function M.forget()
+  renderer, rid, sig, hidden = nil, nil, nil, true
 end
 
 -- for the phone's Settings
@@ -214,15 +345,13 @@ function M.state()
   local veh = playerCar()
   local model = veh and modelOf(veh)
   local place = M.placement(p, model)
-  return { on = p.on, rate = p.rate, vr = vrOn(), cockpit = sent, model = model, size = place.size,
+  return { show = p.show, vr = vrOn(), shown = not hidden, model = model, size = place.size,
     moved = model ~= nil and p.models[model] ~= nil }
 end
 
 function M.act(what, dir)
   local veh = playerCar()
   M.adjust(M.prefs(), veh and modelOf(veh), what, dir)
-  last = nil -- send the new place at once
-  acc = 1
   save()
   return M.state()
 end

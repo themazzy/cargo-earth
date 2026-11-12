@@ -2803,7 +2803,7 @@ function M.settingsState()
 end
 
 -- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
--- dash (a = on | rate | reset | x | y | z | size, b = +1 | -1)
+-- dash (a = show | reset | x | y | z | size, b = +1 | -1)
 function M.settingsDo(name, a, b)
   -- the dash phone is a screen preference, not part of the career: it works on the resume screen too
   if name == 'dash' then dash.act(a, b) return M.settingsState() end
@@ -2931,11 +2931,11 @@ function M.onExtensionLoaded()
   if S.loadError then log('E', 'cargoEarth', S.loadError) end
 end
 
--- the dash phone follows the camera, so it is placed right before each frame is drawn
+-- the VR dash phone follows the car, so it is placed right before each frame is drawn
+local function dashMoney(n) return currency.format(n, S.career and S.career.currency) end
 function M.onPreRender(dtReal)
-  dash.tick(dtReal)
+  dash.tick(dtReal, M.phoneState, dashMoney)
 end
-function M.dashResend() dash.resend() end
 
 function M.onUpdate(dtReal, dtSim)
   if S.pendingCareer then
@@ -3112,6 +3112,7 @@ function M.onPartsTreeConfigChanged(_, respawn)
 end
 
 function M.onClientEndMission()
+  dash.forget()
   S.resumeTrip = nil
   releaseStorage()
   clearFreight()

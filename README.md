@@ -13,7 +13,7 @@ A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight,
 - Progress from vans to rigid trucks and articulated freight with native cargo containers and loads.
 - Drive parcel routes: load a van or box truck at a depot and drop parcels at several real addresses, emptying its cargo containers stop by stop.
 - Choose a nearby address as your home garage, then drive there and park to claim it. Store and switch owned cars, buy used vehicles, repair and confirm real parts purchases.
-- In cockpit view the phone sits on the centre of the dashboard, still fully clickable; move or resize it per car in Settings.
+- In VR, a phone screen sits on the centre of the dashboard with your order, distance, time left and speed limit; move or resize it per car in Settings.
 - Track money, debt, deliveries, cargo condition, employer reputation and active driving distance through the phone.
 - Earn 1 to 5 stars on every order. They build two reputations, courier and freight, that bring premium orders and better freight pay.
 - Pay for fuel at real stations and chargers. The car keeps its fuel level through resets, and a roadside delivery is always available.
@@ -92,7 +92,7 @@ To publish a release, create a GitHub release with a tag such as `v0.7.0` and at
 
 ## Current limits
 
-This is an early development build. Fuel, the headquarters screen and speed cameras (0.4), the firm's trucks, drivers and upkeep (0.5), special cargo, tow jobs and fuel resupply (0.6), local money (0.7) and the dashboard phone (0.8) still need in-game verification; the payout report describes 0.3.5, before fuel costs. Native crash/accelerometer behaviour, phone layout and full driving sessions need further verification. Public POIs are candidate stops rather than certified loading bays. Rigid/articulated site access is more restricted than van access. Parcel cargo has condition penalties; bulk/fluid condition is not yet modeled. Company contracts pay for the return trip from 0.3.5; the payout report shows the hourly pay of each kind of work.
+This is an early development build. Fuel, the headquarters screen and speed cameras (0.4), the firm's trucks, drivers and upkeep (0.5), special cargo, tow jobs and fuel resupply (0.6), local money (0.7) and the VR dashboard screen (0.8) still need in-game verification; the payout report describes 0.3.5, before fuel costs. Native crash/accelerometer behaviour, phone layout and full driving sessions need further verification. Public POIs are candidate stops rather than certified loading bays. Rigid/articulated site access is more restricted than van access. Parcel cargo has condition penalties; bulk/fluid condition is not yet modeled. Company contracts pay for the return trip from 0.3.5; the payout report shows the hourly pay of each kind of work.
 
 The helper fetches public Overture source data; busy areas and first visits may take time to load. Python queries and connections are bounded, but real-world latency and coverage vary.
 
