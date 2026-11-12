@@ -2933,7 +2933,10 @@ function M.onExtensionLoaded()
 end
 
 -- the VR dash phone follows the car, so it is placed right before each frame is drawn
-local function dashMoney(n) return currency.format(n, S.career and S.career.currency) end
+local function dashMoney(n)
+  local c = type(S.pendingCareer) == 'table' and S.pendingCareer or S.career -- the same career the phone shows
+  return currency.format(n, c and c.currency)
+end
 function M.onPreRender(dtReal)
   dash.tick(dtReal, M.phoneState, dashMoney)
 end
