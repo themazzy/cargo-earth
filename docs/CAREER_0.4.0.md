@@ -76,6 +76,16 @@ Real speed cameras from OpenStreetMap, anywhere in the world. The helper asks th
 - Where OpenStreetMap has no limit, the mod assumes one no country's default exceeds for that road class (130 motorway, 110 trunk, 100 other main roads, 60 residential), so nobody is fined for a limit the game cannot know. A camera on a road of unknown class is ignored.
 - Cameras need the helper 0.4.0 running, also in Czechia. **Settings → Speed cameras** switches them off.
 
+## Speed limit on the phone
+
+The phone shows the speed limit of the road under the car as a round sign, red when you drive more than 3 km/h over
+it. The limit comes from the road graph BeamNG.Earth gives the game for its traffic: Overture's mapped limits, else
+Earth's default for the country and road type, the same limits Earth's own road signs show. Earth slows its traffic
+in sharp bends, so the mod reads 250 m of road each way and keeps the limit found on both sides. Where the limit is a
+whole number of mph (the US, the UK) the sign shows mph. No sign off the road, or with Earth's traffic switched off
+(the graph exists only then). A speed camera with no limit in OpenStreetMap takes its road's limit from the same graph
+once it is within reach, instead of the generous road-class default.
+
 ## Helper 0.4.0
 
 - Areas now carry fuel stations and chargers (`"fuel"` rows; area cache format 4, so areas are rebuilt once).

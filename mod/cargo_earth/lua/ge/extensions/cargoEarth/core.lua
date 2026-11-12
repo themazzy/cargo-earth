@@ -29,6 +29,7 @@ local rating = require('cargoEarth/rating')
 local fuel = require('cargoEarth/fuel')
 local records = require('cargoEarth/stats')
 local cameras = require('cargoEarth/cameras')
+local speedlimit = require('cargoEarth/speedlimit')
 local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
 
@@ -42,6 +43,10 @@ M.RULES = {
   trucking = { arriveM = 35, stopS = 3, cancelFee = 2000 },
 }
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
+M.ROAD_M = 20          -- the car is on the road edge this close (else: a car park, a field; no limit shown)
+M.LIMIT_S = 0.5        -- the limit under the car is read this often
+M.OVER_KMH = 3         -- the phone's sign turns red this far over the limit
+M.CAMERA_ROAD_M = 600  -- a camera without a mapped limit takes its road's limit from this close
 M.LATE_PER_MIN = { courier = 0.05, trucking = 0.02 }   -- share of pay lost per minute late (food goes cold faster)
 M.LATE_FLOOR = 0.5     -- never less than this share of the pay
 M.TICK_S = 0.5
@@ -81,6 +86,7 @@ local conditionAt, usedAt, previewAt
 local fuelWatch, fuelToken, fuelPending, fuelNearAt = nil, 0, nil, 0
 local forceWatch, forceToken = nil, 0
 local cams = cameras.index()
+local roadLimit = { at = -math.huge }
 local function camerasOn() return S.career.garage.started and not S.career.camerasOff end
 
 function M.elapsed(job) return careerClock.elapsed(S.career, job) end
@@ -1361,6 +1367,18 @@ function M.placesDo(name, value)
 end
 
 -- Everything the phone shows, small and JSON friendly. screen: offline, waiting, incoming, active, done, error.
+-- The speed limit of the road under the car: { kmh, sign, unit }, or nil off the road or without a road graph.
+local function limitHere(p)
+  if not (p and p.x and p.y) or p.camera or not M.G.road then return nil end
+  if S.clock < roadLimit.at + M.LIMIT_S then return roadLimit.value end
+  roadLimit.at = S.clock
+  local graph, a, b, d = M.G.road(p.x, p.y, p.z)
+  local kmh, sign, unit
+  if graph and d <= M.ROAD_M then kmh, sign, unit = speedlimit.at(graph, a, b) end
+  roadLimit.value = kmh and { kmh = kmh, sign = sign, unit = unit } or nil
+  return roadLimit.value
+end
+
 function M.phoneState()
   local c, ph = S.career, S.phone
   local today = (type(c.today) == 'table' and c.today.date == os.date('%Y-%m-%d')) and c.today or { earned = 0, count = 0 }
@@ -1382,8 +1400,13 @@ function M.phoneState()
   if gauge then
     out.fuel = { pct = math.floor(gauge.share * 100 + 0.5), low = gauge.low, empty = gauge.empty, rangeKm = gauge.rangeKm }
   end
+  local here = earth.pose()
+  local limit = limitHere(here)
+  if limit then
+    out.limit = { sign = limit.sign, unit = limit.unit, over = (here.speed or 0) * 3.6 > limit.kmh + M.OVER_KMH }
+  end
   if camerasOn() then
-    local p = earth.pose()
+    local p = here
     if p and not p.camera then out.camera = cameras.ahead(cams, p.lat, p.lon, (p.speed or 0) > M.STOP_SPEED and p.heading or nil) end
     if ph.flash and S.clock < ph.flash.untilT then out.flash = ph.flash else ph.flash = nil end
   end
@@ -1623,9 +1646,29 @@ local function cameraTick(p)
   saveCareer()
 end
 
+-- A camera that OpenStreetMap gives no limit takes the limit of its road from the game's road graph once the graph
+-- reaches it, the limit BeamNG.Earth's own signs show there.
+local cameraRoadAt = -math.huge
+local function learnCameraLimits(p)
+  if not (p and p.x and M.G.road) or S.clock < cameraRoadAt + 2 then return end
+  cameraRoadAt = S.clock
+  for _, cam in ipairs(cams.near) do
+    if cam.assumed and not cam.road and jobs.km(p.lat, p.lon, cam.lat, cam.lon) * 1000 <= M.CAMERA_ROAD_M then
+      local x, y = earth.worldXY(p, { cam.lat, cam.lon })
+      local graph, a, b, d
+      if x then graph, a, b, d = M.G.road(x, y, p.z) end
+      -- (a road farther than ROAD_M: the graph does not reach the camera yet; asked again later)
+      if graph and d <= M.ROAD_M then cameras.learn(cam, speedlimit.at(graph, a, b)) end
+    end
+  end
+end
+
 local function helperTick(p)
   if not p then return end
-  if camerasOn() then cameras.refresh(cams, p.lat, p.lon) end
+  if camerasOn() then
+    cameras.refresh(cams, p.lat, p.lon)
+    learnCameraLimits(p)
+  end
   if S.clock >= helperCheckAt then
     helperCheckAt = S.clock + M.HELPER_CHECK_S
     helperWanted = packRestaurantsNear(p.lat, p.lon) < M.HELPER_MIN

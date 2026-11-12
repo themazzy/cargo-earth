@@ -367,6 +367,14 @@ function M.probe(garage)
   return out
 end
 
+-- The game's road graph (BeamNG.Earth's traffic graph) and the road edge nearest a world point: graph, a, b, metres.
+function M.road(x, y, z)
+  if not (map and map.findClosestRoad and map.getMap and vec3) then return nil end
+  local ok, a, b, d = pcall(map.findClosestRoad, vec3(x, y, z or 0))
+  if not ok or a == nil or b == nil then return nil end
+  return map.getMap(), a, b, tonumber(d) or math.huge
+end
+
 function M._reset() configsCache, jbeamIO = nil, nil end
 
 return M

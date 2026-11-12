@@ -181,6 +181,7 @@ package.loaded['cargoEarth/earth'] = {
   gps = function(lat, lon) gps = {lat = lat, lon = lon} return true end,
   gpsClear = function() gps = nil end,
   teleport = function(lat, lon) pose.lat, pose.lon = lat, lon return true end,
+  worldXY = function(p, pt) return p.x + (pt[2] - p.lon) * 71700, p.y + (pt[1] - p.lat) * 111320 end,
 }
 local function adapter()
   return {
@@ -1225,6 +1226,63 @@ test('a speed camera fines the driver and costs a star on the order on board', f
     core.onUpdate(0.1, 0.1)
   end
   assert(s.career.money == 5000 and not core.phoneState().camera)
+end)
+
+local speedlimit = require('cargoEarth/speedlimit')
+
+-- a straight road along x, a node every 50 m from -500 to 500; speed(i) is the m/s of the edge from node i to i + 1
+local function straightRoad(speed)
+  local nodes = {}
+  for i = -10, 10 do nodes['n' .. i] = {pos = {x = i * 50, y = 0}, links = {}} end
+  for i = -10, 9 do
+    local l = {speedLimit = speed(i)}
+    nodes['n' .. i].links['n' .. (i + 1)], nodes['n' .. (i + 1)].links['n' .. i] = l, l
+  end
+  return {nodes = nodes}
+end
+
+test('speed limit from the road graph: bends do not lower it, a change ahead is not shown early, mph signs', function()
+  assert(speedlimit.at(straightRoad(function() return 13.89 end), 'n0', 'n1') == 50)
+  -- a sharp bend: Earth slows its traffic there, the sign does not change; a faster crossing road does not count
+  local bend = straightRoad(function(i) return (i >= -1 and i <= 1) and 8 or 13.89 end)
+  local cross = {speedLimit = 36.11}
+  bend.nodes.side = {pos = {x = 0, y = 50}, links = {n0 = cross}}
+  bend.nodes.n0.links.side = cross
+  assert(speedlimit.at(bend, 'n0', 'n1') == 50, 'the bend keeps the limit of the road on both sides')
+  -- 50 now, 90 from x = 0 on
+  local change = straightRoad(function(i) return i < 0 and 13.89 or 25 end)
+  assert(speedlimit.at(change, 'n-1', 'n0') == 50 and speedlimit.at(change, 'n0', 'n1') == 90)
+  assert(speedlimit.at(change, 'n1', 'n0') == 90, 'either node order')
+  local kmh, sign, unit = speedlimit.at(straightRoad(function() return 13.41 end), 'n0', 'n1')
+  assert(kmh == 48 and sign == 30 and unit == 'mph')
+  assert(select(3, speedlimit.at(straightRoad(function() return 22.22 end), 'n0', 'n1')) == 'km/h', '80 km/h stays km/h')
+  assert(speedlimit.at(straightRoad(function() return 0 end), 'n0', 'n1') == nil)
+  assert(speedlimit.at({}, 'n0', 'n1') == nil and speedlimit.at(nil, 'a', 'b') == nil)
+end)
+
+test('the phone shows the limit under the car, red when too fast, and a camera without a limit takes its road one', function()
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  local road = straightRoad(function() return 13.89 end)
+  local near = 3
+  core.G.road = function() return road, 'n0', 'n1', near end
+  pose.x, pose.y, pose.z, pose.speed = 0, 0, 0, 45 / 3.6
+  advance(core, 2)
+  local limit = core.phoneState().limit
+  assert(limit and limit.sign == 50 and limit.unit == 'km/h' and not limit.over)
+  pose.speed = 60 / 3.6
+  assert(core.phoneState().limit.over, 'red at 60 in a 50')
+  near = 60
+  advance(core, 2)
+  assert(core.phoneState().limit == nil, 'off the road: no sign')
+  core.onHelperCameras({state = 'ready', cameras = {{'n9', 50.001, 14, 0, 'primary'}}})
+  pose.speed, pose.heading = 0, 0
+  advance(core, 6)
+  assert(core.phoneState().camera.limit == 100, 'the class default while the graph does not reach the camera')
+  near = 3
+  advance(core, 6)
+  assert(core.phoneState().camera.limit == 50, 'the road graph gives the camera its limit')
+  pose.x, pose.y, pose.z = nil, nil, nil
 end)
 
 local firm = require('cargoEarth/firm')

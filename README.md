@@ -19,6 +19,7 @@ A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight,
 - Found your own firm, set its headquarters at a real yard, and build parking bays, a workshop, a fuel tank and a dispatch office. The firm hires your drivers.
 - See where you have delivered on a map with your personal records.
 - Mind real speed cameras from OpenStreetMap: a fine and a lost star for passing one too fast.
+- See the speed limit of the road you drive on, the same one BeamNG.Earth's signs and traffic use.
 - Discover nearby restaurants, stores, workplaces and addresses through the local helper. Bundled Czech geography provides fallback coverage.
 
 Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated with BeamNG or the RLS Career Overhaul project.
