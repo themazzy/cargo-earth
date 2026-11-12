@@ -20,6 +20,7 @@ API (GET, JSON):
                               day): {"state": "ready" | "loading" | "failed", "country", "top": [[id, name, stream url,
                               codec, kbps, tags, region], ...] (most listened first), "near": [[... the same, km], ...]}
   /v1/radioclick?id=uuid      tells Radio Browser a station started playing (its listening counts)
+  /v1/stream?id=uuid          the station's stream passed through, for the game's UI to play
   /v1/player/play?id=uuid&vol=0.6, /v1/player/volume?vol=.., /v1/player/stop, /v1/player/alive
                               the helper plays a listed station itself (when the game's UI cannot); alive is the
                               heartbeat: {"playing", "url", "vol", "secs", "error", "player"}
@@ -1149,38 +1150,77 @@ class Radio:
         return {"state": "ready", "country": cc, "near": near, "top": [r[:7] for r in rows]}
 
 
-# The game's UI browser may not play web streams; then the helper plays the station on this computer. Windows: the
-# system's own media player (Media Foundation, through PowerShell; MP3 and AAC). Elsewhere: ffplay, mpv or VLC if
-# installed. The mod sends a heartbeat while the radio is on; without one for PLAYER_ALIVE_S the helper stops, so
-# music never outlives the game.
+# Two ways to hear a station. 1) The game plays it: the phone's <audio> asks this helper for /v1/stream, which passes
+# the station's stream through (the game's UI browser refuses web streams, but plays what comes from this computer;
+# MP3 and OGG only, it has no AAC). 2) The helper plays it on this computer. Windows: Windows Media Player's engine
+# through PowerShell (the WPF player as a fallback). Elsewhere: ffplay, mpv or VLC if installed. The mod sends a
+# heartbeat while the radio is on; without one for PLAYER_ALIVE_S the helper stops, so music never outlives the game.
 PLAYER_ALIVE_S = 20
-PLAYER_OPEN_S = 15        # a stream that has not started after this long is given up
+PLAYER_OPEN_S = 15        # a stream that has not started after this long is given up, with an error the phone shows
+STREAM_MAX = 4            # streams passed to the game at once (a station change closes the old one)
+STREAM_TYPES = ("audio/", "application/ogg", "application/octet-stream")
+STREAMS = threading.BoundedSemaphore(STREAM_MAX)
 PS_PLAYER = r"""
-Add-Type -AssemblyName PresentationCore
-$p = New-Object System.Windows.Media.MediaPlayer
-$p.Volume = [double]::Parse($env:CARGO_EARTH_VOL, [Globalization.CultureInfo]::InvariantCulture)
-$p.Open([Uri]$env:CARGO_EARTH_STREAM)
-$p.Play()
+$ci = [Globalization.CultureInfo]::InvariantCulture
+$vol = [double]::Parse($env:CARGO_EARTH_VOL, $ci)
+Add-Type -AssemblyName System.Windows.Forms
+$wmp = $null; $p = $null; $script:failed = ''
+try { $wmp = New-Object -ComObject WMPlayer.OCX } catch { $wmp = $null }
+if ($wmp) {
+  $wmp.settings.autoStart = $true
+  $wmp.settings.volume = [int]($vol * 100)
+  $wmp.URL = $env:CARGO_EARTH_STREAM
+  $wmp.controls.play()
+} else {
+  Add-Type -AssemblyName PresentationCore, WindowsBase
+  $p = New-Object System.Windows.Media.MediaPlayer
+  $p.add_MediaFailed({ param($s, $e) $script:failed = [string]$e.ErrorException.Message })
+  $p.Volume = $vol
+  $p.Open([Uri]$env:CARGO_EARTH_STREAM)
+  $p.Play()
+}
 $in = [Console]::OpenStandardInput()
 $buf = New-Object byte[] 256
 $t = $in.ReadAsync($buf, 0, 256)
-$run = $true
+$run = $true; $tick = 0
 while ($run) {
-  Start-Sleep -Milliseconds 250
+  # both players work through window messages: without this pump they never start (Start-Sleep alone blocks them)
+  [System.Windows.Forms.Application]::DoEvents()
+  Start-Sleep -Milliseconds 100
   if ($t.IsCompleted) {
     $n = $t.Result
     if ($n -le 0) { break }
     foreach ($line in [Text.Encoding]::ASCII.GetString($buf, 0, $n).Split("`n")) {
       $line = $line.Trim()
       if ($line -eq 'stop') { $run = $false }
-      if ($line -like 'vol *') { $p.Volume = [double]::Parse($line.Substring(4), [Globalization.CultureInfo]::InvariantCulture) }
+      if ($line -like 'vol *') {
+        $v = [double]::Parse($line.Substring(4), $ci)
+        if ($wmp) { $wmp.settings.volume = [int]($v * 100) } else { $p.Volume = $v }
+      }
     }
     $t = $in.ReadAsync($buf, 0, 256)
   }
-  [Console]::Out.WriteLine('pos ' + [int]$p.Position.TotalSeconds + ' ' + [int]$p.HasAudio)
+  $tick++
+  if ($tick % 10 -ne 0) { continue }
+  if ($wmp) {
+    $state = [int]$wmp.playState      # 3 playing, 6 buffering, 7 waiting, 9 opening, 11 reconnecting
+    $secs = [int]$wmp.controls.currentPosition
+    $ok = [int]($state -eq 3)
+    if ($wmp.Error.errorCount -gt 0) { $script:failed = [string]$wmp.Error.Item(0).errorDescription }
+    elseif ($tick -gt 50 -and ($state -eq 1 -or $state -eq 8 -or $state -eq 10)) { $script:failed = 'the station stopped sending' }
+  } else {
+    $secs = [int]$p.Position.TotalSeconds
+    $ok = [int]($secs -gt 0)
+  }
+  if ($script:failed) {
+    [Console]::Out.WriteLine('fail ' + ($script:failed -replace '\s+', ' '))
+    [Console]::Out.Flush()
+    break
+  }
+  [Console]::Out.WriteLine('pos ' + $secs + ' ' + $ok)
   [Console]::Out.Flush()
 }
-$p.Stop(); $p.Close()
+if ($wmp) { $wmp.controls.stop(); $wmp.close() } else { $p.Stop(); $p.Close() }
 """
 
 
@@ -1189,7 +1229,7 @@ class Player:
         self.spawn = spawn or self._spawn
         self.clock = clock
         self.proc, self.url, self.vol, self.alive_at = None, None, 0.6, 0
-        self.started_at, self.pos, self.error, self.kind = 0, 0, None, None
+        self.started_at, self.pos, self.error, self.kind, self.sound = 0, 0, None, None, False
         self.lock = threading.Lock()
         threading.Thread(target=self._watch, daemon=True).start()
 
@@ -1228,10 +1268,14 @@ class Player:
     def _read(self, proc):
         for line in proc.stdout:
             parts = line.split()
-            if len(parts) == 3 and parts[0] == "pos":
-                with self.lock:
-                    if proc is self.proc:
-                        self.pos = int(parts[1]) if parts[1].isdigit() else 0
+            with self.lock:
+                if proc is not self.proc:
+                    return
+                if len(parts) == 3 and parts[0] == "pos":
+                    self.pos = int(parts[1]) if parts[1].isdigit() else 0
+                    self.sound = self.sound or parts[2] == "1"
+                elif parts and parts[0] == "fail":
+                    self.error = ("Windows could not play it: " + " ".join(parts[1:]))[:160]
 
     def _kill(self):
         proc, self.proc = self.proc, None
@@ -1255,7 +1299,7 @@ class Player:
         with self.lock:
             self._kill()
             self.url, self.vol, self.alive_at = url, max(0.0, min(1.0, vol)), self.clock()
-            self.started_at, self.pos, self.error = self.clock(), 0, None
+            self.started_at, self.pos, self.error, self.sound = self.clock(), 0, None, False
             try:
                 self.proc = self.spawn(url, self.vol)
                 self.kind = getattr(self.proc, "kind", None)
@@ -1298,19 +1342,30 @@ class Player:
         running = bool(proc) and proc.poll() is None
         if proc and not running and not self.error:
             self.error = "the stream stopped or could not be opened"
-        # Windows' player fails silently: a stream whose clock has not moved after a while is probably not playing
-        stuck = running and self.pos == 0 and self.clock() - self.started_at > PLAYER_OPEN_S
-        return {"playing": running, "stuck": stuck, "url": self.url if running else None, "vol": self.vol, "secs": self.pos,
-                "error": self.error, "player": self.kind or self.available()}
+        # Windows' player says when sound comes out ("sound"); the others are taken at their word
+        sound = running and (self.sound or self.kind not in ("powershell", None))
+        return {"playing": running, "sound": sound, "url": self.url if running else None, "vol": self.vol,
+                "secs": self.pos, "error": self.error, "player": self.kind or self.available()}
+
+    def check(self):
+        """Stop a player that failed or never made a sound, so the phone says so instead of showing it playing."""
+        with self.lock:
+            if not self.proc:
+                return
+            if self.clock() - self.alive_at > PLAYER_ALIVE_S:
+                log("radio: no word from the game, stopping")
+                self._kill()
+                self.url = None
+            elif self.error:
+                self._kill()
+            elif self.kind == "powershell" and not self.sound and self.clock() - self.started_at > PLAYER_OPEN_S:
+                self.error = f"no sound after {PLAYER_OPEN_S} seconds, the station may be offline"
+                self._kill()
 
     def _watch(self):
         while True:
             time.sleep(2)
-            with self.lock:
-                if self.proc and self.clock() - self.alive_at > PLAYER_ALIVE_S:
-                    log("radio: no word from the game, stopping")
-                    self._kill()
-                    self.url = None
+            self.check()
 
 
 def missing_libraries():
@@ -1369,6 +1424,40 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             self.end_headers()
             self.wfile.write(body)
 
+        def _relay(self, url):
+            """Pass a station's stream to the game's UI, which plays what comes from this computer but not the web."""
+            if not STREAMS.acquire(blocking=False):
+                return self._send(503, {"error": "too many streams"})
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": f"cargo-earth-helper/{VERSION}",
+                                                           "Icy-MetaData": "0"})
+                try:
+                    up = urllib.request.urlopen(req, timeout=15)
+                except Exception as e:  # noqa: BLE001 - the phone hears an error and tries the helper's player
+                    return self._send(502, {"error": f"station: {e}"})
+                with up:
+                    ctype = (up.headers.get("Content-Type") or "audio/mpeg").split(";")[0].strip().lower()
+                    if not ctype.startswith(STREAM_TYPES):
+                        return self._send(415, {"error": f"not an audio stream ({ctype})"})
+                    self.send_response(200)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    while True:
+                        chunk = up.read1(16384) if hasattr(up, "read1") else up.read(16384)
+                        if not chunk:
+                            break
+                        try:
+                            self.wfile.write(chunk)
+                        except OSError:       # the game closed it: another station, Stop, or the game quit
+                            break
+                        with NETWORK_LOCK:
+                            NETWORK["bytes"] += len(chunk)
+            finally:
+                STREAMS.release()
+
         def do_GET(self):
             if self.headers.get("Origin") or self.headers.get("Host", "").split(":", 1)[0].lower() not in ("127.0.0.1", "localhost"):
                 return self._send(403, {"error": "local client requests only"})
@@ -1403,6 +1492,11 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     if what == "alive":
                         return self._send(200, player.alive())
                     return self._send(404, {"error": "unknown path"})
+                if u.path == "/v1/stream" and radio:
+                    url = radio.url_of(q.get("id", ""))
+                    if not url:
+                        return self._send(404, {"error": "unknown station"})
+                    return self._relay(url)
                 if u.path == "/v1/radioclick" and radio:
                     return self._send(200, radio.click(q.get("id", "")))
                 if u.path == "/v1/near":

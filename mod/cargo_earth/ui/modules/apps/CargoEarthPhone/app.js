@@ -928,7 +928,7 @@ angular.module('beamng.apps')
         '<div class="cep-card cep-radio-now">' +
           '<div class="cep-label">{{ radio.station ? (radio.status === "playing" ? "Now playing" : (radio.status === "loading" ? "Tuning in…" : (radio.status === "error" ? "Cannot play" : "Paused"))) : "Radio" }}</div>' +
           '<div class="cep-name"><span class="cep-eq" ng-if="radio.status === \'playing\'"><i></i><i></i><i></i></span>{{ radio.station ? radio.station.name : "Pick a station below" }}</div>' +
-          '<div class="cep-meta" ng-if="radio.via === \'helper\' && radio.why && radio.status === \'playing\'">{{ radio.why }}</div>' +
+          '<div class="cep-meta" ng-if="radio.why && radio.status !== \'error\'">{{ radio.why }}</div>' +
           '<div class="cep-meta" ng-if="radio.station">{{ stationMeta(radio.station) }}</div>' +
           '<div class="cep-sub" ng-if="radio.status === \'error\'">This stream does not play{{ radio.why ? " (" + radio.why + ")" : "" }}. Try the next one.</div>' +
           '<div class="cep-radio-ctl">' +
@@ -1369,7 +1369,8 @@ angular.module('beamng.apps')
       var prefs = radioPrefs()
       scope.radio = {
         station: prefs.last && prefs.last.url ? prefs.last : null, list: [], status: 'idle', show: 25, moved: false,
-        via: prefs.via === 'helper' ? 'helper' : 'page', why: '',
+        // v2: the game plays stations through the helper now; an older automatic switch to the helper's player is undone
+        via: prefs.v === 2 && prefs.via === 'helper' ? 'helper' : 'page', why: '', alone: false,
         vol: typeof prefs.vol === 'number' ? Math.max(0, Math.min(1, prefs.vol)) : 0.6,
         saved: Array.isArray(prefs.saved) ? prefs.saved.filter(function (x) { return x && x.id && x.url }).slice(0, 50) : []
       }
@@ -1377,7 +1378,7 @@ angular.module('beamng.apps')
       function saveRadio() {
         var r = scope.radio
         var keep = function (st) { return st && {id: st.id, name: st.name, url: st.url, codec: st.codec, kbps: st.kbps, region: st.region, country: st.country} }
-        try { localStorage.setItem(RADIO_KEY, JSON.stringify({vol: r.vol, via: r.via, last: keep(r.station), saved: r.saved.map(keep)})) } catch (e) { /* private storage */ }
+        try { localStorage.setItem(RADIO_KEY, JSON.stringify({v: 2, vol: r.vol, via: r.via, last: keep(r.station), saved: r.saved.map(keep)})) } catch (e) { /* private storage */ }
       }
       function radioStatus(v) { if (!destroyed) scope.$evalAsync(function () { scope.radio.status = v }) }
       if (audio) {
@@ -1392,16 +1393,17 @@ angular.module('beamng.apps')
           scope.$evalAsync(function () {
             var r = scope.radio
             if (r.via === 'page' && r.station) {
-              r.via = 'helper'; r.why = 'in-game browser error ' + (code || '?')
+              // this station only: the helper plays it on the computer (the switch below stays as the player set it)
+              r.alone = true; r.why = 'the game could not play it (error ' + (code || '?') + ')'
               audio.removeAttribute('src')
               helperPlay(r.station)
-              saveRadio()
             } else r.status = 'error'
           })
         })
         audio.addEventListener('ended', function () { radioStatus('idle') })
       }
       var lastCountry = null
+      function helperPlays() { return scope.radio.via === 'helper' || scope.radio.alone }
       function helperPlay(st) {
         var r = scope.radio
         r.status = 'loading'
@@ -1411,11 +1413,8 @@ angular.module('beamng.apps')
       // what the helper's player says, while the helper plays the radio
       function playerStatus(p) {
         var r = scope.radio
-        if (r.via !== 'helper' || r.status === 'idle' || !p) return
-        if (p.playing) {
-          r.status = (p.secs > 0 || p.player !== 'powershell' || p.stuck) ? 'playing' : 'loading'
-          r.why = p.stuck ? 'no sound? the station may be offline, try the next one' : ''
-        }
+        if (!helperPlays() || r.status === 'idle' || !p) return
+        if (p.playing) r.status = (p.sound || p.secs > 0) ? 'playing' : 'loading'
         else if (p.error) { r.status = 'error'; r.why = p.error === 'old' ? 'update the Cargo Earth helper' : (p.error === 'helper' ? 'the Cargo Earth helper is not running' : p.error) }
         else r.status = 'idle'      // stopped without an error (helper restarted, or its watchdog): Play starts it again
       }
@@ -1430,7 +1429,7 @@ angular.module('beamng.apps')
         lua('radioState', [], function (r) {
           if (!r || r._phoneError) return
           applyRadio(r)
-          if (scope.radio.via === 'helper' && scope.radio.status === 'loading') setTimeout(loadRadio, 1500)
+          if (helperPlays() && scope.radio.status === 'loading') setTimeout(loadRadio, 1500)
         })
       }
       function withCountry(st, cc) {
@@ -1459,17 +1458,21 @@ angular.module('beamng.apps')
         r.station = withCountry(st, (scope.rs && scope.rs.country) || st.country)
         r.why = ''
         lua('radioDo', ['played', st.id], function () {})
-        if (r.via === 'helper') { audio.removeAttribute('src'); helperPlay(st); saveRadio(); return }
+        if (r.alone) { lua('radioDo', ['helperStop'], function () {}); r.alone = false }
+        // the game's browser has no AAC, and needs the helper to pass the stream on: otherwise the helper plays it
+        var stream = scope.rs && scope.rs.stream
+        if (r.via !== 'helper' && (!stream || /^aac/i.test(st.codec || ''))) r.alone = true
+        if (helperPlays()) { audio.removeAttribute('src'); helperPlay(st); saveRadio(); return }
         r.status = 'loading'
-        audio.src = st.url
+        audio.src = stream + encodeURIComponent(st.id)
         var started = audio.play()
         if (started && started.catch) started.catch(function () { /* the error event decides */ })
         saveRadio()
       }
       scope.radioStop = function () {
         if (audio) { audio.pause(); audio.removeAttribute('src'); try { audio.load() } catch (e) { /* nothing loaded */ } }
-        if (scope.radio.via === 'helper') lua('radioDo', ['helperStop'], function () {})
-        scope.radio.status = 'idle'
+        if (helperPlays()) lua('radioDo', ['helperStop'], function () {})
+        scope.radio.status = 'idle'; scope.radio.alone = false
       }
       scope.radioToggle = function () {
         var r = scope.radio
@@ -1487,7 +1490,7 @@ angular.module('beamng.apps')
         var r = scope.radio
         r.vol = Math.max(0, Math.min(1, Math.round((r.vol + d * 0.1) * 10) / 10))
         if (audio) audio.volume = r.vol
-        if (r.via === 'helper' && r.status !== 'idle') lua('radioDo', ['helperVolume', r.vol], function () {})
+        if (helperPlays() && r.status !== 'idle') lua('radioDo', ['helperVolume', r.vol], function () {})
         saveRadio()
       }
       scope.radioFav = function (st, ev) {
@@ -1507,7 +1510,7 @@ angular.module('beamng.apps')
       }
       scope.$on('$destroy', function () {
         if (audio) { audio.pause(); audio.removeAttribute('src') }
-        if (scope.radio.via === 'helper' && scope.radio.status !== 'idle') bngApi.engineLua('if cargoEarth_core then cargoEarth_core.radioDo("helperStop") end')
+        if (helperPlays() && scope.radio.status !== 'idle') bngApi.engineLua('if cargoEarth_core then cargoEarth_core.radioDo("helperStop") end')
       })
       // The editor can remount the phone. Open straight to checkout while a preview is active.
       scope.$watch('s.screen', function (v) {

@@ -385,15 +385,64 @@ class NetworkAndStorageTests(unittest.TestCase):
         self.assertTrue(player.alive()["playing"])
         self.assertFalse(player.stop()["playing"])
         self.assertIn("stop\n", procs[0][2].lines)
-        player.play("http://s/2", 0.5)               # its clock never moves: reported as stuck
+        out = player.play("http://s/2", 0.5)
+        self.assertFalse(out["sound"], "Windows' player has said nothing yet")
+        player.sound = True
+        self.assertTrue(player.status()["sound"])
+        player.play("http://s/3", 0.5)               # never makes a sound: stopped, and the phone hears why
         now[0] += helper.PLAYER_OPEN_S + 1
-        self.assertTrue(player.status()["stuck"])
+        player.check()
+        out = player.status()
+        self.assertFalse(out["playing"])
+        self.assertIn("no sound", out["error"])
+        self.assertIn("stop\n", procs[-1][2].lines)
+        player.play("http://s/4", 0.5)               # the player reports a failure
+        player.error = "Windows could not play it: bad codec"
+        player.check()
+        self.assertEqual(player.status()["error"], "Windows could not play it: bad codec")
         with tempfile.TemporaryDirectory() as cache:
             radio = helper.Radio(cache, lambda cc: [], servers=lambda: ["x"])
             radio.state["CZ"] = [["00000000-0000-0000-0000-000000000001", "A", "http://a", "MP3", 0, "", ""]]
             self.assertEqual(radio.url_of("00000000-0000-0000-0000-000000000001"), "http://a")
             self.assertIsNone(radio.url_of("00000000-0000-0000-0000-000000000002"))
             self.assertIsNone(radio.url_of("http://evil"))
+
+    def test_stream_relay_passes_only_listed_stations_to_the_game(self):
+        import http.server
+        import threading
+        import urllib.request
+
+        class Up(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html" if self.path == "/page" else "audio/mpeg")
+                self.end_headers()
+                self.wfile.write(b"ID3" + bytes(3000))
+            def log_message(self, *a):
+                pass
+        up = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Up)
+        threading.Thread(target=up.serve_forever, daemon=True).start()
+        with tempfile.TemporaryDirectory() as cache:
+            radio = helper.Radio(cache, lambda cc: [], servers=lambda: ["x"])
+            a, b = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b"
+            radio.state["CZ"] = [[a, "A", f"http://127.0.0.1:{up.server_port}/s", "MP3", 0, "", ""],
+                                 [b, "B", f"http://127.0.0.1:{up.server_port}/page", "MP3", 0, "", ""]]
+            srv = helper.bind("127.0.0.1", 0)
+            areas = type("Areas", (), {"budget": type("Budget", (), {"stats": {}})()})()
+            threading.Thread(target=helper.serve, args=(areas, "r", 0), kwargs={"radio": radio, "srv": srv},
+                             daemon=True).start()
+            base = f"http://127.0.0.1:{srv.server_port}/v1/stream?id="
+            try:
+                with urllib.request.urlopen(base + a, timeout=5) as r:
+                    self.assertEqual(r.headers["Content-Type"], "audio/mpeg")
+                    self.assertEqual(len(r.read()), 3003)
+                for sid, code in ((b, 415), ("00000000-0000-0000-0000-00000000000c", 404)):
+                    with self.assertRaises(urllib.error.HTTPError) as e:
+                        urllib.request.urlopen(base + sid, timeout=5)
+                    self.assertEqual(e.exception.code, code)
+            finally:
+                srv.shutdown()
+                up.shutdown()
 
     def test_browser_requests_cannot_trigger_data_downloads(self):
         captured = []
