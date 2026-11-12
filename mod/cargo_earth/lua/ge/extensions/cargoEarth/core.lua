@@ -5,6 +5,7 @@
 -- Everything is clicked on the phone (the UI app): orders, the garage and the settings. The debug window opens from
 -- the phone's settings (or the console: extensions.cargoEarth_core.toggleWindow()). No key bindings.
 local M = {}
+M.VERSION = '0.8.0'      -- the mod's version (package.json has the same; the support report shows it)
 M.dependencies = { 'ui_imgui' }
 
 local jobs = require('cargoEarth/jobs')
@@ -95,6 +96,15 @@ local S = {
   phone = { online = false, incoming = nil, nextPingAt = 0, declined = {}, lastDone = nil },
 }
 S.opts = S.optsByMode.courier
+
+-- The last warnings and errors, for the support report the phone copies (Settings > Help).
+M.PROBLEMS_KEPT = 20
+local problems = {}
+local function problem(level, msg)
+  log(level, 'cargoEarth', msg)
+  problems[#problems + 1] = os.date('%H:%M:%S') .. ' ' .. level .. ' ' .. tostring(msg)
+  if #problems > M.PROBLEMS_KEPT then table.remove(problems, 1) end
+end
 S.career.garage = garage.new()
 local carSeenAt = 0
 local conditionAt, usedAt, previewAt
@@ -358,7 +368,7 @@ local function saveCareer()
   -- S.skipCapture: the company van is not spawned yet, so the live car is still the personal one.
   if c.garage.car and not c.garage.pendingUsed and not S.parts and not S.skipCapture then
     local ok, err = pcall(garage.remember, M.G, c.garage)
-    if not ok then log('W', 'cargoEarth', 'Could not capture the career car: ' .. tostring(err)) end
+    if not ok then problem('W', 'Could not capture the career car: ' .. tostring(err)) end
   end
   c.savedAt = os.time()
   c.mode = S.mode
@@ -376,7 +386,7 @@ local function saveCareer()
     S.nextAutosaveActive = (c.activeSeconds or 0) + 60
     return true
   else
-    if not S.saveRetryAt then log('E', 'cargoEarth', 'Could not save career progress. Retrying in ' .. M.SAVE_RETRY_S .. ' seconds.') end
+    if not S.saveRetryAt then problem('E', 'Could not save career progress. Retrying in ' .. M.SAVE_RETRY_S .. ' seconds.') end
     S.saveRetryAt = S.clock + M.SAVE_RETRY_S
     S.saveError = 'Progress could not be saved. Retrying; keep the game open.'
   end
@@ -2158,7 +2168,7 @@ function M.onCargoEarthFuel(id, token, report)
           end
         end
         say('Refuelling did not work for this vehicle. Your money was returned.', 8)
-        log('W', 'cargoEarth', 'fuel: the vehicle did not take the new tank level')
+        problem('W', 'fuel: the vehicle did not take the new tank level')
         saveCareer()
       end
     end
@@ -2177,7 +2187,7 @@ function M.onCargoEarthFuel(id, token, report)
     watch.failed = (watch.failed or 0) + 1
     if watch.failed > M.FUEL_GIVE_UP then
       watch.off = true
-      log('W', 'cargoEarth', 'fuel: could not put the remembered tank level back; following the game level')
+      problem('W', 'fuel: could not put the remembered tank level back; following the game level')
     else
       M.G.setFuel(id, set)
     end
@@ -2505,7 +2515,7 @@ local function quoteParts()
   if not ok then
     if S.parts.quoteError ~= tostring(quote) then
       S.parts.quoteError = tostring(quote)
-      log('E', 'cargoEarth', 'parts checkout: ' .. S.parts.quoteError)
+      problem('E', 'parts checkout: ' .. S.parts.quoteError)
     end
     return nil, 'Could not price the preview. Retry checkout or discard it to restore your paid parts.'
   end
@@ -2531,7 +2541,7 @@ local function openParts()
   if ok and opened then return true end
   if opening then S.parts = nil end
   if not ok then
-    log('W', 'cargoEarth', 'Could not open BeamNG’s parts editor: ' .. tostring(opened))
+    problem('W', 'Could not open BeamNG’s parts editor: ' .. tostring(opened))
     return false, 'Could not open the parts editor.'
   end
   return false, why
@@ -2703,7 +2713,7 @@ function M.garageDo(name, a, b)
   elseif f then
     local okCall, r1, r2 = pcall(f, a, b)
     if okCall then ok, msg = r1, r2
-    else ok, msg = false, 'Error: ' .. tostring(r1) log('E', 'cargoEarth', 'garage ' .. name .. ': ' .. tostring(r1)) end
+    else ok, msg = false, 'Error: ' .. tostring(r1) problem('E', 'garage ' .. name .. ': ' .. tostring(r1)) end
   end
   S.garageMsg = msg
   return M.garageState()
@@ -2869,6 +2879,7 @@ end
 ------------------------------------------------------------------------------------------ settings for the phone
 
 -- numeric options the phone can change: key, label, step, min, max, unit
+local aboutHelper   -- (the support report, below)
 M.SETTINGS = {
   courier = { { 'nearKm', 'Pickups within', 0.5, 0.5, 25, 'km' }, { 'minKm', 'Shortest order', 0.5, 0.5, 8, 'km' },
     { 'maxKm', 'Longest order', 0.5, 1, 8, 'km' }, { 'maxOrders', 'Orders at once', 1, 1, 3, '' } },
@@ -2895,6 +2906,7 @@ function M.settingsState()
     out.items[#out.items + 1] = { key = key, label = d[2], step = step, min = min, max = max, unit = d[6], value = v }
   end
   out.dash = dash.state()
+  aboutHelper()
   out.cameras = { on = not S.career.camerasOff, known = #cams.list,
     helper = cams.state or (helper.status().cameras == 'off' and 'off' or nil) }
   if S.mode == 'courier' then
@@ -2938,6 +2950,71 @@ end
 M.garage = garage
 
 ------------------------------------------------------------------------------------------ actions for the window
+
+------------------------------------------------------------------------------------------ support report
+
+-- What the helper says about itself (/v1/info), asked for while the settings are open, for the support report.
+local helperAbout, helperAboutAt = nil, -math.huge
+M.HELPER_ABOUT_S = 30
+aboutHelper = function()
+  if not helper.enabled or S.clock - helperAboutAt < M.HELPER_ABOUT_S then return end
+  helperAboutAt = S.clock
+  helper.ask('/v1/info', function(data, err) helperAbout = data or { error = tostring(err or 'no answer') } end)
+end
+
+local function gameValue(fn)
+  local ok, v = pcall(fn)
+  if ok and v ~= nil and v ~= '' then return tostring(v) end
+  return '?'
+end
+
+-- Plain text a player can paste into Discord or a GitHub issue: versions, BeamNG.Earth and helper state, the
+-- last problems. Where they are only to 0.1 degree (about 10 km), never the home or the exact spot. Copied to the
+-- clipboard by the game; the phone shows it too. phoneNotes: the phone's own errors.
+function M.supportReport(phoneNotes)
+  local lines = {}
+  local function add(...) lines[#lines + 1] = table.concat({ ... }) end
+  local c = S.career or {}
+  add('Cargo Earth support report (', os.date('!%Y-%m-%d %H:%M UTC'), ')')
+  add('Mod: ', M.VERSION, ', save schema ', tostring(persistence.VERSION))
+  add('BeamNG: ', gameValue(function() return rawget(_G, 'beamng_versiond') or rawget(_G, 'beamng_versionb') or rawget(_G, 'beamng_version') end),
+    ', level ', gameValue(function() return getMissionFilename() end))
+  add('BeamNG.Earth: ', gameValue(earth.status))
+  add('Mode: ', tostring(S.mode), ', phase ', tostring(S.phase), ', online ', S.phone.online and 'yes' or 'no',
+    ', career ', S.pendingCareer and 'paused/resume screen' or 'running', S.parts and ', parts preview open' or '')
+  add('Car: ', gameValue(function() local v = M.G.vehicle and M.G.vehicle() return v and v.model end))
+  local p = earth.pose()
+  local cc = S.borders and p and borders.find(S.borders, p.lat, p.lon) or nil
+  add('Where: ', p and string.format('about %.1f, %.1f', p.lat, p.lon) or 'no position', cc and (' (' .. cc .. ')') or '')
+  local h = helper.status()
+  add('Helper: ', helper.enabled and tostring(h.state) or 'turned off in config.json', ' on port ', tostring(helper.PORT),
+    ', areas ', tostring(h.ready or 0), ' ready, ', tostring(h.loading or 0), ' loading',
+    h.cameras and (', cameras ' .. tostring(h.cameras)) or '', h.supportsGrocers == false and ', old helper (no groceries)' or '')
+  if h.msg then add('Helper says: ', tostring(h.msg)) end
+  local a = helperAbout
+  if a and a.error then add('Helper info: no answer (', a.error, ')')
+  elseif a then
+    local missing = type(a.missing) == 'table' and #a.missing > 0 and table.concat(a.missing, ', ') or nil
+    local net = type(a.network) == 'table' and a.network or {}
+    add('Helper info: version ', tostring(a.version), ', Overture ', tostring(a.release),
+      missing and (', MISSING libraries: ' .. missing) or '', ', ', tostring(net.requests or 0), ' downloads')
+  else add('Helper info: not asked yet (open Settings with the game running, then copy again)') end
+  add('Data: ', S.loadError and ('ERROR ' .. S.loadError) or (S.packInfo ~= '' and S.packInfo or 'bundled packs loaded'))
+  if S.saveError then add('Save: ', tostring(S.saveError)) end
+  add('Money: ', tostring(math.floor(c.money or 0)), ' CZK, ', tostring(c.delivered or 0), ' deliveries')
+  add('Recent problems:')
+  if #problems == 0 then add('  none') end
+  for _, line in ipairs(problems) do add('  ', line) end
+  if type(phoneNotes) == 'table' and #phoneNotes > 0 then
+    add('Phone errors:')
+    for i = math.max(1, #phoneNotes - 9), #phoneNotes do add('  ', tostring(phoneNotes[i]):sub(1, 300)) end
+  end
+  local text = table.concat(lines, '\n')
+  local copied = false
+  local set = rawget(_G, 'setClipboard')
+  if set then copied = pcall(set, text) end
+  return { text = text, copied = copied }
+end
 
 function M.forceArrive()
   if S.phase == 'toPickup' then finishPickup() elseif S.phase == 'toDelivery' then finishDelivery(true) end
@@ -3030,7 +3107,7 @@ function M.onExtensionLoaded()
   if type(saved) == 'table' then S.pendingCareer = saved end
   if recovery then S.saveError = recovery end
   if not saved and recovery then S.pendingCareer, S.resumeError, S.loadBlocked = {}, recovery, recovery end
-  if S.loadError then log('E', 'cargoEarth', S.loadError) end
+  if S.loadError then problem('E', S.loadError) end
 end
 
 -- the VR dash phone follows the car, so it is placed right before each frame is drawn
@@ -3093,7 +3170,7 @@ function M.onUpdate(dtReal, dtSim)
   if worldReady then
     if pose and camerasOn() and marker.drawCameras then marker.drawCameras(pose, cams.near, S.clock) end
     local okC, errC = pcall(cameraTick, pose)
-    if not okC and not S.cameraErr then S.cameraErr = tostring(errC) log('W', 'cargoEarth', 'cameras: ' .. S.cameraErr) end
+    if not okC and not S.cameraErr then S.cameraErr = tostring(errC) problem('W', 'cameras: ' .. S.cameraErr) end
   end
   local measured
   S.odometerPose, measured = careerClock.distance(S.odometerPose, pose, activeDt)
@@ -3131,7 +3208,7 @@ function M.onUpdate(dtReal, dtSim)
         or 'No parts previewed yet.') or why
     end
     local okG, errG = pcall(garageTick, dt)
-    if not okG and not S.garageErr then S.garageErr = tostring(errG) log('W', 'cargoEarth', 'garage: ' .. S.garageErr) end
+    if not okG and not S.garageErr then S.garageErr = tostring(errG) problem('W', 'garage: ' .. S.garageErr) end
     local ready = worldReady
     if ready then refreshStorage() else releaseStorage() end
     if ready then

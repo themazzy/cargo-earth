@@ -26,6 +26,7 @@ angular.module('beamng.apps')
       'font-variant-numeric:tabular-nums;box-sizing:border-box}.cep-limit small{font-size:6px;font-weight:700;margin-top:1px}' +
     '.cep-limit.over{background:#d62d20;color:#fff;border-color:#a31d13}' +
     '.cep-pill .cep-limit{width:24px;height:24px;border-width:3px;font-size:10px;vertical-align:middle;margin-right:4px}' +
+    '.cep-report{width:100%;box-sizing:border-box;font:11px/1.35 monospace;background:rgba(0,0,0,.25);color:inherit;border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:6px;resize:none;margin:6px 0}' +
     '.cep-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:12px 14px;gap:10px;overflow:hidden}' +
     '.cep-body.cep-fit{overflow-y:auto}.cep-fit .cep-center{flex:1 0 auto}.cep-fit .cep-pulse{width:56px;height:56px}' +
     '.cep-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px}' +
@@ -410,8 +411,13 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="!s.trucking && (!s.helper || s.helper.state === \'ready\')">Stay near pickup locations. The next order will ring here.</div>' +
         '<div class="cep-sub" ng-if="!s.trucking && s.helper && !s.helper.outdated && (s.helper.state === \'loading\' || s.helper.state === \'searching\')">' +
           '{{ s.helper.restaurants ? "Loading nearby pickup locations…" : "Loading nearby grocery stores…" }}</div>' +
-        '<div class="cep-sub" ng-if="!s.trucking && s.helper && (s.helper.state === \'off\' || s.helper.state === \'error\')">' +
-          '{{ s.helper.restaurants ? "Start the Cargo Earth helper to load nearby pickup locations." : "Start the Cargo Earth helper to get local grocery runs." }}</div>' +
+        '<div class="cep-sub" ng-if="!s.trucking && s.helper && s.helper.state === \'off\'">' +
+          '{{ s.helper.restaurants ? "Start the Cargo Earth helper to load nearby pickup locations." : "Start the Cargo Earth helper to get local grocery runs." }}' +
+          '<span ng-if="s.helper.msg"> ({{ s.helper.msg }})</span></div>' +
+        // the helper answers, but could not build this area (no Python libraries, no internet...): not "start it"
+        '<div class="cep-sub" ng-if="!s.trucking && s.helper && s.helper.state === \'error\'">' +
+          'The Cargo Earth helper is running but could not load this area{{ s.helper.msg ? ": " + s.helper.msg : "." }} ' +
+          'Settings → Copy support report helps us find out why.</div>' +
         '<div class="cep-sub" ng-if="!s.trucking && s.helper.outdated && (s.helper.state === \'ready\' || s.helper.state === \'loading\')">' +
           'Update the Cargo Earth helper for grocery runs.</div></div>' +
       '<div class="cep-card cep-stats"><div>{{ s.todayCount }}<span>today</span></div>' +
@@ -1007,6 +1013,13 @@ angular.module('beamng.apps')
         '<button class="cep-sm ghost" ng-click="sdo(\'reset\')">Back to the defaults</button>' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'window\')">{{ st.window ? "Close" : "Open" }} the debug window</button>' +
+        '<div class="cep-label">Help</div>' +
+        '<button class="cep-sm ghost" ng-disabled="report.busy" ng-click="copyReport()">{{ report.busy ? "Making the report…" : "Copy support report" }}</button>' +
+        '<div class="cep-card" ng-if="report && !report.busy">' +
+          '<div class="cep-sub">{{ report.copied ? "Copied. Paste it (Ctrl+V) into Discord or a GitHub issue." : "Could not copy it. Select the text below and copy it." }} ' +
+            'It has versions, the helper\'s state and recent errors; your position only to about 10 km.</div>' +
+          '<textarea class="cep-report" readonly rows="8" ng-model="report.text" onclick="this.select()"></textarea>' +
+          '<button class="cep-sm ghost" ng-click="closeReport()">Close</button></div>' +
       '</div></div>' +
 
       '<div class="cep-msg" role="alert" ng-if="s.saveError">{{ s.saveError }}</div>' +
@@ -1162,9 +1175,23 @@ angular.module('beamng.apps')
         var a = (args || []).map(q).join(', ')
         bngApi.engineLua('(function() if not cargoEarth_core then return nil end; local ok, value = pcall(cargoEarth_core.' + fn +
           (a ? ', ' + a : '') + '); if ok then return value end; return { _phoneError = tostring(value) } end)()', function (r) {
+          if (r && r._phoneError) {      // kept for the support report
+            var sec = Math.floor(Date.now() / 1000) % 86400, two = function (n) { return (n < 10 ? '0' : '') + n }
+            phoneNotes.push(two(Math.floor(sec / 3600)) + ':' + two(Math.floor(sec / 60) % 60) + ':' + two(sec % 60) + ' UTC ' + fn + ': ' + String(r._phoneError).slice(0, 300))
+            if (phoneNotes.length > 10) phoneNotes.shift()
+          }
           if (!destroyed) scope.$evalAsync(function () { cb(r) })
         })
       }
+      var phoneNotes = []
+      scope.report = null
+      scope.copyReport = function () {
+        scope.report = {busy: true}
+        lua('supportReport', [phoneNotes], function (r) {
+          scope.report = r && !r._phoneError ? r : {text: 'Could not make the report: ' + (r && r._phoneError), copied: false}
+        })
+      }
+      scope.closeReport = function () { scope.report = null }
       var loadingPage = {}
       scope.pageErrors = {}
       function page(fn, field, then) {
