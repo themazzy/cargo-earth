@@ -167,7 +167,7 @@ function M.requirements(c, debt)
     { id = 'debt', label = 'No debt', done = (debt or 0) <= 0,
       detail = (debt or 0) > 0 and string.format('%d CZK owed', debt) or 'Nothing owed' },
     { id = 'fee', label = 'Founding fee', done = (c.money or 0) >= M.FEE,
-      detail = string.format('%d of %d CZK', math.max(0, math.min(M.FEE, math.floor(c.money or 0))), M.FEE) },
+      detail = string.format('%d CZK of %d CZK', math.max(0, math.min(M.FEE, math.floor(c.money or 0))), M.FEE) },
   }
   local ok = true
   for _, r in ipairs(list) do ok = ok and r.done end

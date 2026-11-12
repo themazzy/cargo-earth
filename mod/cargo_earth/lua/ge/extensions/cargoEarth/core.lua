@@ -982,7 +982,7 @@ local function finishDelivery(force)
     minutes = math.floor(minutes + 0.5), late = math.floor(late + 0.5), batched = j.batched or nil, orderType = j.orderType,
     cargoCondition = condition < 100 and condition or nil, stars = stars })
   while #c.history > 50 do table.remove(c.history) end
-  say(string.format('Delivered to %s: %s%d CZK%s%s', j.to.n, j.companyShift and 'held ' or '+', pay, tip > 0 and string.format(' + %d tip', tip) or '',
+  say(string.format('Delivered to %s: %s%d CZK%s%s', j.to.n, j.companyShift and 'held ' or '+', pay, tip > 0 and string.format(' + %d CZK tip', tip) or '',
     late > 0 and string.format(' (%d min late)', late) or '') .. (toDebt > 0 and string.format(', %d CZK to your debt', toDebt) or ''), 8)
   local free = dropOrder(j)
   saveCareer()
@@ -1132,9 +1132,11 @@ end
 
 -- The country the player drives in sets the currency; crossing a border exchanges the money for free.
 -- The money's currency for the phone: { code, rate, symbol, prefix, decimals, country }.
+-- Before a saved career is resumed, the phone shows the save's money in the save's currency.
 local function moneyInfo()
-  local info = currency.info(S.career.currency)
-  info.country = S.career.country and currency.name(S.career.country)
+  local c = type(S.pendingCareer) == 'table' and S.pendingCareer or S.career
+  local info = currency.info(c.currency)
+  info.country = c.country and currency.name(c.country)
   return info
 end
 

@@ -1894,6 +1894,12 @@ test('local money: country borders, exchange rates and free exchange at the bord
   pose.lat, pose.lon = 49, 13
   advance(core, 30)
   assert(s.career.currency == 'CZK' and s.log[1]:find('exchanged for free', 1, true) and s.log[1]:find('Kč', 1, true), s.log[1])
+  assert(currency.localize('+244 CZK + 24 CZK tip', 'EUR') == '+€10.00 + €0.98 tip')
+  -- a saved career waiting to be resumed shows its money in its own currency
+  s.pendingCareer = { money = 500, currency = 'USD', country = 'US' }
+  state = core.phoneState()
+  assert(state.screen == 'resume' and state.currency.code == 'USD' and state.currency.country == 'United States of America')
+  s.pendingCareer = nil
 end)
 
 print(string.format('%d career tests passed', total))
