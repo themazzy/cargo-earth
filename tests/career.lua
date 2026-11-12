@@ -1063,6 +1063,114 @@ test('a ruined company load costs freight reputation', function()
   assert(rep.rated == 1 and rep.score == 1)
 end)
 
+test('the starter car gets the cheapest parcel box its slots take', function()
+  local garage = require('cargoEarth/garage')
+  local parts = {
+    pigeon = {slots2 = {{name = 'pigeon_bed'}}},
+    pigeon_bed = {slots2 = {{name = 'pigeon_bed_load'}}},
+    cargo_load_box_L = {information = {name = 'Large parcel box', value = 400}},
+    cargo_load_box_S = {information = {name = 'Small parcel box', value = 150}},
+    cargo_load_aggregate_box_S = {information = {name = 'Aggregate box', value = 50}},
+    pigeon_tank_fluid = {information = {name = 'Fluid tank', value = 10}},
+  }
+  local G = {
+    part = function(_, name) return parts[name] end,
+    compatible = function(_, def)
+      if def.name == 'pigeon_bed_load' then return {'cargo_load_box_L', 'cargo_load_box_S', 'cargo_load_aggregate_box_S', 'pigeon_tank_fluid'} end
+      return {}
+    end,
+  }
+  local v = {ioCtx = {}, tree = {chosenPartName = 'pigeon'}, slotPartMap = {['/pigeon_bed/'] = 'pigeon_bed', ['/pigeon_bed/pigeon_bed_load/'] = ''}}
+  local box = garage.planBox(G, v)
+  assert(box and box.part == 'cargo_load_box_S' and box.path == '/pigeon_bed/pigeon_bed_load/', box and box.part)
+  v.slotPartMap['/pigeon_bed/pigeon_bed_load/'] = 'cargo_load_box_L'
+  assert(garage.planBox(G, v) == nil, 'a car with a box already gets none')
+  v.slotPartMap = {['/pigeon_bed/'] = 'pigeon_bed'}
+  assert(garage.planBox(G, v) == nil, 'a car with no box slot keeps the starter bag')
+end)
+
+local parcel = require('cargoEarth/parcel')
+
+local function streets(lat0, lon0)
+  local rows = {}
+  for i = 1, 30 do
+    local lat, lon = lat0 + 0.004 * math.floor((i - 1) / 6), lon0 + 0.006 * ((i - 1) % 6) + 0.005
+    rows[i] = {lat, lon, lat, lon, 'Street ' .. i, 'Town'}
+  end
+  return rows
+end
+
+test('parcel route rules: real addresses in nearest-first order, sized to the vehicle', function()
+  local seq = 0
+  local function rnd(n) seq = seq % n + 1 return seq end
+  local depot = {id = 'yard', n = 'Warehouse', g = {50, 14}}
+  local job = parcel.route(depot, streets(50, 14), 'van', 96, rnd, 1)
+  assert(job and job.route and #job.route.stops >= 4 and job.to == job.route.stops[1])
+  local total, last, legs = 0, depot.g, {}
+  for _, s in ipairs(job.route.stops) do
+    total = total + s.slots
+    legs[#legs + 1] = parcel.km(last[1], last[2], s.g[1], s.g[2])
+    last = s.g
+  end
+  assert(total == job.haul.amount and job.haul.kind == 'parcel' and job.pay > 0 and job.minutes > 10)
+  local small = parcel.route(depot, streets(50, 14), 'van', 9, rnd, 2)
+  assert(small and small.haul.amount <= 9, 'the load is cut to the free container space')
+  assert(not parcel.route(depot, streets(50, 14), 'van', 3, rnd, 3), 'too little room: no route')
+  assert(not parcel.route(depot, streets(51, 15), 'van', 96, rnd, 4), 'no addresses near the depot: no route')
+  local plan = {[7] = {volume = 40, density = 1}, [8] = {volume = 20, density = 1}}
+  local kept = parcel.keep(plan, 10, 2.5)
+  assert(kept[7].volume == 25 and kept[8].volume == 0)
+end)
+
+test('a parcel route loads the van, empties the containers stop by stop and pays once at the last address', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if offer.route then i, job = k, offer break end end
+  assert(job, 'a parcel route is offered in a van')
+  -- the phone rings with it although three ordinary offers come first
+  local generate, random = core.generate, math.random
+  core.generate = function()
+    generate()
+    for n = 1, 3 do table.insert(s.offers, 1, { id = 'x' .. n, kind = 'cargo', cargoName = 'Pallets', from = { id = 'x' .. n, n = 'Yard' } }) end
+  end
+  math.random = function(a, b) if b then return random(a, b) end return a end   -- always the last candidate
+  s.phone.online, s.phone.incoming, s.phone.nextPingAt = true, nil, 0
+  advance(core)
+  core.generate, math.random = generate, random
+  assert(s.phone.incoming and s.phone.incoming.job.route, 'a parcel route reaches the phone')
+  s.phone.incoming = nil
+  core.generate()
+  for k, offer in ipairs(s.offers) do if offer.route then i, job = k, offer break end end
+  local stops = #job.route.stops
+  core.take(i)
+  assert(s.job == job and s.phase == 'toPickup')
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and math.abs(boxes[1].currentVolume - job.haul.amount * parcel.DENSITY) < 0.01, 'loaded')
+  local money = c.money
+  for n = 1, stops do
+    local stop = job.route.stops[n]
+    assert(job.to == stop)
+    pose.lat, pose.lon = stop.g[1], stop.g[2]
+    advance(core)
+    if n < stops then
+      assert(job.route.at == n + 1 and c.money == money, 'paid only at the end')
+      assert(math.abs(boxes[1].currentVolume - parcel.left(job, true) * parcel.DENSITY) < 0.01, 'this stop took its parcels')
+    end
+  end
+  assert(not s.job and c.money > money and boxes[1].currentVolume == 0, 'emptied and paid')
+  assert(core.careerState().reputation.freight.rated == 1)
+end)
+
 local cameras = require('cargoEarth/cameras')
 
 test('camera rules: tolerance, fine bands, assumed limits and one fine per pass', function()

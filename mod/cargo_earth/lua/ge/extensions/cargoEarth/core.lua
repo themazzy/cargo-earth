@@ -30,6 +30,7 @@ local fuel = require('cargoEarth/fuel')
 local records = require('cargoEarth/stats')
 local cameras = require('cargoEarth/cameras')
 local firm = require('cargoEarth/firm')
+local parcel = require('cargoEarth/parcel')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
 local SAVE = '/settings/cargoEarth/career.json'
@@ -222,7 +223,15 @@ local function workFreight(job, unload)
     state = { job = job, id = id, data = data, readAt = 0 }
     S.freightLoad = state
   end
-  if state.command == 'unloadDone' or (not unload and state.command == 'loadDone') then
+  -- A parcel route loads what is still to deliver, and each stop but the last takes out only its own parcels.
+  local command = unload and 'unload' or 'load'
+  local keepSlots
+  if job.route then
+    if unload and not parcel.last(job) then command, keepSlots = 'stop' .. job.route.at, parcel.left(job)
+    elseif not unload and job.route.at > 1 then keepSlots = parcel.left(job, true) end
+  end
+  if state.command == 'unloadDone' or state.command == command .. 'Done'
+    or (not unload and (state.command == 'loadDone' or (state.command or ''):match('^stop%d+Done$'))) then
     S.freightStatus = nil
     return true
   end
@@ -230,7 +239,7 @@ local function workFreight(job, unload)
     state.readAt = S.clock + 0.65
     G.readCargoBoxes(id, function(rows) if S.freightLoad == state then state.rows = rows end end)
   end
-  S.freightStatus = unload and 'Unloading freight…' or 'Loading freight…'
+  S.freightStatus = unload and (job.route and 'Unloading parcels…' or 'Unloading freight…') or 'Loading freight…'
   if not state.rows then return false end
   if not state.plan then
     state.plan = haul.plan(state.rows, job.haul)
@@ -239,8 +248,8 @@ local function workFreight(job, unload)
       return false
     end
   end
-  local command = unload and 'unload' or 'load'
   local target = unload and haul.empty(state.plan) or state.plan
+  if keepSlots then target = parcel.keep(state.plan, keepSlots, job.haul.density) end
   if state.command ~= command or (S.clock >= state.sentAt + 2 and not haul.reached(state.rows, target, true)) then
     if G.setFreightLoad(id, target) then state.command, state.sentAt, state.rows, state.readAt = command, S.clock, nil, 0 end
     return false
@@ -531,8 +540,28 @@ function M.generate()
       -- Freight customers pay a carrier by its reputation.
       local factor = rating.freightPay(S.career)
       local ownTruck = S.career.garage.car and not S.career.garage.car.loaner
+      -- parcel routes from the nearest depots to real addresses, in vans and box trucks
+      if (tier == 'van' or tier == 'rigid') and rows and S.fidx then
+        local room = haul.capacity(rows, 'parcel')
+        local near = {}
+        for _, d in ipairs(S.idx.depots or {}) do
+          if d.g and math.abs(d.g[1] - p.lat) < 0.2 then
+            local k = jobs.km(p.lat, p.lon, d.g[1], d.g[2])
+            if k <= math.min(20, S.opts.nearKm or 20) then near[#near + 1] = { d = d, k = k } end
+          end
+        end
+        table.sort(near, function(a, b) return a.k < b.k end)
+        for i = 1, math.min(2, #near) do
+          local d = near[i].d
+          local route = parcel.route(d, food.addressesNear(S.fidx, d.g[1], d.g[2], parcel.TIERS[tier].radiusKm), tier, room, nil, i)
+          if route then
+            route.pickupKm = near[i].k
+            offers[#offers + 1] = route
+          end
+        end
+      end
       for _, offer in ipairs(offers) do
-        if haul.prepare(offer, tier, rows, S.idx) then
+        if offer.route or haul.prepare(offer, tier, rows, S.idx) then
           if ownTruck then
             offer.fuelAllowance = math.floor(offer.km * haul.FUEL_ALLOWANCE[tier] / 5 + 0.5) * 5
             offer.pay = offer.pay + offer.fuelAllowance
@@ -768,10 +797,22 @@ local function finishDelivery(force)
   local j = S.job
   if cargo.supports(j) and cargo.condition(j) == 0 then M.spoil(nil, {[j] = true}) return end
   if j.haul then
-    if not S.freightLoad or (S.freightLoad.command ~= 'unload' and S.freightLoad.command ~= 'unloadDone') then
+    local cmd = S.freightLoad and S.freightLoad.command or ''
+    if cmd ~= 'unload' and cmd ~= 'unloadDone' and not cmd:match('^stop') then
       if not workFreight(j, false) then return end
     end
     if not workFreight(j, true) then return end
+    -- a parcel route goes on to its next address; it is paid and rated at the last one
+    if j.route and not parcel.last(j) then
+      local served = parcel.advance(j)
+      say(string.format('%d parcels left at %s. Next stop %d of %d: %s.', served.slots, served.n, j.route.at,
+        #j.route.stops, j.to.n), 6)
+      S.stopT, S.dist, S.roadM, S.etaS = 0, nil, nil, nil
+      gpsToTarget()
+      saveCareer()
+      phoneSound('pickup')
+      return
+    end
   elseif not force and j.kind ~= 'food' and S.config.requireTrailer and S.config.spawnTrailer and not trailers.withPlayer() then
     say('Bring the trailer: it is not with your truck.', 3)
     S.stopT = -10   -- don't repeat the message every tick
@@ -946,7 +987,8 @@ local function tick(dt)
   local p = earth.pose()
   local r = rules(S.job)
   if S.job.haul and S.phase == 'toDelivery'
-    and (not S.freightLoad or (S.freightLoad.command ~= 'unload' and S.freightLoad.command ~= 'unloadDone')) then
+    and (not S.freightLoad or (S.freightLoad.command ~= 'unload' and S.freightLoad.command ~= 'unloadDone'
+      and not (S.freightLoad.command or ''):match('^stop'))) then
     workFreight(S.job, false)
   end
   S.dist = distToTarget(p)
@@ -999,17 +1041,21 @@ local function phoneTick()
   local plan = storagePlan()
   if S.mode == 'courier' and (not plan or plan.free < 1 or plan.overflow > 0) then return end
   M.generate()
-  local fresh, groceryIncluded = {}, false
+  -- one grocery basket and one parcel route get a place beside the first three offers
+  local fresh, groceryIncluded, routeIncluded, anyRoute = {}, false, false, false
+  for _, j in ipairs(S.offers) do if j.route then anyRoute = true break end end
   for _, j in ipairs(S.offers) do
     local seen = false
     for _, id in ipairs(ph.declined) do if id == j.id or (j.from.id and id:find(j.from.id .. '>', 1, true) == 1) then seen = true break end end
     if not seen and j.kind == 'food' and not cargo.fit(plan, j) then seen = true end
     if not seen and S.job and not batchFits(j) then seen = true end
-    if not seen and (#fresh < 3 or (j.orderType == 'grocery' and not groceryIncluded)) then
+    if not seen and (#fresh < 3 or (j.orderType == 'grocery' and not groceryIncluded) or (j.route and not routeIncluded)) then
       fresh[#fresh + 1] = j
       if j.orderType == 'grocery' then groceryIncluded = true end
+      if j.route then routeIncluded = true end
     end
-    if #fresh >= 3 and (groceryIncluded or not plan or plan.maxFree < food.GROCERY_SLOTS) then break end
+    if #fresh >= 3 and (groceryIncluded or not plan or plan.maxFree < food.GROCERY_SLOTS)
+      and (routeIncluded or not anyRoute) then break end
   end
   if #fresh == 0 then ph.nextPingAt = S.clock + M.PHONE.retryS return end
   local j = fresh[math.random(#fresh)]
@@ -1041,6 +1087,7 @@ local function incomingInfo(inc)
     slots = j.kind == 'food' and cargo.size(j) or nil,
     pickupKm = r1(j.pickupKm), km = r1(j.km), pay = j.pay, minutes = j.minutes, adr = j.adr or false,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
+    route = j.route and parcel.state(j),
     fuelAllowance = j.fuelAllowance,
     trailer = j.trailer and ((j.haul and j.haul.trailerName) or (S.idx and S.idx.trailers[j.trailer]) or j.trailer) or nil,
     leftS = math.max(0, math.floor(inc.expiresAt - S.clock + 0.5)), totalS = M.PHONE.acceptS }
@@ -1371,7 +1418,7 @@ function M.phoneState()
     out.screen = 'active'
     out.active = { phase = S.phase, kind = j.kind or 'cargo', cargo = j.cargoName, items = j.items, from = place(j.from), to = place(j.to),
         orderType = j.orderType, handling = cargo.supports(j) and cargo.handling(j) or nil,
-      freight = j.haul, freightStatus = S.freightStatus,
+      freight = j.haul, freightStatus = S.freightStatus, route = j.route and parcel.state(j),
       canRestoreTrailer = j.trailer and not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested) or nil,
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
       slots = j.kind == 'food' and cargo.size(j) or nil,

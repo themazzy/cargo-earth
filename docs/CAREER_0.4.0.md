@@ -56,6 +56,17 @@ To keep work worth doing with fuel to pay for, courier pay per km rises from 14 
 
 **Career → Map** draws your last 200 drop-off points (courier and freight in different colours) with your home and headquarters, and lists personal records: longest delivery, best pay, best tip, best day, quickest delivery and longest streak of 5-star orders. A new record is named on the receipt.
 
+## Parcel routes
+
+Van and box-truck drivers are also offered parcel routes from the nearest depots: 4-7 stops (van) or 5-8 stops
+(box truck) at real addresses within 5 or 8 km, at least 150 m apart, visited nearest-first. The whole load goes into
+the vehicle's own BeamNG cargo containers at the depot, and each stop takes its share out of those containers. Pay is
+a base plus a sum per stop and per road kilometre, paid once at the last address; the phone lists the stops with what
+is still on board. Parcels that do not fit the vehicle stay at the depot.
+
+All cargo now rides in BeamNG's native containers. The courier starter car is fitted with the cheapest parcel box its
+slots accept; the invisible starter bag is only a fallback for a car that cannot take a box.
+
 ## Speed cameras
 
 Real speed cameras from OpenStreetMap, anywhere in the world. The helper asks the Overpass API for the cameras around you (one small request per 0.5° cell, kept for 30 days) and the limit that applies: the camera's own, its enforcement relation's, or the nearest road's. Limits in mph are converted.

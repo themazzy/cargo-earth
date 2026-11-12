@@ -170,6 +170,35 @@ function M.setInTree(tree, path, partName)
   return true
 end
 
+-- A courier's car carries food in BeamNG's own cargo containers. The starter comes with the cheapest parcel box its
+-- slots take: { path, part, name } or nil when this car fits none (then the invisible starter bag stands in).
+local function isParcelBox(name)
+  local n = name:lower()
+  return n:find('cargo', 1, true) and n:find('box', 1, true) and not n:find('aggregate', 1, true)
+    and not n:find('tank', 1, true) and not n:find('fluid', 1, true)
+end
+
+function M.planBox(G, v)
+  if type(v.slotPartMap) ~= 'table' then return nil end
+  for _, partName in pairs(v.slotPartMap) do
+    if type(partName) == 'string' and partName ~= '' and isParcelBox(partName) then return nil end   -- already fitted
+  end
+  local best
+  for path in pairs(v.slotPartMap) do
+    local def = vehicleSlot(G, v, path)
+    for _, name in ipairs(def and G.compatible(v.ioCtx, def) or {}) do
+      if isParcelBox(name) then
+        local i = info(G, v.ioCtx, name)
+        if i and (not best or i.value < best.value or (i.value == best.value and name < best.part)) then
+          best = { path = path, part = name, name = i.name, value = i.value }
+        end
+      end
+    end
+  end
+  return best
+end
+M.isParcelBox = isParcelBox
+
 ------------------------------------------------------------------------------------------ actions
 
 -- Quote the complete difference after BeamNG has resolved the slots and any dependent parts.
@@ -715,13 +744,18 @@ function M.prepareUsed(G, g, car, setup, rnd)
     setup.finish = planFinish(G, v, car.condition or 1)
     setup.wearVersion = WEAR_VERSION
   end
+  if setup.starter and setup.box == nil then setup.box = M.planBox(G, v) or false end
+  local box = setup.box
+  if box and v.slotPartMap[box.path] == box.part then car.box = box.name box = nil end
   local remaining = {}
   for _, part in ipairs(setup.missing) do
     local installed = v.slotPartMap[part.path]
     if installed and installed ~= '' and installed ~= 'none' then remaining[#remaining + 1] = part end
   end
   local finish = setup.finish or {}
-  if #remaining == 0 and finishApplied(v, finish) then return true end
+  -- a box the game would not fit twice is given up: the wear and paint still have to apply
+  if box and (setup.attempts or 0) >= 2 then setup.box, box = false, nil end
+  if #remaining == 0 and not box and finishApplied(v, finish) then return true end
   setup.attempts = (setup.attempts or 0) + 1
   if setup.attempts > 3 then return false, 'BeamNG could not apply the wear to this car.' end
   local config = G.captureConfig(v)
@@ -735,6 +769,8 @@ function M.prepareUsed(G, g, car, setup, rnd)
     return false, 'This car’s paint slot is unavailable.'
   end
   if finish.paints then config.paints = finish.paints end
+  -- (a box slot that has gone with a removed part is no reason to fail: the starter bag stands in)
+  if box and not M.setInTree(config.partsTree, box.path, box.part) then setup.box = false end
   M.expectFix(g)
   local ok, err = pcall(G.applyConfig, v, config)
   if not ok and log then log('W', 'cargoEarth', 'Could not apply used car parts: ' .. tostring(err)) end
