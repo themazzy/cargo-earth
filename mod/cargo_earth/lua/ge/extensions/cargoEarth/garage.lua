@@ -214,14 +214,29 @@ end
 M.isParcelBox = isParcelBox
 
 -- The path of the slot on the car `v` that takes the part `partName` (empty or not), or nil.
+-- The game's slot map lists only filled slots, so the parts tree (which has every slot, empty ones too) is walked as
+-- well: a slot matches when the game lists the part as suitable for it, or when its id is the part's slot type.
 function M.slotFor(G, v, partName)
-  if type(v.slotPartMap) ~= 'table' then return nil end
-  for path in pairs(v.slotPartMap) do
+  for path in pairs(type(v.slotPartMap) == 'table' and v.slotPartMap or {}) do
     local def = vehicleSlot(G, v, path)
     for _, name in ipairs(def and G.compatible(v.ioCtx, def) or {}) do
       if name == partName then return path end
     end
   end
+  local p = G.part and G.part(v.ioCtx, partName)
+  local slotType = type(p) == 'table' and p.slotType or nil
+  local function walk(node, path)
+    for id, child in pairs(type(node) == 'table' and type(node.children) == 'table' and node.children or {}) do
+      local here = path .. id .. '/'
+      for _, name in ipairs(type(child) == 'table' and type(child.suitablePartNames) == 'table' and child.suitablePartNames or {}) do
+        if name == partName then return here end
+      end
+      if slotType and id == slotType then return here end
+      local deeper = walk(child, here)
+      if deeper then return deeper end
+    end
+  end
+  return walk(v.tree, '/')
 end
 
 ------------------------------------------------------------------------------------------ actions

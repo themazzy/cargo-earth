@@ -8,7 +8,8 @@ to it), and once mod/cargo_earth/vehicles/common/cargo_earth_phone/cargo_earth_p
 The part ("Cargo Earth phone holder") goes in an empty slot of the car and adds no nodes: the phone mesh is a flexbody
 on the dashboard's own node group, and the click grid is COLS x ROWS of the car's cockpit triggers ("triggers2", the
 same kind as its hazard switch) over the screen, framed on three dashboard nodes. A trigger's frame: x toward idX, y
-toward idY, z = x cross y (read off the Pigeon's own dash switches). Each cell runs input action cargoEarthTap_<c>_<r>,
+toward idY, z = x cross y; only the box size is given in it. Box middles are jbeam coordinates
+(baseTranslationGlobal), which the game converts itself. Each cell runs input action cargoEarthTap_<c>_<r>,
 which asks the part's controller (lua/vehicle/controller/cargoEarthPhone.lua) to click that spot of the page.
 
 Positions are jbeam coordinates: the car faces -y, z is up, +x is the driver's left when looking forward.
@@ -32,7 +33,7 @@ CARS = {
         'x': ('dsh2l', (-0.012, -0.457, 0.87)),
         'y': ('dsh1', (-0.316, -0.457, 0.99)),
         # the middle of the screen: on the centre of the dash, standing on its top, a little toward the driver
-        'centre': (0.0, -0.43, 1.11),
+        'centre': (0.0, -0.43, 1.07),  # 1.11 sat too high (Jan, VR test 12 Nov)
         # the driver's eyes (the Pigeon's driver camera): the phone is turned about the vertical to face them
         'eyes': (-0.316, 0.1, 1.25),
     },
@@ -93,14 +94,17 @@ def part(model, car):
     # seen from the driver, the boxes then tile the screen.
     a = math.radians(yaw(car))
     size = {'x': round(cw * abs(math.cos(a)), 4), 'y': round(ch, 4), 'z': round(cw * abs(math.sin(a)) + DEPTH, 4)}
-    triggers = [['id', 'idRef:', 'idX:', 'idY:', 'type', 'size', 'baseRotation', 'rotation', 'translation', 'baseTranslation']]
+    triggers = [['id', 'idRef:', 'idX:', 'idY:', 'type', 'size', 'baseRotation', 'rotation', 'translation']]
     links = [['triggerId:triggers2', 'triggerInput', 'inputAction']]
     for row in range(1, ROWS + 1):
         for col in range(1, COLS + 1):
             tid = 'cep_%d_%d' % (col, row)
             triggers.append([tid, car['ref'][0], car['x'][0], car['y'][0], 'box', size,
                              {'x': 0, 'y': 0, 'z': 0}, {'x': 0, 'y': 0, 'z': 0}, {'x': 0, 'y': 0, 'z': 0},
-                             local(car, cell_centre(car, col, row)), {'color': [0.91, 0.27, 0.17, 0.6]}])
+                             # the box's middle in jbeam coordinates: the game turns it into the trigger's own frame
+                             # (lua/common/jbeam/sections/events.lua), so no guessing which way that frame's axes go
+                             {'baseTranslationGlobal': dict(zip('xyz', (round(c, 4) for c in cell_centre(car, col, row)))),
+                              'color': [0.91, 0.27, 0.17, 0.6]}])
             links.append([tid, 'action0', action(col, row)])
     name = 'cargo_earth_phone_' + model
     return {name: {
