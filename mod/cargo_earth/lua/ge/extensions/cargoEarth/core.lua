@@ -109,6 +109,7 @@ S.career.garage = garage.new()
 local carSeenAt = 0
 local conditionAt, usedAt, previewAt
 local fuelWatch, fuelToken, fuelPending, fuelNearAt = nil, 0, nil, 0
+local gamePump, pumpHookAt = nil, 0   -- a refuel started at one of the game's own pumps
 local forceWatch, forceToken = nil, 0
 local cams = cameras.index()
 local roadLimit = { at = -math.huge }
@@ -549,7 +550,7 @@ local function pauseCareer()
   local ph = S.phone
   ph.online, ph.incoming, ph.lastDone, ph.lastFailure, ph.cancelAskUntil = false, nil, nil, nil, nil
   S.window, S.inCareerWorld, S.stopT, S.dist, S.roadM, S.etaS = false, false, 0, nil, nil, nil
-  fuelWatch, fuelPending = nil, nil
+  fuelWatch, fuelPending, gamePump = nil, nil, nil
   if earth.status() == 'ok' then earth.gpsClear() end
   trailers.remove()
   marker.reset()
@@ -2113,14 +2114,31 @@ M.garageTick = garageTick
 M.FUEL_SILENT_S = 8        -- no report from the car for this long: ask it again
 M.FUEL_VERIFY_S = 6        -- a refill the game has not taken after this long is refunded
 M.FUEL_GIVE_UP = 5         -- putting a level back failed this often: this car's tank cannot be set
+M.PUMP_WAIT_S = 20         -- a game pump's refuel shows in the car's report within this long
 
 local function stopFuelWatch()
-  fuelWatch, fuelPending = nil, nil
+  fuelWatch, fuelPending, gamePump = nil, nil, nil
+end
+
+-- The game's own "Refuel" prompt at a pump (stock gas stations and BeamNG.Earth's): remembered, so the fuller tank
+-- in the next report is paid for at that station's price instead of being put back like a reset's free refill.
+function M.onGameRefuel(id, station, fuelTypes)
+  local g = S.career.garage
+  if not g.started or not g.car or not fuelWatch or (id and fuelWatch.id ~= id) then return end
+  local f = type(station) == 'table' and (type(station.facility) == 'table' and station.facility or station) or {}
+  local types = type(fuelTypes) == 'table' and fuelTypes or {}
+  gamePump = { id = fuelWatch.id, untilT = S.clock + M.PUMP_WAIT_S,
+    station = { id = tostring(f.id or station and station.id or 'pump'), n = type(f.name) == 'string' and f.name ~= '' and f.name or 'Gas station',
+      kind = types.electricEnergy and not types.gasoline and not types.diesel and 'electric' or 'fuel' } }
 end
 
 -- Keeps the vehicle-side reporter running on the career car the player sits in.
 function fuelTick(own)
   local G, g = M.G, S.career.garage
+  if G.hookPumps and S.clock >= pumpHookAt then
+    pumpHookAt = S.clock + 5
+    pcall(G.hookPumps, function(...) return M.onGameRefuel(...) end)
+  end
   if not own or not g.car or S.parts or g.preview or g.pendingUsed or not G.watchFuel then
     if fuelWatch then stopFuelWatch() end
     return
@@ -2178,6 +2196,10 @@ function M.onCargoEarthFuel(id, token, report)
         saveCareer()
       end
     end
+  end
+  if gamePump then
+    if gamePump.id ~= id or S.clock > gamePump.untilT then gamePump = nil
+    elseif M.payPump(car, report) then gamePump = nil end
   end
   local km = math.max(0, (car.km or 0) - (watch.km or car.km or 0))
   watch.km = car.km or 0
@@ -2269,6 +2291,27 @@ local function unitsText(units)
     if units[kind] then parts[#parts + 1] = string.format('%.1f %s', units[kind], fuel.UNIT[kind]) end
   end
   return table.concat(parts, ' + ')
+end
+
+-- A game pump filled the tank: books it and takes the money (a debt when the wallet is short, like fuel delivery).
+function M.payPump(car, report)
+  local c, g, st = S.career, S.career.garage, gamePump.station
+  local free = car.loaner == true
+  local quote = fuel.pumpQuote(car, report, fuel.stationFactor(st.id), free)
+  if not quote then return false end
+  local debt = false
+  if quote.cost > 0 then
+    if (c.money or 0) < quote.cost then
+      g.debt, debt = (g.debt or 0) + quote.cost, true
+    else
+      economy.post(c, -quote.cost, 'fuel', economy.nextId(c, 'fuel'), st.n)
+    end
+  end
+  fuel.apply(car, quote)
+  say(free and string.format('Filled %s at %s on the company fuel card.', unitsText(quote.units), st.n)
+    or string.format('Filled %s at %s for %d CZK%s.', unitsText(quote.units), st.n, quote.cost, debt and ' (added to your debt)' or ''), 8)
+  saveCareer()
+  return true
 end
 
 -- amount: units to buy, or nil for a full tank

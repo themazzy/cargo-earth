@@ -865,8 +865,8 @@ test('refill quotes respect the pump, the amount asked for and the money at hand
   assert(fuel.quote(car, fuel.sells('electric'), 1) == nil, 'a charger does not sell petrol')
   local some = fuel.quote(car, fuel.sells('fuel'), 1, 10)
   assert(some.units.gasoline == 10 and not some.full and some.levels.mainTank == 0.75)
-  local poor = fuel.quote(car, fuel.sells('fuel'), 1, nil, 190)
-  assert(poor.units.gasoline == 5 and poor.cost == 190 and not poor.full)
+  local poor = fuel.quote(car, fuel.sells('fuel'), 1, nil, 5 * fuel.PRICE.gasoline)
+  assert(poor.units.gasoline == 5 and poor.cost == 5 * fuel.PRICE.gasoline and not poor.full)
   assert(fuel.quote(car, fuel.sells('fuel'), 1, nil, 0) == nil)
   assert(fuel.quote(car, fuel.sells('fuel'), 1, nil, nil, true).cost == 0, 'a company card pays nothing')
   fuel.apply(car, full)
@@ -962,6 +962,60 @@ test('a tank refilled by a game reset is put back and costs nothing', function()
   tank.ratio = 1
   fuelReport(core)
   assert(tank.ratio == 0.4 and fuelSets == 1 and s.career.money == 1000)
+end)
+
+test('a fill at one of the game\'s own pumps is kept and paid at that station\'s price', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  advance(core, 2)
+  fuelReport(core)
+  local money = s.career.money
+  core.onGameRefuel(vehicle.id, {type = 'gasStation', facility = {id = 'bne_fuel_1', name = 'Earth Pump'}}, {gasoline = true})
+  tank.ratio = 1
+  fuelReport(core)
+  local cost = math.ceil(20 * fuel.price('gasoline', fuel.stationFactor('bne_fuel_1')) - 1e-6)
+  assert(tank.ratio == 1 and fuelSets == 0, 'the game level stays')
+  assert(s.career.garage.car.fuel.tanks.mainTank.ratio == 1 and s.career.money == money - cost)
+  local h = s.career.accounts.history[1]
+  assert(h.category == 'fuel' and h.amount == -cost and h.detail == 'Earth Pump')
+  -- the pump is used once: a later jump (a reset) is put back for free again
+  tank.ratio = 0.6
+  fuelReport(core)
+  tank.ratio = 1
+  fuelReport(core)
+  assert(tank.ratio == 0.6 and s.career.money == money - cost)
+end)
+
+test('a game pump fill without the money goes on the debt; an old pump press expires', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  advance(core, 2)
+  fuelReport(core)
+  s.career.money, s.career.garage.debt = 10, 0
+  core.onGameRefuel(vehicle.id, {facility = {id = 'p', name = 'Pump'}}, {any = true})
+  tank.ratio = 0.75
+  fuelReport(core)
+  assert(tank.ratio == 0.75 and s.career.money == 10 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.stationFactor('p')) - 1e-6))
+  core.onGameRefuel(vehicle.id, {facility = {id = 'p'}}, {any = true})
+  advance(core, (core.PUMP_WAIT_S + 5) * 2)
+  fuelReport(core)
+  tank.ratio = 1
+  fuelReport(core)
+  assert(tank.ratio == 0.75, 'a refill long after the pump press is a reset')
+end)
+
+test('the game pump hook wraps refuelCar once and still refuels', function()
+  local gamecar = require('cargoEarth/gamecar')
+  local calls, heard = 0, nil
+  local gs = {refuelCar = function() calls = calls + 1 end}
+  local had = rawget(_G, 'freeroam_gasStations')
+  rawset(_G, 'freeroam_gasStations', gs)
+  assert(gamecar.hookPumps(function(id, st) heard = {id, st} end))
+  local wrapped = gs.refuelCar
+  assert(gamecar.hookPumps(function() end) and gs.refuelCar == wrapped, 'never wrapped twice')
+  gs.refuelCar({facility = {}}, {}, {getID = function() return 7 end})
+  assert(calls == 1 and heard[1] == 7)
+  rawset(_G, 'freeroam_gasStations', had)
 end)
 
 test('refuelling away from a station is refused; delivery works anywhere and can go on debt', function()
@@ -1452,7 +1506,7 @@ test('upkeep: wear by km, service at a price, overdue service makes breakdowns l
   st = upkeep.state(car)
   assert(st.items[1].due and st.items[2].soon == false and st.due >= 1)
   assert(upkeep.chance(car, 100) > 0 and upkeep.chance(car, 100000) == upkeep.MAX_CHANCE)
-  assert(upkeep.cost({model = 'us_semi'}, 'oil') == math.floor(120 * 3.2 / 5 + 0.5) * 5, 'a tractor costs more')
+  assert(upkeep.cost({model = 'us_semi'}, 'oil') == math.floor(upkeep.byId.oil.cost * 3.2 / 5 + 0.5) * 5, 'a tractor costs more')
   local c = {money = 50}
   local ok, why = upkeep.service(c, car, nil, 1)
   assert(not ok and why:find('Not enough'))
