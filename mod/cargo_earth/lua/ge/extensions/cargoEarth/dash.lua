@@ -253,6 +253,9 @@ local font, fontRead = nil, false
 local hidden = true
 local partCars = {} -- cars with the phone part: their own phone shows instead
 function M.partCar(id) if id then partCars[id] = true end end
+-- the car is being respawned (maybe without the part) or removed: its new controller registers again if the part is there
+function M.dropCar(id) if id then partCars[id] = nil end end
+function M.isPartCar(id) return partCars[id] == true end
 local shownButtons = {} -- the buttons on the current picture
 
 function M.prefs()

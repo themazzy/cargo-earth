@@ -3189,6 +3189,7 @@ function M.onBeamNGEarthTeleported(info)
 end
 
 function M.onBeforeVehicleReplaced(id)
+  dash.dropCar(id)
   if S.storage and S.storage.id == id then releaseStorage() end
   if forceWatch and forceWatch.id == id then stopForceWatch() end
   if not M.G.spawning and M.G.ownsVehicleId and M.G.ownsVehicleId(id) then
@@ -3196,6 +3197,8 @@ function M.onBeforeVehicleReplaced(id)
     M.G.clearOwnership()
   end
 end
+
+function M.onVehicleDestroyed(id) dash.dropCar(id) end
 
 function M.onVehicleSpawned(id)
   if fuelWatch and fuelWatch.id == id then stopFuelWatch() end
