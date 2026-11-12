@@ -1905,18 +1905,22 @@ M.RADIO_NEAR_S = 120       -- the "near you" list follows the car this often
 M.RADIO_ALIVE_S = 5       -- while the helper plays the radio, the game says so this often (it stops without)
 local radio = { cc = nil, state = nil, data = nil, askedAt = -math.huge, asking = false, aliveAt = -math.huge }
 
--- The helper's own player: { playing, url, vol, secs, error, player } as it last said, or nil.
-local function onPlayer(data, err)
-  if data then radio.player = data
-  elseif radio.player then radio.player = { playing = false, error = err == 'HTTP 404' and 'old' or 'helper' } end
-  if radio.player and not radio.player.playing then radio.helperOn = false end
+-- The helper's own player: { playing, url, vol, secs, error, player } as it last said, or nil. Each play starts a
+-- new session (radio.gen): an answer to a request of an older one, still in flight, is ignored.
+local function onPlayer(gen)
+  return function(data, err)
+    if gen ~= radio.gen then return end
+    if data then radio.player = data
+    elseif radio.player then radio.player = { playing = false, error = err == 'HTTP 404' and 'old' or 'helper' } end
+    if radio.player then radio.helperOn = radio.player.playing == true end
+  end
 end
 
 -- From the helper tick: the heartbeat that keeps the helper's player going.
 radioAlive = function()
   if radio.helperOn and S.clock >= radio.aliveAt + M.RADIO_ALIVE_S then
     radio.aliveAt = S.clock
-    helper.ask('/v1/player/alive', onPlayer)
+    helper.ask('/v1/player/alive', onPlayer(radio.gen))
   end
 end
 
@@ -1982,12 +1986,14 @@ function M.radioDo(name, a, b)
   elseif name == 'helperPlay' and type(a) == 'string' and a:match('^[%x%-]+$') and #a == 36 then
     -- the game's UI cannot play the stream: the helper plays this station on the computer
     local vol = math.max(0, math.min(1, tonumber(b) or 0.6))
+    radio.gen = (radio.gen or 0) + 1
     radio.helperOn, radio.aliveAt = true, S.clock
     radio.player = { playing = true, secs = 0 }
-    helper.ask(string.format('/v1/player/play?id=%s&vol=%.2f', a, vol), onPlayer)
+    helper.ask(string.format('/v1/player/play?id=%s&vol=%.2f', a, vol), onPlayer(radio.gen))
   elseif name == 'helperVolume' and radio.helperOn then
-    helper.ask(string.format('/v1/player/volume?vol=%.2f', math.max(0, math.min(1, tonumber(a) or 0.6))), onPlayer)
+    helper.ask(string.format('/v1/player/volume?vol=%.2f', math.max(0, math.min(1, tonumber(a) or 0.6))), onPlayer(radio.gen))
   elseif name == 'helperStop' then
+    radio.gen = (radio.gen or 0) + 1
     radio.helperOn, radio.player = false, nil
     helper.ask('/v1/player/stop', nil)
   end
