@@ -2935,6 +2935,7 @@ end
 function M.onPreRender(dtReal)
   dash.tick(dtReal)
 end
+function M.dashResend() dash.resend() end
 
 function M.onUpdate(dtReal, dtSim)
   if S.pendingCareer then

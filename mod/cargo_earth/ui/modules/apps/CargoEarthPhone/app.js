@@ -1347,6 +1347,7 @@ angular.module('beamng.apps')
       scope.$on('CargoEarthDash', function (e, d) { lastDash = d; scope.dashUpdate(d) })
       var dashWatch = setInterval(function () { if (lastDash && lastDash.on) scope.dashUpdate(lastDash) }, 300)
       scope.$on('$destroy', function () { clearInterval(dashWatch) })
+      bngApi.engineLua('cargoEarth_core and cargoEarth_core.dashResend and cargoEarth_core.dashResend()', function () {})
       scope.$on('$destroy', function () { if (holder && holder.parentNode) holder.parentNode.removeChild(holder) })
       scope.sdo = function (name, a, b) {
         var args = [name]

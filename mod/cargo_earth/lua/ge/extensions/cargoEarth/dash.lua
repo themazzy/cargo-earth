@@ -202,6 +202,12 @@ function M.tick(dt)
   end
 end
 
+-- a phone app that just mounted asks for the current place, which is otherwise sent only when it moves
+function M.resend()
+  last = nil
+  acc = 1
+end
+
 -- for the phone's Settings
 function M.state()
   local p = M.prefs()
