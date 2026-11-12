@@ -334,6 +334,16 @@ function M.tick(dt, phoneState, money)
   end
 end
 
+-- the mod is unloading: take the billboard and its scene object away, or a frozen phone would stay in the car
+function M.remove()
+  local r, id = renderer, rid
+  renderer, rid, sig, hidden = nil, nil, nil, true
+  if not r then r = scenetree and scenetree[M.RENDERER] end
+  if not r then return end
+  if id then pcall(function() r:destroy(id) end) end
+  pcall(function() r:delete() end)
+end
+
 -- the level is going away and takes the renderer with it
 function M.forget()
   renderer, rid, sig, hidden = nil, nil, nil, true

@@ -3121,6 +3121,7 @@ function M.onClientEndMission()
 end
 
 function M.onExtensionUnloaded()
+  dash.remove()
   releaseStorage()
   clearFreight()
   stopForceWatch()
