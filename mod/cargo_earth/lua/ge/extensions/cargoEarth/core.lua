@@ -38,6 +38,7 @@ local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
 local borders = require('cargoEarth/borders')
 local currency = require('cargoEarth/currency')
+local dash = require('cargoEarth/dash')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
 local SAVE = '/settings/cargoEarth/career.json'
@@ -2791,6 +2792,7 @@ function M.settingsState()
     local v = math.max(min, math.min(max, opts[key] or default))
     out.items[#out.items + 1] = { key = key, label = d[2], step = step, min = min, max = max, unit = d[6], value = v }
   end
+  out.dash = dash.state()
   out.cameras = { on = not S.career.camerasOff, known = #cams.list,
     helper = cams.state or (helper.status().cameras == 'off' and 'off' or nil) }
   if S.mode == 'courier' then
@@ -2800,8 +2802,11 @@ function M.settingsState()
   return out
 end
 
--- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window
+-- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
+-- dash (a = on | rate | reset | x | y | z | size, b = +1 | -1)
 function M.settingsDo(name, a, b)
+  -- the dash phone is a screen preference, not part of the career: it works on the resume screen too
+  if name == 'dash' then dash.act(a, b) return M.settingsState() end
   if S.pendingCareer then return M.settingsState() end
   if S.parts then return M.settingsState() end
   if name == 'pause' then
@@ -2924,6 +2929,11 @@ function M.onExtensionLoaded()
   if recovery then S.saveError = recovery end
   if not saved and recovery then S.pendingCareer, S.resumeError, S.loadBlocked = {}, recovery, recovery end
   if S.loadError then log('E', 'cargoEarth', S.loadError) end
+end
+
+-- the dash phone follows the camera, so it is placed right before each frame is drawn
+function M.onPreRender(dtReal)
+  dash.tick(dtReal)
 end
 
 function M.onUpdate(dtReal, dtSim)

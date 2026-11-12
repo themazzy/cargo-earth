@@ -4,6 +4,7 @@
 // Tabs: Work (deliveries / companies), Garage, Home, Career (progress / money / map / firm) and Settings. The firm's
 // headquarters is a full-screen plan of the building (office, workshop, parts storage, yard, tank) opened from Career / Firm. Everything is
 // clicked here: the mod has no key bindings. The "–" button folds the phone to a small bar; a ringing order opens it.
+// In a cockpit camera the phone moves onto the centre of the dashboard (cargoEarth/dash.lua sends where; see dashUpdate).
 angular.module('beamng.apps')
 .directive('cargoEarthPhone', [function () {
   var STATE = 'cargoEarth_core and cargoEarth_core.phoneState() or nil'
@@ -128,6 +129,16 @@ angular.module('beamng.apps')
     '.cep-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}' +
     '.cep-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}'
 
+  // On the dash the holder leaves the app's box: a phone-sized layer on the page, bent onto the dash with one matrix.
+  var DASH_W = 290, DASH_H = 560
+  var DASH_CSS =
+    '.cep-holder{width:100%;height:100%}' +
+    '.cep-holder.cep-dash{position:fixed;left:0;top:0;width:' + DASH_W + 'px;height:' + DASH_H + 'px;z-index:40;' +
+    'transform-origin:0 0;pointer-events:auto;backface-visibility:hidden}' +
+    '.cep-dash .cep{box-shadow:0 0 0 2px #2b2926}.cep-dash .cep-pill{box-shadow:none}' +
+    '.cep-nudge{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}' +
+    '.cep-nudge .cep-sm{padding:7px 4px}'
+
   var HQ_CSS =
     '.cehq{position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:99999;display:flex;align-items:center;justify-content:center;' +
     'background:rgba(10,14,18,.72);font-family:"Segoe UI",Roboto,system-ui,sans-serif;color:#e8eef2;pointer-events:auto}' +
@@ -221,11 +232,50 @@ angular.module('beamng.apps')
     return (neg ? '−' : '') + m + ':' + (r < 10 ? '0' : '') + r
   }
   function mins(s) { return s < 60 ? 'under 1 min' : Math.ceil(s / 60) + ' min' }
+
+  // The CSS matrix that bends a DASH_W x DASH_H box onto four screen points. c = [u1, v1, ... u4, v4] from the game
+  // (top left, top right, bottom right, bottom left; half screen heights from the centre, v up), W x H = the page.
+  function dashMatrix(c, W, H) {
+    if (!c || c.length !== 8) return null
+    var p = []
+    for (var i = 0; i < 4; i++) p.push([W / 2 + c[2 * i] * H / 2, H / 2 - c[2 * i + 1] * H / 2])
+    function adj(m) {
+      return [m[4] * m[8] - m[5] * m[7], m[2] * m[7] - m[1] * m[8], m[1] * m[5] - m[2] * m[4],
+        m[5] * m[6] - m[3] * m[8], m[0] * m[8] - m[2] * m[6], m[2] * m[3] - m[0] * m[5],
+        m[3] * m[7] - m[4] * m[6], m[1] * m[6] - m[0] * m[7], m[0] * m[4] - m[1] * m[3]]
+    }
+    function mm(a, b) {
+      var r = []
+      for (var i = 0; i < 3; i++) for (var j = 0; j < 3; j++) {
+        var sum = 0
+        for (var k = 0; k < 3; k++) sum += a[3 * i + k] * b[3 * k + j]
+        r.push(sum)
+      }
+      return r
+    }
+    function mv(m, x) { return [m[0] * x[0] + m[1] * x[1] + m[2] * x[2], m[3] * x[0] + m[4] * x[1] + m[5] * x[2], m[6] * x[0] + m[7] * x[1] + m[8] * x[2]] }
+    // maps (1,0,0), (0,1,0), (0,0,1) to the first three points and (1,1,1) to the fourth
+    function basis(a, b, d, e) {
+      var m = [a[0], b[0], d[0], a[1], b[1], d[1], 1, 1, 1]
+      var w = mv(adj(m), [e[0], e[1], 1])
+      return mm(m, [w[0], 0, 0, 0, w[1], 0, 0, 0, w[2]])
+    }
+    // box corners in the same order: top left, top right, bottom left, then bottom right
+    var src = basis([0, 0], [DASH_W, 0], [0, DASH_H], [DASH_W, DASH_H])
+    var dst = basis(p[0], p[1], p[3], p[2])
+    var t = mm(dst, adj(src))
+    if (!t[8] || !isFinite(t[8])) return null
+    for (var n = 0; n < 9; n++) t[n] = t[n] / t[8]
+    var out = [t[0], t[3], 0, t[6], t[1], t[4], 0, t[7], 0, 0, 1, 0, t[2], t[5], 0, t[8]]
+    for (var o = 0; o < 16; o++) if (!isFinite(out[o])) return null
+    return out
+  }
   function km(v) { return v === null || v === undefined ? '–' : String(v).replace('.', ',') + ' km' }
 
   return {
+    dashMatrix: dashMatrix,
     template:
-      '<div style="width:100%;height:100%"><style>' + CSS + HQ_CSS + '</style>' +
+      '<div style="width:100%;height:100%"><style>' + CSS + DASH_CSS + HQ_CSS + '</style>' +
       '<div class="cehq" ng-show="hqOpen" role="dialog" aria-label="Headquarters">' +
       '<div class="cehq-panel" ng-if="hqOpen">' +
         '<div class="cehq-head">' +
@@ -333,6 +383,7 @@ angular.module('beamng.apps')
         '<div class="cehq-foot" ng-if="hq.hq && !hq.hq.here && hq.place && hq.parked">' +
           '<button class="cehq-btn ghost" ng-disabled="hq.busy || hq.company" ng-click="moveHq()">{{ moveAsk ? "Press again to move · " + fmt.money(hq.moveFee) : "Move the headquarters to " + hq.place.name }}</button></div>' +
       '</div></div>' +
+      '<div class="cep-holder">' +
       '<div class="cep-pill" ng-if="min" ng-click="fold(false)"><span>Cargo<b>Earth</b></span>' +
         '<span><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}">{{ s.limit.sign }}</span>' +
         '{{ s.online ? "● online" : "" }} {{ fmt.money(s.money) }} ▴</span></div>' +
@@ -928,6 +979,27 @@ angular.module('beamng.apps')
             '(st.cameras.helper === "loading" ? "Loading cameras around you…" : ' +
             '(st.cameras.helper === "failed" ? "Could not load cameras; trying again" : st.cameras.known + " real cameras around you (OpenStreetMap)"))) }}</small></div>' +
           '<b>{{ st.cameras.on ? "On" : "Off" }}</b></div>' +
+        '<div class="cep-label" ng-if="st.dash">Cockpit view</div>' +
+        '<div class="cep-li" ng-if="st.dash" ng-click="sdo(\'dash\', \'on\')">' +
+          '<div><div class="cep-name">Phone on the dashboard</div><small>{{ st.dash.vr ? "In VR the phone stays on the floating panel" : ' +
+            '(st.dash.on ? "In the cockpit the phone sits on the centre of the dash" : "The phone stays in its corner") }}</small></div>' +
+          '<b>{{ st.dash.on ? "On" : "Off" }}</b></div>' +
+        '<div class="cep-card" ng-if="st.dash.on && !st.dash.vr">' +
+          '<div class="cep-sub" ng-if="!st.dash.cockpit">Switch to the driver camera to see it move. Each car model keeps its own place.</div>' +
+          '<div class="cep-sub" ng-if="st.dash.cockpit">Place it for this car{{ st.dash.moved ? " (moved)" : "" }}:</div>' +
+          '<div class="cep-nudge" ng-if="st.dash.cockpit">' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z\', 1)">Up</button>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'y\', -1)">Closer</button>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'size\', 1)">Bigger</button>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x\', -1)">Left</button>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x\', 1)">Right</button>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'size\', -1)">Smaller</button>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z\', -1)">Down</button>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'y\', 1)">Further</button>' +
+            '<button class="cep-sm ghost" ng-disabled="!st.dash.moved" ng-click="sdo(\'dash\', \'reset\')">Reset</button></div>' +
+          '<div class="cep-li" ng-click="sdo(\'dash\', \'rate\')" style="margin-top:8px">' +
+            '<div><div class="cep-name">Follows the car</div><small>Fewer times a second is lighter on the computer</small></div>' +
+            '<b>{{ st.dash.rate }}× a second</b></div></div>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'reset\')">Back to the defaults</button>' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'window\')">{{ st.window ? "Close" : "Open" }} the debug window</button>' +
@@ -968,7 +1040,7 @@ angular.module('beamng.apps')
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V13h4v8M10 21V8h4v13M15 21V3h4v18"/></svg>Career</button>' +
         '<button ng-class="{on: tab === \'settings\'}" ng-attr-aria-current="{{ tab === \'settings\' ? \'page\' : undefined }}" ng-click="setTab(\'settings\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="var(--card)"/><circle cx="15" cy="12" r="2" fill="var(--card)"/><circle cx="9" cy="18" r="2" fill="var(--card)"/></svg>Settings</button></nav>' +
-      '</div></div></div>',
+      '</div></div></div></div>',
     replace: true,
     link: function (scope, element) {
       'use strict'
@@ -1245,6 +1317,32 @@ angular.module('beamng.apps')
         document.body.appendChild(overlay)
         scope.$on('$destroy', function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay) })
       }
+      // Cockpit view: the game sends where the dash phone's corners are (cargoEarth/dash.lua, about 30 times a second).
+      // The phone and its folded bar move out of the app's box onto the page and are bent onto those points. Hidden
+      // app (menus, photo mode), another camera or VR: back into the box.
+      var holder = element && element[0] && element[0].querySelector && element[0].querySelector('.cep-holder')
+      var holderHome = holder && holder.parentNode, onDash = false
+      function leaveDash() {
+        if (!onDash) return
+        onDash = false
+        holder.className = 'cep-holder'
+        holder.style.transform = ''
+        holderHome.appendChild(holder)
+      }
+      scope.dashUpdate = function (d) {
+        if (!holder || typeof document === 'undefined' || !document.body) return
+        var shown = d && d.on && element[0].offsetParent !== null
+        var m = shown && dashMatrix(d.c, window.innerWidth, window.innerHeight)
+        if (!m) { leaveDash(); return }
+        if (!onDash) {
+          onDash = true
+          holder.className = 'cep-holder cep-dash'
+          document.body.appendChild(holder)
+        }
+        holder.style.transform = 'matrix3d(' + m.join(',') + ')'
+      }
+      scope.$on('CargoEarthDash', function (e, d) { scope.dashUpdate(d) })
+      scope.$on('$destroy', function () { if (holder && holder.parentNode) holder.parentNode.removeChild(holder) })
       scope.sdo = function (name, a, b) {
         var args = [name]
         if (a !== undefined) args.push(a)

@@ -121,3 +121,19 @@ assert.equal(commands.length, stopped)
 pending.shift()({rank: 'late response'})
 assert.notEqual(scope.career && scope.career.rank, 'late response')
 console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded polling, backpressure and teardown verified')
+// The dash phone matrix puts the phone's four corners exactly on the points the game projected.
+{
+  const c = [0.8166, -0.1234, 1.1807, -0.1351, 1.1948, -0.8142, 0.8049, -0.739]
+  const W = 1920, H = 1080
+  const m = directive.dashMatrix(c, W, H)
+  assert(m && m.length === 16)
+  const corners = [[0, 0], [290, 0], [290, 560], [0, 560]]
+  corners.forEach(([x, y], i) => {
+    const X = m[0] * x + m[4] * y + m[12], Y = m[1] * x + m[5] * y + m[13], Wt = m[3] * x + m[7] * y + m[15]
+    assert(Wt > 0)
+    assert(Math.abs(X / Wt - (W / 2 + c[2 * i] * H / 2)) < 1e-6, 'x of corner ' + i)
+    assert(Math.abs(Y / Wt - (H / 2 - c[2 * i + 1] * H / 2)) < 1e-6, 'y of corner ' + i)
+  })
+  assert.equal(directive.dashMatrix([1, 2], W, H), null)
+  console.log('Dash phone: the phone lands on the projected corners')
+}

@@ -22,6 +22,7 @@ console.log('Lua syntax: all career modules compile')
 run(`package.path = '${extensions}/?.lua;' .. package.path`, 'test-path')
 run(fs.readFileSync('tests/helper.lua', 'utf8'), 'tests/helper.lua')
 run(fs.readFileSync('tests/career.lua', 'utf8'), 'tests/career.lua')
+run(fs.readFileSync('tests/dash.lua', 'utf8'), 'tests/dash.lua')
 // Exercise the actual supplied freight pack as well as the small rule fixtures.
 function toLua(value) {
   if (value === null) return 'nil'
