@@ -110,6 +110,15 @@ end
 
 local car = nil -- { id, vdata, abids = { [slot] = abid }, key }
 
+-- one log line per reason, so a test drive leaves a trail in beamng.log without flooding it
+local said = {}
+local function note(key, msg)
+  if said[key] then return end
+  said[key] = true
+  if log then log('I', 'cargoEarth', 'dash buttons: ' .. msg) end
+end
+M.note = note
+
 local function xyz(a) return v(a.x, a.y, a.z) end
 
 local function vdataOf(id)
@@ -166,18 +175,18 @@ end
 function M.sync(veh, centre, height, buttons, W, H)
   local id = veh:getId()
   local vdata = vdataOf(id)
-  if not vdata then return end
+  if not vdata then note('novdata', 'no vehicle data for car ' .. tostring(id)) return end
   if car and (car.id ~= id or car.vdata ~= vdata) then
     if car.id ~= id then inert(car) end
     car = nil
   end
   local nodes = refNodes(vdata)
-  if not nodes or not vdata.nodes then return end
+  if not nodes or not vdata.nodes then note('nonodes', 'the car has no reference nodes') return end
   if not car then
     car = { id = id, vdata = vdata, abids = {} }
     for slot = 1, 2 do
       local abid = veh:addTrigger()
-      if not abid or abid < 0 then car = nil return end
+      if not abid or abid < 0 then note('noadd', 'addTrigger failed: ' .. tostring(abid)) car = nil return end
       car.abids[slot] = abid
       vdata.triggers = vdata.triggers or {}
       vdata.triggers[abid] = { cid = abid, id = actionName(slot), name = 'Cargo Earth', label = '', type = 'box' }
@@ -191,7 +200,7 @@ function M.sync(veh, centre, height, buttons, W, H)
   local function jpos(cid) local p = vdata.nodes[cid] and vdata.nodes[cid].pos return p and xyz(p) end
   local jr, jl, jbk = jpos(nodes.ref), jpos(nodes.left), jpos(nodes.back)
   local jb = jr and jl and jbk and M.frame(jr, jl, jbk)
-  if not live or not jb then return end
+  if not live or not jb then note('noframe', 'could not build the car frame') return end
   local cj = M.toJbeam(centre, live, jb)
   local localKey = string.format('%.2f|%.2f|%.2f|%.3f|%s', cj.x, cj.y, cj.z, height, table.concat(labels, '|'))
   if car.key == localKey then return end
@@ -209,6 +218,13 @@ function M.sync(veh, centre, height, buttons, W, H)
       shape(abo, nodes, M.toJbeam(s.pos, live, jb), on and s.w or 0.001, on and s.h or 0.001)
       local b = #buttons == 1 and buttons[1] or buttons[slot]
       link(vdata, slot, abid, on, b and b.label)
+      local ok, c = pcall(function() return abo:getCenter() end)
+      local off = ok and c and math.sqrt((c.x - s.pos.x) ^ 2 + (c.y - s.pos.y) ^ 2 + (c.z - s.pos.z) ^ 2) or -1
+      note('placed' .. slot .. localKey, string.format('slot %d = trigger %s on car %s, %s, wanted (%.2f %.2f %.2f), box centre %s, %.2f m off',
+        slot, tostring(abid), tostring(id), b and b.label or 'off', s.pos.x, s.pos.y, s.pos.z,
+        ok and c and string.format('(%.2f %.2f %.2f)', c.x, c.y, c.z) or 'unknown', off))
+    else
+      note('noget' .. slot, 'getTrigger returned nothing for ' .. tostring(abid))
     end
   end
 end

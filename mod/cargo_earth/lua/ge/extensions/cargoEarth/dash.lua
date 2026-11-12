@@ -16,7 +16,7 @@ local M = {}
 M.FILE = '/settings/cargoEarth/dash.json'
 M.HEIGHT = 0.16      -- metres, at size 1
 M.FORWARD = 0.55     -- metres ahead of the driver's eyes
-M.DROP = -0.14       -- metres below the eyes
+M.DROP = -0.24       -- metres below the eyes (the centre of the screen; -0.14 sat too high in the Pigeon)
 M.CENTRE = 0.85      -- share of the way from the driver's seat to the middle of the car
 M.SHOWS = { 'vr', 'always', 'off' }
 M.LIMITS = { x = { -0.6, 0.6, 0.03 }, y = { -0.4, 0.4, 0.03 }, z = { -0.4, 0.4, 0.03 }, size = { 0.5, 2, 0.1 } }

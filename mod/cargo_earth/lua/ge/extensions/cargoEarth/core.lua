@@ -3015,6 +3015,7 @@ end
 -- phone still offers it (the picture can be up to a second old)
 function M.dashTap(slot)
   local a = dashtap.pressed(dash.shownButtons(), dashtap.buttons(M.phoneState()), tonumber(slot) or 0)
+  log('I', 'cargoEarth', 'dash buttons: pressed slot ' .. tostring(slot) .. ' -> ' .. tostring(a))
   if a then M.phoneAction(a) end
 end
 
