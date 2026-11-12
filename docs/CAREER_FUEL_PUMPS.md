@@ -1,6 +1,6 @@
 # Cheaper running costs and the game's own pumps
 
-Not yet in a release (merged into `dev` for testing).
+Released in 0.8.6.
 
 ## Lower fuel and service prices
 
