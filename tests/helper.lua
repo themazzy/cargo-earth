@@ -139,6 +139,23 @@ test('a newer radio command replaces queued ones, so the last press wins in orde
   assert(#requests == 2 and requests[1] == '/v1/player/stop' and requests[2] == '/v1/radio?cc=CZ', table.concat(requests, ' '))
 end)
 
+test('radio presses go through their own lane in one frame, even while an area download is open', function()
+  tick(0)                                          -- the slow lane opens a request and keeps it
+  local slow = #requests
+  local got
+  client.command('/v1/player/play?id=a', function() got = 'a' end, '/v1/player/')
+  client.command('/v1/player/play?id=b', function(data) got = data end, '/v1/player/')
+  assert(client.commanding())
+  client.pump(0.01)
+  assert(requests[#requests] == '/v1/player/play?id=b' and #requests == slow + 1, table.concat(requests, ' '))
+  assert(type(got) == 'table' and not client.commanding(), 'answered within the same frame')
+  local why
+  client.command('/v1/player/stop', function(data, err) why = err end)
+  client.configure({helper = false})
+  client.pump(0.02)
+  assert(why == 'helper turned off' and not client.commanding())
+end)
+
 client._reset()
 socket = nil
 package.loaded['cargoEarth/helper'] = nil
