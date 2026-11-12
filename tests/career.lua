@@ -1267,6 +1267,14 @@ test('speed limit from the road graph: bends do not lower it, a change ahead is 
   assert(kmh == 48 and sign == 30 and unit == 'mph')
   assert(select(3, speedlimit.at(straightRoad(function() return 22.22 end), 'n0', 'n1')) == 'km/h', '80 km/h stays km/h')
   assert(speedlimit.at(straightRoad(function() return 0 end), 'n0', 'n1') == nil)
+  -- with the country known: Earth's 35 mph fallback in Czechia is no sign; in the US it is
+  local kmhCz, signCz, unitCz, sureCz = speedlimit.at(straightRoad(function() return 15.65 end), 'n0', 'n1', speedlimit.unitsFor('CZ'))
+  assert(kmhCz == 56 and signCz == nil and unitCz == 'km/h' and sureCz == false)
+  local _, signUs, unitUs = speedlimit.at(straightRoad(function() return 15.65 end), 'n0', 'n1', speedlimit.unitsFor('US'))
+  assert(signUs == 35 and unitUs == 'mph')
+  assert(select(2, speedlimit.at(straightRoad(function() return 13.89 end), 'n0', 'n1', 'km/h')) == 50)
+  assert(select(3, speedlimit.at(straightRoad(function() return 26.82 end), 'n0', 'n1', 'mph')) == 'mph', '60 mph in the UK')
+  assert(speedlimit.unitsFor('gb') == 'mph' and speedlimit.unitsFor('DE') == 'km/h' and speedlimit.unitsFor(nil) == nil)
   assert(speedlimit.at({}, 'n0', 'n1') == nil and speedlimit.at(nil, 'a', 'b') == nil)
 end)
 

@@ -1571,8 +1571,9 @@ local function limitHere(p)
   roadLimit.at = S.clock
   local graph, a, b, d = M.G.road(p.x, p.y, p.z)
   local kmh, sign, unit
-  if graph and d <= M.ROAD_M then kmh, sign, unit = speedlimit.at(graph, a, b) end
-  roadLimit.value = kmh and { kmh = kmh, sign = sign, unit = unit } or nil
+  if graph and d <= M.ROAD_M then kmh, sign, unit = speedlimit.at(graph, a, b, speedlimit.unitsFor(S.career.country)) end
+  -- no sign where the road's speed is no posted limit in the country's unit (Earth's fallback where it knows none)
+  roadLimit.value = kmh and sign and { kmh = kmh, sign = sign, unit = unit } or nil
   return roadLimit.value
 end
 
@@ -1861,7 +1862,7 @@ local function learnCameraLimits(p)
       -- Only a posted limit fines anyone: a road farther than ROAD_M (the graph does not reach the camera yet) or a
       -- bend speed not yet resolved by the road around it keeps the default and is asked again later.
       if graph and d <= M.ROAD_M then
-        local kmh, _, _, sure = speedlimit.at(graph, a, b)
+        local kmh, _, _, sure = speedlimit.at(graph, a, b, speedlimit.unitsFor(S.career.country))
         if kmh == nil or sure then cameras.learn(cam, kmh) end
       end
     end
