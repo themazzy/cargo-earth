@@ -184,7 +184,7 @@ function M.spawnTow(kind, cars)
     end
   end
   if be and be.enterVehicle and veh then pcall(be.enterVehicle, be, 0, veh) end
-  if #towed == 0 then M.remove() return false, 'the broken-down car could not be spawned' end
+  if #towed < n then M.remove() return false, 'a broken-down car could not be spawned' end
   return true
 end
 
