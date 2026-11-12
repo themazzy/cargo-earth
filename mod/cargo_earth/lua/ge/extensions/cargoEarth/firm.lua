@@ -30,6 +30,84 @@ M.UPGRADES = {
 local byId = {}
 for _, u in ipairs(M.UPGRADES) do byId[u.id] = u end
 
+-- New vehicles the firm buys from the factory: BeamNG's stock configs, priced by their value like every car (no
+-- used discount). They are delivered to a free bay at the headquarters. fallback: the price when the game has none.
+M.VEHICLES = {
+  { id = 'van', model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', fallback = 6000,
+    text = 'Parcels and van freight' },
+  { id = 'rigid', model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', fallback = 14000,
+    text = 'Box truck freight and longer parcel routes' },
+  { id = 'semi', model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', fallback = 20000,
+    text = 'Articulated freight; a hired driver needs one of your trailers' },
+}
+-- The firm's own trailers: a hired tractor driver needs one, and your own articulated jobs pay TRAILER_BONUS more
+-- when the freight fits one of them (no trailer hire).
+M.TRAILERS = {
+  { id = 'dryvan', name = 'Box trailer', price = 6000, text = 'Parcels, pallets and dry bulk' },
+  { id = 'tanker', name = 'Tanker trailer', price = 8000, text = 'Milk, fuel and chemicals' },
+}
+M.TRAILER_BONUS = 0.12
+M.TRAILER_MAX = 6
+local trailerById = {}
+for _, t in ipairs(M.TRAILERS) do trailerById[t.id] = t end
+
+-- The trailer kind a freight load travels in.
+function M.trailerKind(freightKind)
+  return freightKind == 'fluid' and 'tanker' or 'dryvan'
+end
+
+function M.trailers(c)
+  local f = c.firm
+  if not f then return {} end
+  if type(f.trailers) ~= 'table' then f.trailers = {} end
+  return f.trailers
+end
+
+function M.ownsTrailer(c, kind)
+  for _, t in ipairs(M.trailers(c)) do if t.kind == kind then return true end end
+  return false
+end
+
+function M.buyTrailer(c, id, debt)
+  local f, t = c.firm, trailerById[id]
+  if not f then return false, 'Start a firm first.' end
+  if not t then return false, 'Unknown trailer.' end
+  if not f.hq then return false, 'Choose the headquarters first.' end
+  if (debt or 0) > 0 then return false, 'Pay your debt first.' end
+  local list = M.trailers(c)
+  if #list >= M.TRAILER_MAX then return false, 'The yard has no room for more trailers.' end
+  if (c.money or 0) < t.price then return false, string.format('Not enough money (%d CZK needed).', t.price) end
+  if not economy.post(c, -t.price, 'firm', economy.nextId(c, 'firm'), t.name) then return false, 'The payment failed.' end
+  f.trailerSeq = (f.trailerSeq or 0) + 1
+  list[#list + 1] = { id = f.trailerSeq, kind = t.id, name = t.name }
+  f.spent = (f.spent or 0) + t.price
+  return true, t.name .. ' bought. It waits in the yard.'
+end
+
+-- Trailers sell back for half.
+function M.sellTrailer(c, id)
+  local list = M.trailers(c)
+  for i, t in ipairs(list) do
+    if t.id == id then
+      local price = math.floor((trailerById[t.kind] and trailerById[t.kind].price or 0) / 2 / 5 + 0.5) * 5
+      table.remove(list, i)
+      economy.post(c, price, 'firm', economy.nextId(c, 'firm'), 'Sold ' .. t.name)
+      return true, string.format('%s sold for %d CZK.', t.name, price)
+    end
+  end
+  return false, 'That trailer is not in the yard.'
+end
+
+-- prices: id -> CZK from the game's vehicle values (garage), or nil for the fallback.
+function M.vehicleOffer(id, prices)
+  for _, v in ipairs(M.VEHICLES) do
+    if v.id == id then
+      return { id = v.id, model = v.model, key = v.key, name = v.name, text = v.text,
+        price = prices and prices[v.id] or v.fallback }
+    end
+  end
+end
+
 local function point(g)
   return type(g) == 'table' and type(g[1]) == 'number' and type(g[2]) == 'number' and g[1] == g[1] and g[2] == g[2]
     and math.abs(g[1]) <= 90 and math.abs(g[2]) <= 180
@@ -42,6 +120,12 @@ function M.restore(c)
   if type(f) ~= 'table' or type(f.name) ~= 'string' then c.firm = nil return nil end
   if f.hq ~= nil and (type(f.hq) ~= 'table' or not point(f.hq.g)) then f.hq = nil end
   if type(f.upgrades) ~= 'table' then f.upgrades = {} end
+  if type(f.trailers) ~= 'table' then f.trailers = {} end
+  for i = #f.trailers, 1, -1 do
+    local t = f.trailers[i]
+    if type(t) ~= 'table' or not trailerById[t.kind] or type(t.id) ~= 'number' then table.remove(f.trailers, i)
+    else t.name = trailerById[t.kind].name end
+  end
   for id, level in pairs(f.upgrades) do
     local u = byId[id]
     level = tonumber(level)

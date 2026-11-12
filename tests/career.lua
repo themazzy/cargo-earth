@@ -217,6 +217,8 @@ local function fresh()
   package.loaded['cargoEarth/core'] = nil
   local core = require('cargoEarth/core')
   core.G = G
+  -- no chance events unless a test asks: the first applicant, no incident, no breakdown
+  core.random = function(a, b) if a then return b and a or 1 end return 0.99 end
   local s = core.state()
   s.idx = idx
   s.career.money = 1000
@@ -1370,14 +1372,22 @@ test('drivers are hired by a firm with a headquarters; the office raises what th
   ok, why = fleet.hire(g, c, 1)
   assert(not ok and why:find('headquarters'))
   assert(firm.setHq(c, {id = 'home', n = 'Home office', g = {50, 14}}, {lat = 50, lon = 14, speed = 0}))
-  assert(fleet.hire(g, c, 1))
-  assert(fleet.advance(g, fleet.SHIFT_S, firm.driverFactor(c)) == fleet.NET_PER_SHIFT)
+  local calm = function() return 0.99 end   -- no incident
+  local list = fleet.applicants(c.firm, 0, function() return 0.5 end)
+  assert(#list == fleet.APPLICANTS and math.abs(list[1].speed - 1.03) < 0.015 and list[1].care == 1
+    and list[1].wage == fleet.wage(list[1].speed, 1) and list[1].wage >= 15 and list[1].wage <= 70)
+  local pick = list[2]
+  assert(fleet.hire(g, c, 1, pick.id) and g.parked[1].driver.name == pick.name and #c.firm.applicants == 2)
+  local van = g.parked[1]
+  local net = math.floor(fleet.GROSS.van * pick.speed + 0.5) - pick.wage
+  assert(fleet.net(van.driver, van, 1) == net and fleet.advance(g, fleet.SHIFT_S, firm.driverFactor(c), c, calm) == net)
+  assert(van.km > 0 and van.service.oil > 0, 'the van wears')
   c.money = 50000
   assert(firm.upgrade(c, 'office', 0))
-  assert(fleet.advance(g, fleet.SHIFT_S, firm.driverFactor(c)) == math.floor(fleet.NET_PER_SHIFT * 1.15 + 0.5))
-  -- a driver from before 0.4 keeps working without a firm
-  local old = {parked = {{fleetId = 1, name = 'Van', model = 'van', driver = {elapsed = 0, earned = 0}}}}
-  assert(fleet.advance(old, fleet.SHIFT_S) == fleet.NET_PER_SHIFT)
+  assert(fleet.advance(g, fleet.SHIFT_S, firm.driverFactor(c), c, calm) == math.floor(fleet.GROSS.van * pick.speed * 1.15 + 0.5) - pick.wage)
+  -- a driver from before 0.4 keeps working without a firm: an average driver (wage 25) in a car
+  local old = {parked = {{fleetId = 1, name = 'Pigeon', model = 'pigeon', driver = {elapsed = 0, earned = 0}}}}
+  assert(fleet.advance(old, fleet.SHIFT_S, 1, nil, calm) == fleet.NET_PER_SHIFT and old.parked[1].driver.name)
 end)
 
 test('the firm in the game: founded from the phone, headquarters at a real yard, bays lift the car limit', function()
@@ -1421,6 +1431,156 @@ test('the firm in the game: founded from the phone, headquarters at a real yard,
   -- it survives a save and a reload
   package.loaded['cargoEarth/core'] = nil
   assert(disk['/settings/cargoEarth/career.json'].firm.hq.n == yard.n)
+end)
+
+local upkeep = require('cargoEarth/upkeep')
+
+test('upkeep: wear by km, service at a price, overdue service makes breakdowns likelier', function()
+  local car = {name = 'Pigeon', model = 'pigeon', starter = true}
+  local st = upkeep.state(car)
+  assert(st.items[1].id == 'oil' and st.items[1].share == 0.6 and not st.items[1].due, 'a starter comes worn')
+  assert(upkeep.chance(car, 10) == 0, 'nothing overdue, no breakdowns')
+  upkeep.wear(car, 800)
+  st = upkeep.state(car)
+  assert(st.items[1].due and st.items[2].soon == false and st.due >= 1)
+  assert(upkeep.chance(car, 100) > 0 and upkeep.chance(car, 100000) == upkeep.MAX_CHANCE)
+  assert(upkeep.cost({model = 'us_semi'}, 'oil') == math.floor(120 * 3.2 / 5 + 0.5) * 5, 'a tractor costs more')
+  local c = {money = 50}
+  local ok, why = upkeep.service(c, car, nil, 1)
+  assert(not ok and why:find('Not enough'))
+  c.money = 5000
+  ok = upkeep.service(c, car, nil, 0.7, 'the headquarters')
+  assert(ok and car.service.oil == 0 and c.money == 5000 - upkeep.cost(car, 'oil', 0.7) - upkeep.cost(car, 'brakes', 0.7))
+  assert(c.accounts.history[1].category == 'upkeep')
+  -- a breakdown: the most overdue item fails; what the wallet cannot pay is owed
+  upkeep.wear(car, 5000)
+  local failure = upkeep.breakdown(car)
+  assert(failure.id == 'oil' and failure.cost > 0 and failure.text:find('oil'))
+  local g = {debt = 0}
+  c.money = 10
+  local paid, owed = upkeep.roadside(c, g, car, failure)
+  assert(paid == 10 and owed == failure.cost - 10 and g.debt == owed and car.service.oil == 0)
+  -- a used car is as worn as its condition
+  assert(upkeep.state({model = 'pigeon', condition = 0.5}).items[1].share == 0.5)
+end)
+
+test('your car breaks down after skipped service; roadside help gets it going', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  local g = s.career.garage
+  g.debt = 0
+  local stalls = {}
+  core.G.stall = function(on) stalls[#stalls + 1] = on return true end
+  upkeep.ensure(g.car).oil = 3000
+  core.random = function(a, b) if a then return b and a or 1 end return 0 end   -- every roll fails
+  pose.speed = 40
+  advance(core, 70)   -- 35 s: over a km
+  pose.speed = 0
+  assert(s.breakdown and s.breakdown.id == 'oil' and stalls[1] == true, 'the engine stops')
+  local state = core.garageState()
+  assert(state.breakdown and state.breakdown.cost == s.breakdown.cost)
+  local cost = s.breakdown.cost
+  s.career.money = 5000
+  state = core.garageDo('roadside')
+  assert(not s.breakdown and stalls[#stalls] == false and s.career.money == 5000 - cost and g.car.service.oil == 0)
+  -- a service needs the headquarters or a fuel station
+  core.random = function(a, b) if a then return b and a or 1 end return 0.99 end
+  upkeep.ensure(g.car).tyres = 2400
+  state = core.garageDo('service')
+  assert(state.msg:find('fuel station') and g.car.service.tyres == 2400)
+  withStation(s, 50, 14)
+  pose.lat, pose.lon = 50, 14
+  advance(core, 2)
+  state = core.garageState()
+  assert(state.upkeep.where and state.upkeep.due >= 1)
+  state = core.garageDo('service')
+  assert(g.car.service.tyres == 0, tostring(state.msg))
+end)
+
+test('the firm buys trucks and trailers; skilled drivers work them and wait for repairs and trailers', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  local c = s.career
+  c.garage.debt, c.money, c.delivered = 0, 200000, 30
+  for _ = 1, 5 do rating.add(c, 'freight', 5) end
+  core.firmDo('found', 'Kola')
+  local yard = idx.depots[1]
+  pose.lat, pose.lon = yard.g[1] + 0.0003, yard.g[2]
+  assert(core.firmDo('setHq').hq)
+  local hq = core.hqState()
+  assert(#hq.shop == 3 and hq.shop[3].id == 'semi' and hq.shop[3].price == firm.VEHICLES[3].fallback and hq.shop[3].can)
+  assert(#hq.drivers.applicants == fleet.APPLICANTS and hq.drivers.applicants[1].nets.semi)
+  local money = c.money
+  hq = core.hqDo('buyVehicle', 'semi')
+  assert(c.money == money - firm.VEHICLES[3].fallback and #hq.bays == 2 and hq.bays[2].tier == 'semi', tostring(hq.msg))
+  assert(c.accounts.history[1].category == 'firm')
+  -- a driver for the tractor: nothing happens without a trailer
+  local pick = hq.drivers.applicants[1]
+  hq = core.hqDo('hireDriver', hq.bays[2].id, pick.id)
+  local truck = c.garage.parked[1]
+  assert(truck.driver and truck.driver.name == pick.name, tostring(hq.msg))
+  money = c.money
+  s.driverTick = fleet.SHIFT_S
+  advance(core, 1)
+  assert(truck.driver.waiting == 'trailer' and c.money == money, 'no trailer: no shift')
+  hq = core.hqDo('buyTrailer', 'dryvan')
+  assert(#hq.trailers == 1 and firm.ownsTrailer(c, 'dryvan'), tostring(hq.msg))
+  money = c.money
+  s.driverTick = fleet.SHIFT_S
+  advance(core, 1)
+  local net = fleet.net(truck.driver, truck, 1)
+  assert(not truck.driver.waiting and c.money == money + net and truck.km > 0, 'a shift with the trailer')
+  -- an accident: the truck waits at the headquarters until it is repaired
+  core.random = function(a, b) if a then return b and a or 1 end return 0 end
+  s.driverTick = fleet.SHIFT_S
+  advance(core, 1)
+  core.random = function(a, b) if a then return b and a or 1 end return 0.99 end
+  assert(truck.parkedRepair > 0 and truck.driver.waiting == 'repair')
+  hq = core.hqState()
+  assert(hq.bays[2].repairCost > 0 and hq.bays[2].driver.waiting == 'repair')
+  money = c.money
+  hq = core.hqDo('repairParked', truck.fleetId)
+  assert(truck.parkedRepair == 0 and not truck.driver.waiting and c.money < money, tostring(hq.msg))
+  -- service of a parked vehicle at the headquarters
+  upkeep.ensure(truck).oil = 900
+  hq = core.hqDo('service', truck.fleetId)
+  assert(truck.service.oil == 0, tostring(hq.msg))
+  -- the trailer sells back for half
+  money = c.money
+  core.hqDo('sellTrailer', hq.trailers[1].id)
+  assert(c.money == money + 3000 and #firm.trailers(c) == 0)
+end)
+
+test('customers tip a fast, smooth ride; harsh moments cost the tip', function()
+  local marker = package.loaded['cargoEarth/marker']
+  marker.PICKUP_RADIUS, marker.PICKUP_RANGE, marker.pickupDistance = 5, 250, function() return nil end
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function() return {{50.02, 14, 50.02, 14, 'Street 5', 'Town'}} end)
+  local function deliver(harsh)
+    advance(core, 2)
+    core.phoneAction('online')
+    for _ = 1, 60 do
+      advance(core, 2)
+      if core.phoneState().screen == 'incoming' then break end
+    end
+    core.phoneAction('accept')
+    local job = s.job
+    pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+    advance(core)
+    for _ = 1, harsh do core.onCargoEarthHarsh(vehicle.id, 1, 0.7) end
+    pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+    advance(core)
+    return core.phoneState().done, job
+  end
+  local done, job = deliver(0)
+  assert(done.tipWhy and done.tipWhy.smooth and done.tip >= math.floor(job.pay * core.SMOOTH_TIP / 5 + 0.5) * 5)
+  s.phone.lastDone = nil
+  pose.lat, pose.lon = 50, 14
+  done, job = deliver(2)
+  assert(job.harsh == 2 and done.tipWhy and done.tipWhy.harsh == 2 and not done.tipWhy.smooth)
+  assert(done.tip <= math.floor(food.tip(job.pay, 0, job.minutes) * (1 - 2 * core.HARSH_TIP_LOSS) / 5 + 0.5) * 5, 'no smooth tip, less for speed')
 end)
 
 print(string.format('%d career tests passed', total))

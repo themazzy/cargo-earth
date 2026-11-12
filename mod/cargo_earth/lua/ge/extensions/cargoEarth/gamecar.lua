@@ -367,6 +367,16 @@ function M.probe(garage)
   return out
 end
 
+-- A breakdown: the player's engine is switched off (on = true) and kept off until the roadside help is paid; false
+-- turns the ignition back on so the engine can be started again.
+function M.stall(on)
+  local v = playerVeh()
+  if not v then return false end
+  v:queueLuaCommand(on and 'if electrics and electrics.setIgnitionLevel then electrics.setIgnitionLevel(0) end'
+    or 'if electrics and electrics.setIgnitionLevel then electrics.setIgnitionLevel(2) end')
+  return true
+end
+
 -- The game's road graph (BeamNG.Earth's traffic graph) and the road edge nearest a world point: graph, a, b, metres.
 function M.road(x, y, z)
   if not (map and map.findClosestRoad and map.getMap and vec3) then return nil end
