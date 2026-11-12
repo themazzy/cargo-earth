@@ -37,6 +37,7 @@ local tow = require('cargoEarth/tow')
 local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
 local borders = require('cargoEarth/borders')
+local uiLayout = require('cargoEarth/layout')
 local currency = require('cargoEarth/currency')
 local dash = require('cargoEarth/dash')
 local dashtap = require('cargoEarth/dashtap')
@@ -3173,6 +3174,10 @@ end
 function M.onBeamNGEarthWorldReady()
   stopForceWatch()
   marker.reset()
+  -- the first time: the phone goes into BeamNG.Earth's UI layout, above the speedometer
+  local okL, placed = pcall(uiLayout.ensure, uiLayout.gameApi(), uiLayout.gameFlag())
+  if okL and placed == 'added' then say('Cargo Earth: the phone was added to the .Earth UI layout (move it with the UI Apps editor).', 8)
+  elseif not okL then log('W', 'cargoEarth', 'layout: ' .. tostring(placed)) end
   if S.pendingCareer then return end
   S.inCareerWorld = true
   if not S.job then M.generate() end

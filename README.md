@@ -39,7 +39,7 @@ With BeamNG.drive and BeamNG.Earth already installed, download **[CargoEarthSetu
 
 It downloads the latest release, puts the mod ZIP in your BeamNG `mods` folder (older Cargo Earth ZIPs are moved to `cargo_earth_old_mods`), copies the helper to `%LOCALAPPDATA%\CargoEarth\helper`, installs its Python libraries and registers it with BeamNG.Earth. Career saves are never touched.
 
-**Then add the phone once in the game:** load a BeamNG.Earth map, press Escape, open **UI Apps**, add **Cargo Earth: Phone**, place it (above the speedometer works well) and save the layout. The installer does not change your in-game UI layout.
+**The phone in the game:** the first time you load a BeamNG.Earth map with Cargo Earth, the mod adds the **Cargo Earth: Phone** app to BeamNG.Earth's ".Earth" UI layout, above the speedometer. Move or resize it with the UI Apps editor (Escape → **UI Apps**). If you use another layout, or removed the phone, add **Cargo Earth: Phone** there yourself and save the layout.
 
 The installer is not code-signed, so Windows SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**. The source is in [`installer/`](installer/) and the release file is built from it by a GitHub workflow.
 
@@ -62,7 +62,7 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 2. Download `cargo_earth_career_0.8.0.zip` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest). Close the game. Put the ZIP in your active BeamNG user-folder `mods` directory. Keep only one Cargo Earth version enabled; do not unpack the ZIP for normal installation.
 3. For live geography, install Python 3 and the helper dependencies: `python -m pip install duckdb fsspec`.
 4. Run `python cargo_earth_helper_0.8.0.py` (also attached to the release), or add it to BeamNG.Earth as a companion add-on with [`helper/local.json.example`](helper/local.json.example) in `%LOCALAPPDATA%\beamng-earth\addons\local.json`. It listens locally on `127.0.0.1:47820`. Keep it running while playing. The helper also needs internet access to fetch public geographic data.
-5. Load a BeamNG.Earth map, press Escape, open **UI Apps** and add the **Cargo Earth: Phone** app (it is not added for you), place it and save the layout. Then start or resume your career in the phone.
+5. Load a BeamNG.Earth map. The first time, the mod adds the **Cargo Earth: Phone** app to the ".Earth" UI layout above the speedometer; in any other layout add it yourself (Escape → **UI Apps**) and save the layout. Then start or resume your career in the phone.
 
 Phone sections: **Work**, **Garage**, **Home**, **Career**, **Settings**. Work separates Deliveries and Companies; Career separates Progress, Finances, Map and Firm. The firm's headquarters opens as a full-screen plan of the building.
 
