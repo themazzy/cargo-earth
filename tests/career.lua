@@ -1249,6 +1249,9 @@ test('speed limit from the road graph: bends do not lower it, a change ahead is 
   bend.nodes.side = {pos = {x = 0, y = 50}, links = {n0 = cross}}
   bend.nodes.n0.links.side = cross
   assert(speedlimit.at(bend, 'n0', 'n1') == 50, 'the bend keeps the limit of the road on both sides')
+  -- a short posted 30 between stretches of 50 is a real limit, not a bend
+  local zone = straightRoad(function(i) return (i >= 0 and i <= 1) and 8.33 or 13.89 end)
+  assert(speedlimit.at(zone, 'n0', 'n1') == 30 and speedlimit.at(zone, 'n1', 'n2') == 30)
   -- 50 now, 90 from x = 0 on
   local change = straightRoad(function(i) return i < 0 and 13.89 or 25 end)
   assert(speedlimit.at(change, 'n-1', 'n0') == 50 and speedlimit.at(change, 'n0', 'n1') == 90)

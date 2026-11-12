@@ -1,8 +1,9 @@
 -- The speed limit of the road under the car, read from the road graph BeamNG.Earth hands to the game for its traffic
 -- (map.getMap(): every edge has speedLimit in m/s, from Overture's limits or the country's default for the road,
 -- the same limits Earth's own road signs show). Earth lowers an edge's speed in a sharp bend so its traffic slows
--- down; the legal limit is the one on both sides of the bend, so a stretch of road is read in both directions and
--- the lower of the two highest values counts. A limit that changes ahead is not shown early, as only one side has it.
+-- down; such a bend speed is not a whole posted limit (5 km/h or 5 mph steps), and only then is the legal limit taken
+-- from the road on both sides of the bend: a stretch of road is read in both directions and the lower of the two
+-- highest values counts. A posted lower limit, however short, is kept; a limit that changes ahead is not shown early.
 -- Pure rules: the graph is passed in.
 local M = {}
 
@@ -23,6 +24,13 @@ local function dir(p, q)
 end
 
 local function speedOf(l) return tonumber(l and l.speedLimit) or 0 end
+
+-- A speed (m/s) that is a posted limit: a whole 5 km/h or 5 mph step (Earth stores m/s to 2 decimals).
+local function posted(ms)
+  local kmh, mph = ms * 3.6, ms / 0.44704
+  return math.abs(kmh - math.floor(kmh / 5 + 0.5) * 5) <= 0.2 or math.abs(mph - math.floor(mph / 5 + 0.5) * 5) <= 0.1
+end
+M.posted = posted
 
 -- The highest edge speed met walking on from `at` away from `from`, straight on at each node, up to REACH_M.
 local function walk(nodes, from, at)
@@ -60,7 +68,8 @@ function M.at(graph, a, b)
   local l = link(nodes, a, b)
   local base = speedOf(l)
   if base <= 0 then return nil end
-  local ms = math.max(base, math.min(walk(nodes, a, b), walk(nodes, b, a)))
+  local ms = base
+  if not posted(base) then ms = math.max(base, math.min(walk(nodes, a, b), walk(nodes, b, a))) end
   local kmh = ms * 3.6
   if kmh < M.MIN_KMH then return nil end
   local five = math.floor(kmh / 5 + 0.5) * 5

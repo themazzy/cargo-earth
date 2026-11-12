@@ -81,7 +81,8 @@ Real speed cameras from OpenStreetMap, anywhere in the world. The helper asks th
 The phone shows the speed limit of the road under the car as a round sign, red when you drive more than 3 km/h over
 it. The limit comes from the road graph BeamNG.Earth gives the game for its traffic: Overture's mapped limits, else
 Earth's default for the country and road type, the same limits Earth's own road signs show. Earth slows its traffic
-in sharp bends, so the mod reads 250 m of road each way and keeps the limit found on both sides. Where the limit is a
+in sharp bends; such a bend speed is not a whole 5 km/h or 5 mph step, and only then does the mod read 250 m of
+road each way and keep the limit found on both sides. A short posted lower limit is kept as it is. Where the limit is a
 whole number of mph (the US, the UK) the sign shows mph. No sign off the road, or with Earth's traffic switched off
 (the graph exists only then). A speed camera with no limit in OpenStreetMap takes its road's limit from the same graph
 once it is within reach, instead of the generous road-class default.
