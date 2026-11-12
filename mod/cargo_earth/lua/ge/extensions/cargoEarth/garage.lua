@@ -31,6 +31,7 @@ M.VALUE_PER_HOUR = 2000      -- an hour of deliveries buys this much BeamNG valu
 M.REPAIR_SHARE = 0.18        -- a repair: this share of the value rate per unit of the game's damage
 M.START_HOURS = 1.5          -- money at the start of a career
 M.MIN_PART_HOURS = 0.02      -- the cheapest part (about a minute of deliveries)
+M.REPAIR_CAP = 0.75          -- a repair never costs more than this share of the car's parts value (a wreck is a write-off)
 M.PRICE_V = 2                -- prices' version in saves (1: the first fixed prices)
 
 local function round5(x) return math.floor(x / 5 + 0.5) * 5 end
@@ -147,15 +148,28 @@ function M.slots(G, g)
 end
 
 -- The car's worth: its installed parts, in CZK.
-function M.carValue(G)
-  local v = G.vehicle()
-  if not v or type(v.slotPartMap) ~= 'table' then return 0 end
+local function valueOf(G, v)
+  if not v or not G.part or type(v.slotPartMap) ~= 'table' then return 0 end
   local sum = 0
   for _, name in pairs(v.slotPartMap) do
     local i = info(G, v.ioCtx, name)
     if i then sum = sum + i.value end
   end
   return round5(sum * M.PRICE_PER_VALUE)
+end
+function M.carValue(G) return valueOf(G, G.vehicle()) end
+
+-- Remembers what the car you drive is worth (g.car.value, CZK), which caps its repairs. Needs the game's car.
+function M.noteValue(G, g, vehicle)
+  if not g.car then return end
+  local value = valueOf(G, vehicle or G.vehicle())
+  if value > 0 then g.car.value = value end
+end
+
+-- The most a repair of the current car can cost, or nil while its value is not known.
+function M.repairCap(g)
+  local value = g.car and tonumber(g.car.value)
+  if value and value > 0 then return round5(value * M.REPAIR_CAP) end
 end
 
 -- Puts `partName` ('' = nothing) in the slot at `path` of a parts tree; true when the slot was found.
@@ -270,6 +284,8 @@ function M.trackDamage(g, damage)
   g.lastDamage = damage
   local before = g.repair or 0
   g.repair = (g.carriedRepair or 0) + round5(math.max(0, damage) * M.REPAIR_PER_DAMAGE)
+  local cap = M.repairCap(g)
+  if cap and g.repair > cap then g.repair = cap end
   if damage > last then return 'hit', g.repair - before, damage - last end
   if damage < last then
     local ours = g.fixUntil and M.clock() <= g.fixUntil
@@ -949,6 +965,7 @@ function M.remember(G, g, vehicle)
   local parts = {}
   for k, p in pairs(v.slotPartMap) do parts[k] = p end
   g.car.parts = parts
+  M.noteValue(G, g, v)
   if G.captureConfig then g.car.config = G.captureConfig(v) or g.car.config end
   return true
 end
