@@ -2089,6 +2089,10 @@ local function garageTick(dt)
     S.stallAt = S.clock + 1
     if M.G.stall then pcall(M.G.stall, true) end
   end
+  if not g.car.value and not S.parts and S.clock >= (S.valueAt or 0) then   -- caps the repair (older saves, new cars)
+    S.valueAt = S.clock + 5
+    garage.noteValue(M.G, g)
+  end
   local what, amount = garage.trackDamage(g, M.G.damage())
   if shift and what == 'hit' then employment.damage(S.career, math.max(0, amount)) end
   if shift and not shift.ownerOperator then g.debt = 0 end
@@ -2629,6 +2633,8 @@ function M.garageState()
   out.debtShare = garage.DEBT_SHARE
   out.income = math.floor(garage.INCOME_PER_HOUR / 10 + 0.5) * 10   -- what an hour of deliveries pays
   out.repairHours = garage.hours(out.repair)
+  local cap = garage.repairCap(g)
+  out.repairCapped = cap ~= nil and out.repair > 0 and out.repair >= cap or nil
   if g.preview then
     local l = garage.findListing(g, g.preview.id)
     if l then

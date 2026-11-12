@@ -1935,6 +1935,32 @@ test('the dash phone part only runs the phone app\'s own calls', function()
   assert(not core.dashAllowed(nil) and not core.dashAllowed(string.rep('a', 5000)))
 end)
 
+test('a wreck never costs more to repair than the car is worth', function()
+  local garage = require('cargoEarth/garage')
+  local values = {body = 4000, engine = 2000}
+  local G = {
+    vehicle = function() return {slotPartMap = {['/'] = 'body', ['/engine/'] = 'engine'}} end,
+    part = function(_, name) return {information = {name = name, value = values[name]}} end,
+  }
+  local g = {started = true, car = {model = 'pigeon'}, repair = 0, debt = 0, lastDamage = 0}
+  -- the value is not known yet: the plain damage price
+  garage.trackDamage(g, 1000)
+  local plain = g.repair
+  assert(plain > 0 and garage.repairCap(g) == nil)
+  garage.noteValue(G, g)
+  local cap = garage.repairCap(g)
+  assert(g.car.value == garage.carValue(G) and cap == math.floor(g.car.value * garage.REPAIR_CAP / 5 + 0.5) * 5)
+  -- a small hit is priced as before, a total wreck stops at the cap
+  garage.trackDamage(g, 1000)
+  assert(g.repair == plain)
+  local what = garage.trackDamage(g, 300000)
+  assert(what == 'hit' and g.repair == cap, 'repair ' .. g.repair .. ' cap ' .. cap)
+  local _, grow = garage.trackDamage(g, 400000)
+  assert(grow == 0 and g.repair == cap, 'more damage on a wreck adds nothing')
+  -- a free menu repair of a wreck puts only the capped price on the debt
+  assert(garage.trackDamage(g, 0) == 'debt' and g.debt == cap and g.repair == 0)
+end)
+
 print(string.format('%d career tests passed', total))
 
 do
