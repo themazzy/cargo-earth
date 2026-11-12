@@ -1345,7 +1345,7 @@ angular.module('beamng.apps')
       // stands still is checked here: the last corners are applied again, which also returns a hidden phone.
       var lastDash = null
       scope.$on('CargoEarthDash', function (e, d) { lastDash = d; scope.dashUpdate(d) })
-      var dashWatch = setInterval(function () { if (lastDash && lastDash.on) scope.dashUpdate(lastDash) }, 250)
+      var dashWatch = setInterval(function () { if (lastDash && lastDash.on) scope.dashUpdate(lastDash) }, 300)
       scope.$on('$destroy', function () { clearInterval(dashWatch) })
       scope.$on('$destroy', function () { if (holder && holder.parentNode) holder.parentNode.removeChild(holder) })
       scope.sdo = function (name, a, b) {
