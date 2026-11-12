@@ -444,3 +444,49 @@ class NetworkAndStorageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpdateCheckTests(unittest.TestCase):
+    def test_versions_compare_numerically(self):
+        self.assertTrue(helper.newer("0.10.0", "0.9.3"))
+        self.assertTrue(helper.newer("v1.0", "0.8.0"))
+        self.assertFalse(helper.newer("0.8.0", "0.8.0"))
+        self.assertFalse(helper.newer("0.8.0-beta", "0.7.0"))
+        self.assertFalse(helper.newer(None, "0.8.0"))
+
+    def test_check_saves_latest_and_restart_reuses_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = [1000.0]
+            u = helper.Updates(d, fetch=lambda: {"tag_name": "v99.1.0",
+                                                 "html_url": "https://github.com/themazzy/cargo-earth/releases/tag/v99.1.0"},
+                               clock=lambda: now[0])
+            self.assertTrue(u.due())
+            with patch.object(helper, "log"):
+                u.check()
+            info = u.info()
+            self.assertEqual(info["latest"], "99.1.0")
+            self.assertTrue(info["helperOutdated"])
+            self.assertFalse(u.due())
+            again = helper.Updates(d, fetch=lambda: self.fail("asked again"), clock=lambda: now[0] + 60)
+            self.assertEqual(again.info()["latest"], "99.1.0")
+            self.assertFalse(again.due())
+            now[0] += helper.UPDATE_EVERY_S
+            self.assertTrue(u.due())
+
+    def test_foreign_url_is_never_opened_and_failure_retries_sooner(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = [0.0]
+            u = helper.Updates(d, fetch=lambda: {"tag_name": "v0.0.1", "html_url": "https://evil.example/x"}, clock=lambda: now[0])
+            u.check()
+            self.assertTrue(u.info()["url"].startswith(helper.UPDATE_PAGE))
+            self.assertFalse(u.info()["helperOutdated"])
+
+            def boom():
+                raise OSError("offline")
+            bad = helper.Updates(os.path.join(d, "x"), fetch=boom, clock=lambda: now[0])
+            with patch.object(helper, "log"):
+                bad.check()
+            self.assertEqual(bad.info()["error"], "offline")
+            now[0] += helper.UPDATE_RETRY_S
+            self.assertTrue(bad.due())
+            self.assertFalse(helper.Updates(d, enabled=False).due())

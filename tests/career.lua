@@ -1937,6 +1937,42 @@ test('the support report has versions, helper state and recent problems, but no 
   assert(not again.copied and again.text:find('Phone errors', 1, true) == nil)
 end)
 
+test('the phone says when a newer release is out (the helper looks it up)', function()
+  local helper = require('cargoEarth/helper')
+  local ask, enabled = helper.ask, helper.enabled
+  local asked, opened = {}, nil
+  helper.enabled = true
+  helper.ask = function(path, cb) asked[#asked + 1] = { path, cb } end
+  local ok, why = pcall(function()
+    local core, s = fresh()
+    assert(core.versionNewer('0.10.0', '0.9.9') and core.versionNewer('v1.0', '0.8.0'))
+    assert(not core.versionNewer('0.8.0', '0.8.0') and not core.versionNewer('0.9.0-beta', '0.8.0') and not core.versionNewer(nil, '1'))
+    assert(core.phoneState().update == nil, 'nothing known yet')
+    advance(core, 60)
+    local info
+    for _, a in ipairs(asked) do if a[1] == '/v1/info' then info = a end end
+    assert(info, 'asked the helper for its info')
+    info[2]({ version = core.VERSION, update = { latest = '99.0.0' } })
+    local u = core.phoneState().update
+    assert(u and u.available and u.modOld and u.helperOld and u.latest == '99.0.0' and not u.hidden)
+    assert(s.log[1]:find('Cargo Earth 99.0.0 is out', 1, true), s.log[1])
+    assert(core.settingsState().update.latest == '99.0.0')
+    core.updateDo('open')
+    assert(asked[#asked][1] == '/v1/update/open')
+    openWebBrowser = function(url) opened = url end
+    asked[#asked][2]({ opened = false })
+    openWebBrowser = nil
+    assert(opened == 'https://github.com/themazzy/cargo-earth/releases/latest')
+    u = core.updateDo('hide')
+    assert(u.hidden and s.career.updateHidden == '99.0.0')
+    -- up to date: no notice
+    info[2]({ version = core.VERSION, update = { latest = core.VERSION } })
+    assert(not core.phoneState().update.available)
+  end)
+  helper.ask, helper.enabled = ask, enabled
+  assert(ok, why)
+end)
+
 test('the dash phone part only runs the phone app\'s own calls', function()
   local core = fresh()
   assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.phoneAction("online") or nil'))

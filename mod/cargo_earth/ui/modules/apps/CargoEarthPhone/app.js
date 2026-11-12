@@ -118,6 +118,8 @@ angular.module('beamng.apps')
     '.cep-sm.ghost{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--line)}' +
     '.cep-sm[disabled],.cep-btn[disabled]{opacity:.4;cursor:default}' +
     '.cep-msg{font-size:12px;padding:8px 10px;border-radius:10px;background:#fff4e5;color:#6b4a00}' +
+    '.cep-update{display:flex;align-items:center;gap:6px;font-size:12px;padding:6px 8px 6px 10px;border-radius:10px;background:#e8f1ff;color:#123a73}' +
+    '.cep-update span{flex:1}.cep-update .cep-sm{margin:0;padding:4px 8px}' +
     '.cep-step2{display:flex;align-items:center;gap:8px}.cep-step2 b{min-width:62px;text-align:center;font-variant-numeric:tabular-nums}' +
     '.cep-li>div{min-width:0}' +
     '.cep-radio-now{display:flex;flex-direction:column;gap:8px}.cep-radio-now .cep-name{font-size:16px;white-space:normal}' +
@@ -1014,6 +1016,11 @@ angular.module('beamng.apps')
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'window\')">{{ st.window ? "Close" : "Open" }} the debug window</button>' +
         '<div class="cep-label">Help</div>' +
+        '<div class="cep-li" style="padding:6px 10px"><div><div class="cep-name" style="font-size:12px">Updates</div>' +
+          '<small ng-if="st.update.unknown">Mod {{ st.update.mod }}. Start the Cargo Earth helper to check for updates.</small>' +
+          '<small ng-if="!st.update.unknown">Mod {{ st.update.mod }}, helper {{ st.update.helper }}. ' +
+            '{{ st.update.available ? "Newest: " + st.update.latest : "Up to date" }}</small></div>' +
+          '<button class="cep-sm" ng-if="st.update.available" ng-click="updateDo(\'open\')">Get {{ st.update.latest }}</button></div>' +
         '<button class="cep-sm ghost" ng-disabled="report.busy" ng-click="copyReport()">{{ report.busy ? "Making the report…" : "Copy support report" }}</button>' +
         '<div class="cep-card" ng-if="report && !report.busy">' +
           '<div class="cep-sub">{{ report.copied ? "Copied. Paste it (Ctrl+V) into Discord or a GitHub issue." : "Could not copy it. Select the text below and copy it." }} ' +
@@ -1022,6 +1029,10 @@ angular.module('beamng.apps')
           '<button class="cep-sm ghost" ng-click="closeReport()">Close</button></div>' +
       '</div></div>' +
 
+      '<div class="cep-update" ng-if="s.update.available && !s.update.hidden">' +
+        '<span>Cargo Earth {{ s.update.latest }} is out{{ s.update.modOld && s.update.helperOld ? "" : (s.update.modOld ? " (new mod)" : " (new helper)") }}</span>' +
+        '<button class="cep-sm" ng-click="updateDo(\'open\')">Get it</button>' +
+        '<button class="cep-sm ghost" aria-label="Hide until the next update" ng-click="updateDo(\'hide\')">Later</button></div>' +
       '<div class="cep-msg" role="alert" ng-if="s.saveError">{{ s.saveError }}</div>' +
       '<div class="cep-msg" role="alert" ng-if="s.flash">Speed camera: {{ s.flash.speed }} km/h, limit {{ s.flash.limit }}. Fine {{ fmt.money(s.flash.fine) }}' +
         '<span ng-if="s.flash.owed > 0"> ({{ fmt.money(s.flash.owed) }} added to your debt)</span>' +
@@ -1192,6 +1203,13 @@ angular.module('beamng.apps')
         })
       }
       scope.closeReport = function () { scope.report = null }
+      scope.updateDo = function (name) {
+        lua('updateDo', [name], function (u) {
+          if (!u || u._phoneError) return
+          if (scope.s) scope.s.update = u
+          if (scope.st) scope.st.update = u
+        })
+      }
       var loadingPage = {}
       scope.pageErrors = {}
       function page(fn, field, then) {

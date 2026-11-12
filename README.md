@@ -87,6 +87,10 @@ Career progress is local JSON at `settings/cargoEarth/career.json` in the active
 
 The helper's default 1 GiB soft cache budget covers replaceable downloaded source blocks and processed geographic areas. It does not include career saves, installed mod assets or BeamNG.Earth's own terrain/imagery cache. Increase it with `--cache-mb 4096` for 4 GiB; use `--cache` to choose a directory.
 
+## Update notice
+
+The game itself can't go online, so the helper checks this repository's latest GitHub release when it starts and then every 6 hours (one small request; the answer is kept in its cache folder). When a newer mod or helper is out, the phone shows **Cargo Earth x.y.z is out** with a **Get it** button that opens the release page; **Later** hides it until the next release. Settings → Help shows your mod and helper versions. Start the helper with `--no-update-check` to turn the check off. Without the helper running, the game can't learn about updates.
+
 ## Development
 
 Source lives under `mod/cargo_earth/`; the helper lives under `helper/`. Runtime code is Lua, AngularJS and Python. No build step is needed to edit the mod itself.
