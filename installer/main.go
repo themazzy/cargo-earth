@@ -627,7 +627,7 @@ func installHelper(py, tag string) error {
 		"summary": "Restaurants, shops, workplaces and customer addresses anywhere in the world for the Cargo Earth mod.",
 		"licence": "MIT", "asset": `^cargo_earth_helper.*\.py$`,
 		"local": map[string]any{"file": target, "tag": tag},
-		"run":   map[string]any{"args": []any{}, "port": helperPort},
+		"run":   map[string]any{"args": []any{}, "port": helperPort, "page": fmt.Sprintf("http://127.0.0.1:%d/", helperPort)},
 	}
 	data["addons"] = append(withoutHelper(list), entry)
 	if err := writeAddons(data); err != nil {

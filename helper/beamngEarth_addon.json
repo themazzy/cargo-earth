@@ -2,4 +2,4 @@
   {"key": "port", "label": "Port", "type": "int", "default": 47820, "min": 1024, "max": 65535, "arg": "--port",
    "help": "The port the Cargo Earth mod asks on (the mod's config.json helperPort, if you change it)."}
  ],
- "run": {"args": [], "port": 47820}}
+ "run": {"args": [], "port": 47820, "page": "http://127.0.0.1:{port}/"}}
