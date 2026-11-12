@@ -1477,7 +1477,7 @@ angular.module('beamng.apps')
       }
       scope.$on('$destroy', function () {
         if (audio) { audio.pause(); audio.removeAttribute('src') }
-        if (scope.radio.via === 'helper' && scope.radio.status !== 'idle') bngApi.engineLua('cargoEarth_core and cargoEarth_core.radioDo("helperStop")')
+        if (scope.radio.via === 'helper' && scope.radio.status !== 'idle') bngApi.engineLua('if cargoEarth_core then cargoEarth_core.radioDo("helperStop") end')
       })
       // The editor can remount the phone. Open straight to checkout while a preview is active.
       scope.$watch('s.screen', function (v) {
