@@ -1589,7 +1589,7 @@ function M.phoneState()
     todayCount = today.count, status = earth.status(), clock = os.date('%H:%M'), hidden = S.phoneHidden,
       helper = M.helperInfo(), saveError = S.saveError, company = c.employment and c.employment.companyName,
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
-      currency = moneyInfo() }
+      currency = moneyInfo(), update = M.updateInfo() }
   if S.pendingCareer then
     out.screen, out.money = 'resume', S.pendingCareer.money or 0
     local savedGarage = S.pendingCareer.garage
@@ -1875,6 +1875,7 @@ local function learnCameraLimits(p)
 end
 
 local radioAlive   -- (the radio, below)
+local askUpdate    -- (the update notice, with the support report below)
 local function helperTick(p)
   if not p then return end
   if camerasOn() then
@@ -1893,6 +1894,7 @@ local function helperTick(p)
   local areas = (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
   local wantCameras = camerasOn() and onHelperCameras or nil
   radioAlive()
+  askUpdate()
   if areas or wantCameras or helper.asking() then
     helper.tick(p.lat, p.lon, S.clock, onHelperArea, wantCameras, not areas)
   end
@@ -2913,6 +2915,7 @@ function M.settingsState()
   end
   out.dash = dash.state()
   aboutHelper()
+  out.update = M.updateInfo() or { mod = M.VERSION, unknown = true }
   out.cameras = { on = not S.career.camerasOff, known = #cams.list,
     helper = cams.state or (helper.status().cameras == 'off' and 'off' or nil) }
   if S.mode == 'courier' then
@@ -2960,12 +2963,90 @@ M.garage = garage
 ------------------------------------------------------------------------------------------ support report
 
 -- What the helper says about itself (/v1/info), asked for while the settings are open, for the support report.
+-- The same answer carries the newest Cargo Earth release on GitHub (the helper looks it up; the game cannot go
+-- online), so it is also asked for now and then while playing: the phone then says an update is out.
 local helperAbout, helperAboutAt = nil, -math.huge
+local updateAskAt, updateSaid = nil, nil
 M.HELPER_ABOUT_S = 30
+M.UPDATE_FIRST_S = 20      -- the first update question, this long after the mod starts
+M.UPDATE_ASK_S = 1800      -- then this often (the helper itself asks GitHub every 6 hours)
+M.UPDATE_RETRY_S = 300     -- the helper did not answer: ask again after this long
+M.RELEASES = 'https://github.com/themazzy/cargo-earth/releases'
+
+-- '0.10.2' newer than '0.9.3'? Plain release numbers only; anything else is never newer.
+function M.versionNewer(latest, current)
+  local function parts(v)
+    local a, b, c = tostring(v or ''):match('^v?(%d+)%.(%d+)%.?(%d*)$')
+    if not a then return nil end
+    return { tonumber(a), tonumber(b), tonumber(c) or 0 }
+  end
+  local x, y = parts(latest), parts(current)
+  if not x or not y then return false end
+  for i = 1, 3 do
+    if x[i] ~= y[i] then return x[i] > y[i] end
+  end
+  return false
+end
+
+local function onAbout(data, err)
+  helperAbout = data or { error = tostring(err or 'no answer') }
+  if not data then return end
+  local u = M.updateInfo()
+  if u and u.available and updateSaid ~= u.latest then
+    updateSaid = u.latest
+    say('Cargo Earth ' .. u.latest .. ' is out. Open the phone to get it.', 10)
+  end
+end
+
 aboutHelper = function()
   if not helper.enabled or S.clock - helperAboutAt < M.HELPER_ABOUT_S then return end
   helperAboutAt = S.clock
-  helper.ask('/v1/info', function(data, err) helperAbout = data or { error = tostring(err or 'no answer') } end)
+  helper.ask('/v1/info', onAbout)
+end
+
+-- From the helper tick: ask for the newest release now and then.
+askUpdate = function()
+  if not helper.enabled then return end
+  updateAskAt = updateAskAt or S.clock + M.UPDATE_FIRST_S
+  if S.clock < updateAskAt then return end
+  updateAskAt = S.clock + M.UPDATE_ASK_S
+  helperAboutAt = S.clock
+  helper.ask('/v1/info', function(data, err)
+    if not data then updateAskAt = S.clock + M.UPDATE_RETRY_S end
+    onAbout(data, err)
+  end)
+end
+
+-- What the phone shows about updates: nil until the helper has said which release is the newest.
+-- { latest, mod, helper, modOld, helperOld, available, hidden (the player closed the notice for this release), checkError }
+function M.updateInfo()
+  local a = helperAbout
+  local u = a and type(a.update) == 'table' and a.update or nil
+  if not u or type(u.latest) ~= 'string' then return nil end
+  local helperVersion = tostring(a.version or '?')
+  local modOld, helperOld = M.versionNewer(u.latest, M.VERSION), M.versionNewer(u.latest, helperVersion)
+  return { latest = u.latest, mod = M.VERSION, helper = helperVersion, modOld = modOld, helperOld = helperOld,
+    available = modOld or helperOld, hidden = S.career and S.career.updateHidden == u.latest or false,
+    checkError = type(u.error) == 'string' and u.error or nil }
+end
+
+-- name: open (the release page in the player's browser) | hide (close the notice until a newer release)
+function M.updateDo(name)
+  local u = M.updateInfo()
+  if name == 'hide' and u and S.career then
+    S.career.updateHidden = u.latest
+    saveCareer()
+  elseif name == 'open' then
+    -- the helper opens it (Python's webbrowser); a helper too old for that: the game's own browser call
+    helper.ask('/v1/update/open', function(data)
+      if data and data.opened then return end
+      local open = rawget(_G, 'openWebBrowser')
+      if not (open and pcall(open, M.RELEASES .. '/latest')) then
+        say('Open ' .. M.RELEASES .. ' in your browser to download the update.', 10)
+      end
+    end)
+  end
+  return M.updateInfo()
 end
 
 local function gameValue(fn)
@@ -3005,6 +3086,8 @@ function M.supportReport(phoneNotes)
     add('Helper info: version ', tostring(a.version), ', Overture ', tostring(a.release),
       missing and (', MISSING libraries: ' .. missing) or '', ', ', tostring(net.requests or 0), ' downloads')
   else add('Helper info: not asked yet (open Settings with the game running, then copy again)') end
+  local up = M.updateInfo()
+  if up then add('Newest release: ', up.latest, up.available and ' (update available)' or ' (up to date)') end
   add('Data: ', S.loadError and ('ERROR ' .. S.loadError) or (S.packInfo ~= '' and S.packInfo or 'bundled packs loaded'))
   if S.saveError then add('Save: ', tostring(S.saveError)) end
   add('Money: ', tostring(math.floor(c.money or 0)), ' CZK, ', tostring(c.delivered or 0), ' deliveries')

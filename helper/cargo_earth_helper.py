@@ -12,7 +12,10 @@ and prints what it found.
 
 API (GET, JSON):
   /                           a small status page for people (is it running, libraries, areas, network)
-  /v1/info                    {"app": "cargo-earth-helper", "version", "release"}
+  /v1/info                    {"app": "cargo-earth-helper", "version", "release", "update": {"latest", "url", "page",
+                              "helper", "helperOutdated", "checkedAt", "error"}} (the newest Cargo Earth release on
+                              GitHub, checked every 6 hours unless --no-update-check)
+  /v1/update/open             opens that release page in the browser: {"opened", "url"}
   /v1/cameras?lat=..&lon=..   speed cameras around the point, from OpenStreetMap (Overpass API, one request per
                               0.5 degree cell, kept for 30 days): {"state": "ready" | "loading" | "failed",
                               "cells": [...], "cameras": [[id, lat, lon, limit km/h (0 = unknown), road class], ...]}
@@ -1313,12 +1316,113 @@ class Player:
                     self.url = None
 
 
+UPDATE_REPO = "themazzy/cargo-earth"
+UPDATE_PAGE = f"https://github.com/{UPDATE_REPO}/releases"
+UPDATE_EVERY_S = 6 * 3600          # GitHub allows 60 unauthenticated requests an hour; one in 6 hours is plenty
+UPDATE_RETRY_S = 1800              # no answer (offline, rate limit): try again after this long
+
+
+def version_tuple(v):
+    """'v0.10.2' -> (0, 10, 2); None for anything that is not a plain release version."""
+    m = re.fullmatch(r"v?(\d+)\.(\d+)(?:\.(\d+))?", str(v or "").strip())
+    return tuple(int(x or 0) for x in m.groups()) if m else None
+
+
+def newer(latest, current):
+    a, b = version_tuple(latest), version_tuple(current)
+    return bool(a and b and a > b)
+
+
+class Updates:
+    """The newest published Cargo Earth release (GitHub), checked at start and every few hours, kept on disk so a
+    restart does not ask again. The game cannot go online; it reads this from /v1/info and shows it on the phone."""
+
+    def __init__(self, cache_dir, enabled=True, fetch=None, clock=time.time):
+        self.path = os.path.join(cache_dir, "update.json")
+        self.enabled, self.clock = enabled, clock
+        self.fetch = fetch or (lambda: json.loads(http_get(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest",
+                                                           {"Accept": "application/vnd.github+json"}, tries=1)))
+        self.lock = threading.Lock()
+        self.state = {"latest": None, "url": None, "checkedAt": None, "error": None}
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                saved = json.load(f)
+            if version_tuple(saved.get("latest")) and str(saved.get("url", "")).startswith(UPDATE_PAGE):
+                self.state.update(latest=saved["latest"], url=saved["url"], checkedAt=float(saved.get("checkedAt") or 0))
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+
+    def due(self):
+        with self.lock:
+            at = self.state["checkedAt"]
+            wait = UPDATE_RETRY_S if self.state["error"] else UPDATE_EVERY_S
+        return self.enabled and (not at or self.clock() - at >= wait)
+
+    def check(self):
+        try:
+            rel = self.fetch()
+            tag, url = rel.get("tag_name"), str(rel.get("html_url") or "")
+            if not version_tuple(tag):
+                raise ValueError(f"unexpected release tag {tag!r}")
+            if not url.startswith(UPDATE_PAGE):
+                url = f"{UPDATE_PAGE}/latest"
+            latest = ".".join(map(str, version_tuple(tag)))
+            with self.lock:
+                self.state.update(latest=latest, url=url, checkedAt=self.clock(), error=None)
+                saved = dict(self.state)
+            try:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                with open(self.path + ".tmp", "w", encoding="utf-8") as f:
+                    json.dump(saved, f)
+                os.replace(self.path + ".tmp", self.path)
+            except OSError:
+                pass
+            if newer(latest, VERSION):
+                log(f"Cargo Earth {latest} is out (this helper is {VERSION}): {url}")
+        except Exception as e:  # noqa: BLE001
+            with self.lock:
+                self.state.update(checkedAt=self.clock(), error=str(e)[:200])
+            log("could not check for Cargo Earth updates:", e)
+
+    def info(self):
+        with self.lock:
+            out = dict(self.state)
+        if not self.enabled:
+            out["error"] = "update check turned off"
+        out["helper"] = VERSION
+        out["helperOutdated"] = newer(out["latest"], VERSION)
+        out["page"] = out["url"] or f"{UPDATE_PAGE}/latest"
+        return out
+
+    def open(self):
+        """Opens the release page in the player's browser (only ever this repository's releases)."""
+        url = self.info()["page"]
+        if not url.startswith(UPDATE_PAGE):
+            return {"opened": False, "url": None}
+        import webbrowser
+        try:
+            return {"opened": bool(webbrowser.open(url)), "url": url}
+        except Exception:  # noqa: BLE001
+            return {"opened": False, "url": url}
+
+    def run(self):
+        while True:
+            if self.due():
+                self.check()
+            time.sleep(60)
+
+    def start(self):
+        if self.enabled:
+            threading.Thread(target=self.run, daemon=True, name="updates").start()
+        return self
+
+
 def missing_libraries():
     """The Python libraries the helper needs that this Python does not have."""
     return [m for m in ("duckdb", "fsspec") if importlib.util.find_spec(m) is None]
 
 
-def status_page(areas, release, port):
+def status_page(areas, release, port, updates=None):
     """The page a player sees at http://127.0.0.1:<port>/: whether the helper works, in plain words."""
     with areas.cv:
         states = dict(areas.state)
@@ -1336,6 +1440,9 @@ def status_page(areas, release, port):
              "none asked for yet (drive in BeamNG with Cargo Earth)"),
             ("Downloads", f"{network.get('requests', 0)} requests, {network.get('bytes', 0) / 1048576:.1f} MiB"),
             ("Cache", f"{cache.get('bytes', 0) / 1048576:.0f} of {cache.get('limit', 0) / 1048576:.0f} MiB")]
+    up = updates.info() if updates else None
+    if up and up["latest"]:
+        rows.append(("Newest release", up["latest"] + (" (update available)" if up["helperOutdated"] else " (up to date)")))
     bad = missing or errors
     head = ("Running, but with problems" if bad else "Running")
     body = "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(v)}</td></tr>" for k, v in rows)
@@ -1344,6 +1451,9 @@ def status_page(areas, release, port):
         notes += ("<p class=bad>Areas outside the bundled data can't be built without these libraries. Start the helper "
                   "from BeamNG.Earth's Add-ons page (its Python has them), or run <code>python -m pip install duckdb "
                   "fsspec</code>.</p>")
+    if up and up["helperOutdated"]:
+        notes += (f"<p class=bad>Cargo Earth {html.escape(up['latest'])} is out: "
+                  f"<a href=\"{html.escape(up['page'])}\">download it from the release page</a>.</p>")
     if errors:
         notes += "<p class=bad>Last errors:</p><ul>" + "".join(f"<li>{html.escape(e)}</li>" for e in errors[-5:]) + "</ul>"
     return f"""<!doctype html><html><head><meta charset=utf-8><meta http-equiv=refresh content=5>
@@ -1357,7 +1467,7 @@ td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
 <table>{body}</table>{notes}</body></html>""".encode()
 
 
-def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None):
+def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -1376,14 +1486,17 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
             try:
                 if u.path in ("/", "/index.html"):
-                    return self._send(200, status_page(areas, release, port), "text/html; charset=utf-8")
+                    return self._send(200, status_page(areas, release, port, updates), "text/html; charset=utf-8")
                 if u.path == "/v1/info":
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
                                             "cameras": cameras is not None, "radio": radio is not None,
                                             "player": player is not None, "missing": missing_libraries(),
-                                            "network": network, "cache": areas.budget.stats})
+                                            "network": network, "cache": areas.budget.stats,
+                                            "update": updates.info() if updates else None})
+                if u.path == "/v1/update/open" and updates:
+                    return self._send(200, updates.open())
                 if u.path == "/v1/cameras" and cameras:
                     return self._send(200, cameras.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/radio" and radio:
@@ -1447,6 +1560,7 @@ def main():
     ap.add_argument("--cache", default=os.environ.get("BNE_CARGO_CACHE") or os.path.join(here, "cache"))
     ap.add_argument("--release", default=RELEASE, help="Overture release (default: the pinned one, else the latest)")
     ap.add_argument("--cache-mb", type=int, default=1024, help="soft disk-cache budget in MiB (default: 1024)")
+    ap.add_argument("--no-update-check", action="store_true", help="never ask GitHub for a newer Cargo Earth release")
     ap.add_argument("--test", help="LAT,LON: build that area, print a summary and exit")
     a = ap.parse_args()
     if a.cache_mb < 64:
@@ -1479,7 +1593,9 @@ def main():
                          ensure_ascii=False, indent=1))
         budget.prune(force=True)
         return
-    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache), player=Player(), srv=srv)
+    updates = Updates(a.cache, enabled=not a.no_update_check).start()
+    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache), player=Player(), srv=srv,
+          updates=updates)
 
 
 if __name__ == "__main__":
