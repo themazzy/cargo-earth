@@ -37,6 +37,7 @@ local tow = require('cargoEarth/tow')
 local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
 local borders = require('cargoEarth/borders')
+local uiLayout = require('cargoEarth/layout')
 local currency = require('cargoEarth/currency')
 local dash = require('cargoEarth/dash')
 local dashtap = require('cargoEarth/dashtap')
@@ -1871,6 +1872,7 @@ local function learnCameraLimits(p)
   end
 end
 
+local radioAlive   -- (the radio, below)
 local function helperTick(p)
   if not p then return end
   if camerasOn() then
@@ -1888,6 +1890,7 @@ local function helperTick(p)
   local places = S.placesRequestedAt and S.clock - S.placesRequestedAt < 30
   local areas = (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
   local wantCameras = camerasOn() and onHelperCameras or nil
+  radioAlive()
   if areas or wantCameras or helper.asking() then
     helper.tick(p.lat, p.lon, S.clock, onHelperArea, wantCameras, not areas)
   end
@@ -1899,7 +1902,27 @@ end
 
 M.RADIO_ASK_S = 3          -- the helper is still fetching the list: ask again after this long
 M.RADIO_NEAR_S = 120       -- the "near you" list follows the car this often
-local radio = { cc = nil, state = nil, data = nil, askedAt = -math.huge, asking = false }
+M.RADIO_ALIVE_S = 5       -- while the helper plays the radio, the game says so this often (it stops without)
+local radio = { cc = nil, state = nil, data = nil, askedAt = -math.huge, asking = false, aliveAt = -math.huge }
+
+-- The helper's own player: { playing, url, vol, secs, error, player } as it last said, or nil. Each play starts a
+-- new session (radio.gen): an answer to a request of an older one, still in flight, is ignored.
+local function onPlayer(gen)
+  return function(data, err)
+    if gen ~= radio.gen then return end
+    if data then radio.player = data
+    elseif radio.player then radio.player = { playing = false, error = err == 'HTTP 404' and 'old' or 'helper' } end
+    if radio.player then radio.helperOn = radio.player.playing == true end
+  end
+end
+
+-- From the helper tick: the heartbeat that keeps the helper's player going.
+radioAlive = function()
+  if radio.helperOn and S.clock >= radio.aliveAt + M.RADIO_ALIVE_S then
+    radio.aliveAt = S.clock
+    helper.ask('/v1/player/alive', onPlayer(radio.gen))
+  end
+end
 
 local function radioRows(rows, withKm)
   local out = {}
@@ -1949,15 +1972,31 @@ function M.radioState()
   local out = { country = radio.cc, countryName = radio.cc and currency.name(radio.cc) or nil,
     state = not helper.enabled and 'disabled' or (not radio.cc and (p and 'nowhere' or 'noworld')) or radio.state or 'loading' }
   if radio.data then out.near, out.top = radio.data.near, radio.data.top end
+  out.player = radio.player
   return out
 end
 
--- name: refresh | played (a = station id: Radio Browser counts what is listened to)
-function M.radioDo(name, a)
+-- name: refresh | played (a = station id: Radio Browser counts what is listened to) | helperPlay (a = station id,
+-- b = volume 0..1) | helperVolume (a = volume) | helperStop
+function M.radioDo(name, a, b)
   if name == 'refresh' then
     radio.askedAt = -math.huge
   elseif name == 'played' and type(a) == 'string' and a:match('^[%x%-]+$') and #a == 36 then
     helper.ask('/v1/radioclick?id=' .. a, nil)
+  elseif name == 'helperPlay' and type(a) == 'string' and a:match('^[%x%-]+$') and #a == 36 then
+    -- the game's UI cannot play the stream: the helper plays this station on the computer
+    local vol = math.max(0, math.min(1, tonumber(b) or 0.6))
+    radio.gen = (radio.gen or 0) + 1
+    radio.helperOn, radio.aliveAt = true, S.clock
+    radio.player = { playing = true, secs = 0 }
+    helper.ask(string.format('/v1/player/play?id=%s&vol=%.2f', a, vol), onPlayer(radio.gen), '/v1/player/')
+  elseif name == 'helperVolume' and radio.helperOn then
+    helper.ask(string.format('/v1/player/volume?vol=%.2f', math.max(0, math.min(1, tonumber(a) or 0.6))), onPlayer(radio.gen),
+      '/v1/player/volume')
+  elseif name == 'helperStop' then
+    radio.gen = (radio.gen or 0) + 1
+    radio.helperOn, radio.player = false, nil
+    helper.ask('/v1/player/stop', nil, '/v1/player/')
   end
   return M.radioState()
 end
@@ -3167,6 +3206,10 @@ end
 function M.onBeamNGEarthWorldReady()
   stopForceWatch()
   marker.reset()
+  -- the first time: the phone goes into BeamNG.Earth's UI layout, above the speedometer
+  local okL, placed = pcall(uiLayout.ensure, uiLayout.gameApi(), uiLayout.gameFlag())
+  if okL and placed == 'added' then say('Cargo Earth: the phone was added to the .Earth UI layout (move it with the UI Apps editor).', 8)
+  elseif not okL then log('W', 'cargoEarth', 'layout: ' .. tostring(placed)) end
   if S.pendingCareer then return end
   S.inCareerWorld = true
   if not S.job then M.generate() end

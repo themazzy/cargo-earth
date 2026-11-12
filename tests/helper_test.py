@@ -359,6 +359,42 @@ class NetworkAndStorageTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 radio.click("../../etc")
 
+    def test_helper_player_plays_only_listed_stations_and_stops_without_the_game(self):
+        class Proc:
+            kind = "powershell"
+            def __init__(self):
+                self.lines, self.code, self.stdin, self.stdout = [], None, self, None
+            def write(self, line):
+                self.lines.append(line)
+            def flush(self):
+                pass
+            def poll(self):
+                return self.code
+            def wait(self, timeout=None):
+                self.code = 0
+        procs, now = [], [1000.0]
+        player = helper.Player(spawn=lambda url, vol: procs.append((url, vol, Proc())) or procs[-1][2], clock=lambda: now[0])
+        with self.assertRaises(ValueError):
+            player.play("file:///etc/passwd", 0.5)
+        out = player.play("http://s/1", 0.5)
+        self.assertTrue(out["playing"])
+        player.pos = 4
+        player.volume(0.3)
+        self.assertEqual(procs[0][2].lines, ["vol 0.30\n"])
+        now[0] += 10
+        self.assertTrue(player.alive()["playing"])
+        self.assertFalse(player.stop()["playing"])
+        self.assertIn("stop\n", procs[0][2].lines)
+        player.play("http://s/2", 0.5)               # its clock never moves: reported as stuck
+        now[0] += helper.PLAYER_OPEN_S + 1
+        self.assertTrue(player.status()["stuck"])
+        with tempfile.TemporaryDirectory() as cache:
+            radio = helper.Radio(cache, lambda cc: [], servers=lambda: ["x"])
+            radio.state["CZ"] = [["00000000-0000-0000-0000-000000000001", "A", "http://a", "MP3", 0, "", ""]]
+            self.assertEqual(radio.url_of("00000000-0000-0000-0000-000000000001"), "http://a")
+            self.assertIsNone(radio.url_of("00000000-0000-0000-0000-000000000002"))
+            self.assertIsNone(radio.url_of("http://evil"))
+
     def test_browser_requests_cannot_trigger_data_downloads(self):
         captured = []
         def server(address, handler):

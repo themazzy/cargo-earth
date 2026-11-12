@@ -1,6 +1,6 @@
 {"format": 1, "addons": [{"id": "cargo-earth-helper", "name": "Cargo Earth helper", "author": "themazzy",
   "repo": "themazzy/cargo-earth", "kind": "companion",
-  "summary": "Restaurants, shops, workplaces, fuel stations, speed cameras and customer addresses anywhere in the world for the Cargo Earth mod.",
+  "summary": "Restaurants, shops, workplaces, fuel stations, speed cameras, customer addresses and local radio anywhere in the world for the Cargo Earth mod.",
   "licence": "MIT", "asset": "^cargo_earth_helper.*\\.py$",
-  "local": {"file": "C:\\Users\\YOU\\Documents\\cargo_earth_helper_0.4.0.py", "tag": "v0.4.0"},
+  "local": {"file": "C:\\Users\\YOU\\Documents\\cargo_earth_helper_0.8.0.py", "tag": "v0.8.0"},
   "run": {"args": [], "port": 47820}}]}

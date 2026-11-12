@@ -33,13 +33,18 @@ Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated wi
 
 ## Install
 
+You need **BeamNG.drive** (Windows) and **[BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth)** installed and working first. Cargo Earth has two parts:
+
+- **the mod** (a ZIP in BeamNG's `mods` folder): the career and the phone, in the game;
+- **the helper** (a small Python program): it downloads restaurants, shops, workplaces, addresses, fuel stations, speed cameras and radio stations around you, and plays the radio. The game cannot go online itself, so the helper does it. BeamNG.Earth starts it for you.
+
 ### Quick install (Windows)
 
-With BeamNG.drive and BeamNG.Earth already installed, download **[CargoEarthSetup.exe](https://github.com/themazzy/cargo-earth/releases/latest/download/CargoEarthSetup.exe)** and double-click it. Choose 1 to install or update, 2 for the mod only, 3 to remove Cargo Earth, or 4 to delete your career save and start over.
+1. Download **[CargoEarthSetup.exe](https://github.com/themazzy/cargo-earth/releases/latest/download/CargoEarthSetup.exe)** and double-click it. Windows SmartScreen may say "Windows protected your PC" (the installer is not code-signed): click **More info**, then **Run anyway**.
+2. Choose **1** (install or update). It downloads the latest release, puts the mod ZIP in your BeamNG `mods` folder (older Cargo Earth ZIPs are moved to `cargo_earth_old_mods`), copies the helper to `%LOCALAPPDATA%\CargoEarth\helper`, installs its Python libraries (duckdb, fsspec) and registers it with BeamNG.Earth. Career saves are never touched.
+3. Continue with **[First start](#first-start)** below.
 
-It downloads the latest release, puts the mod ZIP in your BeamNG `mods` folder (older Cargo Earth ZIPs are moved to `cargo_earth_old_mods`), copies the helper to `%LOCALAPPDATA%\CargoEarth\helper`, installs its Python libraries and registers it with BeamNG.Earth. Career saves are never touched.
-
-The installer is not code-signed, so Windows SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**. The source is in [`installer/`](installer/) and the release file is built from it by a GitHub workflow.
+The other choices: 2 installs the mod only, 3 removes Cargo Earth, 4 deletes your career save to start over. The source is in [`installer/`](installer/) and the release file is built from it by a GitHub workflow.
 
 Options, from a command prompt in the download folder (for example `CargoEarthSetup.exe -uninstall`):
 
@@ -56,13 +61,23 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 
 ### Manual install
 
-1. Install and set up BeamNG.drive and BeamNG.Earth separately.
-2. Download `cargo_earth_career_0.8.0.zip` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest). Close the game. Put the ZIP in your active BeamNG user-folder `mods` directory. Keep only one Cargo Earth version enabled; do not unpack the ZIP for normal installation.
-3. For live geography, install Python 3 and the helper dependencies: `python -m pip install duckdb fsspec`.
-4. Run `python cargo_earth_helper_0.8.0.py` (also attached to the release), or add it to BeamNG.Earth as a companion add-on with [`helper/local.json.example`](helper/local.json.example) in `%LOCALAPPDATA%\beamng-earth\addons\local.json`. It listens locally on `127.0.0.1:47820`. Keep it running while playing. The helper also needs internet access to fetch public geographic data.
-5. Load BeamNG.Earth, add the **Cargo Earth: Phone** UI app, then start or resume your career in the phone.
+1. Download `cargo_earth_career_<version>.zip` and `cargo_earth_helper_<version>.py` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest).
+2. Close the game. Put the ZIP as it is (do not unpack it) in your BeamNG user folder's `mods` directory (for example `%LOCALAPPDATA%\BeamNG\BeamNG.drive\current\mods`). Keep only one Cargo Earth version there.
+3. Install Python 3 and the helper's libraries: `python -m pip install duckdb fsspec`.
+4. Register the helper with BeamNG.Earth: copy [`helper/local.json.example`](helper/local.json.example) to `%LOCALAPPDATA%\beamng-earth\addons\local.json` (or add its entry to the file there) and set `"file"` to where you saved the helper. Or run it yourself before playing: `python cargo_earth_helper_<version>.py` (it listens on `127.0.0.1:47820`; keep the window open).
+5. Continue with **First start** below.
 
-Phone sections: **Work**, **Garage**, **Home**, **Career**, **Settings**. Work separates Deliveries and Companies; Career separates Progress, Finances, Map and Firm. The firm's headquarters opens as a full-screen plan of the building.
+### First start
+
+1. **Start BeamNG.Earth** and open its **Add-ons** page. Allow **Cargo Earth helper** the first time it asks, and turn on **Start with BeamNG.Earth** so it runs whenever you play. The helper needs internet access.
+2. **Load a BeamNG.Earth map** with the mod enabled (BeamNG's Mods menu shows **cargo_earth_career**).
+3. **The phone:** the first time, the mod adds the **Cargo Earth: Phone** app to BeamNG.Earth's ".Earth" UI layout, above the speedometer. Move or resize it with the UI Apps editor (Escape → **UI Apps**). If you play with another layout, or removed the phone, add **Cargo Earth: Phone** there yourself and save the layout. Everything is done by clicking on the phone; the mod has no key bindings.
+4. **Start your career** on the phone (Work tab) and go online for orders.
+5. Optional: turn **traffic on in BeamNG.Earth** for the speed-limit sign on the phone (it reads Earth's road graph).
+
+If the phone says the helper is not running: check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras and grocery runs still need it.
+
+Phone sections: **Work**, **Garage**, **Home**, **Career**, **Radio**, **Settings**. Work separates Deliveries and Companies; Career separates Progress, Finances, Map and Firm. The firm's headquarters opens as a full-screen plan of the building.
 
 Parts selected in BeamNG Vehicle Config are previews. Apply them, leave Vehicle Config, then confirm or discard checkout in the phone Garage. Driving with unconfirmed changes restores the paid configuration.
 

@@ -1920,3 +1920,31 @@ test('the dash phone part only runs the phone app\'s own calls', function()
 end)
 
 print(string.format('%d career tests passed', total))
+
+do
+  local layout = require('cargoEarth/layout')
+  local written, added, current = nil, {}, nil
+  local layouts = {
+    {type = 'freeroam', filename = '/settings/ui_apps/layouts/default/freeroam.uilayout.json', apps = {}},
+    {type = 'beamngEarth', filename = '/settings/ui_apps/layouts/default/beamngEarth.uilayout.json', apps = {{appName = 'tacho2'}}},
+  }
+  local api = {layouts = function() return layouts end,
+    addApp = function(fn, name, placement) added[#added + 1] = {fn, name, placement}; return true end,
+    current = function() return layouts[2] end, setCurrent = function(fn) current = fn end}
+  local flag = {read = function() return written end, write = function(t) written = t end}
+  assert(layout.ensure(api, flag) == 'added')
+  assert(#added == 1 and added[1][1]:find('beamngEarth') and added[1][2] == 'cargoEarthPhone' and added[1][3].bottom == '310px')
+  assert(current == layouts[2].filename and written.phoneAdded)
+  assert(layout.ensure(api, flag) == 'done' and #added == 1, 'only once: a player who removes it keeps that')
+  written = nil
+  layouts[2].apps[2] = {appName = 'cargoEarthPhone'}
+  assert(layout.ensure(api, flag) == 'present' and #added == 1, 'a phone the player placed is left alone')
+  written = nil
+  assert(layout.ensure({layouts = function() return {layouts[1]} end}, flag) == 'none' and written == nil)
+  assert(layout.ensure(nil, flag) == nil)
+  written = nil
+  local refuse = {layouts = function() return {{type = 'beamngEarth', filename = 'x/beamngEarth.uilayout.json', apps = {}}} end,
+    addApp = function() return false end, current = function() return nil end, setCurrent = function() end}
+  assert(layout.ensure(refuse, flag) == nil and written == nil, 'a refused insert is not recorded as done')
+  print('PASS the phone goes into the .Earth layout above the speedometer, once')
+end
