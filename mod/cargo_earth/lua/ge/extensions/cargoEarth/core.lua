@@ -33,6 +33,7 @@ local speedlimit = require('cargoEarth/speedlimit')
 local upkeep = require('cargoEarth/upkeep')
 local special = require('cargoEarth/special')
 local resupply = require('cargoEarth/resupply')
+local tow = require('cargoEarth/tow')
 local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
 
@@ -45,6 +46,8 @@ M.RULES = {
   courier = { arriveM = 30, stopS = 5, cancelFee = 50 },
   trucking = { arriveM = 35, stopS = 3, cancelFee = 2000 },
 }
+M.TOW_RULES = { arriveM = 30, stopS = 3, cancelFee = 200 }
+M.TOW_RELOAD_FEE = 150  -- putting a car that slid off back on the trailer
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
 M.random = function(...) return math.random(...) end   -- (tests replace it)
 M.SMOOTH_TIP = 0.06      -- a customer tips this share of the pay for a ride without a harsh moment
@@ -272,7 +275,10 @@ local function workFreight(job, unload)
   return true
 end
 
-local function rules(job) return M.RULES[(job and job.kind == 'food') and 'courier' or (job and 'trucking') or S.mode] end
+local function rules(job)
+  if job and job.kind == 'tow' then return M.TOW_RULES end
+  return M.RULES[(job and job.kind == 'food') and 'courier' or (job and 'trucking') or S.mode]
+end
 local function arrivalRadius(job)
   if job and job.kind == 'food' and S.phase == 'toPickup' then return marker.PICKUP_RADIUS end
   return rules(job).arriveM
@@ -536,6 +542,40 @@ local function modeReady()
   return S.idx ~= nil
 end
 
+-- Tow offers near the player. The workshop is your headquarters when it is close enough, else one at a fuel station.
+local function towOffers(class, p)
+  local c = S.career
+  local kind = tow.CLASSES[class].trailer
+  S.towCars = S.towCars or trailers.existing(tow.CARS)
+  if S.towTrailer == nil then S.towTrailer = {} end
+  if S.towTrailer[kind] == nil then S.towTrailer[kind] = trailers.towModel(kind) ~= nil end
+  if not S.towTrailer[kind] then return {} end
+  local hq = c.firm and c.firm.hq
+  local function workshop(lat, lon)
+    if hq and hq.g then
+      local k = jobs.km(lat, lon, hq.g[1], hq.g[2])
+      if k >= tow.WORKSHOP_KM[1] and k <= tow.WORKSHOP_KM[2] then
+        return { id = 'hq', n = hq.n or 'Headquarters', town = hq.town or '', g = { hq.g[1], hq.g[2] }, label = 'Your workshop' }
+      end
+    end
+    local list = S.fuelIdx and fuel.within(S.fuelIdx, lat, lon, 'fuel', tow.WORKSHOP_KM[1], tow.WORKSHOP_KM[2]) or {}
+    local s = list[1] and list[1].station
+    if s then return { id = 'workshop:' .. s.id, n = 'Workshop at ' .. s.n, town = s.town or '', g = { s.g[1], s.g[2] },
+      label = 'Workshop' } end
+  end
+  local addresses = food.addressesNear(S.fidx, p.lat, p.lon, tow.NEAR_KM)
+  local out = tow.offers(class, p.lat, p.lon, addresses, workshop, S.towCars, M.random)
+  local factor = rating.freightPay(c)
+  for _, offer in ipairs(out) do
+    if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
+    if firm.ownsTrailer(c, kind) then
+      offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
+      offer.pay = offer.pay + offer.trailerBonus
+    end
+  end
+  return out
+end
+
 function M.generate()
   if not modeReady() then S.offers, S.offerStats = {}, nil return end
   local p = earth.pose()
@@ -600,6 +640,11 @@ function M.generate()
         end
       end
       S.offerStats = stats
+    end
+    -- tow jobs: broken-down cars at real addresses, for a vehicle with a tow hitch or a tractor
+    local class = v and tow.class(tier, tow.hasHitch(v))
+    if class and S.fidx and garage.inOwnCar(M.G, S.career.garage) then
+      for _, offer in ipairs(towOffers(class, p)) do S.offers[#S.offers + 1] = offer end
     end
   end
   S.offeredAt = { lat = p.lat, lon = p.lon }
@@ -728,6 +773,13 @@ local function takeJob(j)
     local box = cargo.fit(plan, j)
     if not box then say('This order needs more cargo space.', 4) return end
     j.cargoBox = box.key
+  elseif j.tow then
+    local v, tier = freightCarrier()
+    if not v or tow.class(tier, tow.hasHitch(v)) ~= j.tow.class then
+      say(j.tow.class == 'heavy' and 'Tow jobs with two cars need a tractor for the flatbed trailer.'
+        or 'This tow job needs a vehicle with a tow hitch for the car trailer.', 5)
+      return
+    end
   elseif j.haul then
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
@@ -777,6 +829,18 @@ local function finishPickup()
     end
     say(n > 1 and string.format('Collected %d orders from %s.', n, j.from.n)
       or string.format('Collected %s from %s.', j.cargoName, j.from.n))
+  elseif j.tow then
+    local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars)
+    if not ok then
+      S.stopT = -10
+      say('The broken-down car could not be loaded: ' .. tostring(why), 6)
+      return
+    end
+    j.trailerSpawned, j.tow.spawnedAt, j.tow.damage0, j.tow.onBoard = true, S.clock, nil, #j.tow.cars
+    local _, o = orderOf(j)
+    if o then o.phase = 'toDelivery' end
+    say(string.format('%s on the trailer behind you. Couple it and drive gently to %s: %s not strapped down.',
+      #j.tow.cars > 1 and 'The cars are' or 'The car is', j.to.n, #j.tow.cars > 1 and 'they are' or 'it is'), 8)
   elseif j.haul then
     if j.haul.tier == 'semi' and not trailers.id() then
       M.spawnTrailer(true)
@@ -840,6 +904,19 @@ local function finishDelivery(force)
       phoneSound('pickup')
       return
     end
+  elseif j.tow then
+    if not trailers.withPlayer() then
+      say('Bring the trailer with the broken-down car.', 3)
+      S.stopT = -10
+      return
+    end
+    local onBoard = tow.onBoard(trailers.towedDistances())
+    if onBoard < #j.tow.cars then
+      say(string.format('Only %d of %d cars are on the trailer. Put them back on from the phone (Work).', onBoard, #j.tow.cars), 5)
+      S.stopT = -10
+      return
+    end
+    j.cargoCondition = tow.condition(trailers.towedDamage() - (j.tow.damage0 or trailers.towedDamage()))
   elseif not force and j.kind ~= 'food' and S.config.requireTrailer and S.config.spawnTrailer and not trailers.withPlayer() then
     say('Bring the trailer: it is not with your truck.', 3)
     S.stopT = -10   -- don't repeat the message every tick
@@ -859,7 +936,7 @@ local function finishDelivery(force)
     tipWhy = { fast = fast > 0 or nil, smooth = smooth > 0 or nil, harsh = harsh > 0 and harsh or nil }
   end
   if j.special == 'chilled' then special.warm(j, late) end
-  local condition = cargo.supports(j) and cargo.condition(j) or 100
+  local condition = cargo.supports(j) and cargo.condition(j) or (j.tow and cargo.condition(j)) or 100
   local conditionFactor = j.kind == 'food' and (0.6 + 0.004 * condition) or condition / 100
   pay = math.floor(pay * conditionFactor * (1 - special.penalty(j) / 100) + 0.5)
   tip = math.floor(tip * condition / 100 + 0.5)
@@ -1054,6 +1131,17 @@ local function tick(dt)
       and not (S.freightLoad.command or ''):match('^stop'))) then
     workFreight(S.job, false)
   end
+  -- a tow job: the damage the cars came with is not yours; a car that slides off is noticed
+  if S.job.tow and S.phase == 'toDelivery' and S.clock >= (S.towCheckAt or 0) then
+    local t = S.job.tow
+    S.towCheckAt = S.clock + 1
+    if not t.damage0 and t.spawnedAt and S.clock >= t.spawnedAt + 3 then t.damage0 = trailers.towedDamage() end
+    if trailers.towedCount() > 0 then
+      local n = tow.onBoard(trailers.towedDistances())
+      if n < (t.onBoard or #t.cars) then say('A car slid off the trailer! Put it back on from the phone (Work).', 6) end
+      t.onBoard = n
+    end
+  end
   -- special cargo on board: a chilled load warms up after its time limit, an oversize one has an escort
   if S.job.special and S.phase == 'toDelivery' then
     local j = S.job
@@ -1163,11 +1251,12 @@ local function incomingInfo(inc)
     orderType = j.orderType, sizeBonus = j.sizeBonus, freight = j.haul, handling = j.kind == 'food' and cargo.handling(j) or nil,
     slots = j.kind == 'food' and cargo.size(j) or nil,
     pickupKm = r1(j.pickupKm), km = r1(j.km), pay = j.pay, minutes = j.minutes, adr = j.adr or false,
-    special = special.info(j), resupplyBonus = j.resupplyBonus, litres = j.litres,
+    special = special.info(j), resupplyBonus = j.resupplyBonus, litres = j.litres, tow = tow.info(j),
+    trailerBonus = j.trailerBonus,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
     fuelAllowance = j.fuelAllowance,
-    trailer = j.trailer and ((j.haul and j.haul.trailerName) or (S.idx and S.idx.trailers[j.trailer]) or j.trailer) or nil,
+    trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or (j.haul and j.haul.trailerName) or (S.idx and S.idx.trailers[j.trailer]) or j.trailer) or nil,
     leftS = math.max(0, math.floor(inc.expiresAt - S.clock + 0.5)), totalS = M.PHONE.acceptS }
 end
 
@@ -1515,16 +1604,17 @@ function M.phoneState()
     out.active = { phase = S.phase, kind = j.kind or 'cargo', cargo = j.cargoName, items = j.items, from = place(j.from), to = place(j.to),
         orderType = j.orderType, handling = cargo.supports(j) and cargo.handling(j) or nil,
       freight = j.haul, freightStatus = S.freightStatus, route = j.route and parcel.state(j),
-      canRestoreTrailer = j.trailer and not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested) or nil,
+      canRestoreTrailer = j.trailer and ((not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested))
+        or (j.tow and S.phase == 'toDelivery' and (j.tow.onBoard or #j.tow.cars) < #j.tow.cars)) or nil,
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
-      special = special.info(j),
+      special = special.info(j), tow = tow.info(j), reloadFee = j.tow and M.TOW_RELOAD_FEE or nil,
       slots = j.kind == 'food' and cargo.size(j) or nil,
       distM = distRoad and math.floor(S.roadM + 0.5)
         or (S.dist and math.floor(S.dist + 0.5)) or nil,
       distRoad = distRoad,
       etaS = S.etaS and math.floor(S.etaS + 0.5) or nil, km = r1(j.km), pay = j.pay, minutes = j.minutes,
       leftS = math.floor(left + 0.5), arriveM = radius, stop = stopInfo(),
-      cancelAsk = S.phone.cancelAskUntil ~= nil and S.clock <= S.phone.cancelAskUntil, trailer = j.trailer and (S.idx and S.idx.trailers[j.trailer] or j.trailer) or nil,
+      cancelAsk = S.phone.cancelAskUntil ~= nil and S.clock <= S.phone.cancelAskUntil, trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or S.idx and S.idx.trailers[j.trailer] or j.trailer) or nil,
       trailerM = j.trailerSpawned and trailers.distanceToPlayer() and math.floor(trailers.distanceToPlayer()) or nil,
       cancelFee = rules(j).cancelFee, count = #S.orders, carrying = carrying, orders = {} }
     -- List the current stop first, then the remaining orders.
@@ -2721,6 +2811,19 @@ end
 function M.spawnTrailer(atPickup)
   local j, p = S.job, earth.pose()
   if not j or not j.trailer or not p or p.camera or earth.status() ~= 'ok' then return end
+  if j.tow then
+    -- the trailer is gone (a reload) or a car slid off: load the cars on again, for a fee
+    if S.phase ~= 'toDelivery' then return end
+    if (p.speed or 0) > M.STOP_SPEED then say('Stop before loading the cars again.') return end
+    if (S.career.money or 0) < M.TOW_RELOAD_FEE then say('Not enough money to load the cars again.') return end
+    local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars)
+    if not ok then say('The cars could not be loaded: ' .. tostring(why)) return end
+    economy.post(S.career, -M.TOW_RELOAD_FEE, 'cancel_fee', economy.nextId(S.career, 'cancel_fee'), 'Tow: loading the cars again')
+    j.trailerSpawned, j.tow.spawnedAt, j.tow.damage0, j.tow.onBoard = true, S.clock, nil, #j.tow.cars
+    say(string.format('The cars are back on the trailer (%d CZK). Couple it again.', M.TOW_RELOAD_FEE))
+    saveCareer()
+    return
+  end
   if j.haul then
     if trailers.id() then return end
     if not atPickup and S.phase ~= 'toDelivery' and not j.trailerRequested then return end

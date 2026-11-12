@@ -122,7 +122,7 @@ end
 local function blocked(car, f, used)
   if garage.parkedRepairCost(car) > 0 then return 'repair' end
   if upkeep.tier(car) == 'semi' then
-    local t = trailerFor(f, 'dryvan', used) or trailerFor(f, 'tanker', used)
+    local t = trailerFor(f, 'dryvan', used) or trailerFor(f, 'tanker', used) or trailerFor(f, 'flatbed', used)
     if not t then return 'trailer' end
     used[t] = true
   end

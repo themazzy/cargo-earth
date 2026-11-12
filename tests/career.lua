@@ -1754,4 +1754,85 @@ test('a tractor gets resupply offers among its freight jobs', function()
   assert(job and job.resupplyBonus > 0 and job.to.n == 'Test pump' and not job.special, 'a resupply job is offered')
 end)
 
+local tow = require('cargoEarth/tow')
+local trailers = require('cargoEarth/trailers')
+
+test('tow rules: who can tow, offers to a workshop, cars on board, damage costs pay', function()
+  assert(tow.class('semi', false) == 'heavy' and tow.class(nil, true) == 'light' and tow.class('van', false) == nil)
+  assert(tow.hasHitch({ slotPartMap = { a = 'pickup_tow_hitch' } }))
+  assert(not tow.hasHitch({ slotPartMap = { a = 'pickup_hitch_delete' } }) and not tow.hasHitch({ slotPartMap = { a = 'engine' } }))
+  local addresses = { { 50.01, 14, 50.0101, 14, 'Main Street 1', 'Town' }, { 50.5, 14, 50.5, 14, 'Far Away 2', 'Far' } }
+  local workshop = function(lat, lon) return { id = 'w', n = 'Workshop', g = { lat + 0.1, lon } } end
+  local offers = tow.offers('light', 50, 14, addresses, workshop, { 'covet' }, function() return 1 end)
+  assert(#offers == 1, 'one car near the player; the far one and repeats are skipped')
+  local job = offers[1]
+  assert(job.kind == 'tow' and job.tow.class == 'light' and #job.tow.cars == 1 and job.trailer == 'cartrailer')
+  assert(job.from.n == 'Main Street 1' and job.from.g[1] == 50.0101 and job.to.n == 'Workshop' and job.pay == tow.pay('light', job.km))
+  local heavy = tow.offers('heavy', 50, 14, addresses, workshop, { 'covet', 'pessima' }, function() return 1 end)[1]
+  assert(#heavy.tow.cars == 2 and heavy.trailer == 'flatbed' and heavy.pay > tow.pay('light', heavy.km))
+  assert(#tow.offers('light', 50, 14, addresses, function() return nil end, { 'covet' }) == 0, 'no workshop near: no job')
+  assert(#tow.offers('light', 50, 14, addresses, workshop, {}) == 0, 'no cars in the game: no job')
+  assert(tow.onBoard({ 1, 5.9, 7, nil }) == 2)
+  assert(tow.condition(0) == 100 and tow.condition(600) == 90 and tow.condition(1e9) == 100 - tow.MAX_LOSS)
+end)
+
+test('a tow job: the car goes on the trailer, slides off, is loaded again and towed to a workshop', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  vehicle.slotPartMap = { body = 'pigeon', hitch = 'pigeon_tow_hitch' }
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  withStation(s, 50.1, 14)
+  -- the game side, stubbed: what trailers.lua would do in BeamNG
+  local saved = {}
+  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id' }) do
+    saved[k] = trailers[k]
+  end
+  local spawned, distances, damage = 0, {}, 0
+  trailers.existing = function(list) return { list[1] } end
+  trailers.towModel = function() return 'cartrailer' end
+  trailers.spawnTow = function(kind, cars) spawned = spawned + 1 distances = { 1 } return kind == 'cartrailer' and #cars == 1 end
+  trailers.withPlayer = function() return true end
+  trailers.towedDistances = function() return distances end
+  trailers.towedDamage = function() return damage end
+  trailers.towedCount = function() return #distances end
+  trailers.remove = function() distances = {} end
+  trailers.id = function() return #distances > 0 and 7 or nil end
+  local ok, err = pcall(function()
+    core.setMode('trucking')
+    advance(core, 2)
+    core.generate()
+    local i, job
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    assert(job and job.to.n == 'Workshop at Test pump', 'a tow job to the workshop at a fuel station')
+    core.take(i)
+    assert(s.job == job)
+    damage = 500                    -- the damage it broke down with
+    pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+    advance(core)
+    assert(spawned == 1 and s.phase == 'toDelivery' and job.tow.onBoard == 1)
+    assert(job.tow.damage0 == 500, 'damage before the tow is not yours ' .. tostring(job.tow.damage0) .. ' ' .. tostring(job.tow.spawnedAt) .. ' ' .. tostring(s.clock))
+    -- it slides off
+    distances = { 12 }
+    advance(core, 4)
+    local state = core.phoneState()
+    assert(job.tow.onBoard == 0 and state.active.tow.onBoard == 0 and state.active.canRestoreTrailer)
+    pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+    advance(core)
+    assert(s.job == job, 'not delivered without the car')
+    c.money = 1000
+    core.phoneAction('restoreTrailer')
+    assert(spawned == 2 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
+    advance(core, 8)
+    damage = damage + 600           -- 10 % worse on the way
+    advance(core, 30)
+    assert(not s.job, 'delivered')
+    assert(s.phone.lastDone.cargoCondition == 90 and s.phone.lastDone.pay <= math.floor(job.pay * 0.9 + 0.5))
+    assert(c.history[1].kind == 'tow')
+  end)
+  for k, f in pairs(saved) do trailers[k] = f end
+  assert(ok, err)
+end)
+
 print(string.format('%d career tests passed', total))
