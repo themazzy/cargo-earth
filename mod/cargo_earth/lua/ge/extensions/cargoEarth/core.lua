@@ -30,6 +30,7 @@ local fuel = require('cargoEarth/fuel')
 local records = require('cargoEarth/stats')
 local cameras = require('cargoEarth/cameras')
 local speedlimit = require('cargoEarth/speedlimit')
+local upkeep = require('cargoEarth/upkeep')
 local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
 
@@ -43,6 +44,10 @@ M.RULES = {
   trucking = { arriveM = 35, stopS = 3, cancelFee = 2000 },
 }
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
+M.random = function(...) return math.random(...) end   -- (tests replace it)
+M.SMOOTH_TIP = 0.06      -- a customer tips this share of the pay for a ride without a harsh moment
+M.HARSH_TIP_LOSS = 0.3   -- each harsh moment takes this share off the tip for speed
+M.PARCEL_TIP_SHARE = 0.5 -- a parcel route's tip for speed is figured on this share of its pay
 M.ROAD_M = 20          -- the car is on the road edge this close (else: a car park, a field; no limit shown)
 M.LIMIT_S = 0.5        -- the limit under the car is read this often
 M.OVER_KMH = 3         -- the phone's sign turns red this far over the limit
@@ -575,6 +580,11 @@ function M.generate()
           if factor ~= 1 then
             offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor
           end
+          -- your firm's own trailer: no trailer hire to pay
+          if tier == 'semi' and offer.haul and firm.ownsTrailer(S.career, firm.trailerKind(offer.haul.kind)) then
+            offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
+            offer.pay = offer.pay + offer.trailerBonus
+          end
           S.offers[#S.offers + 1] = offer
         end
       end
@@ -828,7 +838,15 @@ local function finishDelivery(force)
   local late = math.max(0, minutes - j.minutes)
   local perMin = M.LATE_PER_MIN[j.kind == 'food' and 'courier' or 'trucking']
   local pay = math.floor(j.pay * math.max(M.LATE_FLOOR, 1 - late * perMin) + 0.5)
-  local tip = j.kind == 'food' and food.tip(j.pay, minutes, j.minutes) or 0
+  -- Tips from private customers (meals and parcel routes): for a fast delivery, and for a smooth ride
+  local tip, tipWhy = 0, nil
+  if j.kind == 'food' or j.route then
+    local fast = food.tip(j.kind == 'food' and j.pay or math.floor(j.pay * M.PARCEL_TIP_SHARE), minutes, j.minutes)
+    local harsh = j.harsh or 0
+    local smooth = harsh == 0 and math.floor(j.pay * M.SMOOTH_TIP / 5 + 0.5) * 5 or 0
+    tip = harsh == 0 and fast + smooth or math.floor(fast * math.max(0, 1 - M.HARSH_TIP_LOSS * harsh) / 5 + 0.5) * 5
+    tipWhy = { fast = fast > 0 or nil, smooth = smooth > 0 or nil, harsh = harsh > 0 and harsh or nil }
+  end
   local condition = cargo.supports(j) and cargo.condition(j) or 100
   local conditionFactor = j.kind == 'food' and (0.6 + 0.004 * condition) or condition / 100
   pay = math.floor(pay * conditionFactor + 0.5)
@@ -858,7 +876,8 @@ local function finishDelivery(force)
     toDebt = toDebt, net = pay + tip - toDebt, rankUp = rankUp, truckUnlock = truckUnlock,
     cargoCondition = condition < 100 and condition or nil, held = j.companyShift ~= nil,
     ownerOperator = c.employment and c.employment.ownerOperator,
-    stars = stars, note = note, track = track, records = #newRecords > 0 and newRecords or nil, premium = j.premium }
+    stars = stars, note = note, track = track, records = #newRecords > 0 and newRecords or nil, premium = j.premium,
+    tipWhy = tip > 0 and tipWhy or (tipWhy and tipWhy.harsh and tipWhy) or nil }
   nextPing()
   c.km = (c.km or 0) + j.km
   table.insert(c.history, 1, { date = os.date('%Y-%m-%d %H:%M'), kind = j.kind or 'cargo', from = j.from.n,
@@ -956,6 +975,23 @@ function M.onCargoEarthShock(id, token, peak)
   elseif damaged > 0 then
     say(string.format('%d order%s damaged by a %.1f g impact.', damaged, damaged == 1 and '' or 's', peak))
     saveCareer()
+  end
+end
+
+-- A harsh moment (hard braking, accelerating or cornering) with a customer's order on board: it costs part of the tip.
+function M.onCargoEarthHarsh(id, token, g)
+  if S.pendingCareer or type(g) ~= 'number' or g ~= g then return end
+  if M.G.playerId() ~= id then return end
+  local counted = 0
+  for _, order in ipairs(S.orders) do
+    local job = order.job
+    if order.phase == 'toDelivery' and (job.kind == 'food' or job.route) then
+      job.harsh, counted = (job.harsh or 0) + 1, counted + 1
+    end
+  end
+  if counted > 0 and S.clock >= (S.harshSaidAt or -math.huge) + 20 then
+    S.harshSaidAt = S.clock
+    say('Easy: the customer felt that. A smooth ride earns a better tip.', 3)
   end
 end
 
@@ -1426,7 +1462,8 @@ function M.phoneState()
     out.done = { pay = receipt.pay, tip = receipt.tip, late = receipt.late, to = receipt.to,
       toDebt = receipt.toDebt, net = receipt.net, rankUp = receipt.rankUp, truckUnlock = receipt.truckUnlock,
       cargoCondition = receipt.cargoCondition, held = receipt.held, ownerOperator = receipt.ownerOperator,
-      stars = receipt.stars, note = receipt.note, track = receipt.track, records = receipt.records, premium = receipt.premium }
+      stars = receipt.stars, note = receipt.note, track = receipt.track, records = receipt.records, premium = receipt.premium,
+      tipWhy = receipt.tipWhy }
   end
   if ph.lastFailure and S.clock < ph.lastFailure.untilT then
     out.failure = { count = ph.lastFailure.count, g = ph.lastFailure.g }
@@ -1740,9 +1777,34 @@ local function garageTick(dt)
   if not own then return end
   -- the odometer
   local p = earth.pose()
-  if p and p.speed and dt then g.car.km = (g.car.km or 0) + p.speed * dt / 1000 end
-  local what, amount = garage.trackDamage(g, M.G.damage())
   local shift = S.career.employment
+  if p and p.speed and dt then
+    local km = p.speed * dt / 1000
+    g.car.km = (g.car.km or 0) + km
+    -- upkeep: your own car wears, also on an owner-operator contract; a long overdue service can end in a breakdown
+    -- (company and loaner vehicles are looked after by their owners)
+    if (not shift or shift.ownerOperator) and not g.car.loaner and km > 0 then
+      upkeep.wear(g.car, km)
+      S.wearKm = (S.wearKm or 0) + km
+      if S.wearKm >= 1 and not g.car.breakdown then
+        local chance = upkeep.chance(g.car, S.wearKm)
+        S.wearKm = 0
+        if chance > 0 and M.random() < chance then
+          local failure = upkeep.breakdown(g.car)
+          g.car.breakdown, S.stallAt = failure, 0   -- kept with the car: saved, and it stays broken when parked
+          phoneSound('cancelled')
+          say(failure.text .. string.format(' Roadside help: %d CZK (Garage on the phone).', failure.cost), 10)
+          saveCareer()
+        end
+      end
+    end
+  end
+  -- a breakdown keeps the engine off until the roadside help is paid
+  if g.car.breakdown and S.clock >= (S.stallAt or 0) then
+    S.stallAt = S.clock + 1
+    if M.G.stall then pcall(M.G.stall, true) end
+  end
+  local what, amount = garage.trackDamage(g, M.G.damage())
   if shift and what == 'hit' then employment.damage(S.career, math.max(0, amount)) end
   if shift and not shift.ownerOperator then g.debt = 0 end
   if what == 'hit' then
@@ -2071,8 +2133,61 @@ end
 local function garageRefuel(amount) local ok, msg = fuelRefuel(amount) say(msg) return ok, msg end
 local function garageFuelDelivery() local ok, msg = fuelDelivery() say(msg) return ok, msg end
 local function garageFuelGps() return fuelGps() end
-local function garageHireDriver(id)
-  return garageSay(fleet.hire(S.career.garage, S.career, tonumber(id)))
+local function garageHireDriver(id, applicant)
+  if S.career.firm then fleet.applicants(S.career.firm, (S.career.activeSeconds or 0) / 60, M.random) end
+  return garageSay(fleet.hire(S.career.garage, S.career, tonumber(id), applicant))
+end
+-- Roadside help after a breakdown: the failed item is serviced, the engine can be started again.
+local function garageRoadside()
+  local g = S.career.garage
+  local failure = g.car and g.car.breakdown
+  if type(failure) ~= 'table' or not upkeep.byId[failure.id] then
+    if g.car then g.car.breakdown = nil end
+    return false, 'Your car is running.'
+  end
+  failure.cost = tonumber(failure.cost) or 0
+  local paid, owed = upkeep.roadside(S.career, g, g.car, failure)
+  g.car.breakdown = nil
+  if M.G.stall then pcall(M.G.stall, false) end
+  saveCareer()
+  local msg = string.format('Roadside help fixed the %s for %d CZK%s. Start the engine and drive on.',
+    upkeep.byId[failure.id].name:lower(), failure.cost, owed > 0 and string.format(' (%d CZK added to your debt)', owed) or '')
+  say(msg)
+  return true, msg
+end
+-- Where a service is possible now: at the headquarters (the workshop's share off) or at a fuel station.
+local function serviceSpot()
+  local p = earth.status() == 'ok' and earth.pose() or nil
+  if firm.atHq(S.career, p) then return 'the headquarters', firm.value(S.career, 'workshop') or 1 end
+  if not p or p.camera or (p.speed or 0) > M.STOP_SPEED then return nil end
+  for _, kind in ipairs({ fuel.stationKind('gasoline'), fuel.stationKind('electric') }) do
+    local station, km = fuel.nearest(S.fuelIdx, p.lat, p.lon, kind, 1)
+    if station and km * 1000 <= fuel.STATION_RADIUS then return station.n or 'the fuel station', 1 end
+  end
+end
+-- id: a parked vehicle's fleet id (it is at the headquarters), or nil for the car you drive; item: one, or nil for
+-- all that are due.
+local function garageService(id, item)
+  local g, c = S.career.garage, S.career
+  local car, where, factor
+  if id ~= nil and id ~= '' and id ~= 'current' then
+    car = garage.parkedCar(g, tonumber(id))
+    if not car then return false, 'That vehicle is not parked here.' end
+    if not (c.firm and c.firm.hq) then return false, 'Parked vehicles are serviced at the headquarters.' end
+    where, factor = 'the headquarters', firm.value(c, 'workshop') or 1
+  else
+    car = g.car
+    if not car or car.loaner then return false, 'The loaner is serviced by its company.' end
+    if not garage.inOwnCar(M.G, g) then return false, 'Sit in your car first.' end
+    where, factor = serviceSpot()
+    if not where then return false, 'Drive to your headquarters or a fuel station for a service.' end
+  end
+  return garageSay(upkeep.service(c, car, item and item ~= '' and { item } or nil, factor, where))
+end
+local function garageRepairParked(id)
+  local c = S.career
+  if not (c.firm and c.firm.hq) then return false, 'Parked vehicles are repaired at the headquarters.' end
+  return garageSay(garage.repairParked(S.career.garage, c, tonumber(id), firm.value(c, 'workshop') or 1))
 end
 local function garageReleaseDriver(id)
   return garageSay(fleet.release(S.career.garage, tonumber(id)))
@@ -2206,6 +2321,18 @@ function M.garageState()
   end
   if not g.started then return out end
   out.fleet = fleet.state(g, S.career, firm.driverFactor(S.career))
+  for _, v in ipairs(out.fleet.cars) do
+    local car = garage.parkedCar(g, v.id)
+    if car and not car.loaner then v.upkeep = upkeep.state(car, firm.value(S.career, 'workshop')) end
+  end
+  local shift = S.career.employment
+  if g.car and not g.car.loaner and (not shift or shift.ownerOperator) then
+    local where, factor = serviceSpot()
+    out.upkeep = upkeep.state(g.car, factor)
+    out.upkeep.where = where
+  end
+  local broken = g.car and g.car.breakdown
+  if type(broken) == 'table' then out.breakdown = { text = broken.text, cost = broken.cost } end
   out.capacity = firm.capacity(S.career)
   out.car = g.car and g.car.name or nil
   out.loaner = g.car and g.car.loaner or nil
@@ -2296,6 +2423,7 @@ function M.garageDo(name, a, b)
   local fns = { start = M.garageStart, repair = M.garageRepair, paydebt = M.garagePayDebt, sellCar = M.garageSellCar,
     buyListing = M.garageBuyListing, preview = M.garagePreview, back = M.garagePreviewEnd, bring = M.garageBringCar,
     switchCar = garageSwitchCar, hireDriver = garageHireDriver, releaseDriver = garageReleaseDriver,
+    roadside = garageRoadside, service = garageService, repairParked = garageRepairParked,
     refuel = garageRefuel, fuelDelivery = garageFuelDelivery, fuelGps = garageFuelGps,
     sell = M.garageSell, openParts = openParts, buyParts = buyParts, cancelParts = cancelParts }
   local f = fns[name]
@@ -2354,10 +2482,16 @@ function M.hqState()
   local out = M.firmState()
   if not out.founded then return out end
   out.bays = {}
+  local workshop = firm.value(c, 'workshop') or 1
+  local factor = firm.driverFactor(c)
   local function bay(car, current)
+    local owed = not current and garage.parkedRepairCost(car) or 0
     out.bays[#out.bays + 1] = { id = car.fleetId, name = car.name, current = current or nil, loaner = car.loaner or nil,
-      km = math.floor(car.km or 0), condition = car.condition, repair = not current and car.parkedRepair or nil,
-      driver = car.driver and { earned = car.driver.earned or 0 } or nil }
+      km = math.floor(car.km or 0), condition = car.condition, repair = owed > 0 and owed or nil,
+      repairCost = owed > 0 and math.floor(owed * workshop / 5 + 0.5) * 5 or nil,
+      broken = type(car.breakdown) == 'table' and car.breakdown.text or nil,
+      tier = upkeep.tier(car), upkeep = upkeep.state(car, workshop),
+      driver = fleet.driverState(car.driver, car, factor) }
   end
   if g.car and not g.car.loaner then bay(g.car, true) end
   for _, car in ipairs(g.parked or {}) do if not car.loaner then bay(car, false) end end
@@ -2366,7 +2500,33 @@ function M.hqState()
   for _, b in ipairs(out.bays) do if b.driver then drivers = drivers + 1 end end
   local f = fleet.state(g, c, firm.driverFactor(c))
   out.drivers = { count = drivers, pay = f.pay, shiftMinutes = f.shiftMinutes, hireFee = f.hireFee, earned = f.earned,
-    can = fleet.unlocked(c) }
+    can = fleet.unlocked(c), applicants = fleet.applicants(c.firm, (c.activeSeconds or 0) / 60, M.random),
+    nextMin = math.max(1, math.ceil((c.firm.applicantsAt or 0) + fleet.APPLICANT_MIN - (c.activeSeconds or 0) / 60)) }
+  for _, a in ipairs(out.drivers.applicants) do
+    a.nets = {}
+    for tier, gross in pairs(fleet.GROSS) do a.nets[tier] = math.floor(gross * a.speed * factor + 0.5) - a.wage end
+  end
+  -- the factory and the trailer yard
+  out.shop = {}
+  for _, v in ipairs(firm.VEHICLES) do
+    local offer = firm.vehicleOffer(v.id)
+    offer.price = garage.newPrice(M.G, v.model, v.key) or offer.price
+    out.shop[#out.shop + 1] = { id = offer.id, name = offer.name, text = offer.text, price = offer.price,
+      can = out.free > 0 and (c.money or 0) >= offer.price and (g.debt or 0) <= 0 }
+  end
+  out.trailerShop = {}
+  for _, t in ipairs(firm.TRAILERS) do
+    out.trailerShop[#out.trailerShop + 1] = { id = t.id, name = t.name, text = t.text, price = t.price,
+      can = (c.money or 0) >= t.price and (g.debt or 0) <= 0 and #firm.trailers(c) < firm.TRAILER_MAX }
+  end
+  out.trailers = {}
+  local semiDrivers = 0
+  for _, b in ipairs(out.bays) do if b.driver and b.tier == 'semi' then semiDrivers = semiDrivers + 1 end end
+  for i, t in ipairs(firm.trailers(c)) do
+    out.trailers[#out.trailers + 1] = { id = t.id, name = t.name, kind = t.kind, busy = i <= semiDrivers or nil }
+  end
+  out.trailerBonus = math.floor(firm.TRAILER_BONUS * 100 + 0.5)
+  out.workshopFactor = workshop
   local parts, kinds = 0, 0
   out.parts = { items = {} }
   local okSpares, spares = pcall(garage.spares, M.G, g)   -- (names the parts as the shop does)
@@ -2412,8 +2572,27 @@ function M.hqDo(name, a, b)
   if name == 'found' or name == 'rename' or name == 'setHq' or name == 'gpsHq' or name == 'upgrade' then
     M.firmDo(name, a)
   else
-    local allowed = { repair = true, switchCar = true, hireDriver = true, releaseDriver = true, refuel = true, paydebt = true }
-    if allowed[name] then S.firmMsg = M.garageDo(name, a, b).msg end
+    local allowed = { repair = true, switchCar = true, hireDriver = true, releaseDriver = true, refuel = true, paydebt = true,
+      service = true, repairParked = true }
+    if allowed[name] then S.firmMsg = M.garageDo(name, a, b).msg
+    elseif name == 'buyVehicle' or name == 'buyTrailer' or name == 'sellTrailer' then
+      local c, g = S.career, personalGarage()
+      local ok, msg = false, 'Unknown action'
+      if c.employment then ok, msg = false, 'End company work first.'
+      elseif not (c.firm and c.firm.hq) then ok, msg = false, 'Choose the headquarters first.'
+      elseif name == 'buyTrailer' then ok, msg = firm.buyTrailer(c, a, g.debt)
+      elseif name == 'sellTrailer' then ok, msg = firm.sellTrailer(c, tonumber(a))
+      else
+        local v = firm.vehicleOffer(a)
+        if v then
+          v.price = garage.newPrice(M.G, v.model, v.key) or v.price
+          ok, msg = garage.buyForFirm(g, c, v, firm.capacity(c))
+          if ok then economy.reconcile(c, 'firm', msg) end
+        end
+      end
+      S.firmMsg = msg
+      if ok then say(msg) saveCareer() end
+    end
   end
   return M.hqState()
 end
@@ -2629,8 +2808,14 @@ function M.onUpdate(dtReal, dtSim)
       -- Hired drivers belong to the personal garage, also while the player drives a company van.
       local shift = S.career.employment
       local fg = shift and shift.personalGarage or g
-      local income = fleet.advance(fg, driverDt, firm.driverFactor(S.career))
-      if income > 0 then
+      local income, events = fleet.advance(fg, driverDt, firm.driverFactor(S.career), S.career, M.random)
+      for _, e in ipairs(events) do say(e.text, 8) end
+      if #events > 0 then saveCareer() end
+      if income < 0 then
+        local c = S.career
+        economy.post(c, income, 'drivers', economy.nextId(c, 'drivers'), 'Driver wages')
+        saveCareer()
+      elseif income > 0 then
         local c = S.career
         local debtPaid = garage.takeForDebt(fg, income)
         economy.post(c, income - debtPaid, 'drivers', economy.nextId(c, 'drivers'), 'Fleet shift')

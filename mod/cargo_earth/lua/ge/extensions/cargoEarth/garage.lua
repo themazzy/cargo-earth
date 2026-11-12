@@ -362,6 +362,48 @@ local function park(g, car)
   g.parked[#g.parked + 1] = car
 end
 
+-- A new vehicle bought for the firm: straight into a bay at the headquarters (nothing is spawned).
+function M.buyForFirm(g, career, offer, limit)
+  if (g.debt or 0) > 0 then return false, 'Pay your debt first.' end
+  if M.ownedCount(g) >= limit then return false, 'Every bay is taken. Build more bays or sell a vehicle.' end
+  if (career.money or 0) < offer.price then return false, string.format('Not enough money (%d CZK needed).', offer.price) end
+  career.money = career.money - offer.price
+  park(g, { model = offer.model, key = offer.key, name = offer.name, km = 0, condition = 1, firm = true })
+  return true, string.format('%s bought for %d CZK. It is parked at the headquarters.', offer.name, offer.price), offer.price
+end
+
+-- The game's price for a new config (its value), or nil.
+function M.newPrice(G, model, key)
+  for _, c in ipairs(G.configs() or {}) do
+    if c.model == model and c.key == key and tonumber(c.value) and tonumber(c.value) > 0 then
+      return round5(tonumber(c.value) * M.PRICE_PER_VALUE)
+    end
+  end
+end
+
+-- What a parked vehicle's repair costs before the workshop's share: damage, plus a breakdown you parked it with.
+function M.parkedRepairCost(car)
+  local broken = type(car.breakdown) == 'table' and tonumber(car.breakdown.cost) or 0
+  return (car.parkedRepair or 0) + broken
+end
+
+-- Repairs a parked vehicle picked up (an accident or a breakdown), at the headquarters.
+function M.repairParked(g, career, id, factor)
+  local car = M.parkedCar(g, id)
+  if not car then return false, 'That vehicle is not parked here.' end
+  local cost = round5(M.parkedRepairCost(car) * (factor or 1))
+  if cost <= 0 then return false, car.name .. ' needs no repair.' end
+  if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK needed).', cost) end
+  career.money = career.money - cost
+  car.parkedRepair = 0
+  if type(car.breakdown) == 'table' then
+    if type(car.service) == 'table' and car.service[car.breakdown.id] then car.service[car.breakdown.id] = 0 end
+    car.breakdown = nil
+  end
+  if car.driver then car.driver.waiting = nil end
+  return true, string.format('%s repaired for %d CZK.', car.name, cost), cost
+end
+
 -- Owned cars: the one in use (not a loaner) and every parked one that isn't a loaner.
 function M.ownedCount(g)
   local n = g.car and not g.car.loaner and 1 or 0

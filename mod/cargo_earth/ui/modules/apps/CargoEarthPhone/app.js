@@ -146,12 +146,12 @@ angular.module('beamng.apps')
     '.cehq-btn:hover{filter:brightness(1.1)}.cehq-btn.build{background:#e8452c;color:#fff}' +
     '.cehq-btn.ghost{background:transparent;color:#e8eef2;box-shadow:inset 0 0 0 1.5px #3a4d5c}' +
     '.cehq-btn.small{padding:6px 9px;font-size:12px}.cehq-btn[disabled]{opacity:.4;cursor:default;filter:none}' +
-    '.cehq-plan{flex:1;min-height:0;display:grid;grid-template-columns:1.15fr 1fr 1fr;grid-template-rows:auto minmax(240px,1fr);gap:0;' +
+    '.cehq-plan{flex:1;min-height:0;display:grid;grid-template-columns:1.15fr 1fr 1fr;grid-template-rows:max-content max-content;align-content:start;gap:0;' +
     'border:3px solid #7fb7d1;border-radius:6px;background:#101921;overflow:auto}' +
     '.cehq-room{display:flex;flex-direction:column;gap:7px;padding:14px 16px;border-right:3px solid #7fb7d1;border-bottom:3px solid #7fb7d1;' +
     'background-image:linear-gradient(#1a2733 1px,transparent 1px),linear-gradient(90deg,#1a2733 1px,transparent 1px);background-size:22px 22px}' +
     '.cehq-room.stores{border-right:0}.cehq-room.tank{border-right:0;border-bottom:0;grid-column:3;grid-row:2}' +
-    '.cehq-yard{grid-column:1 / span 2;grid-row:2;padding:14px 16px;border-right:3px solid #7fb7d1;background:#232a31;overflow:auto}' +
+    '.cehq-yard{grid-column:1 / span 2;grid-row:2;min-height:300px;padding:14px 16px;border-right:3px solid #7fb7d1;background:#232a31}' +
     '.cehq-stat{font-size:30px;font-weight:800;line-height:1;color:#fff}.cehq-stat small{font-size:12px;font-weight:600;color:#9fb2bf;margin-left:6px}' +
     '.cehq-note{font-size:12px;line-height:1.4;color:#9fb2bf}.cehq-note.warn{color:#ffb86b}' +
     '.cehq-sep{height:1px;background:#2b3c4a;margin:3px 0}' +
@@ -169,7 +169,19 @@ angular.module('beamng.apps')
     '.cehq-bay-actions{display:flex;flex-direction:column;gap:5px;margin-top:auto;width:100%}' +
     '.cehq-car{width:44px;height:80px;flex-shrink:0}.cehq-car rect{fill:#c9d4dc}.cehq-car .glass{fill:#15202a;stroke:#15202a;stroke-width:3;stroke-linecap:round}' +
     '.cehq-bay.current .cehq-car rect{fill:#e8452c}.cehq-bay.out .cehq-car{opacity:.3}' +
-    '.cehq-foot{flex-shrink:0;display:flex;justify-content:flex-end}'
+    '.cehq-foot{flex-shrink:0;display:flex;justify-content:flex-end}' +
+    '.cehq-app{padding:7px 9px;border-radius:9px;background:#1d2a35;cursor:pointer;box-shadow:inset 0 0 0 1.5px transparent}' +
+    '.cehq-app:hover{background:#22313d}.cehq-app.picked{box-shadow:inset 0 0 0 2px #e8452c;background:#2a2421}' +
+    '.cehq-app b{display:block;font-size:13px;color:#fff}.cehq-app span{font-size:11px;color:#9fb2bf}' +
+    '.cehq-wear{display:flex;flex-direction:column;gap:3px;width:100%;margin:2px 0}' +
+    '.cehq-wear div{display:flex;align-items:center;gap:5px;font-size:10px;color:#9fb2bf}' +
+    '.cehq-wear span{flex:0 0 38px;text-align:left}.cehq-wear em{flex:1;height:5px;border-radius:3px;background:#2b3c4a;overflow:hidden}' +
+    '.cehq-wear em i{display:block;height:100%;background:#7fd19b}.cehq-wear .soon em i{background:#ffb86b}.cehq-wear .due em i{background:#ff6b57}' +
+    '.cehq-driver{font-size:12px;font-weight:700;color:#e8eef2}' +
+    '.cehq-shop{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;margin-top:8px}' +
+    '.cehq-item{display:flex;flex-direction:column;gap:4px;padding:9px 10px;border-radius:10px;background:#1b242c;box-shadow:inset 0 0 0 1px #34424e}' +
+    '.cehq-item b{font-size:13px;color:#fff}' +
+    '.cehq-section{margin-top:14px}'
 
   function money(n) { return (Math.round(n || 0)).toLocaleString('cs-CZ') + ' Kč' }
   function dist(m) {
@@ -210,7 +222,13 @@ angular.module('beamng.apps')
         '<div class="cehq-plan" ng-if="hq.hq">' +
           '<div class="cehq-room office"><div class="cehq-label">Office</div>' +
             '<div class="cehq-stat">{{ hq.drivers.count }}<small>{{ hq.drivers.count === 1 ? "driver" : "drivers" }} on the road</small></div>' +
-            '<div class="cehq-note">Each brings in {{ fmt.money(hq.drivers.pay) }} per {{ hq.drivers.shiftMinutes }} minutes you are working.<span ng-if="hq.drivers.earned > 0"> So far: {{ fmt.money(hq.drivers.earned) }}.</span></div>' +
+            '<div class="cehq-note">A driver works {{ hq.drivers.shiftMinutes }}-minute shifts while you play and is paid out of what each shift brings in.<span ng-if="hq.drivers.earned"> So far: {{ fmt.money(hq.drivers.earned) }}.</span></div>' +
+            '<div class="cehq-label small" ng-if="hq.drivers.can">Looking for work · new faces in {{ hq.drivers.nextMin }} min</div>' +
+            '<div class="cehq-app" ng-repeat="a in hq.drivers.applicants track by a.id" ng-if="hq.drivers.can" ng-class="{picked: pick.id === a.id}" ' +
+              'ng-click="pick.id = (pick.id === a.id ? null : a.id)" title="Choose, then pick a vehicle in the yard">' +
+              '<b>{{ a.name }}</b><span>speed {{ pct(a.speed) }} · care {{ pct(a.care) }} · wage {{ fmt.money(a.wage) }} a shift</span></div>' +
+            '<div class="cehq-note" ng-if="hq.drivers.can && !hq.drivers.applicants.length">Nobody is looking for work. New faces in {{ hq.drivers.nextMin }} min.</div>' +
+            '<div class="cehq-note warn" ng-if="pickedApplicant()">Now choose a vehicle in the yard for {{ pickedApplicant().name }} (hiring {{ fmt.money(hq.drivers.hireFee) }}).</div>' +
             '<div class="cehq-sep"></div><div class="cehq-label small">Dispatch</div>' +
       '<div class="cehq-level"><span class="cehq-pips"><i ng-repeat="on in pips(up(\'office\')) track by $index" ng-class="{on: on}"></i></span>' +
         '<span>{{ up(\'office\').now || "Not built" }}</span></div>' +
@@ -239,15 +257,40 @@ angular.module('beamng.apps')
               '<div class="cehq-bay" ng-repeat="b in hq.bays track by $index" ng-class="{current: b.current, out: b.driver}">' +
                 '<svg class="cehq-car" viewBox="0 0 60 110" aria-hidden="true"><rect x="8" y="4" width="44" height="102" rx="14"/><path class="glass" d="M14 30h32l-4 16H18zM18 78h24l4 12H14z"/><path class="glass" d="M10 50v24M50 50v24"/></svg>' +
                 '<div class="cehq-bay-name">{{ b.name }}</div>' +
-                '<div class="cehq-note">{{ fmt.int(b.km) }} km · {{ b.current ? "you drive it" : (b.driver ? "driver earned " + fmt.money(b.driver.earned) : "parked") }}</div>' +
-                '<div class="cehq-note warn" ng-if="b.repair > 0">Needs {{ fmt.money(b.repair) }} in repairs</div>' +
+                '<div class="cehq-note">{{ fmt.int(b.km) }} km · {{ b.current ? "you drive it" : (b.driver ? "on the road" : "parked") }}</div>' +
+                '<div class="cehq-driver" ng-if="b.driver">{{ b.driver.name }}</div>' +
+                '<div class="cehq-note" ng-if="b.driver && !b.driver.waiting">{{ fmt.money(b.driver.net) }} a shift · earned {{ fmt.money(b.driver.earned) }}</div>' +
+                '<div class="cehq-note warn" ng-if="b.driver.waiting === \'repair\'">Waiting for a repair</div>' +
+                '<div class="cehq-note warn" ng-if="b.driver.waiting === \'trailer\'">Needs a free trailer</div>' +
+                '<div class="cehq-wear" ng-if="b.upkeep"><div ng-repeat="it in b.upkeep.items track by it.id" ng-class="{soon: it.soon, due: it.due}" ' +
+                  'title="{{ it.name }}: {{ it.due ? \'overdue\' : it.kmLeft + \' km left\' }}"><span>{{ it.id }}</span><em><i ng-style="{width: Math.min(100, it.share * 100) + \'%\'}"></i></em></div></div>' +
+                '<button class="cehq-btn small" ng-if="b.upkeep.due > 0" ng-disabled="hq.company || (b.current && !hq.hq.here) || hq.money < b.upkeep.dueCost" ' +
+                  'ng-click="hdo(\'service\', b.current ? \'current\' : b.id)" title="{{ b.current && !hq.hq.here ? \'Bring the car here\' : \'\' }}">Service · {{ fmt.money(b.upkeep.dueCost) }}</button>' +
+                '<button class="cehq-btn small build" ng-if="b.repairCost > 0" ng-disabled="hq.company || hq.money < b.repairCost" ng-click="hdo(\'repairParked\', b.id)">Repair · {{ fmt.money(b.repairCost) }}</button>' +
                 '<div class="cehq-bay-actions" ng-if="!b.current">' +
                   '<button class="cehq-btn small" ng-if="!b.driver" ng-disabled="hq.busy || hq.company" ng-click="hdo(\'switchCar\', b.id)">Drive</button>' +
-                  '<button class="cehq-btn small ghost" ng-if="!b.driver && hq.drivers.can" ng-disabled="b.repair > 0 || hq.debt > 0 || hq.money < hq.drivers.hireFee || hq.company" ng-click="hdo(\'hireDriver\', b.id)">Hire driver · {{ fmt.money(hq.drivers.hireFee) }}</button>' +
+                  '<button class="cehq-btn small ghost" ng-if="!b.driver && hq.drivers.can && !b.loaner" ng-disabled="!pickedApplicant() || b.repair > 0 || hq.debt > 0 || hq.money < hq.drivers.hireFee || hq.company" ' +
+                    'ng-click="hdo(\'hireDriver\', b.id, pick.id); pick.id = null" title="{{ pickedApplicant() ? \'\' : \'Choose someone in the office first\' }}">' +
+                    '{{ pickedApplicant() ? "Hire " + pickedApplicant().name + " · " + fmt.money(pickedApplicant().nets[b.tier]) + " a shift" : "Hire: choose in the office" }}</button>' +
                   '<button class="cehq-btn small ghost" ng-if="b.driver" ng-disabled="hq.company" ng-click="hdo(\'releaseDriver\', b.id)">Release driver</button></div></div>' +
               '<div class="cehq-bay free" ng-repeat="n in range(hq.free) track by $index"><div class="cehq-bay-free">Free bay</div>' +
-                '<div class="cehq-note">Buy a car and keep your current one to fill it.</div></div>' +
-            '</div></div>' +
+                '<div class="cehq-note">Buy a vehicle below, or buy a car and keep your current one.</div></div>' +
+            '</div>' +
+            '<div class="cehq-section"><div class="cehq-label">Buy new for the firm · delivered to a free bay</div>' +
+              '<div class="cehq-shop"><div class="cehq-item" ng-repeat="v in hq.shop track by v.id"><b>{{ v.name }}</b>' +
+                '<div class="cehq-note">{{ v.text }}</div>' +
+                '<button class="cehq-btn small build" ng-disabled="!v.can || hq.company" ng-click="hdo(\'buyVehicle\', v.id)">Buy · {{ fmt.money(v.price) }}</button></div></div></div>' +
+            '<div class="cehq-section"><div class="cehq-label">Trailers · {{ hq.trailers.length }} in the yard</div>' +
+              '<div class="cehq-note">A hired tractor driver needs one. Your own articulated jobs pay {{ hq.trailerBonus }} % more when the load fits one of them.</div>' +
+              '<div class="cehq-shop">' +
+                '<div class="cehq-item" ng-repeat="t in hq.trailers track by t.id"><b>{{ t.name }}</b>' +
+                  '<div class="cehq-note">{{ t.busy ? "With a driver" : "In the yard" }}</div>' +
+                  '<button class="cehq-btn small ghost" ng-disabled="hq.company" ng-click="hdo(\'sellTrailer\', t.id)">Sell for half</button></div>' +
+                '<div class="cehq-item" ng-repeat="t in hq.trailerShop track by t.id"><b>New {{ t.name.toLowerCase() }}</b>' +
+                  '<div class="cehq-note">{{ t.text }}</div>' +
+                  '<button class="cehq-btn small build" ng-disabled="!t.can || hq.company" ng-click="hdo(\'buyTrailer\', t.id)">Buy · {{ fmt.money(t.price) }}</button></div>' +
+              '</div></div>' +
+            '</div>' +
           '<div class="cehq-room tank"><div class="cehq-label">Fuel tank</div>' +
       '<div class="cehq-level"><span class="cehq-pips"><i ng-repeat="on in pips(up(\'tank\')) track by $index" ng-class="{on: on}"></i></span>' +
         '<span>{{ up(\'tank\').now || "Not built" }}</span></div>' +
@@ -458,7 +501,8 @@ angular.module('beamng.apps')
         '<div class="cep-step to" ng-if="s.done.truckUnlock">{{ s.done.truckUnlock }} unlocked</div>' +
         '<div class="cep-card" style="width:100%;text-align:left">' +
           '<div class="cep-keyval"><span class="cep-sub">Delivery pay</span><strong>{{ fmt.money(s.done.pay) }}</strong></div>' +
-          '<div class="cep-keyval"><span class="cep-sub">Customer tip</span><strong style="color:var(--ok)">{{ fmt.money(s.done.tip) }}</strong></div>' +
+          '<div class="cep-keyval"><span class="cep-sub">Customer tip<span ng-if="s.done.tipWhy"> · {{ tipWhy(s.done.tipWhy) }}</span></span>' +
+            '<strong style="color:var(--ok)">{{ fmt.money(s.done.tip) }}</strong></div>' +
           '<div class="cep-keyval" ng-if="s.done.toDebt > 0"><span class="cep-sub">Paid toward debt</span><strong>−{{ fmt.money(s.done.toDebt) }}</strong></div>' +
           '<div class="cep-keyval" ng-if="s.done.cargoCondition"><span class="cep-sub">Reduced pay for damaged cargo</span><strong>{{ s.done.cargoCondition }}% intact</strong></div>' +
           '<div class="cep-keyval" ng-if="s.done.late > 0"><span class="cep-sub">Delivered late</span><strong>{{ s.done.late }} min</strong></div>' +
@@ -733,6 +777,13 @@ angular.module('beamng.apps')
           '<div class="cep-li" ng-if="g.own"><div><div class="cep-name">Damage</div>' +
             '<small>{{ g.repair > 0 ? "About " + fmt.hrs(g.repairHours) + " of deliveries. Repair here, or the menu repair goes on your debt" : "The car is in one piece" }}</small></div>' +
             '<button class="cep-sm go" ng-disabled="!(g.repair > 0)" ng-click="gdo(\'repair\')">{{ g.repair > 0 ? "Repair " + fmt.money(g.repair) : "No damage" }}</button></div>' +
+          '<div class="cep-card" ng-if="g.breakdown" role="alert" style="box-shadow:inset 0 0 0 1.5px var(--tomato)"><div class="cep-label" style="color:var(--tomato)">Breakdown</div>' +
+            '<div class="cep-sub">{{ g.breakdown.text }}</div>' +
+            '<button class="cep-btn" style="margin-top:6px" ng-click="gdo(\'roadside\')">Call roadside help · {{ fmt.money(g.breakdown.cost) }}</button></div>' +
+          '<div class="cep-li" ng-if="g.upkeep && g.own"><div><div class="cep-name">Service</div>' +
+            '<small ng-repeat="it in g.upkeep.items track by it.id" ng-style="it.due ? {color: \'var(--tomato)\'} : {}">{{ it.name }}: {{ it.due ? "overdue" : fmt.int(it.kmLeft) + " km left" }}{{ $last ? "" : " · " }}</small>' +
+            '<div><small ng-if="g.upkeep.due > 0 && !g.upkeep.where">Service at your headquarters or any fuel station. Overdue service can end in a breakdown.</small></div></div>' +
+            '<button class="cep-sm go" ng-if="g.upkeep.due > 0" ng-disabled="!g.upkeep.where || g.money < g.upkeep.dueCost" ng-click="gdo(\'service\')">Service {{ fmt.money(g.upkeep.dueCost) }}</button></div>' +
           '<div class="cep-li" ng-if="g.debt > 0" style="box-shadow:inset 0 0 0 1.5px var(--tomato)"><div><div class="cep-name" style="color:var(--tomato)">Debt {{ fmt.money(g.debt) }}</div>' +
             '<small>{{ g.debtShare * 100 }} % of each delivery pays it. No buying until it is paid.</small></div>' +
             '<button class="cep-sm" ng-disabled="!(g.money > 0)" ng-click="gdo(\'paydebt\')">Pay</button></div>' +
@@ -770,7 +821,7 @@ angular.module('beamng.apps')
             '<div class="cep-sub">Active car · {{ fmt.int(g.km) }} km</div></div>' +
           '<div class="cep-card"><div class="cep-label">Drivers</div>' +
             '<div class="cep-sub" ng-if="!g.fleet.unlocked">Only a firm with a headquarters hires drivers. See Career → Firm.</div>' +
-            '<div class="cep-sub" ng-if="g.fleet.unlocked">Hire a driver for a parked car. Each earns {{ fmt.money(g.fleet.pay) }} per {{ g.fleet.shiftMinutes }} minutes of active play.</div>' +
+            '<div class="cep-sub" ng-if="g.fleet.unlocked">Drivers are hired in the headquarters view (Career → Firm), where you choose who drives which vehicle.</div>' +
             '<div class="cep-sub" ng-if="g.fleet.earned > 0">Total earned by drivers · {{ fmt.money(g.fleet.earned) }}</div></div>' +
           '<div class="cep-sub" ng-if="!g.fleet.cars.length">Buy another car and keep your current one to build your fleet.</div>' +
           '<div class="cep-sub" ng-if="g.busy && g.fleet.cars.length">Finish your current orders before switching cars.</div>' +
@@ -780,11 +831,11 @@ angular.module('beamng.apps')
             '<div class="cep-sub" ng-if="v.storageSlots">{{ v.boxCount ? v.boxCount + " fitted boxes" : "Starter bag" }} · {{ v.storageSlots }} slots</div>' +
             '<div class="cep-sub" ng-if="!v.storageSlots">Storage checked when driven.</div>' +
             '<div class="cep-sub" ng-if="v.repair > 0">Needs {{ fmt.money(v.repair) }} in repairs before hiring.</div>' +
-            '<div class="cep-sub" ng-if="v.driver">Earned {{ fmt.money(v.driver.earned) }} · next payout in {{ v.driver.nextMin }} min</div>' +
+            '<div class="cep-sub" ng-if="v.driver">{{ v.driver.name }} · earned {{ fmt.money(v.driver.earned) }}{{ v.driver.waiting === "repair" ? " · waiting for a repair" : (v.driver.waiting === "trailer" ? " · needs a trailer" : " · next shift in " + v.driver.nextMin + " min") }}</div>' +
+            '<div class="cep-sub" ng-if="v.upkeep && v.upkeep.due > 0" style="color:var(--tomato)">Service due · {{ fmt.money(v.upkeep.dueCost) }} at the headquarters</div>' +
             '<div class="cep-row" style="margin-top:6px">' +
               '<button class="cep-sm go" ng-if="!v.driver" ng-disabled="g.busy" ng-click="gdo(\'switchCar\', v.id)">Drive</button>' +
-              '<button class="cep-sm" ng-if="g.fleet.unlocked && !v.driver && !v.loaner" ng-disabled="v.repair > 0 || g.debt > 0 || g.money < g.fleet.hireFee" ' +
-                'ng-click="gdo(\'hireDriver\', v.id)">Hire · {{ fmt.money(g.fleet.hireFee) }}</button>' +
+              '<button class="cep-sm" ng-if="g.fleet.unlocked && !v.driver && !v.loaner" ng-click="openHq()">Hire in the headquarters</button>' +
               '<button class="cep-sm ghost" ng-if="v.driver" ng-click="gdo(\'releaseDriver\', v.id)">Release driver</button></div>' +
           '</div></div>' +
         '<div ng-if="g && g.started && gview === \'cars\' && !g.parts" class="cep-scroll">' +
@@ -937,7 +988,7 @@ angular.module('beamng.apps')
         return scope.fmt.int(load.amount) + (load.kind === 'parcel' ? ' slots' : ' L') + ' · ' + scope.fmt.int(load.kg) + ' kg'
       }
       var CATS = {delivery: 'Delivery', company_wages: 'Company wages', drivers: 'Drivers', garage: 'Garage', parts: 'Parts',
-        cancel_fee: 'Cancel fee', adjustment: 'Other', fuel: 'Fuel', fine: 'Speeding fine', firm: 'Firm'}
+        cancel_fee: 'Cancel fee', adjustment: 'Other', fuel: 'Fuel', fine: 'Speeding fine', firm: 'Firm', upkeep: 'Upkeep'}
       scope.fmt.stars = function (n) { return '★★★★★'.slice(0, Math.max(0, Math.min(5, Math.round(n || 0)))) }
       scope.fmt.noStars = function (n) { return '★★★★★'.slice(0, 5 - Math.max(0, Math.min(5, Math.round(n || 0)))) }
       scope.fmt.pct = function (share) { return Math.round((share || 0) * 100) + ' %' }
@@ -961,6 +1012,13 @@ angular.module('beamng.apps')
         scope.mapPaths = {c: dots(r.dots, 'c'), f: dots(r.dots, 'f'), home: dots(r.marks, 'home'), hq: dots(r.marks, 'hq')}
       }
       scope.fmt.cat = function (c) { return CATS[c] || c || 'Other' }
+      scope.tipWhy = function (w) {
+        var parts = []
+        if (w.fast) parts.push('fast')
+        if (w.smooth) parts.push('smooth ride')
+        if (w.harsh) parts.push(w.harsh === 1 ? 'one harsh moment' : w.harsh + ' harsh moments')
+        return parts.join(', ')
+      }
       scope.fmt.cond = function (c) { return c >= 0.85 ? 'very good' : c >= 0.6 ? 'good' : c >= 0.35 ? 'worn' : 'rough' }
       scope.fmt.left = function (m) { return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min' }
       scope.fmt.hrs = function (h) { h = h || 0; return h < 1 ? Math.max(1, Math.round(h * 60)) + ' min' : (Math.round(h * 10) / 10).toLocaleString('cs-CZ') + ' h' }
@@ -1121,6 +1179,14 @@ angular.module('beamng.apps')
         return out
       }
       scope.range = function (n) { return new Array(Math.max(0, Math.min(12, n || 0))) }
+      scope.Math = Math
+      scope.pick = { id: null }
+      scope.pct = function (v) { return Math.round((v || 0) * 100) + ' %' }
+      scope.pickedApplicant = function () {
+        var list = (scope.hq && scope.hq.drivers && scope.hq.drivers.applicants) || []
+        for (var i = 0; i < list.length; i++) if (list[i].id === scope.pick.id) return list[i]
+        return null
+      }
       // moving costs money: the first press asks, the second moves
       scope.moveHq = function () {
         if (scope.moveAsk) { scope.hdo('setHq'); return }
