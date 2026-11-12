@@ -1781,17 +1781,17 @@ local function garageTick(dt)
   if p and p.speed and dt then
     local km = p.speed * dt / 1000
     g.car.km = (g.car.km or 0) + km
-    -- upkeep: your own car wears; a long overdue service can end in a breakdown (company and loaner vehicles are
-    -- looked after by their owners)
-    if not shift and not g.car.loaner and km > 0 then
+    -- upkeep: your own car wears, also on an owner-operator contract; a long overdue service can end in a breakdown
+    -- (company and loaner vehicles are looked after by their owners)
+    if (not shift or shift.ownerOperator) and not g.car.loaner and km > 0 then
       upkeep.wear(g.car, km)
       S.wearKm = (S.wearKm or 0) + km
-      if S.wearKm >= 1 and not S.breakdown then
+      if S.wearKm >= 1 and not g.car.breakdown then
         local chance = upkeep.chance(g.car, S.wearKm)
         S.wearKm = 0
         if chance > 0 and M.random() < chance then
           local failure = upkeep.breakdown(g.car)
-          S.breakdown, S.stallAt = failure, 0
+          g.car.breakdown, S.stallAt = failure, 0   -- kept with the car: saved, and it stays broken when parked
           phoneSound('cancelled')
           say(failure.text .. string.format(' Roadside help: %d CZK (Garage on the phone).', failure.cost), 10)
           saveCareer()
@@ -1800,7 +1800,7 @@ local function garageTick(dt)
     end
   end
   -- a breakdown keeps the engine off until the roadside help is paid
-  if S.breakdown and S.clock >= (S.stallAt or 0) then
+  if g.car.breakdown and S.clock >= (S.stallAt or 0) then
     S.stallAt = S.clock + 1
     if M.G.stall then pcall(M.G.stall, true) end
   end
@@ -2139,11 +2139,15 @@ local function garageHireDriver(id, applicant)
 end
 -- Roadside help after a breakdown: the failed item is serviced, the engine can be started again.
 local function garageRoadside()
-  local failure, g = S.breakdown, S.career.garage
-  if not failure then return false, 'Your car is running.' end
-  if not g.car then S.breakdown = nil return false, 'You have no car.' end
+  local g = S.career.garage
+  local failure = g.car and g.car.breakdown
+  if type(failure) ~= 'table' or not upkeep.byId[failure.id] then
+    if g.car then g.car.breakdown = nil end
+    return false, 'Your car is running.'
+  end
+  failure.cost = tonumber(failure.cost) or 0
   local paid, owed = upkeep.roadside(S.career, g, g.car, failure)
-  S.breakdown = nil
+  g.car.breakdown = nil
   if M.G.stall then pcall(M.G.stall, false) end
   saveCareer()
   local msg = string.format('Roadside help fixed the %s for %d CZK%s. Start the engine and drive on.',
@@ -2321,12 +2325,14 @@ function M.garageState()
     local car = garage.parkedCar(g, v.id)
     if car and not car.loaner then v.upkeep = upkeep.state(car, firm.value(S.career, 'workshop')) end
   end
-  if g.car and not g.car.loaner and not S.career.employment then
+  local shift = S.career.employment
+  if g.car and not g.car.loaner and (not shift or shift.ownerOperator) then
     local where, factor = serviceSpot()
     out.upkeep = upkeep.state(g.car, factor)
     out.upkeep.where = where
   end
-  if S.breakdown then out.breakdown = { text = S.breakdown.text, cost = S.breakdown.cost } end
+  local broken = g.car and g.car.breakdown
+  if type(broken) == 'table' then out.breakdown = { text = broken.text, cost = broken.cost } end
   out.capacity = firm.capacity(S.career)
   out.car = g.car and g.car.name or nil
   out.loaner = g.car and g.car.loaner or nil
@@ -2479,9 +2485,11 @@ function M.hqState()
   local workshop = firm.value(c, 'workshop') or 1
   local factor = firm.driverFactor(c)
   local function bay(car, current)
+    local owed = not current and garage.parkedRepairCost(car) or 0
     out.bays[#out.bays + 1] = { id = car.fleetId, name = car.name, current = current or nil, loaner = car.loaner or nil,
-      km = math.floor(car.km or 0), condition = car.condition, repair = not current and car.parkedRepair or nil,
-      repairCost = not current and car.parkedRepair and car.parkedRepair > 0 and math.floor(car.parkedRepair * workshop / 5 + 0.5) * 5 or nil,
+      km = math.floor(car.km or 0), condition = car.condition, repair = owed > 0 and owed or nil,
+      repairCost = owed > 0 and math.floor(owed * workshop / 5 + 0.5) * 5 or nil,
+      broken = type(car.breakdown) == 'table' and car.breakdown.text or nil,
       tier = upkeep.tier(car), upkeep = upkeep.state(car, workshop),
       driver = fleet.driverState(car.driver, car, factor) }
   end

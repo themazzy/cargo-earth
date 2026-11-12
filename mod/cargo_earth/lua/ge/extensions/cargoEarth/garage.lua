@@ -381,15 +381,25 @@ function M.newPrice(G, model, key)
   end
 end
 
--- Repairs a parked vehicle picked up (an accident or a breakdown of a hired driver), at the headquarters.
+-- What a parked vehicle's repair costs before the workshop's share: damage, plus a breakdown you parked it with.
+function M.parkedRepairCost(car)
+  local broken = type(car.breakdown) == 'table' and tonumber(car.breakdown.cost) or 0
+  return (car.parkedRepair or 0) + broken
+end
+
+-- Repairs a parked vehicle picked up (an accident or a breakdown), at the headquarters.
 function M.repairParked(g, career, id, factor)
   local car = M.parkedCar(g, id)
   if not car then return false, 'That vehicle is not parked here.' end
-  local cost = round5((car.parkedRepair or 0) * (factor or 1))
+  local cost = round5(M.parkedRepairCost(car) * (factor or 1))
   if cost <= 0 then return false, car.name .. ' needs no repair.' end
   if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK needed).', cost) end
   career.money = career.money - cost
   car.parkedRepair = 0
+  if type(car.breakdown) == 'table' then
+    if type(car.service) == 'table' and car.service[car.breakdown.id] then car.service[car.breakdown.id] = 0 end
+    car.breakdown = nil
+  end
   if car.driver then car.driver.waiting = nil end
   return true, string.format('%s repaired for %d CZK.', car.name, cost), cost
 end

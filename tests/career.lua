@@ -345,7 +345,7 @@ end)
 
 test('hired drivers in the personal garage keep earning during company work', function()
   local core, s = fresh()
-  local fleet = require('cargoEarth/fleet')
+  local fleet, garage = require('cargoEarth/fleet'), require('cargoEarth/garage')
   s.career.garage.debt = 0
   s.career.garage.parked = {{fleetId = 'car:1', name = 'Spare', model = 'pigeon', km = 0, driver = {elapsed = 0}}}
   start(core)
@@ -1476,13 +1476,28 @@ test('your car breaks down after skipped service; roadside help gets it going', 
   pose.speed = 40
   advance(core, 70)   -- 35 s: over a km
   pose.speed = 0
-  assert(s.breakdown and s.breakdown.id == 'oil' and stalls[1] == true, 'the engine stops')
+  assert(g.car.breakdown and g.car.breakdown.id == 'oil' and stalls[1] == true, 'the engine stops')
   local state = core.garageState()
-  assert(state.breakdown and state.breakdown.cost == s.breakdown.cost)
-  local cost = s.breakdown.cost
+  assert(state.breakdown and state.breakdown.cost == g.car.breakdown.cost)
+  local cost = g.car.breakdown.cost
+  -- the breakdown is saved with the car
+  local saved = copy(s.career)
+  assert(saved.garage.car.breakdown and saved.garage.car.breakdown.id == 'oil', 'a breakdown survives a save')
   s.career.money = 5000
   state = core.garageDo('roadside')
-  assert(not s.breakdown and stalls[#stalls] == false and s.career.money == 5000 - cost and g.car.service.oil == 0)
+  assert(not g.car.breakdown and stalls[#stalls] == false and s.career.money == 5000 - cost and g.car.service.oil == 0)
+  -- a parked car keeps its breakdown: no driver for it until the headquarters repairs it
+  local fleet, garage = require('cargoEarth/fleet'), require('cargoEarth/garage')
+  local parkedCar = { fleetId = 99, name = 'Broken Pigeon', model = 'pigeon', km = 0,
+    breakdown = { id = 'tyres', text = 'A worn tyre burst.', cost = 500 }, service = { oil = 0, tyres = 3000, brakes = 0 } }
+  g.parked = g.parked or {}
+  g.parked[#g.parked + 1] = parkedCar
+  assert(garage.parkedRepairCost(parkedCar) == 500)
+  local ok, why = fleet.hire(g, { firm = { hq = {}, applicants = {} }, money = 1000 }, 99, nil)
+  assert(not ok and why:find('Repair'), 'no driver for a broken-down car')
+  local fixed = garage.repairParked(g, { money = 1000 }, 99, 1)
+  assert(fixed and not parkedCar.breakdown and parkedCar.service.tyres == 0)
+  for i, c in ipairs(g.parked) do if c == parkedCar then table.remove(g.parked, i) break end end
   -- a service needs the headquarters or a fuel station
   core.random = function(a, b) if a then return b and a or 1 end return 0.99 end
   upkeep.ensure(g.car).tyres = 2400

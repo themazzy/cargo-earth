@@ -84,7 +84,7 @@ function M.hire(g, career, id, applicantId)
   if not car then return false, 'Choose a parked vehicle for the driver.' end
   if car.loaner then return false, 'Drivers need a vehicle you own.' end
   if car.driver then return false, 'This vehicle already has a driver.' end
-  if (car.parkedRepair or 0) > 0 then return false, 'Repair this vehicle before assigning a driver.' end
+  if garage.parkedRepairCost(car) > 0 then return false, 'Repair this vehicle before assigning a driver.' end
   if (g.debt or 0) > 0 then return false, 'Pay off your debt before hiring.' end
   if (career.money or 0) < M.HIRE_FEE then return false, 'Not enough money to hire a driver.' end
   local list, pick, index = career.firm.applicants or {}, nil, nil
@@ -120,7 +120,7 @@ end
 
 -- Why a driver cannot work right now, or nil. used: trailers already taken this round.
 local function blocked(car, f, used)
-  if (car.parkedRepair or 0) > 0 then return 'repair' end
+  if garage.parkedRepairCost(car) > 0 then return 'repair' end
   if upkeep.tier(car) == 'semi' then
     local t = trailerFor(f, 'dryvan', used) or trailerFor(f, 'tanker', used)
     if not t then return 'trailer' end
@@ -190,7 +190,7 @@ function M.state(g, career, factor)
     pay = M.GROSS.car - 25 }
   for _, car in ipairs(g.parked or {}) do
     out.cars[#out.cars + 1] = { id = car.fleetId, name = car.name, km = math.floor(car.km or 0), condition = car.condition,
-      storageSlots = car.storageSlots, boxCount = car.boxCount, repair = car.parkedRepair or 0, loaner = car.loaner,
+      storageSlots = car.storageSlots, boxCount = car.boxCount, repair = garage.parkedRepairCost(car), loaner = car.loaner,
       tier = upkeep.tier(car), driver = M.driverState(car.driver, car, factor) }
   end
   return out
