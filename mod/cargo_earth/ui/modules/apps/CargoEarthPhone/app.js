@@ -996,7 +996,9 @@ angular.module('beamng.apps')
             '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'size\', -1)">Smaller</button>' +
             '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z\', -1)">Down</button>' +
             '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'y\', 1)">Further</button>' +
-            '<button class="cep-sm ghost" ng-disabled="!st.dash.moved" ng-click="sdo(\'dash\', \'reset\')">Reset</button></div>' +
+            '</div>' +
+          // Reset stays reachable even when the moved phone can no longer be drawn (out of view)
+          '<button class="cep-sm ghost" ng-if="st.dash.moved" style="margin-top:6px" ng-click="sdo(\'dash\', \'reset\')">Put it back in its usual place</button>' +
           '<div class="cep-li" ng-click="sdo(\'dash\', \'rate\')" style="margin-top:8px">' +
             '<div><div class="cep-name">Follows the car</div><small>Fewer times a second is lighter on the computer</small></div>' +
             '<b>{{ st.dash.rate }}× a second</b></div></div>' +
