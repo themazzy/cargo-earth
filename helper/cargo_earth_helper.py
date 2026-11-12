@@ -1020,7 +1020,7 @@ class Radio:
         self.fetch = fetch or self._get
         self.servers = servers or radio_servers
         self._hosts = None
-        self.state, self.fail_at = {}, {}
+        self.state, self.fail_at, self.fresh_until, self.refreshing = {}, {}, {}, set()
         self.lock = threading.Lock()
 
     def path(self, cc):
@@ -1055,12 +1055,20 @@ class Radio:
             with open(self.path(cc), "rb") as f:
                 data = json.loads(f.read(MAX_RADIO_BYTES))
             if time.time() - data["at"] < RADIO_HOURS * 3600 and isinstance(data["stations"], list):
+                self.fresh_until[cc] = data["at"] + RADIO_HOURS * 3600
                 return data["stations"]
         except (OSError, ValueError, KeyError, TypeError):
             pass
         return None
 
-    def _work(self, cc):
+    def _refresh(self, cc):
+        try:
+            self._work(cc, keep=True)
+        finally:
+            with self.lock:
+                self.refreshing.discard(cc)
+
+    def _work(self, cc, keep=False):
         try:
             rows = radio_rows(self.fetch(cc), cc)
             tmp = self.path(cc) + ".tmp"
@@ -1070,10 +1078,12 @@ class Radio:
             log(f"radio {cc}: {len(rows)} stations")
             with self.lock:
                 self.state[cc] = rows
+                self.fresh_until[cc] = time.time() + RADIO_HOURS * 3600
         except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
             log(f"radio {cc} failed:", repr(e))
             with self.lock:
-                self.state.pop(cc, None)
+                if not keep:
+                    self.state.pop(cc, None)
                 self.fail_at[cc] = time.time()
 
     def near(self, cc, lat=None, lon=None):
@@ -1084,6 +1094,11 @@ class Radio:
             and abs(lat) <= 90 and abs(lon) <= 180
         with self.lock:
             rows = self.state.get(cc)
+            if isinstance(rows, list) and time.time() >= self.fresh_until.get(cc, 0) \
+                    and time.time() - self.fail_at.get(cc, 0) >= 120 and cc not in self.refreshing:
+                # a day old: fetched again in the background, the old list is served meanwhile
+                self.refreshing.add(cc)
+                threading.Thread(target=self._refresh, args=(cc,), daemon=True).start()
             if rows is None:
                 rows = self._load(cc)
                 if rows is not None:

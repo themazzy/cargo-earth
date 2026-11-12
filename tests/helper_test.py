@@ -345,6 +345,15 @@ class NetworkAndStorageTests(unittest.TestCase):
             again = helper.Radio(cache, lambda cc: calls.append(cc) or [], servers=lambda: ["x"])
             self.assertEqual(len(again.near("CZ")["top"]), 4)
             self.assertEqual(calls, ["CZ"])
+            radio.fresh_until["CZ"] = 0                                 # a day later, still running
+            stations.pop()
+            self.assertEqual(len(radio.near("CZ")["top"]), 4)            # the old list meanwhile
+            for _ in range(100):
+                if "CZ" not in radio.refreshing:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(len(radio.near("CZ")["top"]), 3)
+            self.assertEqual(calls, ["CZ", "CZ"])
             with self.assertRaises(ValueError):
                 radio.near("CZE")
             with self.assertRaises(ValueError):
