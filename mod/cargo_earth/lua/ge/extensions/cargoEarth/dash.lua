@@ -251,6 +251,8 @@ local prefs, loaded = nil, false
 local renderer, rid, sig, nextBuild = nil, nil, nil, 0
 local font, fontRead = nil, false
 local hidden = true
+local partCars = {} -- cars with the phone part: their own phone shows instead
+function M.partCar(id) if id then partCars[id] = true end end
 local shownButtons = {} -- the buttons on the current picture
 
 function M.prefs()
@@ -343,7 +345,7 @@ function M.tick(dt, phoneState, money)
   local ok, err = pcall(function()
     local veh = core_camera and be and playerCar()
     local cockpit = veh and core_camera.isCameraInside and core_camera.isCameraInside(0, core_camera.getPosition()) == 1
-    if not veh or not M.wanted(M.prefs(), vrOn(), cockpit) then hide() return end
+    if not veh or not M.wanted(M.prefs(), vrOn(), cockpit) or partCars[veh:getId()] then hide() return end
     local pos, place = spotNow(veh)
     local r = pos and getRenderer()
     if not r then hide() return end
@@ -373,6 +375,7 @@ end
 -- the level is going away and takes the renderer with it
 function M.forget()
   tap.forget()
+  partCars = {}
   renderer, rid, sig, hidden = nil, nil, nil, true
 end
 

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Cargo Earth phone</title>
+  <!-- The phone in its holder on the dash: the same phone app as the floating UI app, drawn as the screen's texture.
+       The texture is twice the phone's layout size, so the phone is scaled 2x to stay sharp. -->
+  <style>
+    html, body { margin: 0; height: 100%; background: #141312; overflow: hidden; }
+    .device { width: 290px; height: 560px; transform: scale(2); transform-origin: 0 0; }
+    .cep-dot { position: fixed; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%;
+      background: rgba(232, 69, 44, .55); pointer-events: none; transition: opacity .35s, transform .35s; }
+  </style>
+</head>
+<body>
+  <div class="device" ng-app="beamng.apps"><cargo-earth-phone></cargo-earth-phone></div>
+  <script src="angular.min.js"></script>
+  <script>angular.module('beamng.apps', [])</script>
+  <script src="dash.js"></script>
+  <script src="local://local/ui/modules/apps/CargoEarthPhone/app.js"></script>
+</body>
+</html>

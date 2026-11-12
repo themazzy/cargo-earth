@@ -3011,6 +3011,30 @@ function M.onPreRender(dtReal)
   dash.tick(dtReal, M.phoneState, dashMoney)
 end
 
+-- The phone page on a car's dash screen (vehicles/common/cargo_earth_phone) asks the same questions as the floating phone
+-- app, but a car screen page can only send Lua one way. dashCall runs the question (only the phone app's own calls into
+-- cargoEarth_core) and sends the answer back through the car's cargoEarthPhone controller.
+function M.dashAllowed(cmd)
+  if type(cmd) ~= 'string' or #cmd > 4000 then return false end
+  return cmd:find('^cargoEarth_core and cargoEarth_core%.[%w_]+%(') ~= nil
+    or cmd:find('^%(function%(%) if not cargoEarth_core then return nil end; local ok, value = pcall%(cargoEarth_core%.[%w_]+') ~= nil
+end
+
+-- a car with the phone part in it: its own phone replaces the floating dash screen
+function M.dashPhonePart(vehId) dash.partCar(tonumber(vehId)) end
+
+function M.dashCall(vehId, id, cmd)
+  local veh = getObjectByID and getObjectByID(tonumber(vehId) or -1)
+  if not veh or not M.dashAllowed(cmd) then return end
+  local fn = (loadstring or load)('return ' .. cmd)
+  local ok, value = false, nil
+  if fn then ok, value = pcall(fn) end
+  local json = jsonEncode(ok and value or nil) or 'null'
+  veh:queueLuaCommand(string.format(
+    'local c = controller.getControllerSafe("cargoEarthPhone") if c and c.reply then c.reply(%d, %q) end',
+    tonumber(id) or 0, json))
+end
+
 -- a button on the VR dash screen was pressed (slot 1 = left, 2 = right): do what the drawn button says, if the
 -- phone still offers it (the picture can be up to a second old)
 function M.dashTap(slot)

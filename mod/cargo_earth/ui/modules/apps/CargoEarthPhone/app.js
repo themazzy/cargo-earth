@@ -349,7 +349,7 @@ angular.module('beamng.apps')
       '<div class="cep" ng-if="!min"><div class="cep-screen">' +
       '<div class="cep-notch"></div>' +
       '<div class="cep-bar"><span>{{ s.clock }}</span><span>{{ s.online ? "● online" : "" }} ' +
-        '<button class="cep-min" title="Fold the phone" ng-click="fold(true)">–</button></span></div>' +
+        '<button class="cep-min" title="Fold the phone" ng-if="!dash" ng-click="fold(true)">–</button></span></div>' +
       '<div class="cep-head"><div class="cep-brand">Cargo<b>Earth</b></div>' +
         '<div class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}" title="Speed limit here">{{ s.limit.sign }}' +
           '<small ng-if="s.limit.unit === \'mph\'">mph</small></div>' +
@@ -1090,6 +1090,7 @@ angular.module('beamng.apps')
       // tabs, folding, garage and settings
       scope.tab = 'orders'
       scope.min = false
+      scope.dash = !!(typeof window !== 'undefined' && window.cargoEarthDash && window.cargoEarthDash.page) // on a car screen
       scope.storageHelpOpen = false
       scope.career = null
       scope.places = null
@@ -1326,7 +1327,8 @@ angular.module('beamng.apps')
       // The radio. The stream plays in this page (an <audio> object kept outside the template), so it keeps playing
       // with the phone folded or on another tab. Volume and saved stations stay in this browser's storage.
       var RADIO_KEY = 'cargoEarth.radio', radioLoadedAt = 0
-      var audio = typeof Audio !== 'undefined' ? new Audio() : null
+      // the phone on the dash (a car screen page) never plays: the floating phone does
+      var audio = typeof Audio !== 'undefined' && !scope.dash ? new Audio() : null
       function radioPrefs() {
         try { var v = JSON.parse(localStorage.getItem(RADIO_KEY) || '{}'); return v && typeof v === 'object' ? v : {} } catch (e) { return {} }
       }
