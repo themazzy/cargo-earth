@@ -78,7 +78,7 @@ function M.restore(driver)
 end
 
 function M.hire(g, career, id, applicantId)
-  if not career.firm then return false, 'Start a firm before hiring drivers (Career → Firm).' end
+  if not career.firm then return false, 'Start a firm before hiring drivers (Menu → Firm).' end
   if not M.unlocked(career) then return false, 'Choose your firm’s headquarters before hiring drivers.' end
   local car = garage.parkedCar(g, id)
   if not car then return false, 'Choose a parked vehicle for the driver.' end

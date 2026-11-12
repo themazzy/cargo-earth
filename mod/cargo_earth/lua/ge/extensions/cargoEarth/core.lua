@@ -1007,7 +1007,7 @@ end
 function M.cancel(free, all)
   if not S.job then return end
   if S.job.companyShift then
-    say('End company work from Work / Companies. Completed deliveries are paid without a cancellation fee.')
+    say('End company work from Menu → Companies. Completed deliveries are paid without a cancellation fee.')
     return
   end
   repeat
@@ -1514,7 +1514,7 @@ function M.companyTick()
     takeJob(employment.nextJob(c))
   elseif shift.phase == 'returning' and not S.job and not shift.routed then
     shift.routed = earth.gps(shift.yard.g[1], shift.yard.g[2], shift.yard.n) == true
-    say('Company route finished. Return to the yard and settle in Work / Companies.')
+    say('Company route finished. Return to the yard and settle in Menu → Companies.')
     saveCareer()
   end
 end
@@ -1686,9 +1686,9 @@ function M.phoneState()
   local g = S.career.garage
   if g.started then out.repair, out.debt = g.repair or 0, g.debt or 0 end
   if not garage.inOwnCar(M.G, g) then
-    out.screen, out.error = 'error', g.preview and 'You are looking at a used car. Garage tab: buy it or go back to your car.'
-      or g.car and ('Drive your own car (' .. g.car.name .. '). Garage tab > Bring my car.')
-      or 'You have no car. Buy one in the Garage tab > Used cars.'
+    out.screen, out.error = 'error', g.preview and 'You are looking at a used car. Menu → Garage: buy it or go back to your car.'
+      or g.car and ('Drive your own car (' .. g.car.name .. '). Menu → Garage → Bring my car.')
+      or 'You have no car. Buy one in Menu → Garage → Used cars.'
     return out
   end
   if not ph.online then out.screen = 'offline' return out end
