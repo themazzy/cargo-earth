@@ -213,6 +213,17 @@ function M.planBox(G, v)
 end
 M.isParcelBox = isParcelBox
 
+-- The path of the slot on the car `v` that takes the part `partName` (empty or not), or nil.
+function M.slotFor(G, v, partName)
+  if type(v.slotPartMap) ~= 'table' then return nil end
+  for path in pairs(v.slotPartMap) do
+    local def = vehicleSlot(G, v, path)
+    for _, name in ipairs(def and G.compatible(v.ioCtx, def) or {}) do
+      if name == partName then return path end
+    end
+  end
+end
+
 ------------------------------------------------------------------------------------------ actions
 
 -- Quote the complete difference after BeamNG has resolved the slots and any dependent parts.

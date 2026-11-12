@@ -15,12 +15,13 @@ Positions are jbeam coordinates: the car faces -y, z is up, +x is the driver's l
 """
 import json
 import os
-import shutil
+import importlib.util
+import math
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', 'mod', 'cargo_earth', 'vehicles')
 COLS, ROWS = 6, 12
 SCREEN_W, SCREEN_H = 0.100, 0.100 * 560 / 290   # must match tools/make-phone-mesh.py
-DEPTH = 0.02                                      # how thick each click box is
+DEPTH = 0.012                                     # how thick each click box is
 
 CARS = {
     'pigeon': {
@@ -32,6 +33,8 @@ CARS = {
         'y': ('dsh1', (-0.316, -0.457, 0.99)),
         # the middle of the screen: on the centre of the dash, standing on its top, a little toward the driver
         'centre': (0.0, -0.43, 1.11),
+        # the driver's eyes (the Pigeon's driver camera): the phone is turned about the vertical to face them
+        'eyes': (-0.316, 0.1, 1.25),
     },
 }
 
@@ -60,11 +63,23 @@ def local(car, p):
     return {'x': round(dot(d, x), 4), 'y': round(dot(d, y), 4), 'z': round(dot(d, z), 4)}
 
 
+def yaw(car):
+    """degrees to turn the phone's face (+y at 0) toward the driver's eyes, about the vertical"""
+    d = sub(car['eyes'], car['centre'])
+    return math.degrees(math.atan2(-d[0], d[1]))
+
+
+def turn(p, deg):
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return (p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2])
+
+
 def cell_centre(car, col, row):
     cx, cy, cz = car['centre']
     cw, ch = SCREEN_W / COLS, SCREEN_H / ROWS
-    # seen by the driver, +x is on the left: the page's left edge (column 1) is at +x
-    return (cx + SCREEN_W / 2 - (col - 0.5) * cw, cy + 0.004, cz + SCREEN_H / 2 - (row - 0.5) * ch)
+    # seen by the driver, +x is on the left: the page's left edge (column 1) is at +x; 4 mm in front of the screen
+    dx, dy, dz = turn((SCREEN_W / 2 - (col - 0.5) * cw, 0.004, SCREEN_H / 2 - (row - 0.5) * ch), yaw(car))
+    return (cx + dx, cy + dy, cz + dz)
 
 
 def action(col, row): return 'cargoEarthTap_%d_%d' % (col, row)
@@ -73,9 +88,11 @@ def action(col, row): return 'cargoEarthTap_%d_%d' % (col, row)
 def part(model, car):
     o, x, y, z = frame(car)
     cw, ch = SCREEN_W / COLS * 0.98, SCREEN_H / ROWS * 0.98
-    # box size in the trigger's frame: its x and y axes lie in the screen when the frame's x and y do (dash nodes
-    # across and up); its z is the screen's normal
-    size = {'x': round(cw, 4), 'y': round(ch, 4), 'z': DEPTH}
+    # Box size in the trigger's frame (dash nodes: x across the car, y up, z forward). The boxes stay square to the car
+    # while the phone is turned by `a`, so each one is as wide across and as deep as its cell's turned footprint:
+    # seen from the driver, the boxes then tile the screen.
+    a = math.radians(yaw(car))
+    size = {'x': round(cw * abs(math.cos(a)), 4), 'y': round(ch, 4), 'z': round(cw * abs(math.sin(a)) + DEPTH, 4)}
     triggers = [['id', 'idRef:', 'idX:', 'idY:', 'type', 'size', 'baseRotation', 'rotation', 'translation', 'baseTranslation']]
     links = [['triggerId:triggers2', 'triggerInput', 'inputAction']]
     for row in range(1, ROWS + 1):
@@ -91,8 +108,8 @@ def part(model, car):
         'slotType': car['slotType'],
         'flexbodies': [
             ['mesh', '[group]:', 'nonFlexMaterials'],
-            ['cargo_earth_phone_body', [car['group']], [], {'pos': dict(zip('xyz', car['centre']))}],
-            ['cargo_earth_phone_screen', [car['group']], [], {'pos': dict(zip('xyz', car['centre']))}],
+            ['cargo_earth_phone_body_' + model, [car['group']], [], {'pos': dict(zip('xyz', car['centre']))}],
+            ['cargo_earth_phone_screen_' + model, [car['group']], [], {'pos': dict(zip('xyz', car['centre']))}],
         ],
         'controller': [
             ['fileName'],
@@ -137,6 +154,16 @@ def write_json(path, data):
         f.write('\n')
 
 
+def load_mesh():
+    spec = importlib.util.spec_from_file_location('phone_mesh', os.path.join(os.path.dirname(__file__), 'make-phone-mesh.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+mesh = load_mesh()
+
+
 def main():
     common = os.path.join(ROOT, 'common', 'cargo_earth_phone')
     write_json(os.path.join(common, 'cargo_earth_phone.interaction.json'), interaction())
@@ -144,8 +171,8 @@ def main():
         d = os.path.join(ROOT, model)
         write_json(os.path.join(d, 'cargo_earth_phone.jbeam'), part(model, car))
         write_json(os.path.join(d, 'cargo_earth_phone.materials.json'), MATERIALS)
-        shutil.copyfile(os.path.join(common, 'cargo_earth_phone.dae'), os.path.join(d, 'cargo_earth_phone.dae'))
-        print(model, 'triggers', COLS * ROWS)
+        mesh.write(os.path.join(d, 'cargo_earth_phone.dae'), '_' + model, yaw(car))
+        print(model, 'triggers', COLS * ROWS, 'turned %.1f degrees' % yaw(car))
 
 
 if __name__ == '__main__':

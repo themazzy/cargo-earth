@@ -41,7 +41,6 @@ local borders = require('cargoEarth/borders')
 local uiLayout = require('cargoEarth/layout')
 local currency = require('cargoEarth/currency')
 local dash = require('cargoEarth/dash')
-local dashtap = require('cargoEarth/dashtap')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
 local SAVE = '/settings/cargoEarth/career.json'
@@ -2956,7 +2955,8 @@ function M.settingsState()
     local v = math.max(min, math.min(max, opts[key] or default))
     out.items[#out.items + 1] = { key = key, label = d[2], step = step, min = min, max = max, unit = d[6], value = v }
   end
-  out.dash = dash.state()
+  out.dash = dash.state(M.G.vehicle and M.G.vehicle() or nil)
+  out.dash.error = S.dashError
   aboutHelper()
   out.update = M.updateInfo() or { mod = M.VERSION, unknown = true }
   out.cameras = { on = not S.career.camerasOff, known = #cams.list,
@@ -2969,10 +2969,14 @@ function M.settingsState()
 end
 
 -- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
--- dash (a = show | reset | x | y | z | size, b = +1 | -1)
+-- dash (a = fit | remove: the phone holder on the dashboard)
 function M.settingsDo(name, a, b)
-  -- the dash phone is a screen preference, not part of the career: it works on the resume screen too
-  if name == 'dash' then dash.act(a, b) return M.settingsState() end
+  -- the dash phone holder is a car part: BeamNG's parts menu works on the resume screen too, so this does as well
+  if name == 'dash' then
+    local ok, why = M.dashHolder(a == 'fit')
+    S.dashError = not ok and why or nil
+    return M.settingsState()
+  end
   if S.pendingCareer then return M.settingsState() end
   if S.parts then return M.settingsState() end
   if name == 'pause' then
@@ -3242,15 +3246,6 @@ function M.onExtensionLoaded()
   if S.loadError then problem('E', S.loadError) end
 end
 
--- the VR dash phone follows the car, so it is placed right before each frame is drawn
-local function dashMoney(n)
-  local c = type(S.pendingCareer) == 'table' and S.pendingCareer or S.career -- the same career the phone shows
-  return currency.format(n, c and c.currency)
-end
-function M.onPreRender(dtReal)
-  dash.tick(dtReal, M.phoneState, dashMoney)
-end
-
 -- The phone page on a car's dash screen (vehicles/common/cargo_earth_phone) asks the same questions as the floating phone
 -- app, but a car screen page can only send Lua one way. dashCall runs the question (only the phone app's own calls into
 -- cargoEarth_core) and sends the answer back through the car's cargoEarthPhone controller.
@@ -3260,8 +3255,11 @@ function M.dashAllowed(cmd)
     or cmd:find('^%(function%(%) if not cargoEarth_core then return nil end; local ok, value = pcall%(cargoEarth_core%.[%w_]+') ~= nil
 end
 
--- a car with the phone part in it: its own phone replaces the floating dash screen
-function M.dashPhonePart(vehId) dash.partCar(tonumber(vehId)) end
+-- a car's phone holder has started its screen
+function M.dashPhonePart(vehId)
+  log('I', 'cargoEarth', 'dash phone holder running in car ' .. tostring(vehId))
+  dash.partCar(tonumber(vehId))
+end
 
 function M.dashCall(vehId, id, cmd)
   local veh = getObjectByID and getObjectByID(tonumber(vehId) or -1)
@@ -3275,12 +3273,31 @@ function M.dashCall(vehId, id, cmd)
     tonumber(id) or 0, json))
 end
 
--- a button on the VR dash screen was pressed (slot 1 = left, 2 = right): do what the drawn button says, if the
--- phone still offers it (the picture can be up to a second old)
-function M.dashTap(slot)
-  local a = dashtap.pressed(dash.shownButtons(), dashtap.buttons(M.phoneState()), tonumber(slot) or 0)
-  log('I', 'cargoEarth', 'dash buttons: pressed slot ' .. tostring(slot) .. ' -> ' .. tostring(a))
-  if a then M.phoneAction(a) end
+-- Settings > Phone on the dashboard: fit (on) or take off the car's phone holder. It changes the car's parts the way
+-- BeamNG's Vehicle Config does, so in a career the parts checkout on the phone asks to pay for it like any other part.
+local function copyTree(t)
+  if type(t) ~= 'table' then return t end
+  local out = {}
+  for k, x in pairs(t) do out[k] = copyTree(x) end
+  return out
+end
+
+function M.dashHolder(on)
+  local G = M.G
+  local v = G.vehicle and G.vehicle()
+  local part = v and dash.partName(v.model)
+  if not part then return false, 'This car has no phone holder yet.' end
+  local path = garage.slotFor(G, v, part)
+  if not path then return false, 'This car has no free slot for the phone holder.' end
+  if (v.slotPartMap[path] == part) == (on and true or false) then return true end
+  local tree = copyTree(v.tree)
+  if not tree or not garage.setInTree(tree, path, on and part or '') then return false, 'This car’s parts could not be changed.' end
+  local ok, err = pcall(G.fitTree, tree)
+  if not ok then
+    log('W', 'cargoEarth', 'dash phone holder: ' .. tostring(err))
+    return false, 'BeamNG could not change this car’s parts.'
+  end
+  return true
 end
 
 function M.onUpdate(dtReal, dtSim)
