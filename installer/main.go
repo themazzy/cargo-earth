@@ -34,7 +34,7 @@ const (
 	userAgent  = "cargo-earth-installer"
 )
 
-// set with -ldflags "-X main.buildVersion=0.4.0"; the release the installer was built for
+// set with -ldflags "-X main.buildVersion=0.6.0"; the release the installer was built for
 var buildVersion = "dev"
 
 type options struct {
@@ -61,7 +61,7 @@ func doIt(what string, action func() error) error {
 }
 
 func main() {
-	flag.StringVar(&opt.version, "version", "", "release to install, e.g. 0.4.0 (default: the latest release)")
+	flag.StringVar(&opt.version, "version", "", "release to install, e.g. 0.6.0 (default: the latest release)")
 	flag.StringVar(&opt.userFolder, "user-folder", "", "BeamNG user folder (default: found automatically)")
 	flag.StringVar(&opt.zipPath, "zip", "", "use this mod ZIP instead of downloading")
 	flag.StringVar(&opt.helperPath, "helper", "", "use this helper .py instead of downloading")
@@ -76,7 +76,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Cargo Earth installer %s\n\nDouble-click to choose from a menu, or use options:\n\n", buildVersion)
 		flag.PrintDefaults()
-		fmt.Fprintln(os.Stderr, "\nExamples:\n  CargoEarthSetup.exe\n  CargoEarthSetup.exe -version 0.4.0\n  CargoEarthSetup.exe -uninstall\n  CargoEarthSetup.exe -delete-save\n  CargoEarthSetup.exe -zip cargo_earth_career_0.3.5.zip -helper cargo_earth_helper.py")
+		fmt.Fprintln(os.Stderr, "\nExamples:\n  CargoEarthSetup.exe\n  CargoEarthSetup.exe -version 0.6.0\n  CargoEarthSetup.exe -uninstall\n  CargoEarthSetup.exe -delete-save\n  CargoEarthSetup.exe -zip cargo_earth_career_0.3.5.zip -helper cargo_earth_helper.py")
 	}
 	flag.Parse()
 
