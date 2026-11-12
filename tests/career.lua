@@ -1910,4 +1910,13 @@ test('local money: country borders, exchange rates and free exchange at the bord
   s.pendingCareer = nil
 end)
 
+test('the dash phone part only runs the phone app\'s own calls', function()
+  local core = fresh()
+  assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.phoneAction("online") or nil'))
+  assert(core.dashAllowed('(function() if not cargoEarth_core then return nil end; local ok, value = pcall(cargoEarth_core.garageDo, "x") end)()'))
+  assert(not core.dashAllowed('os.exit()'))
+  assert(not core.dashAllowed('be:getPlayerVehicle(0)'))
+  assert(not core.dashAllowed(nil) and not core.dashAllowed(string.rep('a', 5000)))
+end)
+
 print(string.format('%d career tests passed', total))

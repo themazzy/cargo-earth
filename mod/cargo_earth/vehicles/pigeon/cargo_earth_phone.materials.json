@@ -1,0 +1,49 @@
+{
+ "cargo_earth_phone_screen": {
+  "name": "cargo_earth_phone_screen",
+  "mapTo": "cargo_earth_phone_screen",
+  "class": "Material",
+  "Stages": [
+   {
+    "baseColorMap": "@cargo_earth_phone",
+    "emissiveMap": "@cargo_earth_phone",
+    "emissiveFactor": [
+     1,
+     1,
+     1
+    ],
+    "roughnessFactor": 0.35,
+    "metallicFactor": 0
+   },
+   {},
+   {},
+   {}
+  ],
+  "materialTag0": "beamng",
+  "materialTag1": "vehicle",
+  "version": 1.5
+ },
+ "cargo_earth_phone_body": {
+  "name": "cargo_earth_phone_body",
+  "mapTo": "cargo_earth_phone_body",
+  "class": "Material",
+  "Stages": [
+   {
+    "baseColorFactor": [
+     0.06,
+     0.06,
+     0.055,
+     1
+    ],
+    "roughnessFactor": 0.55,
+    "metallicFactor": 0
+   },
+   {},
+   {},
+   {}
+  ],
+  "materialTag0": "beamng",
+  "materialTag1": "vehicle",
+  "version": 1.5
+ }
+}

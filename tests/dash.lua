@@ -131,4 +131,11 @@ test('VR dash screen buttons are placed in the car frame', function()
   assert(tap.frame(jr, jr, jb) == nil, 'degenerate nodes')
 end)
 
+test('a car with the phone part hides the floating screen until it is respawned', function()
+  dash.partCar(7)
+  assert(dash.isPartCar(7) and not dash.isPartCar(8))
+  dash.dropCar(7)
+  assert(not dash.isPartCar(7), 'a respawn without the part brings the floating screen back')
+end)
+
 print('Dash phone: ' .. total .. ' checks passed')
