@@ -19,6 +19,9 @@ API (GET, JSON):
                               day): {"state": "ready" | "loading" | "failed", "country", "top": [[id, name, stream url,
                               codec, kbps, tags, region], ...] (most listened first), "near": [[... the same, km], ...]}
   /v1/radioclick?id=uuid      tells Radio Browser a station started playing (its listening counts)
+  /v1/player/play?id=uuid&vol=0.6, /v1/player/volume?vol=.., /v1/player/stop, /v1/player/alive
+                              the helper plays a listed station itself (when the game's UI cannot); alive is the
+                              heartbeat: {"playing", "url", "vol", "secs", "error", "player"}
   /v1/near?lat=..&lon=..      the 3 x 3 areas around the point: {"ready": ["r_c", ...], "loading": n, "failed": n,
                               "errors": [...], "grocers": true, "depots": true, "fuel": true}; builds missing areas
                               nearest first
@@ -1043,6 +1046,27 @@ class Radio:
                                     "limit": RADIO_LIMIT})
         return self._api("/json/stations/search?" + q)
 
+    def url_of(self, sid):
+        """The stream of a station this helper listed (in memory or in the cache), or None: the helper plays only
+        those, never an address it is handed."""
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", sid or ""):
+            return None
+        with self.lock:
+            lists = [v for v in self.state.values() if isinstance(v, list)]
+        for rows in lists:
+            for r in rows:
+                if r[0] == sid:
+                    return r[2]
+        try:
+            names = [n for n in os.listdir(self.dir) if re.fullmatch(r"[A-Z]{2}\.json", n)]
+        except OSError:
+            names = []
+        for n in names:
+            for r in self._load(n[:2]) or []:
+                if r[0] == sid:
+                    return r[2]
+        return None
+
     def click(self, sid):
         """Radio Browser counts what people listen to: one call each time a station starts playing."""
         if not re.fullmatch(r"[0-9a-fA-F-]{36}", sid or ""):
@@ -1122,7 +1146,171 @@ class Radio:
         return {"state": "ready", "country": cc, "near": near, "top": [r[:7] for r in rows]}
 
 
-def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None):
+# The game's UI browser may not play web streams; then the helper plays the station on this computer. Windows: the
+# system's own media player (Media Foundation, through PowerShell; MP3 and AAC). Elsewhere: ffplay, mpv or VLC if
+# installed. The mod sends a heartbeat while the radio is on; without one for PLAYER_ALIVE_S the helper stops, so
+# music never outlives the game.
+PLAYER_ALIVE_S = 20
+PLAYER_OPEN_S = 15        # a stream that has not started after this long is given up
+PS_PLAYER = r"""
+Add-Type -AssemblyName PresentationCore
+$p = New-Object System.Windows.Media.MediaPlayer
+$p.Volume = [double]::Parse($env:CARGO_EARTH_VOL, [Globalization.CultureInfo]::InvariantCulture)
+$p.Open([Uri]$env:CARGO_EARTH_STREAM)
+$p.Play()
+$in = [Console]::OpenStandardInput()
+$buf = New-Object byte[] 256
+$t = $in.ReadAsync($buf, 0, 256)
+$run = $true
+while ($run) {
+  Start-Sleep -Milliseconds 250
+  if ($t.IsCompleted) {
+    $n = $t.Result
+    if ($n -le 0) { break }
+    foreach ($line in [Text.Encoding]::ASCII.GetString($buf, 0, $n).Split("`n")) {
+      $line = $line.Trim()
+      if ($line -eq 'stop') { $run = $false }
+      if ($line -like 'vol *') { $p.Volume = [double]::Parse($line.Substring(4), [Globalization.CultureInfo]::InvariantCulture) }
+    }
+    $t = $in.ReadAsync($buf, 0, 256)
+  }
+  [Console]::Out.WriteLine('pos ' + [int]$p.Position.TotalSeconds + ' ' + [int]$p.HasAudio)
+  [Console]::Out.Flush()
+}
+$p.Stop(); $p.Close()
+"""
+
+
+class Player:
+    def __init__(self, spawn=None, clock=time.time):
+        self.spawn = spawn or self._spawn
+        self.clock = clock
+        self.proc, self.url, self.vol, self.alive_at = None, None, 0.6, 0
+        self.started_at, self.pos, self.error, self.kind = 0, 0, None, None
+        self.lock = threading.Lock()
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    @staticmethod
+    def available():
+        import shutil
+        if os.name == "nt":
+            return "powershell"
+        for name in ("ffplay", "mpv", "cvlc"):
+            if shutil.which(name):
+                return name
+        return None
+
+    def _spawn(self, url, vol):
+        import subprocess
+        kind = self.available()
+        if not kind:
+            raise OSError("no media player found on this computer")
+        import base64
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        env = dict(os.environ, CARGO_EARTH_STREAM=url, CARGO_EARTH_VOL=f"{vol:.2f}")   # data, never code
+        if kind == "powershell":
+            cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+                   base64.b64encode(PS_PLAYER.encode("utf-16-le")).decode()]
+        elif kind == "ffplay":
+            cmd = ["ffplay", "-nodisp", "-loglevel", "quiet", "-volume", str(int(vol * 100)), url]
+        elif kind == "mpv":
+            cmd = ["mpv", "--no-video", "--really-quiet", f"--volume={int(vol * 100)}", url]
+        else:
+            cmd = ["cvlc", "--quiet", "--play-and-exit", f"--gain={vol:.2f}", url]
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True, bufsize=1, creationflags=flags, env=env)
+        proc.kind = kind
+        return proc
+
+    def _read(self, proc):
+        for line in proc.stdout:
+            parts = line.split()
+            if len(parts) == 3 and parts[0] == "pos":
+                with self.lock:
+                    if proc is self.proc:
+                        self.pos = int(parts[1]) if parts[1].isdigit() else 0
+
+    def _kill(self):
+        proc, self.proc = self.proc, None
+        if proc:
+            try:
+                proc.stdin.write("stop\n")
+                proc.stdin.flush()
+            except (OSError, ValueError, AttributeError):
+                pass
+            try:
+                proc.wait(timeout=2)
+            except Exception:  # noqa: BLE001 - still running: ended the hard way
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+
+    def play(self, url, vol):
+        if not re.match(r"https?://", url or "") or len(url) > 500:
+            raise ValueError("not a web stream")
+        with self.lock:
+            self._kill()
+            self.url, self.vol, self.alive_at = url, max(0.0, min(1.0, vol)), self.clock()
+            self.started_at, self.pos, self.error = self.clock(), 0, None
+            try:
+                self.proc = self.spawn(url, self.vol)
+                self.kind = getattr(self.proc, "kind", None)
+            except Exception as e:  # noqa: BLE001 - reported to the phone
+                self.error = str(e)
+                return self.status()
+            if getattr(self.proc, "stdout", None):
+                threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
+            return self.status()
+
+    def volume(self, vol):
+        with self.lock:
+            self.vol = max(0.0, min(1.0, vol))
+            self.alive_at = self.clock()
+            proc = self.proc
+            if proc and getattr(proc, "kind", None) == "powershell":
+                try:
+                    proc.stdin.write(f"vol {self.vol:.2f}\n")
+                    proc.stdin.flush()
+                except (OSError, ValueError):
+                    pass
+                return self.status()
+        if proc and self.url:      # players without a volume command start again at the new volume
+            return self.play(self.url, self.vol)
+        return self.status()
+
+    def stop(self):
+        with self.lock:
+            self._kill()
+            self.url = None
+            return self.status()
+
+    def alive(self):
+        with self.lock:
+            self.alive_at = self.clock()
+            return self.status()
+
+    def status(self):
+        proc = self.proc
+        running = bool(proc) and proc.poll() is None
+        if proc and not running and not self.error:
+            self.error = "the stream stopped or could not be opened"
+        # Windows' player fails silently: a stream whose clock has not moved after a while is probably not playing
+        stuck = running and self.pos == 0 and self.clock() - self.started_at > PLAYER_OPEN_S
+        return {"playing": running, "stuck": stuck, "url": self.url if running else None, "vol": self.vol, "secs": self.pos,
+                "error": self.error, "player": self.kind or self.available()}
+
+    def _watch(self):
+        while True:
+            time.sleep(2)
+            with self.lock:
+                if self.proc and self.clock() - self.alive_at > PLAYER_ALIVE_S:
+                    log("radio: no word from the game, stopping")
+                    self._kill()
+                    self.url = None
+
+
+def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -1145,12 +1333,27 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None):
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
                                             "cameras": cameras is not None, "radio": radio is not None,
+                                            "player": player is not None,
                                             "network": network, "cache": areas.budget.stats})
                 if u.path == "/v1/cameras" and cameras:
                     return self._send(200, cameras.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/radio" and radio:
                     lat, lon = q.get("lat"), q.get("lon")
                     return self._send(200, radio.near(q.get("cc", ""), float(lat) if lat else None, float(lon) if lon else None))
+                if u.path.startswith("/v1/player/") and player and radio:
+                    what = u.path[len("/v1/player/"):]
+                    if what == "play":
+                        url = radio.url_of(q.get("id", ""))
+                        if not url:
+                            return self._send(404, {"error": "unknown station"})
+                        return self._send(200, player.play(url, float(q.get("vol", "0.6"))))
+                    if what == "volume":
+                        return self._send(200, player.volume(float(q.get("vol", "0.6"))))
+                    if what == "stop":
+                        return self._send(200, player.stop())
+                    if what == "alive":
+                        return self._send(200, player.alive())
+                    return self._send(404, {"error": "unknown path"})
                 if u.path == "/v1/radioclick" and radio:
                     return self._send(200, radio.click(q.get("id", "")))
                 if u.path == "/v1/near":
@@ -1209,7 +1412,7 @@ def main():
                          ensure_ascii=False, indent=1))
         budget.prune(force=True)
         return
-    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache))
+    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache), player=Player())
 
 
 if __name__ == "__main__":
