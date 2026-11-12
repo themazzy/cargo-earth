@@ -1153,8 +1153,8 @@ angular.module('beamng.apps')
       scope.tipWhy = function (w) {
         var parts = []
         if (w.fast) parts.push('fast')
-        if (w.smooth) parts.push('smooth ride')
-        if (w.harsh) parts.push(w.harsh === 1 ? 'one harsh moment' : w.harsh + ' harsh moments')
+        if (w.intact) parts.push('arrived intact')
+        if (w.damaged) parts.push('arrived ' + w.damaged + ' % intact')
         return parts.join(', ')
       }
       scope.fmt.cond = function (c) { return c >= 0.85 ? 'very good' : c >= 0.6 ? 'good' : c >= 0.35 ? 'worn' : 'rough' }

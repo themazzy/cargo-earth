@@ -6,7 +6,7 @@ local STANDARD_GRAVITY = 9.80665  -- metres per second squared in one g
 local SHOCK_G, SHOCK_S = 3.5, 0.18
 local IMPACT_G, IMPACT_S = 5.0, 0.07
 local WARMUP_S = 0.5   -- ignore the first samples after arming or resetting the car
--- A harsh moment for the customer's tip: hard braking, accelerating or cornering (horizontal g) held this long.
+-- A harsh moment for a fragile load: hard braking, accelerating or cornering (horizontal g) held this long.
 -- Reported at most every HARSH_GAP_S, while the watch lasts (also after a shock).
 local HARSH_G, HARSH_S, HARSH_GAP_S = 0.55, 0.4, 3
 

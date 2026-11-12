@@ -57,8 +57,7 @@ M.TOW_RULES = { arriveM = 30, stopS = 3, cancelFee = 200 }
 M.TOW_RELOAD_FEE = 150  -- putting a car that slid off back on the trailer
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
 M.random = function(...) return math.random(...) end   -- (tests replace it)
-M.SMOOTH_TIP = 0.06      -- a customer tips this share of the pay for a ride without a harsh moment
-M.HARSH_TIP_LOSS = 0.3   -- each harsh moment takes this share off the tip for speed
+M.INTACT_TIP = 0.06      -- a customer tips this share of the pay when the order arrives in perfect condition
 M.PARCEL_TIP_SHARE = 0.5 -- a parcel route's tip for speed is figured on this share of its pay
 M.ROAD_M = 20          -- the car is on the road edge this close (else: a car park, a field; no limit shown)
 M.LIMIT_S = 0.5        -- the limit under the car is read this often
@@ -947,17 +946,17 @@ local function finishDelivery(force)
   local late = math.max(0, minutes - j.minutes)
   local perMin = M.LATE_PER_MIN[j.kind == 'food' and 'courier' or 'trucking']
   local pay = math.floor(j.pay * math.max(M.LATE_FLOOR, 1 - late * perMin) + 0.5)
-  -- Tips from private customers (meals and parcel routes): for a fast delivery, and for a smooth ride
+  if j.special == 'chilled' then special.warm(j, late) end
+  local condition = cargo.supports(j) and cargo.condition(j) or (j.tow and cargo.condition(j)) or 100
+  -- Tips from private customers (meals and parcel routes) go only by what they can see: how soon the order came and
+  -- the state it arrived in. How it was driven on the way is not theirs to know.
   local tip, tipWhy = 0, nil
   if j.kind == 'food' or j.route then
     local fast = food.tip(j.kind == 'food' and j.pay or math.floor(j.pay * M.PARCEL_TIP_SHARE), minutes, j.minutes)
-    local harsh = j.harsh or 0
-    local smooth = harsh == 0 and math.floor(j.pay * M.SMOOTH_TIP / 5 + 0.5) * 5 or 0
-    tip = harsh == 0 and fast + smooth or math.floor(fast * math.max(0, 1 - M.HARSH_TIP_LOSS * harsh) / 5 + 0.5) * 5
-    tipWhy = { fast = fast > 0 or nil, smooth = smooth > 0 or nil, harsh = harsh > 0 and harsh or nil }
+    local intact = condition >= 100 and math.floor(j.pay * M.INTACT_TIP / 5 + 0.5) * 5 or 0
+    tip = fast + intact
+    tipWhy = { fast = fast > 0 or nil, intact = intact > 0 or nil, damaged = condition < 100 and condition or nil }
   end
-  if j.special == 'chilled' then special.warm(j, late) end
-  local condition = cargo.supports(j) and cargo.condition(j) or (j.tow and cargo.condition(j)) or 100
   local conditionFactor = j.kind == 'food' and (0.6 + 0.004 * condition) or condition / 100
   pay = math.floor(pay * conditionFactor * (1 - special.penalty(j) / 100) + 0.5)
   tip = math.floor(tip * condition / 100 + 0.5)
@@ -987,7 +986,7 @@ local function finishDelivery(force)
     cargoCondition = condition < 100 and condition or nil, held = j.companyShift ~= nil,
     ownerOperator = c.employment and c.employment.ownerOperator,
     stars = stars, note = note, track = track, records = #newRecords > 0 and newRecords or nil, premium = j.premium,
-    tipWhy = tip > 0 and tipWhy or (tipWhy and tipWhy.harsh and tipWhy) or nil, special = special.info(j) }
+    tipWhy = tip > 0 and tipWhy or (tipWhy and tipWhy.damaged and tipWhy) or nil, special = special.info(j) }
   nextPing()
   c.km = (c.km or 0) + j.km
   table.insert(c.history, 1, { date = os.date('%Y-%m-%d %H:%M'), kind = j.kind or 'cargo', from = j.from.n,
@@ -1088,16 +1087,14 @@ function M.onCargoEarthShock(id, token, peak)
   end
 end
 
--- A harsh moment (hard braking, accelerating or cornering) with a customer's order on board: it costs part of the tip.
+-- A harsh moment (hard braking, accelerating or cornering): it cracks a fragile load. Other orders only suffer from real
+-- impacts (onCargoEarthShock), and customers tip by the state their order arrives in, not by how it was driven.
 function M.onCargoEarthHarsh(id, token, g)
   if S.pendingCareer or type(g) ~= 'number' or g ~= g then return end
   if M.G.playerId() ~= id then return end
-  local counted, cracked, ruined = 0, 0, {}
+  local cracked, ruined = 0, {}
   for _, order in ipairs(S.orders) do
     local job = order.job
-    if order.phase == 'toDelivery' and (job.kind == 'food' or job.route) then
-      job.harsh, counted = (job.harsh or 0) + 1, counted + 1
-    end
     if order.phase == 'toDelivery' and special.harsh(job) > 0 then
       cracked = cracked + 1
       if special.condition(job) == 0 then ruined[job] = true end
@@ -1106,11 +1103,6 @@ function M.onCargoEarthHarsh(id, token, g)
   if next(ruined) then M.spoil(nil, ruined) return end
   if cracked > 0 then
     say(string.format('The fragile load felt that: %d %% intact.', special.condition(S.job or {})), 4)
-    return
-  end
-  if counted > 0 and S.clock >= (S.harshSaidAt or -math.huge) + 20 then
-    S.harshSaidAt = S.clock
-    say('Easy: the customer felt that. A smooth ride earns a better tip.', 3)
   end
 end
 

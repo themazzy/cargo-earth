@@ -1574,14 +1574,14 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   assert(c.money == money + 3000 and #firm.trailers(c) == 0)
 end)
 
-test('customers tip a fast, smooth ride; harsh moments cost the tip', function()
+test('customers tip by speed and the order\'s condition, not by how it was driven', function()
   local marker = package.loaded['cargoEarth/marker']
   marker.PICKUP_RADIUS, marker.PICKUP_RANGE, marker.pickupDistance = 5, 250, function() return nil end
   local core, s = fresh()
   s.career.garage.debt = 0
   s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
     function() return {{50.02, 14, 50.02, 14, 'Street 5', 'Town'}} end)
-  local function deliver(harsh)
+  local function deliver(harsh, condition)
     advance(core, 2)
     core.phoneAction('online')
     for _ = 1, 60 do
@@ -1593,17 +1593,28 @@ test('customers tip a fast, smooth ride; harsh moments cost the tip', function()
     pose.lat, pose.lon = job.from.g[1], job.from.g[2]
     advance(core)
     for _ = 1, harsh do core.onCargoEarthHarsh(vehicle.id, 1, 0.7) end
+    if condition then job.cargoCondition = condition end
     pose.lat, pose.lon = job.to.g[1], job.to.g[2]
     advance(core)
     return core.phoneState().done, job
   end
+  -- tips for one job: for speed (delivered at once here) and 6 % for an order in perfect condition
+  local function fast(j) return food.tip(j.pay, 0, j.minutes) end
+  local function intact(j) return math.floor(j.pay * core.INTACT_TIP / 5 + 0.5) * 5 end
   local done, job = deliver(0)
-  assert(done.tipWhy and done.tipWhy.smooth and done.tip >= math.floor(job.pay * core.SMOOTH_TIP / 5 + 0.5) * 5)
+  assert(done.tipWhy and done.tipWhy.intact and done.tip == fast(job) + intact(job), 'fast + intact')
+  -- harsh driving alone changes nothing: the customer cannot feel it
   s.phone.lastDone = nil
   pose.lat, pose.lon = 50, 14
-  done, job = deliver(2)
-  assert(job.harsh == 2 and done.tipWhy and done.tipWhy.harsh == 2 and not done.tipWhy.smooth)
-  assert(done.tip <= math.floor(food.tip(job.pay, 0, job.minutes) * (1 - 2 * core.HARSH_TIP_LOSS) / 5 + 0.5) * 5, 'no smooth tip, less for speed')
+  done, job = deliver(3)
+  assert(job.harsh == nil and done.tipWhy.intact and not done.tipWhy.harsh and done.tip == fast(job) + intact(job),
+    'no tip lost for driving')
+  -- a damaged order: no tip for its state, and the speed tip shrinks with its condition
+  s.phone.lastDone = nil
+  pose.lat, pose.lon = 50, 14
+  done, job = deliver(0, 50)
+  assert(done.tipWhy and done.tipWhy.damaged == 50 and not done.tipWhy.intact)
+  assert(done.tip == math.floor(fast(job) * 0.5 + 0.5), 'speed tip halved, no intact tip')
 end)
 
 ------------------------------------------------------------------------------------------ 0.6: special cargo
