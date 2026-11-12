@@ -8,4 +8,4 @@ globals = { 'log', 'FS', 'jsonReadFile', 'jsonWriteFile', 'jsonDecode', 'jsonEnc
   'setExtensionUnloadMode', 'obj', 'sensors', 'energyStorage', 'beamng_versiond', 'getVersion', 'scenetree', 'createObject',
   'guihooks', 'ui_imgui', 'core_camera', 'getCameraPosition', 'core_groundMarkers', 'spawn', 'commands', 'worldEditorCppApi',
   'Sim', 'electrics', 'String', 'TorqueScriptLua', 'socket', 'im', 'ffi', 'tableSize', 'shallowcopy', 'float3', 'core_trailerRespawn',
-  'core_vehicleBridge', 'gameplay_traffic', 'core_environment', 'MPCoreNetwork', 'career_career', 'simTimeAuthority', 'bullettime' }
+  'core_vehicleBridge', 'gameplay_traffic', 'core_environment', 'MPCoreNetwork', 'career_career', 'simTimeAuthority', 'bullettime', 'render_openxr', 'WorldBillboardRenderer' }

@@ -38,6 +38,8 @@ local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
 local borders = require('cargoEarth/borders')
 local currency = require('cargoEarth/currency')
+local dash = require('cargoEarth/dash')
+local dashtap = require('cargoEarth/dashtap')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
 local SAVE = '/settings/cargoEarth/career.json'
@@ -2861,6 +2863,7 @@ function M.settingsState()
     local v = math.max(min, math.min(max, opts[key] or default))
     out.items[#out.items + 1] = { key = key, label = d[2], step = step, min = min, max = max, unit = d[6], value = v }
   end
+  out.dash = dash.state()
   out.cameras = { on = not S.career.camerasOff, known = #cams.list,
     helper = cams.state or (helper.status().cameras == 'off' and 'off' or nil) }
   if S.mode == 'courier' then
@@ -2870,8 +2873,11 @@ function M.settingsState()
   return out
 end
 
--- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window
+-- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
+-- dash (a = show | reset | x | y | z | size, b = +1 | -1)
 function M.settingsDo(name, a, b)
+  -- the dash phone is a screen preference, not part of the career: it works on the resume screen too
+  if name == 'dash' then dash.act(a, b) return M.settingsState() end
   if S.pendingCareer then return M.settingsState() end
   if S.parts then return M.settingsState() end
   if name == 'pause' then
@@ -2994,6 +3000,22 @@ function M.onExtensionLoaded()
   if recovery then S.saveError = recovery end
   if not saved and recovery then S.pendingCareer, S.resumeError, S.loadBlocked = {}, recovery, recovery end
   if S.loadError then log('E', 'cargoEarth', S.loadError) end
+end
+
+-- the VR dash phone follows the car, so it is placed right before each frame is drawn
+local function dashMoney(n)
+  local c = type(S.pendingCareer) == 'table' and S.pendingCareer or S.career -- the same career the phone shows
+  return currency.format(n, c and c.currency)
+end
+function M.onPreRender(dtReal)
+  dash.tick(dtReal, M.phoneState, dashMoney)
+end
+
+-- a button on the VR dash screen was pressed (slot 1 = left, 2 = right): do what the drawn button says, if the
+-- phone still offers it (the picture can be up to a second old)
+function M.dashTap(slot)
+  local a = dashtap.pressed(dash.shownButtons(), dashtap.buttons(M.phoneState()), tonumber(slot) or 0)
+  if a then M.phoneAction(a) end
 end
 
 function M.onUpdate(dtReal, dtSim)
@@ -3171,6 +3193,7 @@ function M.onPartsTreeConfigChanged(_, respawn)
 end
 
 function M.onClientEndMission()
+  dash.forget()
   S.resumeTrip = nil
   releaseStorage()
   clearFreight()
@@ -3179,6 +3202,7 @@ function M.onClientEndMission()
 end
 
 function M.onExtensionUnloaded()
+  dash.remove()
   releaseStorage()
   clearFreight()
   stopForceWatch()
