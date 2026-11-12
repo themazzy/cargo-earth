@@ -13,7 +13,7 @@ A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight,
 - Progress from vans to rigid trucks and articulated freight with native cargo containers and loads.
 - Drive parcel routes: load a van or box truck at a depot and drop parcels at several real addresses, emptying its cargo containers stop by stop.
 - Choose a nearby address as your home garage, then drive there and park to claim it. Store and switch owned cars, buy used vehicles, repair and confirm real parts purchases.
-- In VR, a phone screen sits on the centre of the dashboard with your order, distance, time left and speed limit; move or resize it per car in Settings.
+- In VR, a phone screen sits on the centre of the dashboard with your order, distance, time left and speed limit; move or resize it per car in Menu → Settings.
 - Track money, debt, deliveries, cargo condition, employer reputation and active driving distance through the phone.
 - Earn 1 to 5 stars on every order. They build two reputations, courier and freight, that bring premium orders and better freight pay.
 - Pay for fuel at real stations and chargers. The car keeps its fuel level through resets, and a roadside delivery is always available.

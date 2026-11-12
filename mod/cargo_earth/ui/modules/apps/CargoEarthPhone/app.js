@@ -865,7 +865,7 @@ angular.module('beamng.apps')
         // the helper answers, but could not build this area (no Python libraries, no internet...): not "start it"
         '<div class="cep-sub" ng-if="!s.trucking && s.helper && s.helper.state === \'error\'">' +
           'The Cargo Earth helper is running but could not load this area{{ s.helper.msg ? ": " + s.helper.msg : "." }} ' +
-          'Settings → Copy support report helps us find out why.</div>' +
+          'Menu → Settings → Copy support report helps us find out why.</div>' +
         '<div class="cep-sub" ng-if="!s.trucking && s.helper.outdated && (s.helper.state === \'ready\' || s.helper.state === \'loading\')">' +
           'Update the Cargo Earth helper for grocery runs.</div></div>' +
       '<div class="cep-card cep-stats"><div>{{ s.todayCount }}<span>today</span></div>' +
