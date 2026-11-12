@@ -13,7 +13,9 @@ end
 local received = 0
 local function response(path)
   local data
-  if path:find('/v1/cameras', 1, true) then
+  if path:find('/v1/radio', 1, true) then
+    data = {state = 'ready', country = 'CZ', top = {{'id', 'Radio', 'http://x'}}, near = {}}
+  elseif path:find('/v1/cameras', 1, true) then
     data = {state = 'ready', cells = {'100_28'}, cameras = {{'n1', 50, 14, 50, 'primary'}}}
   elseif path:find('/v1/near', 1, true) then
     local lat, lon = path:match('lat=([%d%.%-]+)&lon=([%d%.%-]+)')
@@ -111,6 +113,21 @@ test('speed cameras are asked for once a minute, alone where the data pack cover
   assert(got == 3 and #requests == 3 and callbacks == 0, got .. ' camera replies, ' .. #requests .. ' requests')
   for _, request in ipairs(requests) do assert(request:find('/v1/cameras?lat=50.00000&lon=14.00000', 1, true)) end
   assert(client.status().cameras == 'ready')
+end)
+
+test('one-off requests go first, once each, and answer their caller', function()
+  local got = {}
+  client.ask('/v1/radio?cc=CZ', function(data) got[#got + 1] = data.country end)
+  client.ask('/v1/radio?cc=CZ', function(data) got[#got + 1] = data.country end)
+  assert(client.asking())
+  for i = 0, 4 do client.tick(50, 14, i / 2, nil, nil, true) end
+  assert(#got == 1 and got[1] == 'CZ' and #requests == 1 and requests[1] == '/v1/radio?cc=CZ')
+  assert(not client.asking())
+  local why
+  client.ask('/v1/radio?cc=AT', function(data, err) why = err assert(data == nil) end)
+  client.configure({helper = false})
+  client.tick(50, 14, 10)
+  assert(why == 'helper turned off' and not client.asking())
 end)
 
 client._reset()

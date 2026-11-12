@@ -9,6 +9,10 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
   angular: { module: () => ({ directive: (name, factory) => { directive = factory[factory.length - 1]() } }) },
   bngApi: { serializeToLua: JSON.stringify, engineLua: (command, callback) => { commands.push(command); if (hold) pending.push(callback); else callback({screen: 'offline'}) } },
   Date: {now: () => now},
+  Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {} } addEventListener (n, f) { this.on[n] = f }
+    play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
+    getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
+  localStorage: { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
   setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: () => 1
 })
 assert(directive.template.includes('Find nearby addresses'))
@@ -78,6 +82,31 @@ scope.openLiveWork()
 assert.equal(scope.workView, 'companies')
 watches['s.screen']('incoming')
 assert.equal(scope.workView, 'deliveries', 'Incoming work must open the actual delivery view')
+// radio: the list comes from the game, the stream plays in the page and keeps playing on other tabs
+hold = false
+scope.setTab('radio')
+assert.equal(scope.tab, 'radio')
+assert(commands.at(-1).includes('pcall(cargoEarth_core.radioState'))
+const stations = [{id: 'a', name: 'Rádio Jih', url: 'http://a/stream', codec: 'MP3', kbps: 128}, {id: 'b', name: 'Two', url: 'https://b/s', codec: 'OGG'}]
+scope.rs = {country: 'CZ', countryName: 'Czechia', state: 'ready', top: stations, near: []}
+scope.radioPlay(stations[0], stations)
+assert.equal(scope.radio.status, 'loading')
+assert.equal(scope.radio.station.country, 'CZ')
+assert(commands.some(command => command.includes('pcall(cargoEarth_core.radioDo, "played", "a"')))
+scope.radioSkip(1)
+assert.equal(scope.radio.station.id, 'b')
+scope.radioSkip(1)
+assert.equal(scope.radio.station.id, 'a', 'Next wraps around the list')
+scope.radioVol(1); scope.radioVol(1)
+assert.equal(scope.radio.vol, 0.8)
+scope.radioFav(stations[1], {stopPropagation () {}})
+assert(scope.isSaved(stations[1]))
+scope.radioToggle()
+assert.equal(scope.radio.status, 'idle')
+scope.radioPlay({id: 'x', name: 'Bad', url: 'javascript:alert(1)'})
+assert.equal(scope.radio.status, 'error', 'Only web streams are played')
+assert(directive.template.includes('Stations from Radio Browser'))
+scope.setTab('orders')
 scope.setTab('invalid')
 assert.equal(scope.tab, 'orders')
 assert(directive.template.includes('aria-label="Phone sections"'))
