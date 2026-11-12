@@ -122,6 +122,8 @@ angular.module('beamng.apps')
     '.cep-stars{color:#e0a100;letter-spacing:1px;font-size:15px;white-space:nowrap}.cep-stars.big{font-size:24px}' +
     '.cep-stars i{font-style:normal;color:var(--line)}' +
     '.cep-premium{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;background:#e0a100;color:#fff;font-size:10px;font-weight:800}' +
+    '.cep-special{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;color:#fff;font-size:10px;font-weight:800;text-transform:uppercase}' +
+    '.cep-special.fragile{background:#c2416b}.cep-special.chilled{background:#2b7bb9}.cep-special.oversize{background:#d9822b}' +
     '.cep-map{display:block;width:100%;border-radius:12px;background:#f1ebe3}' +
     '.cep-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}' +
     '.cep-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}'
@@ -385,11 +387,12 @@ angular.module('beamng.apps')
       '<div class="cep-body" ng-if="tab === \'orders\' && workView === \'deliveries\' && s.screen === \'incoming\'">' +
         '<div class="cep-order-head">' +
           '<div><div class="cep-label">{{ s.incoming.orderType === "grocery" ? "Grocery run" : (s.incoming.orderType === "family" ? "Family meal" : ' +
-            '(s.incoming.batch ? "Add to your route" : (s.incoming.kind === "food" ? "New food order" : "New freight job"))) }}</div>' +
+            '(s.incoming.batch ? "Add to your route" : (s.incoming.kind === "food" ? "New food order" : (s.incoming.tow ? "Tow job" : "New freight job")))) }}</div>' +
           '<div class="cep-pay">{{ fmt.money(s.incoming.pay) }}</div>' +
           '<div class="cep-sub">{{ s.incoming.kind === "food" ? "Order pay · before any tip" : "Job pay" }}' +
             '<span class="cep-adr" ng-if="s.incoming.adr">ADR</span>' +
-            '<span class="cep-premium" ng-if="s.incoming.premium">PREMIUM</span></div></div>' +
+            '<span class="cep-premium" ng-if="s.incoming.premium">PREMIUM</span>' +
+            '<span class="cep-special {{ s.incoming.special.kind }}" ng-if="s.incoming.special">{{ s.incoming.special.name }}</span></div></div>' +
           '<div class="cep-ring"><svg width="64" height="64"><circle cx="32" cy="32" r="28" fill="none" stroke="#e8e0d7" stroke-width="6"/>' +
             '<circle cx="32" cy="32" r="28" fill="none" stroke="#e8452c" stroke-width="6" stroke-linecap="round" ' +
             'ng-attr-stroke-dasharray="{{ 175.9 * s.incoming.leftS / s.incoming.totalS }} 176"/></svg><b>{{ s.incoming.leftS }}</b></div>' +
@@ -412,6 +415,13 @@ angular.module('beamng.apps')
             '<span ng-if="s.incoming.farPickup > 0 && !s.incoming.batch"> · includes {{ fmt.money(s.incoming.farPickup) }} extra for the pickup drive</span></div>' +
           '<div class="cep-sub" ng-if="s.incoming.sizeBonus">Pay includes {{ fmt.money(s.incoming.sizeBonus) }} for the larger load.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.premium">Premium customer: pays more and wants it sooner. Your rating earned this order.</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.tow">{{ s.incoming.tow.cars > 1 ? s.incoming.tow.cars + " broken-down cars go" : "The broken-down car goes" }} ' +
+            'on your {{ s.incoming.tow.trailer.toLowerCase() }} at the pickup. They are not strapped down: drive gently, damage to them costs pay.</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.trailerBonus">Your firm\'s own trailer: {{ fmt.money(s.incoming.trailerBonus) }} more.</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.resupplyBonus">Fuel station resupply: the station adds {{ fmt.money(s.incoming.resupplyBonus) }} ' +
+            'for {{ s.incoming.litres }} L.</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.special"><b>{{ s.incoming.special.name }} load:</b> pay includes {{ fmt.money(s.incoming.special.bonus) }} extra. ' +
+            '{{ s.incoming.special.note }}</div>' +
           '<div class="cep-sub" ng-if="s.incoming.fuelAllowance">Pay includes {{ fmt.money(s.incoming.fuelAllowance) }} toward fuel for your own vehicle.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.reputationPay > 1">Your freight reputation adds {{ fmt.pct(s.incoming.reputationPay - 1) }} to this job.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.reputationPay < 1">Your freight reputation lowers this job by {{ fmt.pct(1 - s.incoming.reputationPay) }}.</div>' +
@@ -448,6 +458,9 @@ angular.module('beamng.apps')
               '<div class="cep-time" ng-class="{warn: s.active.leftS < 120 && s.active.leftS >= 0, late: s.active.leftS < 0}">' +
               '<i ng-style="{width: timePct() + \'%\'}"></i></div></div>' +
           '</div>' +
+          '<div class="cep-keyval cep-sub" ng-if="s.active.special"><span><span class="cep-special {{ s.active.special.kind }}" style="margin-left:0">' +
+            '{{ s.active.special.name }}</span> {{ s.active.special.note }}</span>' +
+            '<strong ng-if="s.active.special.penalty" style="color:var(--tomato)">−{{ s.active.special.penalty }}% pay</strong></div>' +
           '<div class="cep-keyval cep-sub" ng-if="s.active.handling"><span>{{ s.active.handling }} cargo</span>' +
             '<strong ng-if="s.active.phase === \'toDelivery\'" ng-style="{color: s.active.cargoCondition < 100 ? \'var(--tomato)\' : \'var(--ok)\'}">' +
               '{{ s.active.cargoCondition }}% intact</strong></div>' +
@@ -475,7 +488,11 @@ angular.module('beamng.apps')
               '<b>{{ st.done ? "✓" : st.slots + "×" }}</b>{{ st.name }}</li></ul></div>' +
           '<div class="cep-sub" ng-if="s.active.freight && !s.active.route">{{ fmt.freight(s.active.freight) }}</div>' +
           '<div class="cep-sub" ng-if="s.active.freightStatus">{{ s.active.freightStatus }}</div>' +
-          '<button class="cep-sm" ng-if="s.active.canRestoreTrailer" ng-click="act(\'restoreTrailer\')">Restore assigned trailer</button>' +
+          '<div class="cep-keyval cep-sub" ng-if="s.active.tow && s.active.phase === \'toDelivery\'"><span>{{ s.active.tow.trailer }}</span>' +
+            '<strong ng-style="{color: s.active.tow.onBoard < s.active.tow.cars ? \'var(--tomato)\' : \'var(--ok)\'}">' +
+            '{{ s.active.tow.onBoard }} of {{ s.active.tow.cars }} car{{ s.active.tow.cars > 1 ? "s" : "" }} on board</strong></div>' +
+          '<button class="cep-sm" ng-if="s.active.canRestoreTrailer" ng-click="act(\'restoreTrailer\')">' +
+            '{{ s.active.tow ? "Load the cars again · " + fmt.money(s.active.reloadFee) : "Restore assigned trailer" }}</button>' +
           '<div class="cep-sub" ng-if="s.active.trailerM !== null && s.active.trailerM !== undefined">Trailer: {{ fmt.dist(s.active.trailerM).v }}{{ fmt.dist(s.active.trailerM).u }} behind</div>' +
         '</div>' +
         '<div class="cep-row"><button class="cep-btn ghost" ng-click="confirmCancel()">{{ s.company ? "Company contract" : ((cancelAsk || s.active.cancelAsk) ? "Cancel −" + fmt.money(s.active.cancelFee) + "?" : "Cancel order") }}</button>' +
@@ -505,6 +522,7 @@ angular.module('beamng.apps')
             '<strong style="color:var(--ok)">{{ fmt.money(s.done.tip) }}</strong></div>' +
           '<div class="cep-keyval" ng-if="s.done.toDebt > 0"><span class="cep-sub">Paid toward debt</span><strong>−{{ fmt.money(s.done.toDebt) }}</strong></div>' +
           '<div class="cep-keyval" ng-if="s.done.cargoCondition"><span class="cep-sub">Reduced pay for damaged cargo</span><strong>{{ s.done.cargoCondition }}% intact</strong></div>' +
+          '<div class="cep-keyval" ng-if="s.done.special.penalty"><span class="cep-sub">Escort reports: too fast for an oversize load</span><strong>−{{ s.done.special.penalty }}% pay</strong></div>' +
           '<div class="cep-keyval" ng-if="s.done.late > 0"><span class="cep-sub">Delivered late</span><strong>{{ s.done.late }} min</strong></div>' +
         '</div></div>' +
         '<button class="cep-btn ok" ng-click="act(\'dismiss\')">Done</button></div>' +

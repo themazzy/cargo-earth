@@ -44,6 +44,8 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(helper.depot_kind("warehouse", None, None), "yard")
         self.assertEqual(helper.depot_kind(None, "industrial manufacturing", None), "yard")
         self.assertEqual(helper.depot_kind("supermarket", None, "food_and_beverage_store"), "shop")
+        self.assertEqual(helper.depot_kind("oil_refiners", None, None), "fuel")
+        self.assertIsNone(helper.depot_kind("gas_station", None, None))
         self.assertIsNone(helper.depot_kind("restaurant", "food", None))
         self.assertIsNone(helper.depot_kind(None, None, None))
 

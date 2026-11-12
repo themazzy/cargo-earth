@@ -91,7 +91,7 @@ function M.addArea(idx, data, onDrop)
   for _, d in ipairs(data.depots) do
     if type(d.id) == 'string' and type(d.n) == 'string' and type(d.g) == 'table'
       and type(d.g[1]) == 'number' and type(d.g[2]) == 'number' and math.abs(d.g[1]) <= 90 and math.abs(d.g[2]) <= 180
-      and (d.t == 'yard' or d.t == 'shop') then
+      and (d.t == 'yard' or d.t == 'shop' or d.t == 'fuel') then
       local duplicate = false
       for _, base in ipairs(stream.baseByName[d.n] or {}) do
         if base.n == d.n and math.abs(base.g[1] - d.g[1]) < 0.002 and M.km(base.g[1], base.g[2], d.g[1], d.g[2]) < 0.12 then
@@ -121,6 +121,9 @@ function M.addArea(idx, data, onDrop)
   idx.cargo.pallets_general = idx.cargo.pallets_general or {name = 'General goods', trailer = 'box', tonnes = 0.4, pay = 1}
   idx.types['ce:stream:yard'] = { produces = {'pallets_general'}, accepts = {'pallets_general'} }
   idx.types['ce:stream:shop'] = { produces = {}, accepts = {'pallets_general'} }
+  -- fuel depots: tanker runs to fuel stations only (cargoEarth/resupply)
+  idx.cargo.fuel = idx.cargo.fuel or { name = 'Fuel (diesel, petrol)', trailer = 'tanker', tonnes = 25, pay = 1.55, adr = true }
+  idx.types['ce:stream:fuel'] = { produces = {'fuel'}, accepts = {}, label = 'Fuel depot' }
   local rebuilt = M.index({depots = depots, cargo = idx.cargo, types = idx.types, trailers = idx.trailers})
   for k, v in pairs(rebuilt) do idx[k] = v end
   return #rows

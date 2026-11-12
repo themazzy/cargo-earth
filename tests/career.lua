@@ -1598,4 +1598,257 @@ test('customers tip a fast, smooth ride; harsh moments cost the tip', function()
   assert(done.tip <= math.floor(food.tip(job.pay, 0, job.minutes) * (1 - 2 * core.HARSH_TIP_LOSS) / 5 + 0.5) * 5, 'no smooth tip, less for speed')
 end)
 
+------------------------------------------------------------------------------------------ 0.6: special cargo
+
+local special = require('cargoEarth/special')
+
+test('special cargo rules: which loads qualify, pay, fragile jolts, chilled spoiling, oversize escort', function()
+  local function job(cargoId, kind) return { cargo = cargoId, haul = { kind = kind }, pay = 1000, minutes = 50 } end
+  local list = special.candidates(job('furniture', 'parcel'), 'rigid')
+  assert(#list == 2 and list[1] == 'fragile' and list[2] == 'oversize')
+  assert(#special.candidates(job('furniture', 'parcel'), 'van') == 1, 'no oversize load in a van')
+  assert(special.candidates(job('milk', 'fluid'), 'semi')[1] == 'chilled')
+  assert(#special.candidates(job('gravel', 'dryBulk'), 'semi') == 0)
+  assert(#special.candidates({ route = {}, haul = { kind = 'parcel' } }, 'van') == 0, 'parcel routes stay ordinary')
+  assert(special.roll(job('furniture', 'parcel'), 'rigid', function() return 0.99 end) == nil)
+  -- fragile: more pay, every harsh moment costs condition
+  local f = job('electronics', 'parcel')
+  special.apply(f, 'fragile')
+  assert(f.pay == 1400 and f.specialBonus == 400 and f.handling == 'Fragile' and cargo.handling(f) == 'Fragile')
+  assert(special.harsh(f) == 8 and special.condition(f) == 92)
+  assert(special.harsh(job('electronics', 'parcel')) == 0, 'an ordinary load does not mind')
+  -- chilled: a shorter limit, then it spoils by the minute (counted once)
+  local c = job('milk', 'fluid')
+  special.apply(c, 'chilled')
+  assert(c.minutes == 40 and c.pay == 1300)
+  assert(special.warm(c, -5) == 100 and special.warm(c, 2.5) == 94 and special.warm(c, 2.9) == 94 and special.warm(c, 4) == 88)
+  -- oversize: escort reports every 10 s too fast
+  local o = job('furniture', 'parcel')
+  special.apply(o, 'oversize')
+  assert(not special.speed(o, 55, 30) and special.penalty(o) == 0)
+  assert(not special.speed(o, 80, 9) and special.speed(o, 80, 2) and special.penalty(o) == 3)
+  special.speed(o, 90, 1000)
+  assert(special.penalty(o) == special.KINDS.oversize.maxLoss, 'the escort takes at most a share')
+  assert(special.info(o).penalty == 60 and special.info(f).note:find('8'))
+end)
+
+test('a special freight job shows on the phone, a fragile load cracks with harsh driving and pays less', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if not offer.route and offer.haul and offer.haul.kind == 'parcel' then i, job = k, offer break end end
+  assert(job, 'a parcel freight job is offered in a van')
+  assert(not job.special, 'tests roll no special loads unless asked')
+  local base = job.pay
+  special.apply(job, 'fragile')
+  assert(job.pay > base)
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery')
+  local state = core.phoneState()
+  assert(state.active.special and state.active.special.kind == 'fragile' and state.active.cargoCondition == 100)
+  core.onCargoEarthHarsh(vehicle.id, 1, 0.7)
+  core.onCargoEarthHarsh(vehicle.id, 1, 0.7)
+  assert(job.cargoCondition == 84, 'two harsh moments cost 16 %')
+  local money = c.money
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(not s.job and c.money > money)
+  assert(s.phone.lastDone.pay <= math.floor(job.pay * 0.84 + 0.5) and s.phone.lastDone.special.kind == 'fragile')
+end)
+
+test('an oversize load driven too fast loses pay to escort reports; a ruined fragile load fails', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if not offer.route and offer.haul and offer.haul.kind == 'parcel' then i, job = k, offer break end end
+  special.apply(job, 'oversize')
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  pose.speed = 25   -- 90 km/h
+  advance(core, 50)
+  pose.speed = 0
+  assert(special.penalty(job) > 0 and core.phoneState().active.special.penalty == special.penalty(job))
+  local penalty = special.penalty(job)
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(not s.job and s.phone.lastDone.special.penalty == penalty)
+  assert(s.phone.lastDone.pay <= math.floor(job.pay * (1 - penalty / 100) + 0.5))
+  -- a fragile load shaken to pieces is lost
+  core.generate()
+  for k, offer in ipairs(s.offers) do if not offer.route and offer.haul and offer.haul.kind == 'parcel' then i, job = k, offer break end end
+  special.apply(job, 'fragile')
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  local failed = c.failed or 0
+  for _ = 1, 13 do core.onCargoEarthHarsh(vehicle.id, 1, 0.7) end
+  assert(not s.job and (c.failed or 0) == failed + 1, 'ruined')
+end)
+
+local resupply = require('cargoEarth/resupply')
+local haul = require('cargoEarth/haul')
+
+test('fuel station resupply: tanker runs from a fuel depot to real stations, paid by the litre on top', function()
+  local fidx = jobs.index({ depots = {
+    { id = 'depot', n = 'Fuel Depot', t = 'fuel_depot', s = 'L', g = { 50, 14 } },
+    { id = 'far', n = 'Far Depot', t = 'fuel_depot', s = 'L', g = { 52, 14 } },
+  }, cargo = { fuel = { name = 'Fuel', trailer = 'tanker', tonnes = 25, pay = 1.55, adr = true } }, trailers = {},
+    types = { fuel_depot = { produces = { 'fuel' } } } })
+  local stations = fuel.index()
+  fuel.addPack(stations, { stations = {
+    { 'near', 50.01, 14, 'Too Close', 'f', 'Town' },     -- about 1 km: too short a run
+    { 'a', 50.2, 14, 'Station A', 'f', 'Aville' },       -- about 22 km
+    { 'b', 50.4, 14, 'Station B', 'f', 'Beetown' },      -- about 44 km
+    { 'ev', 50.3, 14, 'Chargers', 'e', 'Town' },
+  } })
+  local ring = fuel.within(stations, 50, 14, 'fuel', 10, 60)
+  assert(#ring == 2 and ring[1].station.id == 'a' and ring[2].station.id == 'b', 'stations in the ring, nearest first')
+  local within = function(lat, lon, a, b) return fuel.within(stations, lat, lon, 'fuel', a, b) end
+  local offers = resupply.offers(fidx, 50, 14, within, function(n) return n end)
+  assert(#offers == 1, 'only the depot near the player')
+  local job = offers[1]
+  assert(job.to.label == 'Fuel station' and job.to.id == 'station:b' and job.resupply and job.adr and job.cargo == 'fuel')
+  assert(job.from.id == 'depot' and job.km > 50 and job.pay == jobs.pay(fidx, 'fuel', job.km))
+  assert(haul.prepare(job, 'semi', nil, fidx), 'the tanker takes it')
+  local before = job.pay
+  assert(resupply.bonus(job) == math.floor(job.haul.amount * resupply.PER_LITRE / 5 + 0.5) * 5 and job.pay > before)
+  assert(job.trailer == 'tanker' and job.litres == job.haul.amount)
+  assert(#resupply.offers(jobs.index({ depots = {}, cargo = {}, types = {}, trailers = {} }), 50, 14, within) == 0)
+  -- streamed fuel depots (helper, anywhere) ship fuel too
+  local stream = jobs.streamIndex()
+  jobs.addArea(stream, { key = 'k', depots = { { id = 'overture:x', n = 'Oil Terminal', g = { 50, 14 }, t = 'fuel' } } })
+  assert(#resupply.offers(stream, 50, 14, within, function(n) return 1 end) == 1)
+end)
+
+test('a tractor gets resupply offers among its freight jobs', function()
+  local core, s = fresh()
+  local c = s.career
+  core.G.spawn('us_semi')
+  c.garage.car.model = 'us_semi'
+  vehicle.slotPartMap = { body = 'us_semi', fifthwheel = 'fifthwheel_top' }
+  c.hauls = { van = haul.VAN_GOAL, rigid = haul.RIGID_GOAL }
+  s.idx = jobs.index({ depots = { { id = 'depot', n = 'Fuel Depot', t = 'fuel_depot', s = 'L', g = { 50, 14 } } },
+    cargo = { fuel = { name = 'Fuel', trailer = 'tanker', tonnes = 25, pay = 1.55, adr = true } }, trailers = {},
+    types = { fuel_depot = { produces = { 'fuel' } } } })
+  withStation(s, 50.3, 14)
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local job
+  for _, offer in ipairs(s.offers) do if offer.resupply then job = offer end end
+  assert(job and job.resupplyBonus > 0 and job.to.n == 'Test pump' and not job.special, 'a resupply job is offered')
+end)
+
+local tow = require('cargoEarth/tow')
+local trailers = require('cargoEarth/trailers')
+
+test('tow rules: who can tow, offers to a workshop, cars on board, damage costs pay', function()
+  assert(tow.class('semi', false) == 'heavy' and tow.class(nil, true) == 'light' and tow.class('van', false) == nil)
+  assert(tow.hasHitch({ slotPartMap = { a = 'pickup_tow_hitch' } }))
+  assert(not tow.hasHitch({ slotPartMap = { a = 'pickup_hitch_delete' } }) and not tow.hasHitch({ slotPartMap = { a = 'engine' } }))
+  local addresses = { { 50.01, 14, 50.0101, 14, 'Main Street 1', 'Town' }, { 50.5, 14, 50.5, 14, 'Far Away 2', 'Far' } }
+  local workshop = function(lat, lon) return { id = 'w', n = 'Workshop', g = { lat + 0.1, lon } } end
+  local offers = tow.offers('light', 50, 14, addresses, workshop, { 'covet' }, function() return 1 end)
+  assert(#offers == 1, 'one car near the player; the far one and repeats are skipped')
+  local job = offers[1]
+  assert(job.kind == 'tow' and job.tow.class == 'light' and #job.tow.cars == 1 and job.trailer == 'cartrailer')
+  assert(job.from.n == 'Main Street 1' and job.from.g[1] == 50.0101 and job.to.n == 'Workshop' and job.pay == tow.pay('light', job.km))
+  local heavy = tow.offers('heavy', 50, 14, addresses, workshop, { 'covet', 'pessima' }, function() return 1 end)[1]
+  assert(#heavy.tow.cars == 2 and heavy.trailer == 'flatbed' and heavy.pay > tow.pay('light', heavy.km))
+  assert(#tow.offers('light', 50, 14, addresses, function() return nil end, { 'covet' }) == 0, 'no workshop near: no job')
+  assert(#tow.offers('light', 50, 14, addresses, workshop, {}) == 0, 'no cars in the game: no job')
+  assert(tow.onBoard({ 1, 5.9, 7, nil }) == 2)
+  assert(tow.condition(0) == 100 and tow.condition(600) == 90 and tow.condition(1e9) == 100 - tow.MAX_LOSS)
+end)
+
+test('a tow job: the car goes on the trailer, slides off, is loaded again and towed to a workshop', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  vehicle.slotPartMap = { body = 'pigeon', hitch = 'pigeon_tow_hitch' }
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  withStation(s, 50.1, 14)
+  -- the game side, stubbed: what trailers.lua would do in BeamNG
+  local saved = {}
+  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id' }) do
+    saved[k] = trailers[k]
+  end
+  local spawned, distances, damage = 0, {}, 0
+  trailers.existing = function(list) return { list[1] } end
+  trailers.towModel = function() return 'cartrailer' end
+  trailers.spawnTow = function(kind, cars) spawned = spawned + 1 distances = { 1 } return kind == 'cartrailer' and #cars == 1 end
+  trailers.withPlayer = function() return true end
+  trailers.towedDistances = function() return distances end
+  trailers.towedDamage = function() return damage end
+  trailers.towedCount = function() return #distances end
+  trailers.remove = function() distances = {} end
+  trailers.id = function() return #distances > 0 and 7 or nil end
+  local ok, err = pcall(function()
+    core.setMode('trucking')
+    advance(core, 2)
+    core.generate()
+    local i, job
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    assert(job and job.to.n == 'Workshop at Test pump', 'a tow job to the workshop at a fuel station')
+    -- the phone rings with it although three ordinary offers come first
+    local generate, random = core.generate, math.random
+    core.generate = function()
+      generate()
+      for n = 1, 3 do table.insert(s.offers, 1, { id = 'x' .. n, kind = 'cargo', cargoName = 'Pallets', from = { id = 'x' .. n, n = 'Yard' } }) end
+    end
+    math.random = function(a, b) if b then return random(a, b) end return a end   -- always the last candidate
+    s.phone.online, s.phone.incoming, s.phone.nextPingAt = true, nil, 0
+    advance(core)
+    core.generate, math.random = generate, random
+    assert(s.phone.incoming and s.phone.incoming.job.tow, 'a tow job reaches the phone')
+    s.phone.incoming, s.phone.online = nil, false
+    core.generate()
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    core.take(i)
+    assert(s.job == job)
+    damage = 500                    -- the damage it broke down with
+    pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+    advance(core)
+    assert(spawned == 1 and s.phase == 'toDelivery' and job.tow.onBoard == 1)
+    assert(job.tow.damage0 == 500, 'damage before the tow is not yours ' .. tostring(job.tow.damage0) .. ' ' .. tostring(job.tow.spawnedAt) .. ' ' .. tostring(s.clock))
+    -- it is damaged and slides off
+    damage = damage + 300
+    distances = { 12 }
+    advance(core, 4)
+    local state = core.phoneState()
+    assert(job.tow.onBoard == 0 and state.active.tow.onBoard == 0 and state.active.canRestoreTrailer)
+    pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+    advance(core)
+    assert(s.job == job, 'not delivered without the car')
+    c.money = 1000
+    core.phoneAction('restoreTrailer')
+    assert(spawned == 2 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
+    damage = 0                      -- the cars spawned again are undamaged; the 300 stays counted
+    advance(core, 8)
+    damage = damage + 600           -- 10 % worse on the way, 5 % before the reload
+    advance(core, 30)
+    assert(not s.job, 'delivered')
+    assert(s.phone.lastDone.cargoCondition == 85 and s.phone.lastDone.pay <= math.floor(job.pay * 0.85 + 0.5))
+    assert(c.history[1].kind == 'tow')
+  end)
+  for k, f in pairs(saved) do trailers[k] = f end
+  assert(ok, err)
+end)
+
 print(string.format('%d career tests passed', total))

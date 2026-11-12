@@ -22,6 +22,9 @@ A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight,
 - See the speed limit of the road you drive on, the same one BeamNG.Earth's signs and traffic use.
 - Buy new trucks and trailers for your firm, hire drivers with their own speed, care and wage, and keep every vehicle serviced or risk a breakdown.
 - Earn tips for fast deliveries and a smooth ride.
+- Special cargo: fragile, chilled and oversize loads that pay more and need care.
+- Tow broken-down cars to a workshop on a car trailer or a flatbed.
+- Tanker runs that resupply real fuel stations.
 - Discover nearby restaurants, stores, workplaces and addresses through the local helper. Bundled Czech geography provides fallback coverage.
 
 Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated with BeamNG or the RLS Career Overhaul project.
