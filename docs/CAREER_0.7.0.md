@@ -1,4 +1,4 @@
-# Cargo Earth: local money
+# Cargo Earth 0.7: local money
 
 Jan's pick on 12 November 2026: money in the currency of the country you drive in, exchanged for free at the border.
 
