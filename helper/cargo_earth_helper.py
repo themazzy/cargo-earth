@@ -982,10 +982,10 @@ def _text(v, n):
 
 def radio_rows(data, cc):
     """Radio Browser stations -> [[id, name, stream url, codec, kbps, tags, region, lat, lon, votes]], working ones
-    only, no duplicates by name and stream."""
+    only, no duplicates by name and stream. cc None: stations of any country."""
     rows, seen = [], set()
     for s in data if isinstance(data, list) else []:
-        if not isinstance(s, dict) or str(s.get("countrycode", "")).upper() != cc:
+        if not isinstance(s, dict) or (cc is not None and str(s.get("countrycode", "")).upper() != cc):
             continue
         url = str(s.get("url_resolved") or s.get("url") or "").strip()
         codec = str(s.get("codec") or "").upper().strip()
@@ -1075,7 +1075,7 @@ class Radio:
             if sid in self.looked_up:
                 return self.looked_up[sid]
         try:
-            rows = radio_rows(self._api("/json/stations/byuuid/" + sid), "")
+            rows = radio_rows(self._api("/json/stations/byuuid/" + sid), None)   # any country
         except Exception as e:  # noqa: BLE001 - unknown station
             log("radio: could not look up a saved station:", e)
             return None

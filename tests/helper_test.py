@@ -409,7 +409,7 @@ class NetworkAndStorageTests(unittest.TestCase):
             def api(path):
                 asked.append(path)
                 if path.endswith("0003"):
-                    return [{"stationuuid": "00000000-0000-0000-0000-000000000003", "name": "Saved", "url_resolved": "http://saved/s",
+                    return [{"stationuuid": "00000000-0000-0000-0000-000000000003", "name": "Saved", "url_resolved": "http://saved/s", "countrycode": "CZ",
                              "codec": "MP3", "lastcheckok": 1}]
                 raise OSError("unknown")
             radio._api = api
