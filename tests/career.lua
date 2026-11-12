@@ -1574,14 +1574,14 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   assert(c.money == money + 3000 and #firm.trailers(c) == 0)
 end)
 
-test('customers tip a fast, smooth ride; harsh moments cost the tip', function()
+test('customers tip by speed and the order\'s condition, not by how it was driven', function()
   local marker = package.loaded['cargoEarth/marker']
   marker.PICKUP_RADIUS, marker.PICKUP_RANGE, marker.pickupDistance = 5, 250, function() return nil end
   local core, s = fresh()
   s.career.garage.debt = 0
   s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
     function() return {{50.02, 14, 50.02, 14, 'Street 5', 'Town'}} end)
-  local function deliver(harsh)
+  local function deliver(harsh, condition)
     advance(core, 2)
     core.phoneAction('online')
     for _ = 1, 60 do
@@ -1593,17 +1593,28 @@ test('customers tip a fast, smooth ride; harsh moments cost the tip', function()
     pose.lat, pose.lon = job.from.g[1], job.from.g[2]
     advance(core)
     for _ = 1, harsh do core.onCargoEarthHarsh(vehicle.id, 1, 0.7) end
+    if condition then job.cargoCondition = condition end
     pose.lat, pose.lon = job.to.g[1], job.to.g[2]
     advance(core)
     return core.phoneState().done, job
   end
+  -- tips for one job: for speed (delivered at once here) and 6 % for an order in perfect condition
+  local function fast(j) return food.tip(j.pay, 0, j.minutes) end
+  local function intact(j) return math.floor(j.pay * core.INTACT_TIP / 5 + 0.5) * 5 end
   local done, job = deliver(0)
-  assert(done.tipWhy and done.tipWhy.smooth and done.tip >= math.floor(job.pay * core.SMOOTH_TIP / 5 + 0.5) * 5)
+  assert(done.tipWhy and done.tipWhy.intact and done.tip == fast(job) + intact(job), 'fast + intact')
+  -- harsh driving alone changes nothing: the customer cannot feel it
   s.phone.lastDone = nil
   pose.lat, pose.lon = 50, 14
-  done, job = deliver(2)
-  assert(job.harsh == 2 and done.tipWhy and done.tipWhy.harsh == 2 and not done.tipWhy.smooth)
-  assert(done.tip <= math.floor(food.tip(job.pay, 0, job.minutes) * (1 - 2 * core.HARSH_TIP_LOSS) / 5 + 0.5) * 5, 'no smooth tip, less for speed')
+  done, job = deliver(3)
+  assert(job.harsh == nil and done.tipWhy.intact and not done.tipWhy.harsh and done.tip == fast(job) + intact(job),
+    'no tip lost for driving')
+  -- a damaged order: no tip for its state, and the speed tip shrinks with its condition
+  s.phone.lastDone = nil
+  pose.lat, pose.lon = 50, 14
+  done, job = deliver(0, 50)
+  assert(done.tipWhy and done.tipWhy.damaged == 50 and not done.tipWhy.intact)
+  assert(done.tip == math.floor(fast(job) * 0.5 + 0.5), 'speed tip halved, no intact tip')
 end)
 
 ------------------------------------------------------------------------------------------ 0.6: special cargo
@@ -1910,6 +1921,22 @@ test('local money: country borders, exchange rates and free exchange at the bord
   s.pendingCareer = nil
 end)
 
+test('the support report has versions, helper state and recent problems, but no exact position', function()
+  local core = fresh()
+  pose.lat, pose.lon = 50.08765, 14.42132
+  local copied
+  setClipboard = function(text) copied = text end
+  local r = core.supportReport({'20:01:02 garageState: boom'})
+  setClipboard = nil
+  assert(r.copied and copied == r.text, 'copied to the clipboard')
+  assert(r.text:find('Mod: ' .. core.VERSION, 1, true), r.text)
+  assert(r.text:find('about 50.1, 14.4', 1, true) and not r.text:find('50.08', 1, true), 'position only to 0.1 degree')
+  assert(r.text:find('Helper: ', 1, true) and r.text:find('Recent problems:', 1, true))
+  assert(r.text:find('garageState: boom', 1, true), 'the phone\'s own errors are in it')
+  local again = core.supportReport()
+  assert(not again.copied and again.text:find('Phone errors', 1, true) == nil)
+end)
+
 test('the dash phone part only runs the phone app\'s own calls', function()
   local core = fresh()
   assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.phoneAction("online") or nil'))
@@ -1917,6 +1944,32 @@ test('the dash phone part only runs the phone app\'s own calls', function()
   assert(not core.dashAllowed('os.exit()'))
   assert(not core.dashAllowed('be:getPlayerVehicle(0)'))
   assert(not core.dashAllowed(nil) and not core.dashAllowed(string.rep('a', 5000)))
+end)
+
+test('a wreck never costs more to repair than the car is worth', function()
+  local garage = require('cargoEarth/garage')
+  local values = {body = 4000, engine = 2000}
+  local G = {
+    vehicle = function() return {slotPartMap = {['/'] = 'body', ['/engine/'] = 'engine'}} end,
+    part = function(_, name) return {information = {name = name, value = values[name]}} end,
+  }
+  local g = {started = true, car = {model = 'pigeon'}, repair = 0, debt = 0, lastDamage = 0}
+  -- the value is not known yet: the plain damage price
+  garage.trackDamage(g, 1000)
+  local plain = g.repair
+  assert(plain > 0 and garage.repairCap(g) == nil)
+  garage.noteValue(G, g)
+  local cap = garage.repairCap(g)
+  assert(g.car.value == garage.carValue(G) and cap == math.floor(g.car.value * garage.REPAIR_CAP / 5 + 0.5) * 5)
+  -- a small hit is priced as before, a total wreck stops at the cap
+  garage.trackDamage(g, 1000)
+  assert(g.repair == plain)
+  local what = garage.trackDamage(g, 300000)
+  assert(what == 'hit' and g.repair == cap, 'repair ' .. g.repair .. ' cap ' .. cap)
+  local _, grow = garage.trackDamage(g, 400000)
+  assert(grow == 0 and g.repair == cap, 'more damage on a wreck adds nothing')
+  -- a free menu repair of a wreck puts only the capped price on the debt
+  assert(garage.trackDamage(g, 0) == 'debt' and g.debt == cap and g.repair == 0)
 end)
 
 print(string.format('%d career tests passed', total))

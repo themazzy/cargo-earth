@@ -39,13 +39,13 @@ what you cannot pay is added to your debt). Company and loaner vehicles are look
 
 ## Customer tips
 
-Private customers (meals and parcel routes) tip for speed as before, and add 6 % of the pay for a smooth ride. A harsh
-moment (hard braking, accelerating or cornering: 0.55 g or more held for 0.4 s, at most one every 3 s, measured by the
-car's own accelerometer) loses the smooth tip and 30 % of the speed tip each. The phone says why: fast, smooth ride, or
-how many harsh moments.
+Private customers (meals and parcel routes) tip for speed as before, and add 6 % of the pay when the order arrives in
+perfect condition. The whole tip shrinks with the order's condition. How the car was driven on the way does not count,
+since the customer cannot know it (changed after 0.8.0; before that, harsh moments cost part of the tip). The phone says
+why: fast, arrived intact, or how intact the order arrived.
 
 ## Not tested in the game yet
 
 - Switching the engine off for a breakdown (`electrics.setIgnitionLevel`) and on again after roadside help.
-- The harsh-moment threshold: it may need tuning once it is felt in a real car.
+- The harsh-moment threshold (now used only by fragile loads): it may need tuning once it is felt in a real car.
 - Spawning a firm vehicle bought into a bay the first time you drive it.

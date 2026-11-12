@@ -161,6 +161,17 @@ pending.shift()({started: true, parts: {error: 'Unknown part', canBuy: false}})
 assert(scope.g.parts && !scope.g.parts.canBuy)
 assert.equal(scope.pageErrors.g, null)
 assert(directive.template.includes('Discard preview and restore car'))
+assert.equal(fs.readFileSync('mod/cargo_earth/lua/ge/extensions/cargoEarth/core.lua', 'utf8').match(/M\.VERSION = '([^']+)'/)[1],
+  JSON.parse(fs.readFileSync('package.json', 'utf8')).version, 'core.lua VERSION matches package.json (bump both)')
+// Settings > Help: the support report carries the phone's own errors
+assert(directive.template.includes('Copy support report'))
+scope.copyReport()
+assert(commands.at(-1).includes('cargoEarth_core.supportReport'))
+assert(commands.at(-1).includes('garageState: pricing failed'), 'the phone error from before is in the report request')
+pending.shift()({text: 'report', copied: true})
+assert.equal(scope.report.text, 'report')
+scope.closeReport()
+assert.equal(scope.report, null)
 // Leave a late response queued to verify teardown.
 scope.setTab('career')
 for (const fn of destroy) fn()

@@ -411,6 +411,36 @@ class NetworkAndStorageTests(unittest.TestCase):
             handler.do_GET()
             self.assertEqual(result, [403])
 
+    def test_root_is_a_status_page(self):
+        captured = []
+        def server(address, handler):
+            captured.append(handler)
+            return SimpleNamespace(serve_forever=lambda: None)
+        areas = SimpleNamespace(cv=threading.Condition(), state={"1_2": "ready", "1_3": "failed: no <network>"},
+                                budget=SimpleNamespace(stats={"bytes": 0, "limit": 1 << 30}))
+        with patch.object(helper, "ThreadingHTTPServer", side_effect=server):
+            helper.serve(areas, "test", 47820)
+        handler = object.__new__(captured[0])
+        handler.headers, handler.path = {"Host": "127.0.0.1:47820"}, "/"
+        result = []
+        handler._send = lambda code, body, ctype="application/json": result.append((code, body, ctype))
+        handler.do_GET()
+        code, body, ctype = result[0]
+        self.assertEqual(code, 200)
+        self.assertTrue(ctype.startswith("text/html"))
+        page = body.decode()
+        self.assertIn("Cargo Earth helper", page)
+        self.assertIn("1 ready", page)
+        self.assertIn("no &lt;network&gt;", page)
+
+    def test_port_in_use_exits_with_a_message(self):
+        def busy(address, handler):
+            raise OSError(10048, "address already in use")
+        with patch.object(helper, "ThreadingHTTPServer", side_effect=busy), patch.object(helper, "log") as log:
+            with self.assertRaises(SystemExit):
+                helper.bind("127.0.0.1", 47820)
+        self.assertIn("another --port", " ".join(str(c) for c in log.call_args_list))
+
 
 if __name__ == "__main__":
     unittest.main()
