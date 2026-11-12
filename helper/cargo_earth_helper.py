@@ -11,6 +11,7 @@ Needs duckdb and fsspec (both come with BeamNG.Earth).  python3 cargo_earth_help
 and prints what it found.
 
 API (GET, JSON):
+  /                           a small status page for people (is it running, libraries, areas, network)
   /v1/info                    {"app": "cargo-earth-helper", "version", "release"}
   /v1/cameras?lat=..&lon=..   speed cameras around the point, from OpenStreetMap (Overpass API, one request per
                               0.5 degree cell, kept for 30 days): {"state": "ready" | "loading" | "failed",
@@ -41,6 +42,8 @@ Radio stations: Radio Browser (https://www.radio-browser.info), free community d
 import argparse
 import datetime
 import hashlib
+import html
+import importlib.util
 import json
 import math
 import os
@@ -1310,7 +1313,51 @@ class Player:
                     self.url = None
 
 
-def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None):
+def missing_libraries():
+    """The Python libraries the helper needs that this Python does not have."""
+    return [m for m in ("duckdb", "fsspec") if importlib.util.find_spec(m) is None]
+
+
+def status_page(areas, release, port):
+    """The page a player sees at http://127.0.0.1:<port>/: whether the helper works, in plain words."""
+    with areas.cv:
+        states = dict(areas.state)
+    ready = sum(1 for s in states.values() if s == "ready")
+    busy = sum(1 for s in states.values() if s in ("loading", "queued"))
+    errors = [s[8:] for s in states.values() if s.startswith("failed")]
+    with NETWORK_LOCK:
+        network = dict(NETWORK)
+    missing = missing_libraries()
+    cache = getattr(areas.budget, "stats", {}) or {}
+    rows = [("Version", VERSION), ("Port", str(port)), ("Overture release", release),
+            ("Python", sys.version.split()[0]),
+            ("Python libraries", "missing: " + ", ".join(missing) if missing else "duckdb and fsspec found"),
+            ("Areas", f"{ready} ready, {busy} loading, {len(errors)} failed" if states else
+             "none asked for yet (drive in BeamNG with Cargo Earth)"),
+            ("Downloads", f"{network.get('requests', 0)} requests, {network.get('bytes', 0) / 1048576:.1f} MiB"),
+            ("Cache", f"{cache.get('bytes', 0) / 1048576:.0f} of {cache.get('limit', 0) / 1048576:.0f} MiB")]
+    bad = missing or errors
+    head = ("Running, but with problems" if bad else "Running")
+    body = "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(v)}</td></tr>" for k, v in rows)
+    notes = ""
+    if missing:
+        notes += ("<p class=bad>Areas outside the bundled data can't be built without these libraries. Start the helper "
+                  "from BeamNG.Earth's Add-ons page (its Python has them), or run <code>python -m pip install duckdb "
+                  "fsspec</code>.</p>")
+    if errors:
+        notes += "<p class=bad>Last errors:</p><ul>" + "".join(f"<li>{html.escape(e)}</li>" for e in errors[-5:]) + "</ul>"
+    return f"""<!doctype html><html><head><meta charset=utf-8><meta http-equiv=refresh content=5>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>Cargo Earth helper</title>
+<style>body{{font:15px system-ui,sans-serif;margin:24px auto;max-width:640px;padding:0 16px;background:#fff;color:#222}}
+h1{{font-size:20px}}.ok{{color:#17803d}}.bad{{color:#b42318}}th{{text-align:left;padding:4px 16px 4px 0;font-weight:600}}
+td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
+@media (prefers-color-scheme:dark){{body{{background:#1b1b1b;color:#ddd}}code{{background:#333}}.ok{{color:#5fd38a}}.bad{{color:#ff8a80}}}}</style>
+</head><body><h1>Cargo Earth helper: <span class={"bad" if bad else "ok"}>{head}</span></h1>
+<p>This page is only for checking the helper. The Cargo Earth mod talks to it by itself; keep it running while you play.</p>
+<table>{body}</table>{notes}</body></html>""".encode()
+
+
+def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -1328,12 +1375,14 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             u = urllib.parse.urlparse(self.path)
             q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
             try:
+                if u.path in ("/", "/index.html"):
+                    return self._send(200, status_page(areas, release, port), "text/html; charset=utf-8")
                 if u.path == "/v1/info":
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
                                             "cameras": cameras is not None, "radio": radio is not None,
-                                            "player": player is not None,
+                                            "player": player is not None, "missing": missing_libraries(),
                                             "network": network, "cache": areas.budget.stats})
                 if u.path == "/v1/cameras" and cameras:
                     return self._send(200, cameras.near(float(q["lat"]), float(q["lon"])))
@@ -1371,9 +1420,24 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
         def log_message(self, *a):
             pass
 
-    srv = ThreadingHTTPServer((host, port), H)
-    log(f"Cargo Earth helper {VERSION} on http://{host}:{port} (Overture {release})")
+    srv = srv or bind(host, port, H)
+    srv.RequestHandlerClass = H
+    log(f"Cargo Earth helper {VERSION} on http://{host}:{port}/ (Overture {release}); open it in a browser to check it")
+    missing = missing_libraries()
+    if missing:
+        log("missing Python libraries:", ", ".join(missing), "- areas can't be built (python -m pip install duckdb fsspec)")
     srv.serve_forever()
+
+
+def bind(host, port, handler=BaseHTTPRequestHandler):
+    """Take the port, or exit with a message a player can act on."""
+    try:
+        return ThreadingHTTPServer((host, port), handler)
+    except OSError as e:
+        log(f"can't listen on {host}:{port}: {e}")
+        log("Another program (often a second copy of this helper) is using that port. Close it, or start the helper "
+            "with another --port and set the same helperPort in the mod's config.json.")
+        sys.exit(2)
 
 
 def main():
@@ -1388,6 +1452,9 @@ def main():
     if a.cache_mb < 64:
         ap.error("--cache-mb must be at least 64")
     release = a.release
+    # take the port before anything slow: a second copy fails at once, and a browser that opens the page while the
+    # release is checked waits in the queue instead of being refused
+    srv = None if a.test else bind("127.0.0.1", a.port)
     try:            # the pinned release gone from the bucket: the latest one
         probe = http_get(f"{BUCKET}/?list-type=2&max-keys=1&prefix=release/{release}/")
         if b"<KeyCount>0</KeyCount>" in probe:
@@ -1412,7 +1479,7 @@ def main():
                          ensure_ascii=False, indent=1))
         budget.prune(force=True)
         return
-    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache), player=Player())
+    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache), player=Player(), srv=srv)
 
 
 if __name__ == "__main__":

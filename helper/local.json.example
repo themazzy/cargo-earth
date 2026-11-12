@@ -3,4 +3,4 @@
   "summary": "Restaurants, shops, workplaces, fuel stations, speed cameras and customer addresses anywhere in the world for the Cargo Earth mod.",
   "licence": "MIT", "asset": "^cargo_earth_helper.*\\.py$",
   "local": {"file": "C:\\Users\\YOU\\Documents\\cargo_earth_helper_0.4.0.py", "tag": "v0.4.0"},
-  "run": {"args": [], "port": 47820}}]}
+  "run": {"args": [], "port": 47820, "page": "http://127.0.0.1:47820/"}}]}
