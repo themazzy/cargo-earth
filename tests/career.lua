@@ -1813,7 +1813,8 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     advance(core)
     assert(spawned == 1 and s.phase == 'toDelivery' and job.tow.onBoard == 1)
     assert(job.tow.damage0 == 500, 'damage before the tow is not yours ' .. tostring(job.tow.damage0) .. ' ' .. tostring(job.tow.spawnedAt) .. ' ' .. tostring(s.clock))
-    -- it slides off
+    -- it is damaged and slides off
+    damage = damage + 300
     distances = { 12 }
     advance(core, 4)
     local state = core.phoneState()
@@ -1824,11 +1825,12 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     c.money = 1000
     core.phoneAction('restoreTrailer')
     assert(spawned == 2 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
+    damage = 0                      -- the cars spawned again are undamaged; the 300 stays counted
     advance(core, 8)
-    damage = damage + 600           -- 10 % worse on the way
+    damage = damage + 600           -- 10 % worse on the way, 5 % before the reload
     advance(core, 30)
     assert(not s.job, 'delivered')
-    assert(s.phone.lastDone.cargoCondition == 90 and s.phone.lastDone.pay <= math.floor(job.pay * 0.9 + 0.5))
+    assert(s.phone.lastDone.cargoCondition == 85 and s.phone.lastDone.pay <= math.floor(job.pay * 0.85 + 0.5))
     assert(c.history[1].kind == 'tow')
   end)
   for k, f in pairs(saved) do trailers[k] = f end

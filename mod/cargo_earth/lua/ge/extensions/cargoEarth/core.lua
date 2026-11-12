@@ -916,7 +916,8 @@ local function finishDelivery(force)
       S.stopT = -10
       return
     end
-    j.cargoCondition = tow.condition(trailers.towedDamage() - (j.tow.damage0 or trailers.towedDamage()))
+    j.cargoCondition = tow.condition((j.tow.damageDone or 0)
+      + math.max(0, trailers.towedDamage() - (j.tow.damage0 or trailers.towedDamage())))
   elseif not force and j.kind ~= 'food' and S.config.requireTrailer and S.config.spawnTrailer and not trailers.withPlayer() then
     say('Bring the trailer: it is not with your truck.', 3)
     S.stopT = -10   -- don't repeat the message every tick
@@ -2816,9 +2817,12 @@ function M.spawnTrailer(atPickup)
     if S.phase ~= 'toDelivery' then return end
     if (p.speed or 0) > M.STOP_SPEED then say('Stop before loading the cars again.') return end
     if (S.career.money or 0) < M.TOW_RELOAD_FEE then say('Not enough money to load the cars again.') return end
+    -- the damage done so far stays counted: the cars spawned again come without it
+    local before = j.tow.damage0 and math.max(0, trailers.towedDamage() - j.tow.damage0) or 0
     local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars)
     if not ok then say('The cars could not be loaded: ' .. tostring(why)) return end
     economy.post(S.career, -M.TOW_RELOAD_FEE, 'cancel_fee', economy.nextId(S.career, 'cancel_fee'), 'Tow: loading the cars again')
+    j.tow.damageDone = (j.tow.damageDone or 0) + before
     j.trailerSpawned, j.tow.spawnedAt, j.tow.damage0, j.tow.onBoard = true, S.clock, nil, #j.tow.cars
     say(string.format('The cars are back on the trailer (%d CZK). Couple it again.', M.TOW_RELOAD_FEE))
     saveCareer()
