@@ -2074,6 +2074,14 @@ test('Settings fits and removes the dash phone holder through the parts tree', f
   core.G.fitTree = function(tree) fitted = tree end
   local st = core.settingsState().dash
   assert(st.car and st.supported and not st.fitted, 'a Pigeon without the holder can fit one')
+  -- the game's slot map has no empty slots: the slot is found in the parts tree by the part's slot type
+  v.slotPartMap = {}
+  core.G.part = function(_, name) if name == 'cargo_earth_phone_pigeon' then return {slotType = 'pigeon_mod'} end end
+  core.settingsDo('dash', 'fit')
+  assert(fitted and fitted.children.pigeon_mod.chosenPartName == 'cargo_earth_phone_pigeon', 'found through the tree')
+  fitted = nil
+  v.slotPartMap = {['/pigeon_mod/'] = ''}
+  core.G.part = function(_, name) if name == 'pigeon' then return {slots2 = {{name = 'pigeon_mod'}}} end end
   core.settingsDo('dash', 'fit')
   assert(fitted and fitted.children.pigeon_mod.chosenPartName == 'cargo_earth_phone_pigeon')
   assert(v.tree.children.pigeon_mod.chosenPartName == '', 'the car\'s own tree is left for the game to change')

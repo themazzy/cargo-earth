@@ -3290,7 +3290,12 @@ function M.dashHolder(on)
   local part = v and dash.partName(v.model)
   if not part then return false, 'This car has no phone holder yet.' end
   local path = garage.slotFor(G, v, part)
-  if not path then return false, 'This car has no free slot for the phone holder.' end
+  if not path then
+    local top = {}
+    for id in pairs(type(v.tree) == 'table' and type(v.tree.children) == 'table' and v.tree.children or {}) do top[#top + 1] = id end
+    log('W', 'cargoEarth', 'dash phone holder: no slot for ' .. part .. ' on ' .. tostring(v.model) .. '; top slots: ' .. table.concat(top, ', '))
+    return false, 'This car has no free slot for the phone holder.'
+  end
   if (v.slotPartMap[path] == part) == (on and true or false) then return true end
   local tree = copyTree(v.tree)
   if not tree or not garage.setInTree(tree, path, on and part or '') then return false, 'This car’s parts could not be changed.' end
