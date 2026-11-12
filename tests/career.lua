@@ -1910,6 +1910,22 @@ test('local money: country borders, exchange rates and free exchange at the bord
   s.pendingCareer = nil
 end)
 
+test('the support report has versions, helper state and recent problems, but no exact position', function()
+  local core = fresh()
+  pose.lat, pose.lon = 50.08765, 14.42132
+  local copied
+  setClipboard = function(text) copied = text end
+  local r = core.supportReport({'20:01:02 garageState: boom'})
+  setClipboard = nil
+  assert(r.copied and copied == r.text, 'copied to the clipboard')
+  assert(r.text:find('Mod: ' .. core.VERSION, 1, true), r.text)
+  assert(r.text:find('about 50.1, 14.4', 1, true) and not r.text:find('50.08', 1, true), 'position only to 0.1 degree')
+  assert(r.text:find('Helper: ', 1, true) and r.text:find('Recent problems:', 1, true))
+  assert(r.text:find('garageState: boom', 1, true), 'the phone\'s own errors are in it')
+  local again = core.supportReport()
+  assert(not again.copied and again.text:find('Phone errors', 1, true) == nil)
+end)
+
 test('the dash phone part only runs the phone app\'s own calls', function()
   local core = fresh()
   assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.phoneAction("online") or nil'))
