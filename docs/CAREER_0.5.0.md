@@ -1,4 +1,4 @@
-# Cargo Earth 0.5 (in progress)
+# Cargo Earth 0.5
 
 Four features Jan picked on 12 November 2026. Everything is clicked in the phone or the headquarters view; nothing
 depends on the country, the weather or the time of day.

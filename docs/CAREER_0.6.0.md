@@ -1,4 +1,4 @@
-# Cargo Earth 0.6 (in progress)
+# Cargo Earth 0.6
 
 Jan's picks on 12 November 2026: special cargo, tow jobs, fuel station resupply, and more trailer work. Everything is
 clicked in the phone or the headquarters view, and nothing depends on the country, the weather or the time of day.
