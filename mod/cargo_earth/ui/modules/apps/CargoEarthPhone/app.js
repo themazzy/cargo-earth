@@ -27,6 +27,7 @@ angular.module('beamng.apps')
     '.cep-limit.over{background:#d62d20;color:#fff;border-color:#a31d13}' +
     '.cep-pill .cep-limit{width:24px;height:24px;border-width:3px;font-size:10px;vertical-align:middle;margin-right:4px}' +
     '.cep-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:12px 14px;gap:10px;overflow:hidden}' +
+    '.cep-body.cep-fit{overflow-y:auto}.cep-fit .cep-center{flex:1 0 auto}.cep-fit .cep-pulse{width:56px;height:56px}' +
     '.cep-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px}' +
     '.cep-big{font-size:22px;font-weight:800;line-height:1.15}' +
     '.cep-sub{font-size:13px;color:var(--muted);line-height:1.35}' +
@@ -388,7 +389,7 @@ angular.module('beamng.apps')
         '<button class="cep-btn go" ng-click="setTab(\'garage\')">Review parts</button></div>' +
 
       // offline
-      '<div class="cep-body" ng-if="tab === \'orders\' && workView === \'deliveries\' && s.screen === \'offline\'"><div class="cep-center">' +
+      '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && workView === \'deliveries\' && s.screen === \'offline\'"><div class="cep-center">' +
         '<div class="cep-label">{{ s.mode === "courier" ? "Food delivery" : "Freight" }}</div>' +
         '<div class="cep-big">You are offline</div>' +
         '<div class="cep-sub" ng-if="!s.trucking || !s.trucking.hint">Go online and orders from nearby {{ s.mode === "courier" ? "restaurants and shops" : "depots" }} will ring here.</div>' +
@@ -402,7 +403,8 @@ angular.module('beamng.apps')
       '<button class="cep-btn go" ng-click="act(\'online\')">Go online</button></div>' +
 
       // waiting
-      '<div class="cep-body" ng-if="tab === \'orders\' && workView === \'deliveries\' && s.screen === \'waiting\'"><div class="cep-center">' +
+      '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && workView === \'deliveries\' && s.screen === \'waiting\'">' +
+      '<button class="cep-btn ghost" ng-click="act(\'offline\')">Go offline</button><div class="cep-center">' +
         '<div class="cep-pulse"><i></i></div><div class="cep-big">Looking for orders</div>' +
         '<div class="cep-sub" ng-if="s.trucking">{{ s.trucking.hint || ("Looking for " + s.trucking.carrier + " freight near you.") }}</div>' +
         '<div class="cep-sub" ng-if="!s.trucking && (!s.helper || s.helper.state === \'ready\')">Stay near pickup locations. The next order will ring here.</div>' +
@@ -416,7 +418,7 @@ angular.module('beamng.apps')
         '<div>{{ fmt.short(s.todayEarned) }}<span>earned</span></div><div>{{ fmt.short(s.money) }}<span>balance</span></div></div>' +
       '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
       '<button class="cep-btn" ng-if="s.trucking.canLoan" ng-click="act(\'loanerTruck\')">Use loaner {{ s.trucking.loanerLabel }}</button>' +
-      '<button class="cep-btn ghost" ng-click="act(\'offline\')">Go offline</button></div>' +
+      '</div>' +
 
       // incoming
       '<div class="cep-body" ng-if="tab === \'orders\' && workView === \'deliveries\' && s.screen === \'incoming\'">' +
