@@ -1924,7 +1924,7 @@ end
 radioAlive = function()
   if radio.helperOn and S.clock >= radio.aliveAt + M.RADIO_ALIVE_S then
     radio.aliveAt = S.clock
-    helper.ask('/v1/player/alive', onPlayer(radio.gen))
+    helper.command('/v1/player/alive', onPlayer(radio.gen), '/v1/player/alive')
   end
 end
 
@@ -1995,14 +1995,14 @@ function M.radioDo(name, a, b)
     radio.gen = (radio.gen or 0) + 1
     radio.helperOn, radio.aliveAt = true, S.clock
     radio.player = { playing = true, secs = 0 }
-    helper.ask(string.format('/v1/player/play?id=%s&vol=%.2f', a, vol), onPlayer(radio.gen), '/v1/player/')
+    helper.command(string.format('/v1/player/play?id=%s&vol=%.2f', a, vol), onPlayer(radio.gen), '/v1/player/')
   elseif name == 'helperVolume' and radio.helperOn then
-    helper.ask(string.format('/v1/player/volume?vol=%.2f', math.max(0, math.min(1, tonumber(a) or 0.6))), onPlayer(radio.gen),
+    helper.command(string.format('/v1/player/volume?vol=%.2f', math.max(0, math.min(1, tonumber(a) or 0.6))), onPlayer(radio.gen),
       '/v1/player/volume')
   elseif name == 'helperStop' then
     radio.gen = (radio.gen or 0) + 1
     radio.helperOn, radio.player = false, nil
-    helper.ask('/v1/player/stop', nil, '/v1/player/')
+    helper.command('/v1/player/stop', nil, '/v1/player/')
   end
   return M.radioState()
 end
@@ -3315,6 +3315,7 @@ function M.onUpdate(dtReal, dtSim)
   end
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
+  if helper.commanding() then helper.pump(S.clock) end     -- radio presses: answered within frames, not ticks
   local worldReady = earth.status() == 'ok'
   local activeDt = careerClock.advance(S.career, dtReal, dtSim, worldReady and not S.parts)
   S.workTick = (S.workTick or 0) + activeDt

@@ -1477,12 +1477,18 @@ angular.module('beamng.apps')
       function stopAudio() {
         if (audio) { audio.pause(); audio.removeAttribute('src'); try { audio.load() } catch (e) { /* nothing loaded */ } }
       }
+      // while the helper tunes in, ask how it goes often (one timer, however many presses)
+      var radioTimer = null
+      function radioSoon() {
+        if (radioTimer) clearTimeout(radioTimer)
+        radioTimer = setTimeout(function () { radioTimer = null; if (!destroyed) loadRadio() }, 400)
+      }
       function helperPlays() { return scope.radio.via === 'helper' || scope.radio.alone }
       function helperPlay(st) {
         var r = scope.radio
         r.status = 'loading'
         lua('radioDo', ['helperPlay', st.id, r.vol], function (x) { if (x && !x._phoneError) applyRadio(x) })
-        setTimeout(loadRadio, 1500)
+        radioSoon()
       }
       // what the helper's player says, while the helper plays the radio
       function playerStatus(p) {
@@ -1503,7 +1509,7 @@ angular.module('beamng.apps')
         lua('radioState', [], function (r) {
           if (!r || r._phoneError) return
           applyRadio(r)
-          if (helperPlays() && scope.radio.status === 'loading') setTimeout(loadRadio, 1500)
+          if (helperPlays() && scope.radio.status === 'loading') radioSoon()
         })
       }
       function withCountry(st, cc) {

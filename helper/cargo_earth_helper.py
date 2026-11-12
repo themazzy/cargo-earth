@@ -1303,13 +1303,18 @@ class Player:
                 proc.stdin.flush()
             except (OSError, ValueError, AttributeError):
                 pass
+            # never wait here: a press (play another station, stop) is answered at once, the old player ends meanwhile
+            threading.Thread(target=self._reap, args=(proc,), daemon=True).start()
+
+    @staticmethod
+    def _reap(proc):
+        try:
+            proc.wait(timeout=1)
+        except Exception:  # noqa: BLE001 - still running: ended the hard way
             try:
-                proc.wait(timeout=2)
-            except Exception:  # noqa: BLE001 - still running: ended the hard way
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+                proc.kill()
+            except (OSError, AttributeError):
+                pass
 
     def play(self, url, vol):
         if not re.match(r"https?://", url or "") or len(url) > 500:

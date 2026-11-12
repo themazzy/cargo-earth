@@ -4,6 +4,7 @@
 -- non-blocking sockets (one request at a time, never waits in a frame).
 --
 --   helper.tick(lat, lon, now, onArea)   every frame or tick; onArea(data) gets each new area once
+--   helper.command(path, onDone, replace) / helper.pump(now)   the fast lane, every frame, for presses (radio)
 --   helper.status()                      { state = 'off' | 'searching' | 'loading' | 'ready' | 'error', loading, ready, msg }
 -- tick also takes onCameras(data) (speed cameras around the player, asked for now and then) and onlyCameras (true
 -- where the mod's own data pack covers everything else).
@@ -58,23 +59,31 @@ local function close()
   req = nil
 end
 
-local function start(path, what, key, now, requestCell)
+-- a new non-blocking request to the helper, or nil and why
+local function open(path, now)
   socket = socket or rawget(_G, 'socket')
   if not socket then
     local ok, loaded = pcall(require, 'socket')
-    if not ok then return false, 'LuaSocket unavailable' end
+    if not ok then return nil, 'LuaSocket unavailable' end
     socket = loaded
   end
   local s = socket.tcp()
-  if not s then return false, 'Could not create helper socket' end
+  if not s then return nil, 'Could not create helper socket' end
   s:settimeout(0)
   local ok, err = s:connect(M.HOST, M.PORT)
   if not ok and err ~= 'timeout' and err ~= 'Operation already in progress' then
     pcall(function() s:close() end)
-    return false, err
+    return nil, err
   end
-  req = { sock = s, phase = 'send', t0 = now, what = what, key = key, cell = requestCell, buf = {}, bytes = 0,
-    out = 'GET ' .. path .. ' HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n', sent = 0 }
+  return { sock = s, phase = 'send', t0 = now, buf = {}, bytes = 0, sent = 0,
+    out = 'GET ' .. path .. ' HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' }
+end
+
+local function start(path, what, key, now, requestCell)
+  local r, err = open(path, now)
+  if not r then return false, err end
+  r.what, r.key, r.cell = what, key, requestCell
+  req = r
   return true
 end
 
@@ -90,32 +99,34 @@ local function parse(raw)
 end
 
 -- one step of the running request: nil while it runs, else (data) or (nil, err)
-local function step(now)
-  local s = req.sock
-  if now - req.t0 > M.TIMEOUT_S then return nil, 'timeout' end
-  if req.phase == 'send' then
-    local n, err, last = s:send(req.out, req.sent + 1)
-    if n then req.sent = n elseif err == 'timeout' then req.sent = last or req.sent
+local function stepReq(r, now)
+  local s = r.sock
+  if now - r.t0 > M.TIMEOUT_S then return nil, 'timeout' end
+  if r.phase == 'send' then
+    local n, err, last = s:send(r.out, r.sent + 1)
+    if n then r.sent = n elseif err == 'timeout' then r.sent = last or r.sent
     elseif err == 'Socket is not connected' then return
     else return nil, err end
-    if req.sent >= #req.out then req.phase = 'recv' end
+    if r.sent >= #r.out then r.phase = 'recv' end
     return
   end
   for _ = 1, M.READ_CHUNKS do
     local data, err, partial = s:receive(65536)
     local chunk = data or partial
     if chunk and #chunk > 0 then
-      req.bytes = req.bytes + #chunk
-      if req.bytes > M.MAX_RESPONSE then return nil, 'helper response exceeds size limit' end
-      req.buf[#req.buf + 1] = chunk
+      r.bytes = r.bytes + #chunk
+      if r.bytes > M.MAX_RESPONSE then return nil, 'helper response exceeds size limit' end
+      r.buf[#r.buf + 1] = chunk
     end
-    if err == 'closed' then return parse(table.concat(req.buf)) end
+    if err == 'closed' then return parse(table.concat(r.buf)) end
     if err then
       if err ~= 'timeout' then return nil, err end
       return
     end
   end
 end
+
+local function step(now) return stepReq(req, now) end
 
 local function finish(data, err, now, lat, lon, onArea)
   local r = req
@@ -191,6 +202,54 @@ end
 
 function M.asking() return #queue > 0 or (req ~= nil and req.what == 'ask') end
 
+-- A second lane for commands a player waits on (the radio's play / stop / volume): its own socket, worked every
+-- frame by pump(), so a press never waits behind an area download or for the half-second tick.
+M.FAST_STEPS = 4           -- socket steps per frame (connect, send and reading are each one)
+local fast, fastQueue = nil, {}
+
+function M.command(path, onDone, replace)
+  if replace then
+    for i = #fastQueue, 1, -1 do
+      if fastQueue[i][1]:sub(1, #replace) == replace then table.remove(fastQueue, i) end
+    end
+  end
+  for _, q in ipairs(fastQueue) do if q[1] == path then return end end
+  if #fastQueue < 8 then fastQueue[#fastQueue + 1] = { path, onDone } end
+end
+
+function M.commanding() return fast ~= nil or #fastQueue > 0 end
+
+function M.pump(now)
+  if not M.enabled then
+    if fast then pcall(function() fast.sock:close() end) fast = nil end
+    for _, q in ipairs(fastQueue) do if q[2] then q[2](nil, 'helper turned off') end end
+    fastQueue = {}
+    return
+  end
+  for _ = 1, M.FAST_STEPS do
+    if not fast then
+      local q = table.remove(fastQueue, 1)
+      if not q then return end
+      local r, err = open(q[1], now)
+      if not r then
+        if q[2] then q[2](nil, tostring(err)) end
+        return
+      end
+      r.on, fast = q[2], r
+    end
+    local reading = fast.phase == 'recv'
+    local data, err = stepReq(fast, now)
+    if data or err then
+      local r = fast
+      pcall(function() r.sock:close() end)
+      fast = nil
+      if r.on then r.on(data, err) end
+    elseif reading then
+      return       -- the helper is still answering: next frame
+    end
+  end
+end
+
 function M.tick(lat, lon, now, onArea, onCameras, onlyCameras)
   if not M.enabled then
     close()
@@ -240,6 +299,8 @@ function M._reset()
   st = { state = 'off', loading = 0, ready = 0 }
   nextAsk, wanted, got = 0, {}, {}
   nearCell, socket, nextCameras, queue = nil, nil, 0, {}
+  if fast then pcall(function() fast.sock:close() end) end
+  fast, fastQueue = nil, {}
   M.enabled, M.PORT = true, 47820
 end
 

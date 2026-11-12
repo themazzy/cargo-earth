@@ -14,7 +14,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
     getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
   localStorage: { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
-  setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: () => 1
+  setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: () => 1, clearTimeout: () => {}
 })
 assert(directive.template.includes('Find nearby addresses'))
 assert(directive.template.includes('Start company contract'))

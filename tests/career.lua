@@ -174,7 +174,7 @@ end
 package.loaded['cargoEarth/ui'] = {drawStop = function() end, drawPartsExit = function() end}
 package.loaded['cargoEarth/marker'] = {reset = function() end, draw = function() end}
 package.loaded['cargoEarth/helper'] = {configure = function() end, tick = function() end, forget = function() end,
-  status = function() return {state = 'off'} end}
+  status = function() return {state = 'off'} end, commanding = function() return false end, pump = function() end}
 package.loaded['cargoEarth/earth'] = {
   pose = function() return pose end, status = function() return ready and 'ok' or 'World loading' end,
   notify = function() end, route = function() return nil end,
