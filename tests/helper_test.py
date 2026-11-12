@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import json
 import os
 import tempfile
 import threading
@@ -385,15 +386,80 @@ class NetworkAndStorageTests(unittest.TestCase):
         self.assertTrue(player.alive()["playing"])
         self.assertFalse(player.stop()["playing"])
         self.assertIn("stop\n", procs[0][2].lines)
-        player.play("http://s/2", 0.5)               # its clock never moves: reported as stuck
+        out = player.play("http://s/2", 0.5)
+        self.assertFalse(out["sound"], "Windows' player has said nothing yet")
+        player.sound = True
+        self.assertTrue(player.status()["sound"])
+        player.play("http://s/3", 0.5)               # never makes a sound: stopped, and the phone hears why
         now[0] += helper.PLAYER_OPEN_S + 1
-        self.assertTrue(player.status()["stuck"])
+        player.check()
+        out = player.status()
+        self.assertFalse(out["playing"])
+        self.assertIn("no sound", out["error"])
+        self.assertIn("stop\n", procs[-1][2].lines)
+        player.play("http://s/4", 0.5)               # the player reports a failure
+        player.error = "Windows could not play it: bad codec"
+        player.check()
+        self.assertEqual(player.status()["error"], "Windows could not play it: bad codec")
         with tempfile.TemporaryDirectory() as cache:
             radio = helper.Radio(cache, lambda cc: [], servers=lambda: ["x"])
             radio.state["CZ"] = [["00000000-0000-0000-0000-000000000001", "A", "http://a", "MP3", 0, "", ""]]
             self.assertEqual(radio.url_of("00000000-0000-0000-0000-000000000001"), "http://a")
+            asked = []
+            def api(path):
+                asked.append(path)
+                if path.endswith("0003"):
+                    return [{"stationuuid": "00000000-0000-0000-0000-000000000003", "name": "Saved", "url_resolved": "http://saved/s", "countrycode": "CZ",
+                             "codec": "MP3", "lastcheckok": 1}]
+                raise OSError("unknown")
+            radio._api = api
             self.assertIsNone(radio.url_of("00000000-0000-0000-0000-000000000002"))
+            self.assertEqual(radio.url_of("00000000-0000-0000-0000-000000000003"), "http://saved/s",
+                             "A saved station no list has is looked up")
+            radio.url_of("00000000-0000-0000-0000-000000000003")
+            self.assertEqual(asked.count("/json/stations/byuuid/00000000-0000-0000-0000-000000000003"), 1)
+            radio.state.clear()
+            with open(radio.path("SK"), "w") as f:      # a list older than a day still knows its stations
+                json.dump({"at": 0, "stations": [["00000000-0000-0000-0000-000000000004", "Old", "http://old", "MP3", 0, "", ""]]}, f)
+            self.assertEqual(radio.url_of("00000000-0000-0000-0000-000000000004"), "http://old")
             self.assertIsNone(radio.url_of("http://evil"))
+
+    def test_stream_relay_passes_only_listed_stations_to_the_game(self):
+        import http.server
+        import threading
+        import urllib.request
+
+        class Up(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html" if self.path == "/page" else "audio/mpeg")
+                self.end_headers()
+                self.wfile.write(b"ID3" + bytes(3000))
+            def log_message(self, *a):
+                pass
+        up = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Up)
+        threading.Thread(target=up.serve_forever, daemon=True).start()
+        with tempfile.TemporaryDirectory() as cache:
+            radio = helper.Radio(cache, lambda cc: [], servers=lambda: ["x"])
+            a, b = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b"
+            radio.state["CZ"] = [[a, "A", f"http://127.0.0.1:{up.server_port}/s", "MP3", 0, "", ""],
+                                 [b, "B", f"http://127.0.0.1:{up.server_port}/page", "MP3", 0, "", ""]]
+            srv = helper.bind("127.0.0.1", 0)
+            areas = type("Areas", (), {"budget": type("Budget", (), {"stats": {}})()})()
+            threading.Thread(target=helper.serve, args=(areas, "r", 0), kwargs={"radio": radio, "srv": srv},
+                             daemon=True).start()
+            base = f"http://127.0.0.1:{srv.server_port}/v1/stream?id="
+            try:
+                with urllib.request.urlopen(base + a, timeout=5) as r:
+                    self.assertEqual(r.headers["Content-Type"], "audio/mpeg")
+                    self.assertEqual(len(r.read()), 3003)
+                for sid, code in ((b, 415), ("00000000-0000-0000-0000-00000000000c", 404)):
+                    with self.assertRaises(urllib.error.HTTPError) as e:
+                        urllib.request.urlopen(base + sid, timeout=5)
+                    self.assertEqual(e.exception.code, code)
+            finally:
+                srv.shutdown()
+                up.shutdown()
 
     def test_browser_requests_cannot_trigger_data_downloads(self):
         captured = []
@@ -444,3 +510,49 @@ class NetworkAndStorageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpdateCheckTests(unittest.TestCase):
+    def test_versions_compare_numerically(self):
+        self.assertTrue(helper.newer("0.10.0", "0.9.3"))
+        self.assertTrue(helper.newer("v1.0", "0.8.0"))
+        self.assertFalse(helper.newer("0.8.0", "0.8.0"))
+        self.assertFalse(helper.newer("0.8.0-beta", "0.7.0"))
+        self.assertFalse(helper.newer(None, "0.8.0"))
+
+    def test_check_saves_latest_and_restart_reuses_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = [1000.0]
+            u = helper.Updates(d, fetch=lambda: {"tag_name": "v99.1.0",
+                                                 "html_url": "https://github.com/themazzy/cargo-earth/releases/tag/v99.1.0"},
+                               clock=lambda: now[0])
+            self.assertTrue(u.due())
+            with patch.object(helper, "log"):
+                u.check()
+            info = u.info()
+            self.assertEqual(info["latest"], "99.1.0")
+            self.assertTrue(info["helperOutdated"])
+            self.assertFalse(u.due())
+            again = helper.Updates(d, fetch=lambda: self.fail("asked again"), clock=lambda: now[0] + 60)
+            self.assertEqual(again.info()["latest"], "99.1.0")
+            self.assertFalse(again.due())
+            now[0] += helper.UPDATE_EVERY_S
+            self.assertTrue(u.due())
+
+    def test_foreign_url_is_never_opened_and_failure_retries_sooner(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = [0.0]
+            u = helper.Updates(d, fetch=lambda: {"tag_name": "v0.0.1", "html_url": "https://evil.example/x"}, clock=lambda: now[0])
+            u.check()
+            self.assertTrue(u.info()["url"].startswith(helper.UPDATE_PAGE))
+            self.assertFalse(u.info()["helperOutdated"])
+
+            def boom():
+                raise OSError("offline")
+            bad = helper.Updates(os.path.join(d, "x"), fetch=boom, clock=lambda: now[0])
+            with patch.object(helper, "log"):
+                bad.check()
+            self.assertEqual(bad.info()["error"], "offline")
+            now[0] += helper.UPDATE_RETRY_S
+            self.assertTrue(bad.due())
+            self.assertFalse(helper.Updates(d, enabled=False).due())

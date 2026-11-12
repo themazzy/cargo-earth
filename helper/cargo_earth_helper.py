@@ -12,7 +12,10 @@ and prints what it found.
 
 API (GET, JSON):
   /                           a small status page for people (is it running, libraries, areas, network)
-  /v1/info                    {"app": "cargo-earth-helper", "version", "release"}
+  /v1/info                    {"app": "cargo-earth-helper", "version", "release", "update": {"latest", "url", "page",
+                              "helper", "helperOutdated", "checkedAt", "error"}} (the newest Cargo Earth release on
+                              GitHub, checked every 6 hours unless --no-update-check)
+  /v1/update/open             opens that release page in the browser: {"opened", "url"}
   /v1/cameras?lat=..&lon=..   speed cameras around the point, from OpenStreetMap (Overpass API, one request per
                               0.5 degree cell, kept for 30 days): {"state": "ready" | "loading" | "failed",
                               "cells": [...], "cameras": [[id, lat, lon, limit km/h (0 = unknown), road class], ...]}
@@ -20,6 +23,7 @@ API (GET, JSON):
                               day): {"state": "ready" | "loading" | "failed", "country", "top": [[id, name, stream url,
                               codec, kbps, tags, region], ...] (most listened first), "near": [[... the same, km], ...]}
   /v1/radioclick?id=uuid      tells Radio Browser a station started playing (its listening counts)
+  /v1/stream?id=uuid          the station's stream passed through, for the game's UI to play
   /v1/player/play?id=uuid&vol=0.6, /v1/player/volume?vol=.., /v1/player/stop, /v1/player/alive
                               the helper plays a listed station itself (when the game's UI cannot); alive is the
                               heartbeat: {"playing", "url", "vol", "secs", "error", "player"}
@@ -981,10 +985,10 @@ def _text(v, n):
 
 def radio_rows(data, cc):
     """Radio Browser stations -> [[id, name, stream url, codec, kbps, tags, region, lat, lon, votes]], working ones
-    only, no duplicates by name and stream."""
+    only, no duplicates by name and stream. cc None: stations of any country."""
     rows, seen = [], set()
     for s in data if isinstance(data, list) else []:
-        if not isinstance(s, dict) or str(s.get("countrycode", "")).upper() != cc:
+        if not isinstance(s, dict) or (cc is not None and str(s.get("countrycode", "")).upper() != cc):
             continue
         url = str(s.get("url_resolved") or s.get("url") or "").strip()
         codec = str(s.get("codec") or "").upper().strip()
@@ -1027,6 +1031,7 @@ class Radio:
         self.servers = servers or radio_servers
         self._hosts = None
         self.state, self.fail_at, self.fresh_until, self.refreshing = {}, {}, {}, set()
+        self.looked_up = {}       # station id -> stream, for saved stations no list here has
         self.lock = threading.Lock()
 
     def path(self, cc):
@@ -1065,10 +1070,22 @@ class Radio:
         except OSError:
             names = []
         for n in names:
-            for r in self._load(n[:2]) or []:
+            for r in self._load(n[:2], any_age=True) or []:   # a saved station from a list since gone stale
                 if r[0] == sid:
                     return r[2]
-        return None
+        # a station saved on the phone that no list here has (another computer, a cleared cache): ask Radio Browser
+        with self.lock:
+            if sid in self.looked_up:
+                return self.looked_up[sid]
+        try:
+            rows = radio_rows(self._api("/json/stations/byuuid/" + sid), None)   # any country
+        except Exception as e:  # noqa: BLE001 - unknown station
+            log("radio: could not look up a saved station:", e)
+            return None
+        url = rows[0][2] if rows and rows[0][0] == sid else None
+        with self.lock:
+            self.looked_up[sid] = url
+        return url
 
     def click(self, sid):
         """Radio Browser counts what people listen to: one call each time a station starts playing."""
@@ -1077,10 +1094,12 @@ class Radio:
         POOL.submit(lambda: self._api("/json/url/" + sid))
         return {"ok": True}
 
-    def _load(self, cc):
+    def _load(self, cc, any_age=False):
         try:
             with open(self.path(cc), "rb") as f:
                 data = json.loads(f.read(MAX_RADIO_BYTES))
+            if any_age and isinstance(data["stations"], list):
+                return data["stations"]
             if time.time() - data["at"] < RADIO_HOURS * 3600 and isinstance(data["stations"], list):
                 self.fresh_until[cc] = data["at"] + RADIO_HOURS * 3600
                 return data["stations"]
@@ -1149,38 +1168,77 @@ class Radio:
         return {"state": "ready", "country": cc, "near": near, "top": [r[:7] for r in rows]}
 
 
-# The game's UI browser may not play web streams; then the helper plays the station on this computer. Windows: the
-# system's own media player (Media Foundation, through PowerShell; MP3 and AAC). Elsewhere: ffplay, mpv or VLC if
-# installed. The mod sends a heartbeat while the radio is on; without one for PLAYER_ALIVE_S the helper stops, so
-# music never outlives the game.
+# Two ways to hear a station. 1) The game plays it: the phone's <audio> asks this helper for /v1/stream, which passes
+# the station's stream through (the game's UI browser refuses web streams, but plays what comes from this computer;
+# MP3 and OGG only, it has no AAC). 2) The helper plays it on this computer. Windows: Windows Media Player's engine
+# through PowerShell (the WPF player as a fallback). Elsewhere: ffplay, mpv or VLC if installed. The mod sends a
+# heartbeat while the radio is on; without one for PLAYER_ALIVE_S the helper stops, so music never outlives the game.
 PLAYER_ALIVE_S = 20
-PLAYER_OPEN_S = 15        # a stream that has not started after this long is given up
+PLAYER_OPEN_S = 15        # a stream that has not started after this long is given up, with an error the phone shows
+STREAM_MAX = 4            # streams passed to the game at once (a station change closes the old one)
+STREAM_TYPES = ("audio/", "application/ogg", "application/octet-stream")
+STREAMS = threading.BoundedSemaphore(STREAM_MAX)
 PS_PLAYER = r"""
-Add-Type -AssemblyName PresentationCore
-$p = New-Object System.Windows.Media.MediaPlayer
-$p.Volume = [double]::Parse($env:CARGO_EARTH_VOL, [Globalization.CultureInfo]::InvariantCulture)
-$p.Open([Uri]$env:CARGO_EARTH_STREAM)
-$p.Play()
+$ci = [Globalization.CultureInfo]::InvariantCulture
+$vol = [double]::Parse($env:CARGO_EARTH_VOL, $ci)
+Add-Type -AssemblyName System.Windows.Forms
+$wmp = $null; $p = $null; $script:failed = ''
+try { $wmp = New-Object -ComObject WMPlayer.OCX } catch { $wmp = $null }
+if ($wmp) {
+  $wmp.settings.autoStart = $true
+  $wmp.settings.volume = [int]($vol * 100)
+  $wmp.URL = $env:CARGO_EARTH_STREAM
+  $wmp.controls.play()
+} else {
+  Add-Type -AssemblyName PresentationCore, WindowsBase
+  $p = New-Object System.Windows.Media.MediaPlayer
+  $p.add_MediaFailed({ param($s, $e) $script:failed = [string]$e.ErrorException.Message })
+  $p.Volume = $vol
+  $p.Open([Uri]$env:CARGO_EARTH_STREAM)
+  $p.Play()
+}
 $in = [Console]::OpenStandardInput()
 $buf = New-Object byte[] 256
 $t = $in.ReadAsync($buf, 0, 256)
-$run = $true
+$run = $true; $tick = 0
 while ($run) {
-  Start-Sleep -Milliseconds 250
+  # both players work through window messages: without this pump they never start (Start-Sleep alone blocks them)
+  [System.Windows.Forms.Application]::DoEvents()
+  Start-Sleep -Milliseconds 100
   if ($t.IsCompleted) {
     $n = $t.Result
     if ($n -le 0) { break }
     foreach ($line in [Text.Encoding]::ASCII.GetString($buf, 0, $n).Split("`n")) {
       $line = $line.Trim()
       if ($line -eq 'stop') { $run = $false }
-      if ($line -like 'vol *') { $p.Volume = [double]::Parse($line.Substring(4), [Globalization.CultureInfo]::InvariantCulture) }
+      if ($line -like 'vol *') {
+        $v = [double]::Parse($line.Substring(4), $ci)
+        if ($wmp) { $wmp.settings.volume = [int]($v * 100) } else { $p.Volume = $v }
+      }
     }
     $t = $in.ReadAsync($buf, 0, 256)
   }
-  [Console]::Out.WriteLine('pos ' + [int]$p.Position.TotalSeconds + ' ' + [int]$p.HasAudio)
+  $tick++
+  if ($tick % 10 -ne 0) { continue }
+  if ($wmp) {
+    $state = [int]$wmp.playState      # 3 playing, 6 buffering, 7 waiting, 9 opening, 11 reconnecting
+    $secs = [int]$wmp.controls.currentPosition
+    $ok = [int]($state -eq 3)
+    if ($wmp.Error.errorCount -gt 0) { $script:failed = [string]$wmp.Error.Item(0).errorDescription }
+    elseif ($tick -gt 50 -and ($state -eq 1 -or $state -eq 8 -or $state -eq 10)) { $script:failed = 'the station stopped sending' }
+  } else {
+    $secs = [int]$p.Position.TotalSeconds
+    $ok = [int]($secs -gt 0)
+  }
+  if ($script:failed) {
+    [Console]::Out.WriteLine('fail ' + ($script:failed -replace '\s+', ' '))
+    [Console]::Out.Flush()
+    break
+  }
+  [Console]::Out.WriteLine('pos ' + $secs + ' ' + $ok)
   [Console]::Out.Flush()
 }
-$p.Stop(); $p.Close()
+if ($wmp) { $wmp.controls.stop(); $wmp.close() } else { $p.Stop(); $p.Close() }
 """
 
 
@@ -1189,7 +1247,7 @@ class Player:
         self.spawn = spawn or self._spawn
         self.clock = clock
         self.proc, self.url, self.vol, self.alive_at = None, None, 0.6, 0
-        self.started_at, self.pos, self.error, self.kind = 0, 0, None, None
+        self.started_at, self.pos, self.error, self.kind, self.sound = 0, 0, None, None, False
         self.lock = threading.Lock()
         threading.Thread(target=self._watch, daemon=True).start()
 
@@ -1228,10 +1286,14 @@ class Player:
     def _read(self, proc):
         for line in proc.stdout:
             parts = line.split()
-            if len(parts) == 3 and parts[0] == "pos":
-                with self.lock:
-                    if proc is self.proc:
-                        self.pos = int(parts[1]) if parts[1].isdigit() else 0
+            with self.lock:
+                if proc is not self.proc:
+                    return
+                if len(parts) == 3 and parts[0] == "pos":
+                    self.pos = int(parts[1]) if parts[1].isdigit() else 0
+                    self.sound = self.sound or parts[2] == "1"
+                elif parts and parts[0] == "fail":
+                    self.error = ("Windows could not play it: " + " ".join(parts[1:]))[:160]
 
     def _kill(self):
         proc, self.proc = self.proc, None
@@ -1255,7 +1317,7 @@ class Player:
         with self.lock:
             self._kill()
             self.url, self.vol, self.alive_at = url, max(0.0, min(1.0, vol)), self.clock()
-            self.started_at, self.pos, self.error = self.clock(), 0, None
+            self.started_at, self.pos, self.error, self.sound = self.clock(), 0, None, False
             try:
                 self.proc = self.spawn(url, self.vol)
                 self.kind = getattr(self.proc, "kind", None)
@@ -1298,19 +1360,131 @@ class Player:
         running = bool(proc) and proc.poll() is None
         if proc and not running and not self.error:
             self.error = "the stream stopped or could not be opened"
-        # Windows' player fails silently: a stream whose clock has not moved after a while is probably not playing
-        stuck = running and self.pos == 0 and self.clock() - self.started_at > PLAYER_OPEN_S
-        return {"playing": running, "stuck": stuck, "url": self.url if running else None, "vol": self.vol, "secs": self.pos,
-                "error": self.error, "player": self.kind or self.available()}
+        # Windows' player says when sound comes out ("sound"); the others are taken at their word
+        sound = running and (self.sound or self.kind not in ("powershell", None))
+        return {"playing": running, "sound": sound, "url": self.url if running else None, "vol": self.vol,
+                "secs": self.pos, "error": self.error, "player": self.kind or self.available()}
+
+    def check(self):
+        """Stop a player that failed or never made a sound, so the phone says so instead of showing it playing."""
+        with self.lock:
+            if not self.proc:
+                return
+            if self.clock() - self.alive_at > PLAYER_ALIVE_S:
+                log("radio: no word from the game, stopping")
+                self._kill()
+                self.url = None
+            elif self.error:
+                self._kill()
+            elif self.kind == "powershell" and not self.sound and self.clock() - self.started_at > PLAYER_OPEN_S:
+                self.error = f"no sound after {PLAYER_OPEN_S} seconds, the station may be offline"
+                self._kill()
 
     def _watch(self):
         while True:
             time.sleep(2)
+            self.check()
+
+
+UPDATE_REPO = "themazzy/cargo-earth"
+UPDATE_PAGE = f"https://github.com/{UPDATE_REPO}/releases"
+UPDATE_EVERY_S = 6 * 3600          # GitHub allows 60 unauthenticated requests an hour; one in 6 hours is plenty
+UPDATE_RETRY_S = 1800              # no answer (offline, rate limit): try again after this long
+
+
+def version_tuple(v):
+    """'v0.10.2' -> (0, 10, 2); None for anything that is not a plain release version."""
+    m = re.fullmatch(r"v?(\d+)\.(\d+)(?:\.(\d+))?", str(v or "").strip())
+    return tuple(int(x or 0) for x in m.groups()) if m else None
+
+
+def newer(latest, current):
+    a, b = version_tuple(latest), version_tuple(current)
+    return bool(a and b and a > b)
+
+
+class Updates:
+    """The newest published Cargo Earth release (GitHub), checked at start and every few hours, kept on disk so a
+    restart does not ask again. The game cannot go online; it reads this from /v1/info and shows it on the phone."""
+
+    def __init__(self, cache_dir, enabled=True, fetch=None, clock=time.time):
+        self.path = os.path.join(cache_dir, "update.json")
+        self.enabled, self.clock = enabled, clock
+        self.fetch = fetch or (lambda: json.loads(http_get(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest",
+                                                           {"Accept": "application/vnd.github+json"}, tries=1)))
+        self.lock = threading.Lock()
+        self.state = {"latest": None, "url": None, "checkedAt": None, "error": None}
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                saved = json.load(f)
+            if version_tuple(saved.get("latest")) and str(saved.get("url", "")).startswith(UPDATE_PAGE):
+                self.state.update(latest=saved["latest"], url=saved["url"], checkedAt=float(saved.get("checkedAt") or 0))
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+
+    def due(self):
+        with self.lock:
+            at = self.state["checkedAt"]
+            wait = UPDATE_RETRY_S if self.state["error"] else UPDATE_EVERY_S
+        return self.enabled and (not at or self.clock() - at >= wait)
+
+    def check(self):
+        try:
+            rel = self.fetch()
+            tag, url = rel.get("tag_name"), str(rel.get("html_url") or "")
+            if not version_tuple(tag):
+                raise ValueError(f"unexpected release tag {tag!r}")
+            if not url.startswith(UPDATE_PAGE):
+                url = f"{UPDATE_PAGE}/latest"
+            latest = ".".join(map(str, version_tuple(tag)))
             with self.lock:
-                if self.proc and self.clock() - self.alive_at > PLAYER_ALIVE_S:
-                    log("radio: no word from the game, stopping")
-                    self._kill()
-                    self.url = None
+                self.state.update(latest=latest, url=url, checkedAt=self.clock(), error=None)
+                saved = dict(self.state)
+            try:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                with open(self.path + ".tmp", "w", encoding="utf-8") as f:
+                    json.dump(saved, f)
+                os.replace(self.path + ".tmp", self.path)
+            except OSError:
+                pass
+            if newer(latest, VERSION):
+                log(f"Cargo Earth {latest} is out (this helper is {VERSION}): {url}")
+        except Exception as e:  # noqa: BLE001
+            with self.lock:
+                self.state.update(checkedAt=self.clock(), error=str(e)[:200])
+            log("could not check for Cargo Earth updates:", e)
+
+    def info(self):
+        with self.lock:
+            out = dict(self.state)
+        if not self.enabled:
+            out["error"] = "update check turned off"
+        out["helper"] = VERSION
+        out["helperOutdated"] = newer(out["latest"], VERSION)
+        out["page"] = out["url"] or f"{UPDATE_PAGE}/latest"
+        return out
+
+    def open(self):
+        """Opens the release page in the player's browser (only ever this repository's releases)."""
+        url = self.info()["page"]
+        if not url.startswith(UPDATE_PAGE):
+            return {"opened": False, "url": None}
+        import webbrowser
+        try:
+            return {"opened": bool(webbrowser.open(url)), "url": url}
+        except Exception:  # noqa: BLE001
+            return {"opened": False, "url": url}
+
+    def run(self):
+        while True:
+            if self.due():
+                self.check()
+            time.sleep(60)
+
+    def start(self):
+        if self.enabled:
+            threading.Thread(target=self.run, daemon=True, name="updates").start()
+        return self
 
 
 def missing_libraries():
@@ -1318,7 +1492,7 @@ def missing_libraries():
     return [m for m in ("duckdb", "fsspec") if importlib.util.find_spec(m) is None]
 
 
-def status_page(areas, release, port):
+def status_page(areas, release, port, updates=None):
     """The page a player sees at http://127.0.0.1:<port>/: whether the helper works, in plain words."""
     with areas.cv:
         states = dict(areas.state)
@@ -1336,6 +1510,9 @@ def status_page(areas, release, port):
              "none asked for yet (drive in BeamNG with Cargo Earth)"),
             ("Downloads", f"{network.get('requests', 0)} requests, {network.get('bytes', 0) / 1048576:.1f} MiB"),
             ("Cache", f"{cache.get('bytes', 0) / 1048576:.0f} of {cache.get('limit', 0) / 1048576:.0f} MiB")]
+    up = updates.info() if updates else None
+    if up and up["latest"]:
+        rows.append(("Newest release", up["latest"] + (" (update available)" if up["helperOutdated"] else " (up to date)")))
     bad = missing or errors
     head = ("Running, but with problems" if bad else "Running")
     body = "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(v)}</td></tr>" for k, v in rows)
@@ -1344,6 +1521,9 @@ def status_page(areas, release, port):
         notes += ("<p class=bad>Areas outside the bundled data can't be built without these libraries. Start the helper "
                   "from BeamNG.Earth's Add-ons page (its Python has them), or run <code>python -m pip install duckdb "
                   "fsspec</code>.</p>")
+    if up and up["helperOutdated"]:
+        notes += (f"<p class=bad>Cargo Earth {html.escape(up['latest'])} is out: "
+                  f"<a href=\"{html.escape(up['page'])}\">download it from the release page</a>.</p>")
     if errors:
         notes += "<p class=bad>Last errors:</p><ul>" + "".join(f"<li>{html.escape(e)}</li>" for e in errors[-5:]) + "</ul>"
     return f"""<!doctype html><html><head><meta charset=utf-8><meta http-equiv=refresh content=5>
@@ -1357,7 +1537,7 @@ td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
 <table>{body}</table>{notes}</body></html>""".encode()
 
 
-def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None):
+def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -1369,6 +1549,40 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             self.end_headers()
             self.wfile.write(body)
 
+        def _relay(self, url):
+            """Pass a station's stream to the game's UI, which plays what comes from this computer but not the web."""
+            if not STREAMS.acquire(blocking=False):
+                return self._send(503, {"error": "too many streams"})
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": f"cargo-earth-helper/{VERSION}",
+                                                           "Icy-MetaData": "0"})
+                try:
+                    up = urllib.request.urlopen(req, timeout=15)
+                except Exception as e:  # noqa: BLE001 - the phone hears an error and tries the helper's player
+                    return self._send(502, {"error": f"station: {e}"})
+                with up:
+                    ctype = (up.headers.get("Content-Type") or "audio/mpeg").split(";")[0].strip().lower()
+                    if not ctype.startswith(STREAM_TYPES):
+                        return self._send(415, {"error": f"not an audio stream ({ctype})"})
+                    self.send_response(200)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    while True:
+                        chunk = up.read1(16384) if hasattr(up, "read1") else up.read(16384)
+                        if not chunk:
+                            break
+                        try:
+                            self.wfile.write(chunk)
+                        except OSError:       # the game closed it: another station, Stop, or the game quit
+                            break
+                        with NETWORK_LOCK:
+                            NETWORK["bytes"] += len(chunk)
+            finally:
+                STREAMS.release()
+
         def do_GET(self):
             if self.headers.get("Origin") or self.headers.get("Host", "").split(":", 1)[0].lower() not in ("127.0.0.1", "localhost"):
                 return self._send(403, {"error": "local client requests only"})
@@ -1376,14 +1590,17 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
             try:
                 if u.path in ("/", "/index.html"):
-                    return self._send(200, status_page(areas, release, port), "text/html; charset=utf-8")
+                    return self._send(200, status_page(areas, release, port, updates), "text/html; charset=utf-8")
                 if u.path == "/v1/info":
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
                                             "cameras": cameras is not None, "radio": radio is not None,
                                             "player": player is not None, "missing": missing_libraries(),
-                                            "network": network, "cache": areas.budget.stats})
+                                            "network": network, "cache": areas.budget.stats,
+                                            "update": updates.info() if updates else None})
+                if u.path == "/v1/update/open" and updates:
+                    return self._send(200, updates.open())
                 if u.path == "/v1/cameras" and cameras:
                     return self._send(200, cameras.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/radio" and radio:
@@ -1403,6 +1620,11 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     if what == "alive":
                         return self._send(200, player.alive())
                     return self._send(404, {"error": "unknown path"})
+                if u.path == "/v1/stream" and radio:
+                    url = radio.url_of(q.get("id", ""))
+                    if not url:
+                        return self._send(404, {"error": "unknown station"})
+                    return self._relay(url)
                 if u.path == "/v1/radioclick" and radio:
                     return self._send(200, radio.click(q.get("id", "")))
                 if u.path == "/v1/near":
@@ -1447,6 +1669,7 @@ def main():
     ap.add_argument("--cache", default=os.environ.get("BNE_CARGO_CACHE") or os.path.join(here, "cache"))
     ap.add_argument("--release", default=RELEASE, help="Overture release (default: the pinned one, else the latest)")
     ap.add_argument("--cache-mb", type=int, default=1024, help="soft disk-cache budget in MiB (default: 1024)")
+    ap.add_argument("--no-update-check", action="store_true", help="never ask GitHub for a newer Cargo Earth release")
     ap.add_argument("--test", help="LAT,LON: build that area, print a summary and exit")
     a = ap.parse_args()
     if a.cache_mb < 64:
@@ -1479,7 +1702,9 @@ def main():
                          ensure_ascii=False, indent=1))
         budget.prune(force=True)
         return
-    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache), player=Player(), srv=srv)
+    updates = Updates(a.cache, enabled=not a.no_update_check).start()
+    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache), player=Player(), srv=srv,
+          updates=updates)
 
 
 if __name__ == "__main__":

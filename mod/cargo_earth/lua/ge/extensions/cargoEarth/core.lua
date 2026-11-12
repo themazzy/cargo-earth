@@ -41,7 +41,6 @@ local borders = require('cargoEarth/borders')
 local uiLayout = require('cargoEarth/layout')
 local currency = require('cargoEarth/currency')
 local dash = require('cargoEarth/dash')
-local dashtap = require('cargoEarth/dashtap')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
 local SAVE = '/settings/cargoEarth/career.json'
@@ -109,6 +108,7 @@ S.career.garage = garage.new()
 local carSeenAt = 0
 local conditionAt, usedAt, previewAt
 local fuelWatch, fuelToken, fuelPending, fuelNearAt = nil, 0, nil, 0
+local gamePump, pumpHookAt = nil, 0   -- a refuel started at one of the game's own pumps
 local forceWatch, forceToken = nil, 0
 local cams = cameras.index()
 local roadLimit = { at = -math.huge }
@@ -549,7 +549,7 @@ local function pauseCareer()
   local ph = S.phone
   ph.online, ph.incoming, ph.lastDone, ph.lastFailure, ph.cancelAskUntil = false, nil, nil, nil, nil
   S.window, S.inCareerWorld, S.stopT, S.dist, S.roadM, S.etaS = false, false, 0, nil, nil, nil
-  fuelWatch, fuelPending = nil, nil
+  fuelWatch, fuelPending, gamePump = nil, nil, nil
   if earth.status() == 'ok' then earth.gpsClear() end
   trailers.remove()
   marker.reset()
@@ -1007,7 +1007,7 @@ end
 function M.cancel(free, all)
   if not S.job then return end
   if S.job.companyShift then
-    say('End company work from Work / Companies. Completed deliveries are paid without a cancellation fee.')
+    say('End company work from Menu → Companies. Completed deliveries are paid without a cancellation fee.')
     return
   end
   repeat
@@ -1514,7 +1514,7 @@ function M.companyTick()
     takeJob(employment.nextJob(c))
   elseif shift.phase == 'returning' and not S.job and not shift.routed then
     shift.routed = earth.gps(shift.yard.g[1], shift.yard.g[2], shift.yard.n) == true
-    say('Company route finished. Return to the yard and settle in Work / Companies.')
+    say('Company route finished. Return to the yard and settle in Menu → Companies.')
     saveCareer()
   end
 end
@@ -1589,7 +1589,7 @@ function M.phoneState()
     todayCount = today.count, status = earth.status(), clock = os.date('%H:%M'), hidden = S.phoneHidden,
       helper = M.helperInfo(), saveError = S.saveError, company = c.employment and c.employment.companyName,
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
-      currency = moneyInfo() }
+      currency = moneyInfo(), update = M.updateInfo() }
   if S.pendingCareer then
     out.screen, out.money = 'resume', S.pendingCareer.money or 0
     local savedGarage = S.pendingCareer.garage
@@ -1686,9 +1686,9 @@ function M.phoneState()
   local g = S.career.garage
   if g.started then out.repair, out.debt = g.repair or 0, g.debt or 0 end
   if not garage.inOwnCar(M.G, g) then
-    out.screen, out.error = 'error', g.preview and 'You are looking at a used car. Garage tab: buy it or go back to your car.'
-      or g.car and ('Drive your own car (' .. g.car.name .. '). Garage tab > Bring my car.')
-      or 'You have no car. Buy one in the Garage tab > Used cars.'
+    out.screen, out.error = 'error', g.preview and 'You are looking at a used car. Menu → Garage: buy it or go back to your car.'
+      or g.car and ('Drive your own car (' .. g.car.name .. '). Menu → Garage → Bring my car.')
+      or 'You have no car. Buy one in Menu → Garage → Used cars.'
     return out
   end
   if not ph.online then out.screen = 'offline' return out end
@@ -1875,6 +1875,7 @@ local function learnCameraLimits(p)
 end
 
 local radioAlive   -- (the radio, below)
+local askUpdate    -- (the update notice, with the support report below)
 local function helperTick(p)
   if not p then return end
   if camerasOn() then
@@ -1893,6 +1894,7 @@ local function helperTick(p)
   local areas = (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
   local wantCameras = camerasOn() and onHelperCameras or nil
   radioAlive()
+  askUpdate()
   if areas or wantCameras or helper.asking() then
     helper.tick(p.lat, p.lon, S.clock, onHelperArea, wantCameras, not areas)
   end
@@ -1975,6 +1977,8 @@ function M.radioState()
     state = not helper.enabled and 'disabled' or (not radio.cc and (p and 'nowhere' or 'noworld')) or radio.state or 'loading' }
   if radio.data then out.near, out.top = radio.data.near, radio.data.top end
   out.player = radio.player
+  -- the phone's <audio> plays the station through the helper: the game's UI refuses web streams, not local ones
+  if helper.enabled then out.stream = string.format('http://%s:%d/v1/stream?id=', helper.HOST, helper.PORT) end
   return out
 end
 
@@ -2111,14 +2115,31 @@ M.garageTick = garageTick
 M.FUEL_SILENT_S = 8        -- no report from the car for this long: ask it again
 M.FUEL_VERIFY_S = 6        -- a refill the game has not taken after this long is refunded
 M.FUEL_GIVE_UP = 5         -- putting a level back failed this often: this car's tank cannot be set
+M.PUMP_WAIT_S = 20         -- a game pump's refuel shows in the car's report within this long
 
 local function stopFuelWatch()
-  fuelWatch, fuelPending = nil, nil
+  fuelWatch, fuelPending, gamePump = nil, nil, nil
+end
+
+-- The game's own "Refuel" prompt at a pump (stock gas stations and BeamNG.Earth's): remembered, so the fuller tank
+-- in the next report is paid for at that station's price instead of being put back like a reset's free refill.
+function M.onGameRefuel(id, station, fuelTypes)
+  local g = S.career.garage
+  if not g.started or not g.car or not fuelWatch or (id and fuelWatch.id ~= id) then return end
+  local f = type(station) == 'table' and (type(station.facility) == 'table' and station.facility or station) or {}
+  local types = type(fuelTypes) == 'table' and fuelTypes or {}
+  gamePump = { id = fuelWatch.id, untilT = S.clock + M.PUMP_WAIT_S,
+    station = { id = tostring(f.id or station and station.id or 'pump'), n = type(f.name) == 'string' and f.name ~= '' and f.name or 'Gas station',
+      kind = types.electricEnergy and not types.gasoline and not types.diesel and 'electric' or 'fuel' } }
 end
 
 -- Keeps the vehicle-side reporter running on the career car the player sits in.
 function fuelTick(own)
   local G, g = M.G, S.career.garage
+  if G.hookPumps and S.clock >= pumpHookAt then
+    pumpHookAt = S.clock + 5
+    pcall(G.hookPumps, function(...) return M.onGameRefuel(...) end)
+  end
   if not own or not g.car or S.parts or g.preview or g.pendingUsed or not G.watchFuel then
     if fuelWatch then stopFuelWatch() end
     return
@@ -2176,6 +2197,10 @@ function M.onCargoEarthFuel(id, token, report)
         saveCareer()
       end
     end
+  end
+  if gamePump then
+    if gamePump.id ~= id or S.clock > gamePump.untilT then gamePump = nil
+    elseif M.payPump(car, report) then gamePump = nil end
   end
   local km = math.max(0, (car.km or 0) - (watch.km or car.km or 0))
   watch.km = car.km or 0
@@ -2267,6 +2292,27 @@ local function unitsText(units)
     if units[kind] then parts[#parts + 1] = string.format('%.1f %s', units[kind], fuel.UNIT[kind]) end
   end
   return table.concat(parts, ' + ')
+end
+
+-- A game pump filled the tank: books it and takes the money (a debt when the wallet is short, like fuel delivery).
+function M.payPump(car, report)
+  local c, g, st = S.career, S.career.garage, gamePump.station
+  local free = car.loaner == true
+  local quote = fuel.pumpQuote(car, report, fuel.stationFactor(st.id), free)
+  if not quote then return false end
+  local debt = false
+  if quote.cost > 0 then
+    if (c.money or 0) < quote.cost then
+      g.debt, debt = (g.debt or 0) + quote.cost, true
+    else
+      economy.post(c, -quote.cost, 'fuel', economy.nextId(c, 'fuel'), st.n)
+    end
+  end
+  fuel.apply(car, quote)
+  say(free and string.format('Filled %s at %s on the company fuel card.', unitsText(quote.units), st.n)
+    or string.format('Filled %s at %s for %d CZK%s.', unitsText(quote.units), st.n, quote.cost, debt and ' (added to your debt)' or ''), 8)
+  saveCareer()
+  return true
 end
 
 -- amount: units to buy, or nil for a full tank
@@ -2911,8 +2957,10 @@ function M.settingsState()
     local v = math.max(min, math.min(max, opts[key] or default))
     out.items[#out.items + 1] = { key = key, label = d[2], step = step, min = min, max = max, unit = d[6], value = v }
   end
-  out.dash = dash.state()
+  out.dash = dash.state(M.G.vehicle and M.G.vehicle() or nil)
+  out.dash.error = S.dashError
   aboutHelper()
+  out.update = M.updateInfo() or { mod = M.VERSION, unknown = true }
   out.cameras = { on = not S.career.camerasOff, known = #cams.list,
     helper = cams.state or (helper.status().cameras == 'off' and 'off' or nil) }
   if S.mode == 'courier' then
@@ -2923,10 +2971,14 @@ function M.settingsState()
 end
 
 -- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
--- dash (a = show | reset | x | y | z | size, b = +1 | -1)
+-- dash (a = fit | remove: the phone holder on the dashboard)
 function M.settingsDo(name, a, b)
-  -- the dash phone is a screen preference, not part of the career: it works on the resume screen too
-  if name == 'dash' then dash.act(a, b) return M.settingsState() end
+  -- the dash phone holder is a car part: BeamNG's parts menu works on the resume screen too, so this does as well
+  if name == 'dash' then
+    local ok, why = M.dashHolder(a == 'fit')
+    S.dashError = not ok and why or nil
+    return M.settingsState()
+  end
   if S.pendingCareer then return M.settingsState() end
   if S.parts then return M.settingsState() end
   if name == 'pause' then
@@ -2960,12 +3012,90 @@ M.garage = garage
 ------------------------------------------------------------------------------------------ support report
 
 -- What the helper says about itself (/v1/info), asked for while the settings are open, for the support report.
+-- The same answer carries the newest Cargo Earth release on GitHub (the helper looks it up; the game cannot go
+-- online), so it is also asked for now and then while playing: the phone then says an update is out.
 local helperAbout, helperAboutAt = nil, -math.huge
+local updateAskAt, updateSaid = nil, nil
 M.HELPER_ABOUT_S = 30
+M.UPDATE_FIRST_S = 20      -- the first update question, this long after the mod starts
+M.UPDATE_ASK_S = 1800      -- then this often (the helper itself asks GitHub every 6 hours)
+M.UPDATE_RETRY_S = 300     -- the helper did not answer: ask again after this long
+M.RELEASES = 'https://github.com/themazzy/cargo-earth/releases'
+
+-- '0.10.2' newer than '0.9.3'? Plain release numbers only; anything else is never newer.
+function M.versionNewer(latest, current)
+  local function parts(v)
+    local a, b, c = tostring(v or ''):match('^v?(%d+)%.(%d+)%.?(%d*)$')
+    if not a then return nil end
+    return { tonumber(a), tonumber(b), tonumber(c) or 0 }
+  end
+  local x, y = parts(latest), parts(current)
+  if not x or not y then return false end
+  for i = 1, 3 do
+    if x[i] ~= y[i] then return x[i] > y[i] end
+  end
+  return false
+end
+
+local function onAbout(data, err)
+  helperAbout = data or { error = tostring(err or 'no answer') }
+  if not data then return end
+  local u = M.updateInfo()
+  if u and u.available and updateSaid ~= u.latest then
+    updateSaid = u.latest
+    say('Cargo Earth ' .. u.latest .. ' is out. Open the phone to get it.', 10)
+  end
+end
+
 aboutHelper = function()
   if not helper.enabled or S.clock - helperAboutAt < M.HELPER_ABOUT_S then return end
   helperAboutAt = S.clock
-  helper.ask('/v1/info', function(data, err) helperAbout = data or { error = tostring(err or 'no answer') } end)
+  helper.ask('/v1/info', onAbout)
+end
+
+-- From the helper tick: ask for the newest release now and then.
+askUpdate = function()
+  if not helper.enabled then return end
+  updateAskAt = updateAskAt or S.clock + M.UPDATE_FIRST_S
+  if S.clock < updateAskAt then return end
+  updateAskAt = S.clock + M.UPDATE_ASK_S
+  helperAboutAt = S.clock
+  helper.ask('/v1/info', function(data, err)
+    if not data then updateAskAt = S.clock + M.UPDATE_RETRY_S end
+    onAbout(data, err)
+  end)
+end
+
+-- What the phone shows about updates: nil until the helper has said which release is the newest.
+-- { latest, mod, helper, modOld, helperOld, available, hidden (the player closed the notice for this release), checkError }
+function M.updateInfo()
+  local a = helperAbout
+  local u = a and type(a.update) == 'table' and a.update or nil
+  if not u or type(u.latest) ~= 'string' then return nil end
+  local helperVersion = tostring(a.version or '?')
+  local modOld, helperOld = M.versionNewer(u.latest, M.VERSION), M.versionNewer(u.latest, helperVersion)
+  return { latest = u.latest, mod = M.VERSION, helper = helperVersion, modOld = modOld, helperOld = helperOld,
+    available = modOld or helperOld, hidden = S.career and S.career.updateHidden == u.latest or false,
+    checkError = type(u.error) == 'string' and u.error or nil }
+end
+
+-- name: open (the release page in the player's browser) | hide (close the notice until a newer release)
+function M.updateDo(name)
+  local u = M.updateInfo()
+  if name == 'hide' and u and S.career then
+    S.career.updateHidden = u.latest
+    saveCareer()
+  elseif name == 'open' then
+    -- the helper opens it (Python's webbrowser); a helper too old for that: the game's own browser call
+    helper.ask('/v1/update/open', function(data)
+      if data and data.opened then return end
+      local open = rawget(_G, 'openWebBrowser')
+      if not (open and pcall(open, M.RELEASES .. '/latest')) then
+        say('Open ' .. M.RELEASES .. ' in your browser to download the update.', 10)
+      end
+    end)
+  end
+  return M.updateInfo()
 end
 
 local function gameValue(fn)
@@ -3005,6 +3135,8 @@ function M.supportReport(phoneNotes)
     add('Helper info: version ', tostring(a.version), ', Overture ', tostring(a.release),
       missing and (', MISSING libraries: ' .. missing) or '', ', ', tostring(net.requests or 0), ' downloads')
   else add('Helper info: not asked yet (open Settings with the game running, then copy again)') end
+  local up = M.updateInfo()
+  if up then add('Newest release: ', up.latest, up.available and ' (update available)' or ' (up to date)') end
   add('Data: ', S.loadError and ('ERROR ' .. S.loadError) or (S.packInfo ~= '' and S.packInfo or 'bundled packs loaded'))
   if S.saveError then add('Save: ', tostring(S.saveError)) end
   add('Money: ', tostring(math.floor(c.money or 0)), ' CZK, ', tostring(c.delivered or 0), ' deliveries')
@@ -3116,15 +3248,6 @@ function M.onExtensionLoaded()
   if S.loadError then problem('E', S.loadError) end
 end
 
--- the VR dash phone follows the car, so it is placed right before each frame is drawn
-local function dashMoney(n)
-  local c = type(S.pendingCareer) == 'table' and S.pendingCareer or S.career -- the same career the phone shows
-  return currency.format(n, c and c.currency)
-end
-function M.onPreRender(dtReal)
-  dash.tick(dtReal, M.phoneState, dashMoney)
-end
-
 -- The phone page on a car's dash screen (vehicles/common/cargo_earth_phone) asks the same questions as the floating phone
 -- app, but a car screen page can only send Lua one way. dashCall runs the question (only the phone app's own calls into
 -- cargoEarth_core) and sends the answer back through the car's cargoEarthPhone controller.
@@ -3134,8 +3257,11 @@ function M.dashAllowed(cmd)
     or cmd:find('^%(function%(%) if not cargoEarth_core then return nil end; local ok, value = pcall%(cargoEarth_core%.[%w_]+') ~= nil
 end
 
--- a car with the phone part in it: its own phone replaces the floating dash screen
-function M.dashPhonePart(vehId) dash.partCar(tonumber(vehId)) end
+-- a car's phone holder has started its screen
+function M.dashPhonePart(vehId)
+  log('I', 'cargoEarth', 'dash phone holder running in car ' .. tostring(vehId))
+  dash.partCar(tonumber(vehId))
+end
 
 function M.dashCall(vehId, id, cmd)
   local veh = getObjectByID and getObjectByID(tonumber(vehId) or -1)
@@ -3149,12 +3275,31 @@ function M.dashCall(vehId, id, cmd)
     tonumber(id) or 0, json))
 end
 
--- a button on the VR dash screen was pressed (slot 1 = left, 2 = right): do what the drawn button says, if the
--- phone still offers it (the picture can be up to a second old)
-function M.dashTap(slot)
-  local a = dashtap.pressed(dash.shownButtons(), dashtap.buttons(M.phoneState()), tonumber(slot) or 0)
-  log('I', 'cargoEarth', 'dash buttons: pressed slot ' .. tostring(slot) .. ' -> ' .. tostring(a))
-  if a then M.phoneAction(a) end
+-- Settings > Phone on the dashboard: fit (on) or take off the car's phone holder. It changes the car's parts the way
+-- BeamNG's Vehicle Config does, so in a career the parts checkout on the phone asks to pay for it like any other part.
+local function copyTree(t)
+  if type(t) ~= 'table' then return t end
+  local out = {}
+  for k, x in pairs(t) do out[k] = copyTree(x) end
+  return out
+end
+
+function M.dashHolder(on)
+  local G = M.G
+  local v = G.vehicle and G.vehicle()
+  local part = v and dash.partName(v.model)
+  if not part then return false, 'This car has no phone holder yet.' end
+  local path = garage.slotFor(G, v, part)
+  if not path then return false, 'This car has no free slot for the phone holder.' end
+  if (v.slotPartMap[path] == part) == (on and true or false) then return true end
+  local tree = copyTree(v.tree)
+  if not tree or not garage.setInTree(tree, path, on and part or '') then return false, 'This car’s parts could not be changed.' end
+  local ok, err = pcall(G.fitTree, tree)
+  if not ok then
+    log('W', 'cargoEarth', 'dash phone holder: ' .. tostring(err))
+    return false, 'BeamNG could not change this car’s parts.'
+  end
+  return true
 end
 
 function M.onUpdate(dtReal, dtSim)

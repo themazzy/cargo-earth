@@ -865,8 +865,8 @@ test('refill quotes respect the pump, the amount asked for and the money at hand
   assert(fuel.quote(car, fuel.sells('electric'), 1) == nil, 'a charger does not sell petrol')
   local some = fuel.quote(car, fuel.sells('fuel'), 1, 10)
   assert(some.units.gasoline == 10 and not some.full and some.levels.mainTank == 0.75)
-  local poor = fuel.quote(car, fuel.sells('fuel'), 1, nil, 190)
-  assert(poor.units.gasoline == 5 and poor.cost == 190 and not poor.full)
+  local poor = fuel.quote(car, fuel.sells('fuel'), 1, nil, 5 * fuel.PRICE.gasoline)
+  assert(poor.units.gasoline == 5 and poor.cost == 5 * fuel.PRICE.gasoline and not poor.full)
   assert(fuel.quote(car, fuel.sells('fuel'), 1, nil, 0) == nil)
   assert(fuel.quote(car, fuel.sells('fuel'), 1, nil, nil, true).cost == 0, 'a company card pays nothing')
   fuel.apply(car, full)
@@ -962,6 +962,60 @@ test('a tank refilled by a game reset is put back and costs nothing', function()
   tank.ratio = 1
   fuelReport(core)
   assert(tank.ratio == 0.4 and fuelSets == 1 and s.career.money == 1000)
+end)
+
+test('a fill at one of the game\'s own pumps is kept and paid at that station\'s price', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  advance(core, 2)
+  fuelReport(core)
+  local money = s.career.money
+  core.onGameRefuel(vehicle.id, {type = 'gasStation', facility = {id = 'bne_fuel_1', name = 'Earth Pump'}}, {gasoline = true})
+  tank.ratio = 1
+  fuelReport(core)
+  local cost = math.ceil(20 * fuel.price('gasoline', fuel.stationFactor('bne_fuel_1')) - 1e-6)
+  assert(tank.ratio == 1 and fuelSets == 0, 'the game level stays')
+  assert(s.career.garage.car.fuel.tanks.mainTank.ratio == 1 and s.career.money == money - cost)
+  local h = s.career.accounts.history[1]
+  assert(h.category == 'fuel' and h.amount == -cost and h.detail == 'Earth Pump')
+  -- the pump is used once: a later jump (a reset) is put back for free again
+  tank.ratio = 0.6
+  fuelReport(core)
+  tank.ratio = 1
+  fuelReport(core)
+  assert(tank.ratio == 0.6 and s.career.money == money - cost)
+end)
+
+test('a game pump fill without the money goes on the debt; an old pump press expires', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  advance(core, 2)
+  fuelReport(core)
+  s.career.money, s.career.garage.debt = 10, 0
+  core.onGameRefuel(vehicle.id, {facility = {id = 'p', name = 'Pump'}}, {any = true})
+  tank.ratio = 0.75
+  fuelReport(core)
+  assert(tank.ratio == 0.75 and s.career.money == 10 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.stationFactor('p')) - 1e-6))
+  core.onGameRefuel(vehicle.id, {facility = {id = 'p'}}, {any = true})
+  advance(core, (core.PUMP_WAIT_S + 5) * 2)
+  fuelReport(core)
+  tank.ratio = 1
+  fuelReport(core)
+  assert(tank.ratio == 0.75, 'a refill long after the pump press is a reset')
+end)
+
+test('the game pump hook wraps refuelCar once and still refuels', function()
+  local gamecar = require('cargoEarth/gamecar')
+  local calls, heard = 0, nil
+  local gs = {refuelCar = function() calls = calls + 1 end}
+  local had = rawget(_G, 'freeroam_gasStations')
+  rawset(_G, 'freeroam_gasStations', gs)
+  assert(gamecar.hookPumps(function(id, st) heard = {id, st} end))
+  local wrapped = gs.refuelCar
+  assert(gamecar.hookPumps(function() end) and gs.refuelCar == wrapped, 'never wrapped twice')
+  gs.refuelCar({facility = {}}, {}, {getID = function() return 7 end})
+  assert(calls == 1 and heard[1] == 7)
+  rawset(_G, 'freeroam_gasStations', had)
 end)
 
 test('refuelling away from a station is refused; delivery works anywhere and can go on debt', function()
@@ -1452,7 +1506,7 @@ test('upkeep: wear by km, service at a price, overdue service makes breakdowns l
   st = upkeep.state(car)
   assert(st.items[1].due and st.items[2].soon == false and st.due >= 1)
   assert(upkeep.chance(car, 100) > 0 and upkeep.chance(car, 100000) == upkeep.MAX_CHANCE)
-  assert(upkeep.cost({model = 'us_semi'}, 'oil') == math.floor(120 * 3.2 / 5 + 0.5) * 5, 'a tractor costs more')
+  assert(upkeep.cost({model = 'us_semi'}, 'oil') == math.floor(upkeep.byId.oil.cost * 3.2 / 5 + 0.5) * 5, 'a tractor costs more')
   local c = {money = 50}
   local ok, why = upkeep.service(c, car, nil, 1)
   assert(not ok and why:find('Not enough'))
@@ -1937,6 +1991,42 @@ test('the support report has versions, helper state and recent problems, but no 
   assert(not again.copied and again.text:find('Phone errors', 1, true) == nil)
 end)
 
+test('the phone says when a newer release is out (the helper looks it up)', function()
+  local helper = require('cargoEarth/helper')
+  local ask, enabled = helper.ask, helper.enabled
+  local asked, opened = {}, nil
+  helper.enabled = true
+  helper.ask = function(path, cb) asked[#asked + 1] = { path, cb } end
+  local ok, why = pcall(function()
+    local core, s = fresh()
+    assert(core.versionNewer('0.10.0', '0.9.9') and core.versionNewer('v1.0', '0.8.0'))
+    assert(not core.versionNewer('0.8.0', '0.8.0') and not core.versionNewer('0.9.0-beta', '0.8.0') and not core.versionNewer(nil, '1'))
+    assert(core.phoneState().update == nil, 'nothing known yet')
+    advance(core, 60)
+    local info
+    for _, a in ipairs(asked) do if a[1] == '/v1/info' then info = a end end
+    assert(info, 'asked the helper for its info')
+    info[2]({ version = core.VERSION, update = { latest = '99.0.0' } })
+    local u = core.phoneState().update
+    assert(u and u.available and u.modOld and u.helperOld and u.latest == '99.0.0' and not u.hidden)
+    assert(s.log[1]:find('Cargo Earth 99.0.0 is out', 1, true), s.log[1])
+    assert(core.settingsState().update.latest == '99.0.0')
+    core.updateDo('open')
+    assert(asked[#asked][1] == '/v1/update/open')
+    openWebBrowser = function(url) opened = url end
+    asked[#asked][2]({ opened = false })
+    openWebBrowser = nil
+    assert(opened == 'https://github.com/themazzy/cargo-earth/releases/latest')
+    u = core.updateDo('hide')
+    assert(u.hidden and s.career.updateHidden == '99.0.0')
+    -- up to date: no notice
+    info[2]({ version = core.VERSION, update = { latest = core.VERSION } })
+    assert(not core.phoneState().update.available)
+  end)
+  helper.ask, helper.enabled = ask, enabled
+  assert(ok, why)
+end)
+
 test('the dash phone part only runs the phone app\'s own calls', function()
   local core = fresh()
   assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.phoneAction("online") or nil'))
@@ -1970,6 +2060,31 @@ test('a wreck never costs more to repair than the car is worth', function()
   assert(grow == 0 and g.repair == cap, 'more damage on a wreck adds nothing')
   -- a free menu repair of a wreck puts only the capped price on the debt
   assert(garage.trackDamage(g, 0) == 'debt' and g.debt == cap and g.repair == 0)
+end)
+
+test('Settings fits and removes the dash phone holder through the parts tree', function()
+  local core = fresh()
+  local fitted
+  local v = {id = 9, model = 'pigeon', ioCtx = {},
+    tree = {chosenPartName = 'pigeon', children = {pigeon_mod = {chosenPartName = ''}}},
+    slotPartMap = {['/pigeon_mod/'] = ''}}
+  core.G.vehicle = function() return v end
+  core.G.part = function(_, name) if name == 'pigeon' then return {slots2 = {{name = 'pigeon_mod'}}} end end
+  core.G.compatible = function(_, def) return def.name == 'pigeon_mod' and {'cargo_earth_phone_pigeon'} or {} end
+  core.G.fitTree = function(tree) fitted = tree end
+  local st = core.settingsState().dash
+  assert(st.car and st.supported and not st.fitted, 'a Pigeon without the holder can fit one')
+  core.settingsDo('dash', 'fit')
+  assert(fitted and fitted.children.pigeon_mod.chosenPartName == 'cargo_earth_phone_pigeon')
+  assert(v.tree.children.pigeon_mod.chosenPartName == '', 'the car\'s own tree is left for the game to change')
+  v.slotPartMap['/pigeon_mod/'] = 'cargo_earth_phone_pigeon'
+  assert(core.settingsState().dash.fitted)
+  fitted = nil
+  core.settingsDo('dash', 'remove')
+  assert(fitted and fitted.children.pigeon_mod.chosenPartName == '')
+  v.model = 'covet'
+  st = core.settingsDo('dash', 'fit').dash
+  assert(not st.supported and st.error, 'a car without a holder says so')
 end)
 
 print(string.format('%d career tests passed', total))

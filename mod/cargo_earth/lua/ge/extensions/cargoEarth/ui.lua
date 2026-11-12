@@ -282,7 +282,7 @@ local function garageSection(core, S)
       tostring(r.model), r.slotPaths or 0, r.shopSlots or 0, r.configs or 0, tostring(r.damage))
   end
 
-  wrapped('Use the phone Garage to open BeamNG’s parts editor and review the purchase.')
+  wrapped('Use Menu → Garage on the phone to open BeamNG’s parts editor and review the purchase.')
 
   if im.TreeNode1('Spare parts##ceSpares') then
     local sp = garage.spares(G, g)
