@@ -22,7 +22,7 @@ A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight,
 - Mind real speed cameras from OpenStreetMap: a fine and a lost star for passing one too fast.
 - See the speed limit of the road you drive on, the same one BeamNG.Earth's signs and traffic use.
 - Buy new trucks and trailers for your firm, hire drivers with their own speed, care and wage, and keep every vehicle serviced or risk a breakdown.
-- Earn tips for fast deliveries and a smooth ride.
+- Earn tips for fast deliveries that arrive in perfect condition.
 - Special cargo: fragile, chilled and oversize loads that pay more and need care.
 - Tow broken-down cars to a workshop on a car trailer or a flatbed.
 - Tanker runs that resupply real fuel stations.
