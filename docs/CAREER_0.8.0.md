@@ -21,6 +21,11 @@ The phone has a **Radio** tab that plays real internet radio stations of the cou
 - **Playback** happens in the phone page itself (an HTML audio element), so it keeps playing with the phone folded or on
   another tab; the folded phone shows the station. Play/stop, previous/next, volume and saved stations (star), all by
   clicking. Volume, the last station and saved stations stay in the UI's local storage.
+- **When the game cannot play it** (Jan's first test: every station failed inside BeamNG's UI browser), the phone hands
+  the station to the helper, which plays it on the computer: on Windows with the system's own media player (Media
+  Foundation through PowerShell; MP3 and AAC), elsewhere with ffplay, mpv or VLC if installed. The phone remembers
+  this ("Play through the Cargo Earth helper", a switch under the volume). The helper plays only stations it listed
+  itself, and stops when the game has not checked in for 20 s, so the music never outlives the game.
 - Crossing a border keeps the current station playing and lists the new country's stations.
 
 Helper API: `/v1/radio?cc=CZ&lat=..&lon=..` and `/v1/radioclick?id=<uuid>`. The helper's `/v1/info` says `"radio": true`.

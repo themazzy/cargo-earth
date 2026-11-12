@@ -2,6 +2,7 @@ const fs = require('node:fs')
 const vm = require('node:vm')
 const assert = require('node:assert/strict')
 let directive
+const audios = []
 const commands = []
 const timers = [], destroy = [], pending = [], watches = {}
 let now = 0, hold = false
@@ -9,7 +10,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
   angular: { module: () => ({ directive: (name, factory) => { directive = factory[factory.length - 1]() } }) },
   bngApi: { serializeToLua: JSON.stringify, engineLua: (command, callback) => { commands.push(command); if (hold) pending.push(callback); else callback({screen: 'offline'}) } },
   Date: {now: () => now},
-  Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {} } addEventListener (n, f) { this.on[n] = f }
+  Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {}; audios.push(this) } addEventListener (n, f) { this.on[n] = f }
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
     getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
   localStorage: { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
@@ -103,6 +104,19 @@ scope.radioFav(stations[1], {stopPropagation () {}})
 assert(scope.isSaved(stations[1]))
 scope.radioToggle()
 assert.equal(scope.radio.status, 'idle')
+// the game's browser refuses the stream: the helper plays it, and keeps doing so
+scope.radioPlay(stations[0], stations)
+audios[0].error = {code: 4}
+audios[0].on.error()
+assert.equal(scope.radio.via, 'helper', 'A stream the page cannot play goes to the helper')
+assert(commands.some(command => command.includes('pcall(cargoEarth_core.radioDo, "helperPlay", "a", 0.8')))
+scope.rs = {country: 'CZ', top: stations, near: [], player: {playing: true, secs: 3, player: 'powershell'}}
+scope.radioVol(-1)
+assert(commands.some(command => command.includes('"helperVolume", 0.7')))
+scope.radioStop()
+assert(commands.at(-1).includes('"helperStop"'))
+scope.radioVia('page')
+assert.equal(scope.radio.via, 'page')
 scope.radioPlay({id: 'x', name: 'Bad', url: 'javascript:alert(1)'})
 assert.equal(scope.radio.status, 'error', 'Only web streams are played')
 assert(directive.template.includes('Stations from Radio Browser'))
