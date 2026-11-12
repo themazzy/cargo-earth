@@ -26,6 +26,7 @@ local st = { state = 'off', loading = 0, ready = 0, msg = nil }
 local nextAsk, wanted, got = 0, {}, {}
 local nearCell
 local nextCameras = 0
+local queue = {}           -- { { path, on } } one-off requests
 M.enabled = true
 
 function M.configure(cfg)
@@ -119,6 +120,10 @@ end
 local function finish(data, err, now, lat, lon, onArea)
   local r = req
   close()
+  if r.what == 'ask' then
+    if r.on then r.on(data, err) end
+    return
+  end
   if r.what == 'cameras' then
     if data then
       st.cameras = data.state
@@ -172,12 +177,30 @@ local function finish(data, err, now, lat, lon, onArea)
   end
 end
 
+function M.ask(path, onDone)
+  for _, q in ipairs(queue) do if q[1] == path then return end end
+  if #queue < 8 then queue[#queue + 1] = { path, onDone } end
+end
+
+function M.asking() return #queue > 0 or (req ~= nil and req.what == 'ask') end
+
 function M.tick(lat, lon, now, onArea, onCameras, onlyCameras)
-  if not M.enabled then close() return end
+  if not M.enabled then
+    close()
+    for _, q in ipairs(queue) do if q[2] then q[2](nil, 'helper turned off') end end
+    queue = {}
+    return
+  end
   if type(lat) ~= 'number' or type(lon) ~= 'number' or lat ~= lat or lon ~= lon or math.abs(lat) > 90 or math.abs(lon) > 180 then return end
   if req then
     local data, err = step(now)
     if data or err then finish(data, err, now, lat, lon, onArea) end
+    return
+  end
+  if #queue > 0 then
+    local q = table.remove(queue, 1)
+    local ok, err = start(q[1], 'ask', nil, now)
+    if ok then req.on = q[2] elseif q[2] then q[2](nil, tostring(err)) end
     return
   end
   if onCameras and now >= nextCameras then
@@ -209,7 +232,7 @@ function M._reset()
   close()
   st = { state = 'off', loading = 0, ready = 0 }
   nextAsk, wanted, got = 0, {}, {}
-  nearCell, socket, nextCameras = nil, nil, 0
+  nearCell, socket, nextCameras, queue = nil, nil, 0, {}
   M.enabled, M.PORT = true, 47820
 end
 

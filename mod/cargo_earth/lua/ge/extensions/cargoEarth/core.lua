@@ -1885,9 +1885,78 @@ local function helperTick(p)
   local places = S.placesRequestedAt and S.clock - S.placesRequestedAt < 30
   local areas = (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
   local wantCameras = camerasOn() and onHelperCameras or nil
-  if areas or wantCameras then
+  if areas or wantCameras or helper.asking() then
     helper.tick(p.lat, p.lon, S.clock, onHelperArea, wantCameras, not areas)
   end
+end
+
+------------------------------------------------------------------------------------------ radio
+-- The phone's radio plays internet stations of the country the player drives in. The helper finds them (Radio Browser);
+-- the phone plays the stream itself. The game only asks and passes the list on.
+
+M.RADIO_ASK_S = 3          -- the helper is still fetching the list: ask again after this long
+M.RADIO_NEAR_S = 120       -- the "near you" list follows the car this often
+local radio = { cc = nil, state = nil, data = nil, askedAt = -math.huge, asking = false }
+
+local function radioRows(rows, withKm)
+  local out = {}
+  for _, r in ipairs(type(rows) == 'table' and rows or {}) do
+    if type(r) == 'table' and type(r[1]) == 'string' and type(r[2]) == 'string' and type(r[3]) == 'string'
+      and r[3]:match('^https?://') then
+      out[#out + 1] = { id = r[1], name = r[2], url = r[3], codec = tostring(r[4] or ''), kbps = tonumber(r[5]) or 0,
+        tags = tostring(r[6] or ''), region = tostring(r[7] or ''), km = withKm and tonumber(r[8]) or nil }
+    end
+  end
+  return out
+end
+
+local function radioAsk(p, cc)
+  if radio.asking then return end
+  radio.asking, radio.askedAt = true, S.clock
+  local path = string.format('/v1/radio?cc=%s&lat=%.4f&lon=%.4f', cc, p.lat, p.lon)
+  helper.ask(path, function(data, err)
+    radio.asking = false
+    if radio.cc ~= cc then return end
+    if not data then
+      radio.state = err == 'HTTP 404' and 'old' or 'off'
+      return
+    end
+    radio.state = data.state
+    if data.state == 'ready' then
+      radio.data = { near = radioRows(data.near, true), top = radioRows(data.top) }
+    end
+  end)
+end
+
+-- What the phone's Radio tab shows: the country, its stations and how the list is coming along.
+function M.radioState()
+  if radio.asking and S.clock - radio.askedAt > 30 then radio.asking = false end
+  local p = earth.pose()
+  local cc = S.borders and p and borders.find(S.borders, p.lat, p.lon) or nil
+  if cc and cc ~= radio.cc and radio.cc then
+    -- a new country: keep the old list until the new one is in, so a station playing does not vanish from view
+    radio.state = 'loading'
+  end
+  if cc then
+    local changed = cc ~= radio.cc
+    radio.cc = cc
+    local wait = radio.state == 'ready' and M.RADIO_NEAR_S or M.RADIO_ASK_S
+    if (changed or S.clock - radio.askedAt >= wait) and helper.enabled then radioAsk(p, cc) end
+  end
+  local out = { country = radio.cc, countryName = radio.cc and currency.name(radio.cc) or nil,
+    state = not helper.enabled and 'disabled' or (not radio.cc and (p and 'nowhere' or 'noworld')) or radio.state or 'loading' }
+  if radio.data then out.near, out.top = radio.data.near, radio.data.top end
+  return out
+end
+
+-- name: refresh | played (a = station id: Radio Browser counts what is listened to)
+function M.radioDo(name, a)
+  if name == 'refresh' then
+    radio.askedAt = -math.huge
+  elseif name == 'played' and type(a) == 'string' and a:match('^[%x%-]+$') and #a == 36 then
+    helper.ask('/v1/radioclick?id=' .. a, nil)
+  end
+  return M.radioState()
 end
 
 -- What the phone and window say about the helper: nil when it isn't needed here.
