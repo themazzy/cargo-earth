@@ -1417,6 +1417,7 @@ angular.module('beamng.apps')
           r.why = p.stuck ? 'no sound? the station may be offline, try the next one' : ''
         }
         else if (p.error) { r.status = 'error'; r.why = p.error === 'old' ? 'update the Cargo Earth helper' : (p.error === 'helper' ? 'the Cargo Earth helper is not running' : p.error) }
+        else r.status = 'idle'      // stopped without an error (helper restarted, or its watchdog): Play starts it again
       }
       function applyRadio(r) {
         if (lastCountry && r.country && r.country !== lastCountry) scope.radio.moved = true

@@ -177,7 +177,14 @@ local function finish(data, err, now, lat, lon, onArea)
   end
 end
 
-function M.ask(path, onDone)
+-- replace: a path prefix; queued requests starting with it are dropped first, so only the newest command of that kind
+-- is sent (play / stop / volume of the radio: the last press wins, in order).
+function M.ask(path, onDone, replace)
+  if replace then
+    for i = #queue, 1, -1 do
+      if queue[i][1]:sub(1, #replace) == replace then table.remove(queue, i) end
+    end
+  end
   for _, q in ipairs(queue) do if q[1] == path then return end end
   if #queue < 8 then queue[#queue + 1] = { path, onDone } end
 end

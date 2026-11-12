@@ -113,6 +113,12 @@ assert(commands.some(command => command.includes('pcall(cargoEarth_core.radioDo,
 scope.rs = {country: 'CZ', top: stations, near: [], player: {playing: true, secs: 3, player: 'powershell'}}
 scope.radioVol(-1)
 assert(commands.some(command => command.includes('"helperVolume", 0.7')))
+pending.length = 0; hold = true
+scope.setTab('radio')
+pending.shift()({country: 'CZ', top: stations, near: [], player: {playing: false, error: null}})
+hold = false
+assert.equal(scope.radio.status, 'idle', 'A player that stopped by itself shows as stopped, so Play works again')
+scope.radioPlay(stations[0], stations)
 scope.radioStop()
 assert(commands.at(-1).includes('"helperStop"'))
 scope.radioVia('page')

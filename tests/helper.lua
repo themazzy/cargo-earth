@@ -130,6 +130,15 @@ test('one-off requests go first, once each, and answer their caller', function()
   assert(why == 'helper turned off' and not client.asking())
 end)
 
+test('a newer radio command replaces queued ones, so the last press wins in order', function()
+  client.ask('/v1/player/stop', nil, '/v1/player/')
+  client.ask('/v1/player/play?id=a', nil, '/v1/player/')
+  client.ask('/v1/player/stop', nil, '/v1/player/')
+  client.ask('/v1/radio?cc=CZ', nil)
+  for i = 0, 10 do client.tick(50, 14, i / 2, nil, nil, true) end
+  assert(#requests == 2 and requests[1] == '/v1/player/stop' and requests[2] == '/v1/radio?cc=CZ', table.concat(requests, ' '))
+end)
+
 client._reset()
 socket = nil
 package.loaded['cargoEarth/helper'] = nil
