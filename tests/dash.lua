@@ -96,6 +96,11 @@ test('VR dash screen buttons follow the phone and press what they show', functio
   assert(tap.buttons({ screen = 'resume' })[1].action == 'resume')
   assert(#tap.buttons({ screen = 'error' }) == 0 and #tap.buttons(nil) == 0)
   assert(tap.actionFor({}, 1) == nil)
+  local incoming = tap.buttons({ screen = 'incoming', incoming = {} })
+  local waiting = tap.buttons({ screen = 'waiting' })
+  assert(tap.pressed(incoming, incoming, 2) == 'accept')
+  assert(tap.pressed(waiting, incoming, 1) == nil, 'a stale Go offline does not decline the new order')
+  assert(tap.pressed(waiting, incoming, 2) == nil and tap.pressed({}, incoming, 1) == nil)
   for _, x in ipairs(tap.buttons({ screen = 'incoming', incoming = {} })) do assert(x.action ~= 'cancel') end
 end)
 

@@ -45,6 +45,15 @@ function M.actionFor(buttons, slot)
   return b and b.action or nil
 end
 
+-- What a press does: the action of the button drawn in that slot, only if the phone still offers that action now.
+-- So a press on a stale picture (an order arrived after "Go offline" was drawn) does nothing instead of something else.
+function M.pressed(shown, now, slot)
+  local a = M.actionFor(shown or {}, slot)
+  if not a then return nil end
+  for _, b in ipairs(now or {}) do if b.action == a then return a end end
+  return nil
+end
+
 ------------------------------------------------------------------------------------------ where the boxes go
 
 -- The two slots on a W x H picture, as offsets from its centre in pixels (x right, y up) and sizes.

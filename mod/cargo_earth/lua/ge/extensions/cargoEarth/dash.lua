@@ -376,6 +376,9 @@ function M.forget()
   renderer, rid, sig, hidden = nil, nil, nil, true
 end
 
+-- the buttons on the picture the player sees now
+function M.shownButtons() return hidden and {} or shownButtons end
+
 -- for the phone's Settings
 function M.state()
   local p = M.prefs()

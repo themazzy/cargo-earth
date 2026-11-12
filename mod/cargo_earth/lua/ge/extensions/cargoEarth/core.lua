@@ -2941,9 +2941,10 @@ function M.onPreRender(dtReal)
   dash.tick(dtReal, M.phoneState, dashMoney)
 end
 
--- a button on the VR dash screen was pressed (slot 1 = left, 2 = right): do what it says on the phone right now
+-- a button on the VR dash screen was pressed (slot 1 = left, 2 = right): do what the drawn button says, if the
+-- phone still offers it (the picture can be up to a second old)
 function M.dashTap(slot)
-  local a = dashtap.actionFor(dashtap.buttons(M.phoneState()), tonumber(slot) or 0)
+  local a = dashtap.pressed(dash.shownButtons(), dashtap.buttons(M.phoneState()), tonumber(slot) or 0)
   if a then M.phoneAction(a) end
 end
 
