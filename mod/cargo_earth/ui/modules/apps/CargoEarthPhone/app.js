@@ -1341,7 +1341,12 @@ angular.module('beamng.apps')
         }
         holder.style.transform = 'matrix3d(' + m.join(',') + ')'
       }
-      scope.$on('CargoEarthDash', function (e, d) { scope.dashUpdate(d) })
+      // The game sends only when the corners move, so hiding or showing the app (menus, photo mode) while the car
+      // stands still is checked here: the last corners are applied again, which also returns a hidden phone.
+      var lastDash = null
+      scope.$on('CargoEarthDash', function (e, d) { lastDash = d; scope.dashUpdate(d) })
+      var dashWatch = setInterval(function () { if (lastDash && lastDash.on) scope.dashUpdate(lastDash) }, 250)
+      scope.$on('$destroy', function () { clearInterval(dashWatch) })
       scope.$on('$destroy', function () { if (holder && holder.parentNode) holder.parentNode.removeChild(holder) })
       scope.sdo = function (name, a, b) {
         var args = [name]

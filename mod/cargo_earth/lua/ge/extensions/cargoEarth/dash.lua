@@ -190,8 +190,12 @@ function M.tick(dt)
     c = nil
   end
   if c then
-    if not same(c, last) then guihooks.trigger('CargoEarthDash', { on = true, c = c }) end
-    sent, last = true, c
+    -- compare with what was last sent, so slow drifts add up and are sent once they cross the threshold
+    if not same(c, last) then
+      guihooks.trigger('CargoEarthDash', { on = true, c = c })
+      last = c
+    end
+    sent = true
   elseif sent then
     guihooks.trigger('CargoEarthDash', { on = false })
     sent, last = false, nil
