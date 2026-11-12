@@ -1028,6 +1028,7 @@ class Radio:
         self.servers = servers or radio_servers
         self._hosts = None
         self.state, self.fail_at, self.fresh_until, self.refreshing = {}, {}, {}, set()
+        self.looked_up = {}       # station id -> stream, for saved stations no list here has
         self.lock = threading.Lock()
 
     def path(self, cc):
@@ -1066,10 +1067,22 @@ class Radio:
         except OSError:
             names = []
         for n in names:
-            for r in self._load(n[:2]) or []:
+            for r in self._load(n[:2], any_age=True) or []:   # a saved station from a list since gone stale
                 if r[0] == sid:
                     return r[2]
-        return None
+        # a station saved on the phone that no list here has (another computer, a cleared cache): ask Radio Browser
+        with self.lock:
+            if sid in self.looked_up:
+                return self.looked_up[sid]
+        try:
+            rows = radio_rows(self._api("/json/stations/byuuid/" + sid), "")
+        except Exception as e:  # noqa: BLE001 - unknown station
+            log("radio: could not look up a saved station:", e)
+            return None
+        url = rows[0][2] if rows and rows[0][0] == sid else None
+        with self.lock:
+            self.looked_up[sid] = url
+        return url
 
     def click(self, sid):
         """Radio Browser counts what people listen to: one call each time a station starts playing."""
@@ -1078,10 +1091,12 @@ class Radio:
         POOL.submit(lambda: self._api("/json/url/" + sid))
         return {"ok": True}
 
-    def _load(self, cc):
+    def _load(self, cc, any_age=False):
         try:
             with open(self.path(cc), "rb") as f:
                 data = json.loads(f.read(MAX_RADIO_BYTES))
+            if any_age and isinstance(data["stations"], list):
+                return data["stations"]
             if time.time() - data["at"] < RADIO_HOURS * 3600 and isinstance(data["stations"], list):
                 self.fresh_until[cc] = data["at"] + RADIO_HOURS * 3600
                 return data["stations"]

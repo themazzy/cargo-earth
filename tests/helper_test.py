@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import json
 import os
 import tempfile
 import threading
@@ -404,7 +405,23 @@ class NetworkAndStorageTests(unittest.TestCase):
             radio = helper.Radio(cache, lambda cc: [], servers=lambda: ["x"])
             radio.state["CZ"] = [["00000000-0000-0000-0000-000000000001", "A", "http://a", "MP3", 0, "", ""]]
             self.assertEqual(radio.url_of("00000000-0000-0000-0000-000000000001"), "http://a")
+            asked = []
+            def api(path):
+                asked.append(path)
+                if path.endswith("0003"):
+                    return [{"stationuuid": "00000000-0000-0000-0000-000000000003", "name": "Saved", "url_resolved": "http://saved/s",
+                             "codec": "MP3", "lastcheckok": 1}]
+                raise OSError("unknown")
+            radio._api = api
             self.assertIsNone(radio.url_of("00000000-0000-0000-0000-000000000002"))
+            self.assertEqual(radio.url_of("00000000-0000-0000-0000-000000000003"), "http://saved/s",
+                             "A saved station no list has is looked up")
+            radio.url_of("00000000-0000-0000-0000-000000000003")
+            self.assertEqual(asked.count("/json/stations/byuuid/00000000-0000-0000-0000-000000000003"), 1)
+            radio.state.clear()
+            with open(radio.path("SK"), "w") as f:      # a list older than a day still knows its stations
+                json.dump({"at": 0, "stations": [["00000000-0000-0000-0000-000000000004", "Old", "http://old", "MP3", 0, "", ""]]}, f)
+            self.assertEqual(radio.url_of("00000000-0000-0000-0000-000000000004"), "http://old")
             self.assertIsNone(radio.url_of("http://evil"))
 
     def test_stream_relay_passes_only_listed_stations_to_the_game(self):

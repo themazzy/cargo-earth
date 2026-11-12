@@ -1395,7 +1395,7 @@ angular.module('beamng.apps')
             if (r.via === 'page' && r.station) {
               // this station only: the helper plays it on the computer (the switch below stays as the player set it)
               r.alone = true; r.why = 'the game could not play it (error ' + (code || '?') + ')'
-              audio.removeAttribute('src')
+              stopAudio()
               helperPlay(r.station)
             } else r.status = 'error'
           })
@@ -1403,6 +1403,10 @@ angular.module('beamng.apps')
         audio.addEventListener('ended', function () { radioStatus('idle') })
       }
       var lastCountry = null
+      // pause and unload: only removing src keeps the old stream (and its connection to the helper) going
+      function stopAudio() {
+        if (audio) { audio.pause(); audio.removeAttribute('src'); try { audio.load() } catch (e) { /* nothing loaded */ } }
+      }
       function helperPlays() { return scope.radio.via === 'helper' || scope.radio.alone }
       function helperPlay(st) {
         var r = scope.radio
@@ -1462,7 +1466,7 @@ angular.module('beamng.apps')
         // the game's browser has no AAC, and needs the helper to pass the stream on: otherwise the helper plays it
         var stream = scope.rs && scope.rs.stream
         if (r.via !== 'helper' && (!stream || /^aac/i.test(st.codec || ''))) r.alone = true
-        if (helperPlays()) { audio.removeAttribute('src'); helperPlay(st); saveRadio(); return }
+        if (helperPlays()) { stopAudio(); helperPlay(st); saveRadio(); return }
         r.status = 'loading'
         audio.src = stream + encodeURIComponent(st.id)
         var started = audio.play()
@@ -1470,7 +1474,7 @@ angular.module('beamng.apps')
         saveRadio()
       }
       scope.radioStop = function () {
-        if (audio) { audio.pause(); audio.removeAttribute('src'); try { audio.load() } catch (e) { /* nothing loaded */ } }
+        stopAudio()
         if (helperPlays()) lua('radioDo', ['helperStop'], function () {})
         scope.radio.status = 'idle'; scope.radio.alone = false
       }
