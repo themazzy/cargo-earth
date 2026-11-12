@@ -45,7 +45,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "0.4.0"
-AREA_CACHE_VERSION = "4"  # include fuel stations and chargers; retain existing downloaded Parquet blocks
+AREA_CACHE_VERSION = "5"  # fuel depots for tanker runs; retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
 STAC_ROOT = "https://stac.overturemaps.org"
@@ -77,6 +77,7 @@ CATS_RX = [(c, re.compile(r)) for c, r in CATS]
 # Geographic business categories identify candidates, not certified loading bays.
 # Cargo relationships below are fictional gameplay rules, not claims about the real businesses.
 DEPOT_RULES = [
+    ("fuel", r"fuel_depot|fuel_terminal|oil_refiner|petroleum|oil_and_gas|fuel_supplier"),
     ("yard", r"warehous|distribution|logistics|wholesale|courier|freight|shipping|manufactur|industrial|factory|sawmill|lumber"),
     ("shop", r"hardware|home_improvement|building_material|furniture|electronics|appliance|auto_parts|grocery|supermarket|hypermarket|department_store"),
 ]
@@ -635,7 +636,7 @@ def valid_area(data, key, release):
                 or not isinstance(row[3], str) or row[4] not in ("f", "e"):
             return False
     for depot in data["depots"]:
-        if not isinstance(depot, dict) or not isinstance(depot.get("id"), str) or not isinstance(depot.get("n"), str) or depot.get("t") not in ("yard", "shop"):
+        if not isinstance(depot, dict) or not isinstance(depot.get("id"), str) or not isinstance(depot.get("n"), str) or depot.get("t") not in ("yard", "shop", "fuel"):
             return False
         point = depot.get("g")
         if not isinstance(point, list) or not coordinates(point + point, 0):

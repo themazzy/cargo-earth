@@ -32,6 +32,7 @@ local cameras = require('cargoEarth/cameras')
 local speedlimit = require('cargoEarth/speedlimit')
 local upkeep = require('cargoEarth/upkeep')
 local special = require('cargoEarth/special')
+local resupply = require('cargoEarth/resupply')
 local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
 
@@ -552,6 +553,13 @@ function M.generate()
       -- Freight customers pay a carrier by its reputation.
       local factor = rating.freightPay(S.career)
       local ownTruck = S.career.garage.car and not S.career.garage.car.loaner
+      -- tanker runs to real fuel stations
+      if tier == 'semi' and S.fuelIdx and S.opts.adr ~= false then
+        local within = function(lat, lon, a, b) return fuel.within(S.fuelIdx, lat, lon, 'fuel', a, b) end
+        for _, offer in ipairs(resupply.offers(S.idx, p.lat, p.lon, within, M.random, nil, S.opts.nearKm)) do
+          table.insert(offers, 1, offer)
+        end
+      end
       -- parcel routes from the nearest depots to real addresses, in vans and box trucks
       if (tier == 'van' or tier == 'rigid') and rows and S.fidx then
         local room = haul.capacity(rows, 'parcel')
@@ -574,7 +582,8 @@ function M.generate()
       end
       for _, offer in ipairs(offers) do
         if offer.route or haul.prepare(offer, tier, rows, S.idx) then
-          if not offer.route then special.roll(offer, tier, M.random) end
+          if offer.resupply then resupply.bonus(offer)
+          elseif not offer.route then special.roll(offer, tier, M.random) end
           if ownTruck then
             offer.fuelAllowance = math.floor(offer.km * haul.FUEL_ALLOWANCE[tier] / 5 + 0.5) * 5
             offer.pay = offer.pay + offer.fuelAllowance
@@ -1154,7 +1163,7 @@ local function incomingInfo(inc)
     orderType = j.orderType, sizeBonus = j.sizeBonus, freight = j.haul, handling = j.kind == 'food' and cargo.handling(j) or nil,
     slots = j.kind == 'food' and cargo.size(j) or nil,
     pickupKm = r1(j.pickupKm), km = r1(j.km), pay = j.pay, minutes = j.minutes, adr = j.adr or false,
-    special = special.info(j),
+    special = special.info(j), resupplyBonus = j.resupplyBonus, litres = j.litres,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
     fuelAllowance = j.fuelAllowance,

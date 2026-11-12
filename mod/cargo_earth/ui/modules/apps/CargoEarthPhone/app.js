@@ -415,6 +415,8 @@ angular.module('beamng.apps')
             '<span ng-if="s.incoming.farPickup > 0 && !s.incoming.batch"> · includes {{ fmt.money(s.incoming.farPickup) }} extra for the pickup drive</span></div>' +
           '<div class="cep-sub" ng-if="s.incoming.sizeBonus">Pay includes {{ fmt.money(s.incoming.sizeBonus) }} for the larger load.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.premium">Premium customer: pays more and wants it sooner. Your rating earned this order.</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.resupplyBonus">Fuel station resupply: the station adds {{ fmt.money(s.incoming.resupplyBonus) }} ' +
+            'for {{ s.incoming.litres }} L.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.special"><b>{{ s.incoming.special.name }} load:</b> pay includes {{ fmt.money(s.incoming.special.bonus) }} extra. ' +
             '{{ s.incoming.special.note }}</div>' +
           '<div class="cep-sub" ng-if="s.incoming.fuelAllowance">Pay includes {{ fmt.money(s.incoming.fuelAllowance) }} toward fuel for your own vehicle.</div>' +

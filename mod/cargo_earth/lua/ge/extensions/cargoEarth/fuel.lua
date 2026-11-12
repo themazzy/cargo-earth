@@ -288,6 +288,27 @@ function M.nearest(idx, lat, lon, kind, maxKm)
   return best, bestKm
 end
 
+-- Every station that sells `kind` between minKm and maxKm (straight km), nearest first: { { station, km } }.
+function M.within(idx, lat, lon, kind, minKm, maxKm)
+  local out = {}
+  if not idx or not finite(lat) or not finite(lon) then return out end
+  local rows = math.ceil(maxKm / 111.32 / M.GRID)
+  local cols = math.ceil(maxKm / (111.32 * math.max(0.2, math.cos(math.rad(lat)))) / M.GRID)
+  local r0, c0 = math.floor(lat / M.GRID), math.floor(lon / M.GRID)
+  for r = r0 - rows, r0 + rows do
+    for c = c0 - cols, c0 + cols do
+      for _, s in ipairs(idx.cells[r .. '_' .. c] or {}) do
+        if s.kind == kind then
+          local d = km(lat, lon, s.g[1], s.g[2])
+          if d >= minKm and d <= maxKm then out[#out + 1] = { station = s, km = d } end
+        end
+      end
+    end
+  end
+  table.sort(out, function(a, b) return a.km == b.km and a.station.id < b.station.id or a.km < b.km end)
+  return out
+end
+
 -- What a station kind sells.
 function M.sells(stationKind)
   if stationKind == 'electric' then return { electric = true } end

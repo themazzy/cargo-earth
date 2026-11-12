@@ -1700,4 +1700,58 @@ test('an oversize load driven too fast loses pay to escort reports; a ruined fra
   assert(not s.job and (c.failed or 0) == failed + 1, 'ruined')
 end)
 
+local resupply = require('cargoEarth/resupply')
+local haul = require('cargoEarth/haul')
+
+test('fuel station resupply: tanker runs from a fuel depot to real stations, paid by the litre on top', function()
+  local fidx = jobs.index({ depots = {
+    { id = 'depot', n = 'Fuel Depot', t = 'fuel_depot', s = 'L', g = { 50, 14 } },
+    { id = 'far', n = 'Far Depot', t = 'fuel_depot', s = 'L', g = { 52, 14 } },
+  }, cargo = { fuel = { name = 'Fuel', trailer = 'tanker', tonnes = 25, pay = 1.55, adr = true } }, trailers = {},
+    types = { fuel_depot = { produces = { 'fuel' } } } })
+  local stations = fuel.index()
+  fuel.addPack(stations, { stations = {
+    { 'near', 50.01, 14, 'Too Close', 'f', 'Town' },     -- about 1 km: too short a run
+    { 'a', 50.2, 14, 'Station A', 'f', 'Aville' },       -- about 22 km
+    { 'b', 50.4, 14, 'Station B', 'f', 'Beetown' },      -- about 44 km
+    { 'ev', 50.3, 14, 'Chargers', 'e', 'Town' },
+  } })
+  local ring = fuel.within(stations, 50, 14, 'fuel', 10, 60)
+  assert(#ring == 2 and ring[1].station.id == 'a' and ring[2].station.id == 'b', 'stations in the ring, nearest first')
+  local within = function(lat, lon, a, b) return fuel.within(stations, lat, lon, 'fuel', a, b) end
+  local offers = resupply.offers(fidx, 50, 14, within, function(n) return n end)
+  assert(#offers == 1, 'only the depot near the player')
+  local job = offers[1]
+  assert(job.to.label == 'Fuel station' and job.to.id == 'station:b' and job.resupply and job.adr and job.cargo == 'fuel')
+  assert(job.from.id == 'depot' and job.km > 50 and job.pay == jobs.pay(fidx, 'fuel', job.km))
+  assert(haul.prepare(job, 'semi', nil, fidx), 'the tanker takes it')
+  local before = job.pay
+  assert(resupply.bonus(job) == math.floor(job.haul.amount * resupply.PER_LITRE / 5 + 0.5) * 5 and job.pay > before)
+  assert(job.trailer == 'tanker' and job.litres == job.haul.amount)
+  assert(#resupply.offers(jobs.index({ depots = {}, cargo = {}, types = {}, trailers = {} }), 50, 14, within) == 0)
+  -- streamed fuel depots (helper, anywhere) ship fuel too
+  local stream = jobs.streamIndex()
+  jobs.addArea(stream, { key = 'k', depots = { { id = 'overture:x', n = 'Oil Terminal', g = { 50, 14 }, t = 'fuel' } } })
+  assert(#resupply.offers(stream, 50, 14, within, function(n) return 1 end) == 1)
+end)
+
+test('a tractor gets resupply offers among its freight jobs', function()
+  local core, s = fresh()
+  local c = s.career
+  core.G.spawn('us_semi')
+  c.garage.car.model = 'us_semi'
+  vehicle.slotPartMap = { body = 'us_semi', fifthwheel = 'fifthwheel_top' }
+  c.hauls = { van = haul.VAN_GOAL, rigid = haul.RIGID_GOAL }
+  s.idx = jobs.index({ depots = { { id = 'depot', n = 'Fuel Depot', t = 'fuel_depot', s = 'L', g = { 50, 14 } } },
+    cargo = { fuel = { name = 'Fuel', trailer = 'tanker', tonnes = 25, pay = 1.55, adr = true } }, trailers = {},
+    types = { fuel_depot = { produces = { 'fuel' } } } })
+  withStation(s, 50.3, 14)
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local job
+  for _, offer in ipairs(s.offers) do if offer.resupply then job = offer end end
+  assert(job and job.resupplyBonus > 0 and job.to.n == 'Test pump' and not job.special, 'a resupply job is offered')
+end)
+
 print(string.format('%d career tests passed', total))
