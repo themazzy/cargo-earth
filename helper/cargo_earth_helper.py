@@ -15,6 +15,10 @@ API (GET, JSON):
   /v1/cameras?lat=..&lon=..   speed cameras around the point, from OpenStreetMap (Overpass API, one request per
                               0.5 degree cell, kept for 30 days): {"state": "ready" | "loading" | "failed",
                               "cells": [...], "cameras": [[id, lat, lon, limit km/h (0 = unknown), road class], ...]}
+  /v1/radio?cc=CZ&lat=..&lon=..  internet radio stations of the country, from Radio Browser (one request per country a
+                              day): {"state": "ready" | "loading" | "failed", "country", "top": [[id, name, stream url,
+                              codec, kbps, tags, region], ...] (most listened first), "near": [[... the same, km], ...]}
+  /v1/radioclick?id=uuid      tells Radio Browser a station started playing (its listening counts)
   /v1/near?lat=..&lon=..      the 3 x 3 areas around the point: {"ready": ["r_c", ...], "loading": n, "failed": n,
                               "errors": [...], "grocers": true, "depots": true, "fuel": true}; builds missing areas
                               nearest first
@@ -29,6 +33,7 @@ the same keys as the mod's own data pack (food_CZ/a/<row>_<col>.json).
 Data: Overture Maps Foundation, places (CDLA-Permissive-2.0), addresses (sources' licences), buildings (ODbL and
 others); https://docs.overturemaps.org/attribution/
 Speed cameras: (c) OpenStreetMap contributors, ODbL; https://www.openstreetmap.org/copyright
+Radio stations: Radio Browser (https://www.radio-browser.info), free community directory; the streams belong to the stations
 """
 import argparse
 import datetime
@@ -933,7 +938,191 @@ class Cameras:
         return out
 
 
-def serve(areas, release, port, host="127.0.0.1", cameras=None):
+######################################################################################## radio (Radio Browser)
+
+RADIO_FALLBACK = ["de1.api.radio-browser.info", "nl1.api.radio-browser.info", "de2.api.radio-browser.info"]
+RADIO_HOURS = 24           # a country's station list is asked for again after this long
+RADIO_LIMIT = 400          # stations asked for per country (most listened first)
+RADIO_NEAR_KM = 120        # a station with a known place this close is "near you"
+RADIO_NEAR_MAX = 30
+MAX_RADIO_BYTES = 6 * 1024 * 1024
+RADIO_CODECS = {"MP3", "AAC", "AAC+", "OGG", "OPUS", "FLAC", ""}   # HLS playlists and video streams are left out
+
+
+def radio_servers():
+    """Radio Browser's API servers as its docs ask: every address behind all.api.radio-browser.info, named by
+    reverse DNS (HTTPS needs the name), shuffled; the known names when DNS gives nothing."""
+    import random
+    import socket
+    names = []
+    try:
+        for info in socket.getaddrinfo("all.api.radio-browser.info", 443, proto=socket.IPPROTO_TCP):
+            try:
+                name = socket.gethostbyaddr(info[4][0])[0]
+            except OSError:
+                continue
+            if name.endswith(".api.radio-browser.info") and name not in names:
+                names.append(name)
+    except OSError:
+        pass
+    random.shuffle(names)
+    return names or list(RADIO_FALLBACK)
+
+
+def _text(v, n):
+    return re.sub(r"\s+", " ", str(v or "")).strip()[:n]
+
+
+def radio_rows(data, cc):
+    """Radio Browser stations -> [[id, name, stream url, codec, kbps, tags, region, lat, lon, votes]], working ones
+    only, no duplicates by name and stream."""
+    rows, seen = [], set()
+    for s in data if isinstance(data, list) else []:
+        if not isinstance(s, dict) or str(s.get("countrycode", "")).upper() != cc:
+            continue
+        url = str(s.get("url_resolved") or s.get("url") or "").strip()
+        codec = str(s.get("codec") or "").upper().strip()
+        sid = str(s.get("stationuuid") or "")
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", sid) or not re.match(r"https?://", url) or len(url) > 500:
+            continue
+        if s.get("lastcheckok") in (0, "0", False) or s.get("hls") in (1, "1", True) or codec not in RADIO_CODECS:
+            continue
+        name = _text(s.get("name"), 60)
+        if not name or (name.lower(), url) in seen:
+            continue
+        seen.add((name.lower(), url))
+        lat, lon = s.get("geo_lat"), s.get("geo_long")
+        ok = all(type(x) in (int, float) and math.isfinite(x) for x in (lat, lon)) and abs(lat) <= 90 and abs(lon) <= 180 \
+            and (lat, lon) != (0, 0)
+        tags = ", ".join(t.strip() for t in str(s.get("tags") or "").split(",") if t.strip())[:60]
+        try:
+            kbps = max(0, min(10000, int(s.get("bitrate") or 0)))
+            votes = max(0, int(s.get("votes") or 0))
+        except (TypeError, ValueError):
+            kbps, votes = 0, 0
+        rows.append([sid, name, url, codec, kbps, tags, _text(s.get("state"), 40),
+                     round(lat, 4) if ok else None, round(lon, 4) if ok else None, votes])
+    return rows
+
+
+def _km(lat1, lon1, lat2, lon2):
+    k = math.cos(math.radians((lat1 + lat2) / 2))
+    return math.hypot((lon2 - lon1) * k, lat2 - lat1) * 111.32
+
+
+class Radio:
+    """Internet radio stations of the country the player drives in, from Radio Browser (radio-browser.info, a free
+    community directory). One request per country a day, kept on disk; the phone plays the streams itself."""
+
+    def __init__(self, cache_dir, fetch=None, servers=None):
+        self.dir = os.path.join(cache_dir, "radio")
+        os.makedirs(self.dir, exist_ok=True)
+        self.fetch = fetch or self._get
+        self.servers = servers or radio_servers
+        self._hosts = None
+        self.state, self.fail_at, self.fresh_until, self.refreshing = {}, {}, {}, set()
+        self.lock = threading.Lock()
+
+    def path(self, cc):
+        return os.path.join(self.dir, cc + ".json")
+
+    def _api(self, path):
+        hosts = self._hosts = self._hosts or self.servers()
+        err = None
+        for host in list(hosts):
+            try:
+                return json.loads(http_get(f"https://{host}{path}", tries=1))
+            except Exception as e:  # noqa: BLE001 - the next server
+                err = e
+                hosts.remove(host)
+                hosts.append(host)
+        raise err or OSError("no Radio Browser server")
+
+    def _get(self, cc):
+        q = urllib.parse.urlencode({"countrycode": cc, "hidebroken": "true", "order": "clickcount", "reverse": "true",
+                                    "limit": RADIO_LIMIT})
+        return self._api("/json/stations/search?" + q)
+
+    def click(self, sid):
+        """Radio Browser counts what people listen to: one call each time a station starts playing."""
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", sid or ""):
+            raise ValueError("bad station id")
+        POOL.submit(lambda: self._api("/json/url/" + sid))
+        return {"ok": True}
+
+    def _load(self, cc):
+        try:
+            with open(self.path(cc), "rb") as f:
+                data = json.loads(f.read(MAX_RADIO_BYTES))
+            if time.time() - data["at"] < RADIO_HOURS * 3600 and isinstance(data["stations"], list):
+                self.fresh_until[cc] = data["at"] + RADIO_HOURS * 3600
+                return data["stations"]
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return None
+
+    def _refresh(self, cc):
+        try:
+            self._work(cc, keep=True)
+        finally:
+            with self.lock:
+                self.refreshing.discard(cc)
+
+    def _work(self, cc, keep=False):
+        try:
+            rows = radio_rows(self.fetch(cc), cc)
+            tmp = self.path(cc) + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"at": time.time(), "stations": rows}, f, separators=(",", ":"), ensure_ascii=False)
+            os.replace(tmp, self.path(cc))
+            log(f"radio {cc}: {len(rows)} stations")
+            with self.lock:
+                self.state[cc] = rows
+                self.fresh_until[cc] = time.time() + RADIO_HOURS * 3600
+        except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
+            log(f"radio {cc} failed:", repr(e))
+            with self.lock:
+                if not keep:
+                    self.state.pop(cc, None)
+                self.fail_at[cc] = time.time()
+
+    def near(self, cc, lat=None, lon=None):
+        cc = str(cc or "").upper()
+        if not re.fullmatch(r"[A-Z]{2}", cc):
+            raise ValueError("country must be an ISO 3166 alpha-2 code")
+        here = lat is not None and lon is not None and math.isfinite(lat) and math.isfinite(lon) \
+            and abs(lat) <= 90 and abs(lon) <= 180
+        with self.lock:
+            rows = self.state.get(cc)
+            if isinstance(rows, list) and time.time() >= self.fresh_until.get(cc, 0) \
+                    and time.time() - self.fail_at.get(cc, 0) >= 120 and cc not in self.refreshing:
+                # a day old: fetched again in the background, the old list is served meanwhile
+                self.refreshing.add(cc)
+                threading.Thread(target=self._refresh, args=(cc,), daemon=True).start()
+            if rows is None:
+                rows = self._load(cc)
+                if rows is not None:
+                    self.state[cc] = rows
+                elif time.time() - self.fail_at.get(cc, 0) < 120:
+                    rows = "failed"
+                else:
+                    rows = self.state[cc] = "loading"
+                    threading.Thread(target=self._work, args=(cc,), daemon=True).start()
+        if not isinstance(rows, list):
+            return {"state": rows, "country": cc, "near": [], "top": []}
+        near = []
+        if here:
+            for r in rows:
+                if r[7] is not None:
+                    d = _km(lat, lon, r[7], r[8])
+                    if d <= RADIO_NEAR_KM:
+                        near.append(r[:7] + [round(d)])
+            near.sort(key=lambda r: r[7])
+            near = near[:RADIO_NEAR_MAX]
+        return {"state": "ready", "country": cc, "near": near, "top": [r[:7] for r in rows]}
+
+
+def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -955,10 +1144,15 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None):
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
-                                            "cameras": cameras is not None,
+                                            "cameras": cameras is not None, "radio": radio is not None,
                                             "network": network, "cache": areas.budget.stats})
                 if u.path == "/v1/cameras" and cameras:
                     return self._send(200, cameras.near(float(q["lat"]), float(q["lon"])))
+                if u.path == "/v1/radio" and radio:
+                    lat, lon = q.get("lat"), q.get("lon")
+                    return self._send(200, radio.near(q.get("cc", ""), float(lat) if lat else None, float(lon) if lon else None))
+                if u.path == "/v1/radioclick" and radio:
+                    return self._send(200, radio.click(q.get("id", "")))
                 if u.path == "/v1/near":
                     return self._send(200, areas.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/area":
@@ -1015,7 +1209,7 @@ def main():
                          ensure_ascii=False, indent=1))
         budget.prune(force=True)
         return
-    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache))
+    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache))
 
 
 if __name__ == "__main__":

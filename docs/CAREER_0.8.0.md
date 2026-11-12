@@ -1,4 +1,35 @@
-# Cargo Earth 0.8: a phone screen on the dashboard for VR
+# Cargo Earth 0.8 (in progress)
+
+Two features so far: regional radio on the phone, and a phone screen on the dashboard for VR.
+
+## Regional radio
+
+The phone has a **Radio** tab that plays real internet radio stations of the country you drive in, anywhere in the world.
+
+- **Stations** come from [Radio Browser](https://www.radio-browser.info), a free community directory (no key, public-domain
+  data). The game cannot reach the internet, so the Cargo Earth helper asks for them: one request per country a day,
+  kept in the helper's cache (`cache/radio/<CC>.json`). It finds Radio Browser's servers through DNS as its docs ask,
+  sends a `cargo-earth-helper/<version>` User-Agent and reports each station you start (`/json/url/<id>`), which is how
+  Radio Browser counts listeners.
+- **Country**: the mod's bundled borders (the same as for the local money). **Near you**: stations whose listed place is
+  within 120 km of the car, nearest first. Radio Browser has no place-based search, so the helper filters the country's
+  400 most listened stations itself; countries where stations list no place show only the popular list.
+- Only working streams (last check OK), no HLS playlists, no duplicates.
+- **Playback** happens in the phone page itself (an HTML audio element), so it keeps playing with the phone folded or on
+  another tab; the folded phone shows the station. Play/stop, previous/next, volume and saved stations (star), all by
+  clicking. Volume, the last station and saved stations stay in the UI's local storage.
+- Crossing a border keeps the current station playing and lists the new country's stations.
+
+Helper API: `/v1/radio?cc=CZ&lat=..&lon=..` and `/v1/radioclick?id=<uuid>`. The helper's `/v1/info` says `"radio": true`.
+
+### Not tested in game
+
+- Whether BeamNG's UI browser plays sound at all, and at what volume relative to the game. If it is silent, the fallback
+  is to let the helper play the stream.
+- Which codecs it supports: MP3 and Ogg should play; AAC may not (the phone says so when a stream fails).
+- Live requests to Radio Browser (the build sandbox blocks the site); tested with fixtures only.
+
+## A phone screen on the dashboard for VR
 
 Jan's ask on 12 November 2026: a phone on the centre of the dash. On a monitor the normal phone app stays as it is.
 In VR, BeamNG shows the whole UI on a floating panel anchored to the room or your head, not to the car, so the panel
@@ -7,7 +38,7 @@ phone can never sit on the dash. The mod therefore puts a small phone screen in 
 (A first try drew the UI phone in perspective over the dash on a monitor. Jan found it not usable, and it could not
 work in VR, so it was dropped.)
 
-## How it works
+### How it works
 
 - In VR, in any camera inside the car, a phone screen sits at the centre of the dash: ahead of the driver's seat,
   below the eyes, most of the way to the middle of the car. It always faces your head and moves with the car.
@@ -23,7 +54,7 @@ work in VR, so it was dropped.)
   the place without the headset) and Off. In the cockpit you can move it (up, down, left, right, closer, further),
   make it bigger or smaller, or put it back. Every car model keeps its own place (`settings/cargoEarth/dash.json`).
 
-## Inside
+### Inside
 
 `cargoEarth/dash.lua` uses the engine's Skia billboards (`WorldBillboardRenderer`), the same path the game uses for
 multiplayer name tags and world icons: no browser view, no mesh, no per-frame drawing in Lua. Each frame only the
@@ -39,7 +70,7 @@ game's own pointer, highlight, hover label and VR controller trigger all work on
 `cargoEarth_core.dashTap(slot)`, which reads the phone again and does what that button shows at that moment. The boxes
 are placed again only when the screen moves or the car is reloaded; when the screen is hidden they shrink to nothing.
 
-## Not tested in game yet
+### Not tested in game yet
 
 - The buttons: that the added trigger boxes land on the drawn buttons, that the VR controller laser and trigger press
   them, and that the game's hover label shows the button's name.

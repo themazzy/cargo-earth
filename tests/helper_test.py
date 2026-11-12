@@ -309,6 +309,56 @@ class NetworkAndStorageTests(unittest.TestCase):
             self.assertEqual(cameras.near(50.25, 14.25)["state"], "failed")
             self.assertEqual(len(calls), 1)
 
+    def test_radio_rows_keep_working_streams_of_the_country(self):
+        good = {"stationuuid": "960e57c5-0601-11e8-ae97-52543be04c81", "name": " Radio  Jih ", "url": "http://a/x.pls",
+                "url_resolved": "http://a/stream", "codec": "MP3", "bitrate": 128, "countrycode": "CZ", "state": "South Bohemia",
+                "geo_lat": 48.97, "geo_long": 14.47, "lastcheckok": 1, "hls": 0, "tags": "pop,  news ,", "votes": 9}
+        rows = helper.radio_rows([
+            good, dict(good),                                                  # duplicate
+            dict(good, stationuuid="960e57c5-0601-11e8-ae97-52543be04c82", lastcheckok=0),
+            dict(good, stationuuid="960e57c5-0601-11e8-ae97-52543be04c83", hls=1, name="HLS"),
+            dict(good, stationuuid="960e57c5-0601-11e8-ae97-52543be04c84", countrycode="SK", name="Other"),
+            dict(good, stationuuid="960e57c5-0601-11e8-ae97-52543be04c85", url_resolved="ftp://x", url="", name="Ftp"),
+            dict(good, stationuuid="bad", name="Bad id"),
+            dict(good, stationuuid="960e57c5-0601-11e8-ae97-52543be04c86", name="Nowhere", geo_lat=None, codec="AAC"),
+        ], "CZ")
+        self.assertEqual([r[1] for r in rows], ["Radio Jih", "Nowhere"])
+        self.assertEqual(rows[0][2:7], ["http://a/stream", "MP3", 128, "pop, news", "South Bohemia"])
+        self.assertIsNone(rows[1][7])
+
+    def test_radio_is_fetched_once_per_country_and_lists_near_stations(self):
+        base = {"url_resolved": "http://s", "codec": "MP3", "countrycode": "CZ", "lastcheckok": 1, "hls": 0}
+        stations = [dict(base, stationuuid="00000000-0000-0000-0000-00000000000%d" % i, name="S%d" % i,
+                         url_resolved="http://s/%d" % i, geo_lat=lat, geo_long=14.4) for i, lat in enumerate([50.1, 48.5, 50.0, None])]
+        calls = []
+        with tempfile.TemporaryDirectory() as cache:
+            radio = helper.Radio(cache, lambda cc: calls.append(cc) or stations, servers=lambda: ["x"])
+            self.assertEqual(radio.near("cz", 50.0, 14.4)["state"], "loading")
+            for _ in range(100):
+                if isinstance(radio.state.get("CZ"), list):
+                    break
+                time.sleep(0.01)
+            out = radio.near("CZ", 50.0, 14.4)
+            self.assertEqual(out["state"], "ready")
+            self.assertEqual(len(out["top"]), 4)
+            self.assertEqual([r[1] for r in out["near"]], ["S2", "S0"])     # S1 is 167 km away
+            again = helper.Radio(cache, lambda cc: calls.append(cc) or [], servers=lambda: ["x"])
+            self.assertEqual(len(again.near("CZ")["top"]), 4)
+            self.assertEqual(calls, ["CZ"])
+            radio.fresh_until["CZ"] = 0                                 # a day later, still running
+            stations.pop()
+            self.assertEqual(len(radio.near("CZ")["top"]), 4)            # the old list meanwhile
+            for _ in range(100):
+                if "CZ" not in radio.refreshing:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(len(radio.near("CZ")["top"]), 3)
+            self.assertEqual(calls, ["CZ", "CZ"])
+            with self.assertRaises(ValueError):
+                radio.near("CZE")
+            with self.assertRaises(ValueError):
+                radio.click("../../etc")
+
     def test_browser_requests_cannot_trigger_data_downloads(self):
         captured = []
         def server(address, handler):
