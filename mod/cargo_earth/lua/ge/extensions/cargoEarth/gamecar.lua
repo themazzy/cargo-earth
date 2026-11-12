@@ -68,6 +68,24 @@ function M.setFuel(id, levels)
   return true
 end
 
+-- The game's own pumps (stock levels and BeamNG.Earth's stations both go through freeroam/gasStations.lua refuelCar):
+-- wraps refuelCar so the career hears of a refuel before the game fills the tank. Called again every few seconds, it
+-- wraps a reloaded extension again and never wraps twice.
+local pumpWrapper
+function M.hookPumps(onRefuel)
+  local gs = extensions and extensions.freeroam_gasStations or rawget(_G, 'freeroam_gasStations')   -- never loaded by us
+  if type(gs) ~= 'table' or type(gs.refuelCar) ~= 'function' then return false end
+  if gs.refuelCar == pumpWrapper then return true end
+  local original = gs.refuelCar
+  pumpWrapper = function(station, fuelTypes, veh, ...)
+    local ok, id = pcall(function() return veh and veh:getID() end)
+    pcall(onRefuel, ok and id or nil, station, fuelTypes)
+    return original(station, fuelTypes, veh, ...)
+  end
+  gs.refuelCar = pumpWrapper
+  return true
+end
+
 local function vehData(id)
   local vm = extensions and extensions.core_vehicle_manager or core_vehicle_manager
   if not vm then return nil end

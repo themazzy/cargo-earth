@@ -5,12 +5,13 @@ local economy = require('cargoEarth/economy')
 local M = {}
 
 -- every: km between services (game distances: a long evening of driving is a few hundred km); cost in CZK for a car
+-- (halved 2026-11-12: a used car often needs all three at once, which cost over two hours of deliveries)
 M.ITEMS = {
-  { id = 'oil', name = 'Oil change', every = 800, cost = 120,
+  { id = 'oil', name = 'Oil change', every = 800, cost = 60,
     breakdown = 'The engine overheated and stopped: the oil change was overdue.' },
-  { id = 'tyres', name = 'Tyres', every = 2500, cost = 600,
+  { id = 'tyres', name = 'Tyres', every = 2500, cost = 300,
     breakdown = 'A worn tyre burst.' },
-  { id = 'brakes', name = 'Brakes', every = 1600, cost = 350,
+  { id = 'brakes', name = 'Brakes', every = 1600, cost = 175,
     breakdown = 'The worn brakes overheated: the car is not safe to drive.' },
 }
 M.TIER_COST = { car = 1, van = 1.3, rigid = 2.4, semi = 3.2 }  -- bigger vehicles cost more to service
@@ -18,7 +19,7 @@ M.SOON = 0.85            -- a service shows as soon due from this share of its i
 M.PER_KM = 0.004         -- breakdown chance per km for each whole interval overdue (half overdue: 0.2 % per km)
 M.MAX_CHANCE = 0.5
 M.ROADSIDE = 2           -- a breakdown's roadside help costs this many services of the failed item
-M.ROADSIDE_FEE = 150
+M.ROADSIDE_FEE = 75
 M.STARTER_WEAR = { oil = 0.6, tyres = 0.5, brakes = 0.4 }   -- a beat-up starter car starts with this much used
 
 local byId = {}

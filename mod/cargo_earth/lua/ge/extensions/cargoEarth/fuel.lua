@@ -5,13 +5,15 @@
 local M = {}
 
 -- CZK per litre (per kWh for electric). The currency of the career is CZK everywhere.
-M.PRICE = { gasoline = 38, diesel = 36, electric = 9 }
+-- Scaled to the game's pay, not the real pump price: BeamNG cars burn about 20 L/100 km in town (a Ferax in a
+-- 2026-11-12 save: 21.6), so at the real 38 CZK fuel took about 40 % of courier pay. A third of that: about 13 %.
+M.PRICE = { gasoline = 13, diesel = 12, electric = 3 }
 M.UNIT = { gasoline = 'L', diesel = 'L', electric = 'kWh' }
 M.STATION_SPREAD = 0.06      -- a station's price differs by up to this share (fixed per station)
 M.STATION_RADIUS = 60        -- metres from a station's point that count as "at the pumps"
 M.HQ_DISCOUNT = 0.85         -- the firm's own tank
 M.DELIVERY_FACTOR = 1.6      -- roadside fuel costs this much more per unit
-M.DELIVERY_FEE = 150         -- and a call-out fee
+M.DELIVERY_FEE = 75          -- and a call-out fee
 M.DELIVERY_UNITS = 10        -- litres (or kWh) a roadside delivery brings at most
 M.REFILL_JUMP = 0.02         -- a tank this much fuller than remembered was refilled by a reset, not by us
 M.LOW, M.EMPTY = 0.15, 0.01  -- shares of a tank: the phone warns, the car is stranded
@@ -203,6 +205,29 @@ function M.apply(car, quote)
     if t then t.ratio = ratio end
   end
   car.fuel.bought = (tonumber(car.fuel.bought) or 0) + quote.cost
+end
+
+-- A refuel at one of the game's own pumps (the stock "Refuel" prompt): what the vehicle now reports above the
+-- remembered levels was bought there. Returns a quote like M.quote (cost at this price factor, 0 when free) or nil.
+function M.pumpQuote(car, report, factor, free)
+  local f = car and car.fuel
+  local seen = M.clean(report)
+  if type(f) ~= 'table' or type(f.tanks) ~= 'table' or not seen then return nil end
+  local q, cost, any = { units = {}, cost = 0, levels = {}, full = true }, 0, false
+  for name, t in pairs(seen) do
+    local known = f.tanks[name]
+    local added = known and (t.ratio - known.ratio) * t.cap or 0
+    if added > 0.05 then
+      any = true
+      q.units[t.kind] = (q.units[t.kind] or 0) + added
+      q.levels[name] = t.ratio
+      cost = cost + added * (free and 0 or M.price(t.kind, factor))
+    end
+  end
+  if not any then return nil end
+  q.cost = math.ceil(cost - 1e-6)
+  for kind, n in pairs(q.units) do q.units[kind] = math.floor(n * 10 + 0.5) / 10 end
+  return q
 end
 
 ------------------------------------------------------------------------------------------ stations
