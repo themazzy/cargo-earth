@@ -932,8 +932,8 @@ angular.module('beamng.apps')
           '<b>{{ st.cameras.on ? "On" : "Off" }}</b></div>' +
         '<div class="cep-label" ng-if="st.dash">VR</div>' +
         '<div class="cep-li" ng-if="st.dash" ng-click="sdo(\'dash\', \'show\')">' +
-          '<div><div class="cep-name">Screen on the dashboard</div><small>{{ st.dash.show === "vr" ? "In VR, in the cockpit view. Buttons stay on this phone" : ' +
-            '(st.dash.show === "always" ? "In the cockpit view, also on a monitor" : "Never shown") }}</small></div>' +
+          '<div><div class="cep-name">Screen on the dashboard</div><small>{{ st.dash.show === "vr" ? "In VR, in the cockpit view. Press its buttons with a controller" : ' +
+            '(st.dash.show === "always" ? "In the cockpit view, also on a monitor (click its buttons)" : "Never shown") }}</small></div>' +
           '<b>{{ st.dash.show === "vr" ? "VR" : (st.dash.show === "always" ? "Always" : "Off") }}</b></div>' +
         '<div class="cep-card" ng-if="st.dash && st.dash.show !== \'off\'">' +
           '<div class="cep-sub" ng-if="!st.dash.shown">Sit in the cockpit view to place it. Each car model keeps its own place.</div>' +

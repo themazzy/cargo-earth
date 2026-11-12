@@ -39,6 +39,7 @@ local parcel = require('cargoEarth/parcel')
 local borders = require('cargoEarth/borders')
 local currency = require('cargoEarth/currency')
 local dash = require('cargoEarth/dash')
+local dashtap = require('cargoEarth/dashtap')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
 local SAVE = '/settings/cargoEarth/career.json'
@@ -2935,6 +2936,12 @@ end
 local function dashMoney(n) return currency.format(n, S.career and S.career.currency) end
 function M.onPreRender(dtReal)
   dash.tick(dtReal, M.phoneState, dashMoney)
+end
+
+-- a button on the VR dash screen was pressed (slot 1 = left, 2 = right): do what it says on the phone right now
+function M.dashTap(slot)
+  local a = dashtap.actionFor(dashtap.buttons(M.phoneState()), tonumber(slot) or 0)
+  if a then M.phoneAction(a) end
 end
 
 function M.onUpdate(dtReal, dtSim)

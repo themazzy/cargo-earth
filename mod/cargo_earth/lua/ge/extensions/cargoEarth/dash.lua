@@ -6,9 +6,11 @@
 --     of the car. A billboard always faces the camera, so it always faces the driver's head.
 --   * Its picture is rebuilt only when what it shows changes, at most once a second: the current order, distance,
 --     time left, pay, an incoming order with its countdown, the speed limit, the clock and the money.
---   * It shows information only. Buttons stay on the normal phone, which still works on the floating panel.
+--   * Its buttons (accept, decline, route, go online ...) are pressed like the car's own cockpit buttons: point a VR
+--     controller at them and pull its trigger, or click them with the mouse (see cargoEarth/dashtap).
 -- Settings (on the phone): show it in VR only (default), always (also on a monitor, handy for placing it) or never;
 -- move it and resize it. Every car model keeps its own place (settings/cargoEarth/dash.json).
+local tap = require('cargoEarth/dashtap')
 local M = {}
 
 M.FILE = '/settings/cargoEarth/dash.json'
@@ -129,7 +131,7 @@ local function name(p) return type(p) == 'table' and (p.name or p.n) or nil end
 function M.card(s, money)
   local fmt = money or function(n) return tostring(math.floor(n + 0.5)) end
   money = function(n) return fmt(tonumber(n) or 0) end
-  local c = { clock = s and s.clock or '', money = s and money(s.money) or '', tone = 'idle' }
+  local c = { clock = s and s.clock or '', money = s and money(s.money) or '', tone = 'idle', buttons = tap.buttons(s) }
   if not s then
     c.title = 'Cargo Earth'
     c.sub = 'Starting…'
@@ -143,7 +145,6 @@ function M.card(s, money)
     c.title = name(i.from) or i.cargo or 'Order'
     c.big = money(i.pay)
     c.sub = (name(i.to) and ('to ' .. name(i.to)) or '') .. (i.km and (' · ' .. tostring(i.km):gsub('%.', ',') .. ' km') or '')
-    c.note = 'Accept on the phone'
   elseif screen == 'active' and s.active then
     local a = s.active
     local pickup = a.phase == 'toPickup'
@@ -160,23 +161,30 @@ function M.card(s, money)
   elseif screen == 'waiting' then
     c.label, c.title, c.sub = 'Online', 'Waiting for orders', 'Today ' .. money(s.todayEarned)
   elseif screen == 'offline' then
-    c.label, c.title, c.sub = 'Offline', 'Go online on the phone', 'Today ' .. money(s.todayEarned)
+    c.label, c.title, c.sub = 'Offline', 'Not taking orders', 'Today ' .. money(s.todayEarned)
   elseif screen == 'company' then
     c.label, c.title, c.sub = 'Company work', s.company or 'Contract', 'Details on the phone'
   elseif screen == 'resume' then
-    c.title, c.sub = 'Career paused', 'Resume it on the phone'
+    c.title, c.sub = 'Career paused', 'Your saved career is ready'
   else
     c.title, c.sub = 'Cargo Earth', s.error and tostring(s.error):sub(1, 60) or 'Open the phone'
   end
   return c
 end
 
+function M.buttonKey(buttons)
+  local out = {}
+  for i, b in ipairs(buttons or {}) do out[i] = b.label end
+  return table.concat(out, '/')
+end
+
 -- a string that changes only when the picture would change
 function M.signature(c)
   return table.concat({ c.clock or '', c.money or '', c.limit or '', tostring(c.over), c.label or '', c.title or '',
-    c.big or '', c.sub or '', c.note or '', c.tone or '', tostring(c.late) }, '|')
+    c.big or '', c.sub or '', c.note or '', c.tone or '', tostring(c.late), M.buttonKey(c.buttons) }, '|')
 end
 
+local BUTTONS = { go = '#2f8f5b', quiet = '#7b726a', main = '#1d1b19' }
 local TONES = { idle = '#7b726a', ring = '#e8452c', pickup = '#e8452c', drop = '#1d1b19', done = '#2f8f5b' }
 
 local function text(t, size, color, extra)
@@ -218,6 +226,19 @@ function M.template(c, font)
       stroke = '#d62d20', strokeWidth = 9, style = { width = 92, height = 92, justifyContent = 'center', alignItems = 'center',
       marginBottom = 18 }, children = { t(c.limit, 36, c.over and '#ffffff' or '#111111') } }
   end
+  local buttons = c.buttons or {}
+  if #buttons > 0 then
+    local R = tap.ROW
+    local _, inner = tap.slots(W, H)
+    local row = { type = 'group', style = { flexDirection = 'row', justifyContent = 'space-between', width = '100%',
+      height = R.height, paddingHorizontal = R.padX }, children = {} }
+    for _, b in ipairs(buttons) do
+      row.children[#row.children + 1] = { type = 'box', color = BUTTONS[b.tone] or BUTTONS.main, radius = 22,
+        style = { width = #buttons == 1 and inner or (inner - R.gap) / 2, height = R.height, justifyContent = 'center',
+        alignItems = 'center' }, children = { t(b.label, 30, '#ffffff') } }
+    end
+    screen.children[#screen.children + 1] = row
+  end
   return {
     type = 'skiaIcon', size = { W, H }, -- the same template shape the game's world icons use
     root = { type = 'box', color = '#141312', radius = 44, style = { width = W, height = H, padding = 12 }, children = { screen } },
@@ -230,6 +251,7 @@ local prefs, loaded = nil, false
 local renderer, rid, sig, nextBuild = nil, nil, nil, 0
 local font, fontRead = nil, false
 local hidden = true
+local shownButtons = {} -- the buttons on the current picture
 
 function M.prefs()
   if not loaded then
@@ -285,6 +307,7 @@ local function getRenderer()
 end
 
 local function hide()
+  pcall(tap.off)
   if hidden then return end
   hidden = true
   if renderer and rid then pcall(function() renderer:update(rid, vec3(0, 0, -10000), 0, false) end) end
@@ -301,6 +324,7 @@ local function build(r, phoneState, money, now)
   r:render(id, '{}')
   if rid then local old = rid pcall(function() r:destroy(old) end) end
   rid, sig, nextBuild = id, s, now + M.REFRESH
+  shownButtons = c.buttons or {}
 end
 
 local function spotNow(veh)
@@ -327,6 +351,7 @@ function M.tick(dt, phoneState, money)
     if not rid then return end
     r:update(rid, vec3(pos.x, pos.y, pos.z), M.HEIGHT * place.size, true)
     hidden = false
+    tap.sync(veh, pos, M.HEIGHT * place.size, shownButtons, M.CANVAS[1], M.CANVAS[2])
   end)
   if not ok then
     hide()
@@ -336,6 +361,7 @@ end
 
 -- the mod is unloading: take the billboard and its scene object away, or a frozen phone would stay in the car
 function M.remove()
+  pcall(tap.off)
   local r, id = renderer, rid
   renderer, rid, sig, hidden = nil, nil, nil, true
   if not r then r = scenetree and scenetree[M.RENDERER] end
@@ -346,6 +372,7 @@ end
 
 -- the level is going away and takes the renderer with it
 function M.forget()
+  tap.forget()
   renderer, rid, sig, hidden = nil, nil, nil, true
 end
 
