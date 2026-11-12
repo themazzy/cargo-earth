@@ -94,6 +94,13 @@ function M.ahead(idx, lat, lon, heading)
   return best
 end
 
+-- The limit of the camera's road from the game's road graph (km/h, or nil when the graph has none there). Asked once
+-- per camera; a limit learned this way replaces the generous class default.
+function M.learn(cam, kmh)
+  cam.road = true
+  if kmh and kmh >= 5 and kmh <= 200 then cam.limit, cam.assumed = kmh, false end
+end
+
 -- Leaving the car, a teleport or a reset: nothing half-measured is kept.
 function M.clear(idx) idx.inside = {} end
 

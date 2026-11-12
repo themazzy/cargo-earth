@@ -21,6 +21,11 @@ angular.module('beamng.apps')
     '.cep-brand{font-weight:800;font-size:17px;letter-spacing:-.01em}.cep-brand b{color:var(--tomato)}' +
     '.cep-money{font-size:12px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}' +
     '.cep-money strong{display:block;color:var(--ink);font-size:15px}' +
+    '.cep-limit{align-self:center;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;width:34px;height:34px;' +
+      'border-radius:50%;border:4px solid #d62d20;background:#fff;color:#111;font-weight:800;font-size:13px;line-height:1;' +
+      'font-variant-numeric:tabular-nums;box-sizing:border-box}.cep-limit small{font-size:6px;font-weight:700;margin-top:1px}' +
+    '.cep-limit.over{background:#d62d20;color:#fff;border-color:#a31d13}' +
+    '.cep-pill .cep-limit{width:24px;height:24px;border-width:3px;font-size:10px;vertical-align:middle;margin-right:4px}' +
     '.cep-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:12px 14px;gap:10px;overflow:hidden}' +
     '.cep-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px}' +
     '.cep-big{font-size:22px;font-weight:800;line-height:1.15}' +
@@ -259,12 +264,15 @@ angular.module('beamng.apps')
           '<button class="cehq-btn ghost" ng-disabled="hq.busy || hq.company" ng-click="moveHq()">{{ moveAsk ? "Press again to move · " + fmt.money(hq.moveFee) : "Move the headquarters to " + hq.place.name }}</button></div>' +
       '</div></div>' +
       '<div class="cep-pill" ng-if="min" ng-click="fold(false)"><span>Cargo<b>Earth</b></span>' +
-        '<span>{{ s.online ? "● online" : "" }} {{ fmt.money(s.money) }} ▴</span></div>' +
+        '<span><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}">{{ s.limit.sign }}</span>' +
+        '{{ s.online ? "● online" : "" }} {{ fmt.money(s.money) }} ▴</span></div>' +
       '<div class="cep" ng-if="!min"><div class="cep-screen">' +
       '<div class="cep-notch"></div>' +
       '<div class="cep-bar"><span>{{ s.clock }}</span><span>{{ s.online ? "● online" : "" }} ' +
         '<button class="cep-min" title="Fold the phone" ng-click="fold(true)">–</button></span></div>' +
       '<div class="cep-head"><div class="cep-brand">Cargo<b>Earth</b></div>' +
+        '<div class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}" title="Speed limit here">{{ s.limit.sign }}' +
+          '<small ng-if="s.limit.unit === \'mph\'">mph</small></div>' +
         '<div class="cep-money">balance<strong>{{ fmt.money(s.money) }}</strong></div></div>' +
       '<div class="cep-section" ng-if="s.screen !== \'resume\'"><h1>{{ sectionTitle() }}</h1>' +
         '<button class="cep-settings-link" ng-if="tab === \'orders\'" ng-click="setTab(\'settings\')">{{ s.mode === "courier" ? "Courier" : "Trucking" }} settings</button></div>' +
