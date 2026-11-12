@@ -23,7 +23,8 @@ local function init(jbeamData)
   local page = jbeamData.page or 'local://local/vehicles/common/cargo_earth_phone/phone.html'
   page = page .. '?vehicle=' .. tostring(obj:getId()) .. '&tag=' .. tag:gsub('@', '%%40')
   obj:createWebView(tag, page, width, height, 1, fps) -- 1 = automatic: redrawn up to fps times a second
-  -- the floating dash screen (a billboard) steps aside for a car with a real phone
+  log('I', 'cargoEarthPhone', 'phone holder screen started: ' .. page)
+  -- tell the game this car has its phone on the dash (Settings shows it running)
   obj:queueGameEngineLua(string.format('if cargoEarth_core and cargoEarth_core.dashPhonePart then cargoEarth_core.dashPhonePart(%d) end', obj:getId()))
 end
 

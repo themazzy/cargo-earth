@@ -1972,6 +1972,31 @@ test('a wreck never costs more to repair than the car is worth', function()
   assert(garage.trackDamage(g, 0) == 'debt' and g.debt == cap and g.repair == 0)
 end)
 
+test('Settings fits and removes the dash phone holder through the parts tree', function()
+  local core = fresh()
+  local fitted
+  local v = {id = 9, model = 'pigeon', ioCtx = {},
+    tree = {chosenPartName = 'pigeon', children = {pigeon_mod = {chosenPartName = ''}}},
+    slotPartMap = {['/pigeon_mod/'] = ''}}
+  core.G.vehicle = function() return v end
+  core.G.part = function(_, name) if name == 'pigeon' then return {slots2 = {{name = 'pigeon_mod'}}} end end
+  core.G.compatible = function(_, def) return def.name == 'pigeon_mod' and {'cargo_earth_phone_pigeon'} or {} end
+  core.G.fitTree = function(tree) fitted = tree end
+  local st = core.settingsState().dash
+  assert(st.car and st.supported and not st.fitted, 'a Pigeon without the holder can fit one')
+  core.settingsDo('dash', 'fit')
+  assert(fitted and fitted.children.pigeon_mod.chosenPartName == 'cargo_earth_phone_pigeon')
+  assert(v.tree.children.pigeon_mod.chosenPartName == '', 'the car\'s own tree is left for the game to change')
+  v.slotPartMap['/pigeon_mod/'] = 'cargo_earth_phone_pigeon'
+  assert(core.settingsState().dash.fitted)
+  fitted = nil
+  core.settingsDo('dash', 'remove')
+  assert(fitted and fitted.children.pigeon_mod.chosenPartName == '')
+  v.model = 'covet'
+  st = core.settingsDo('dash', 'fit').dash
+  assert(not st.supported and st.error, 'a car without a holder says so')
+end)
+
 print(string.format('%d career tests passed', total))
 
 do

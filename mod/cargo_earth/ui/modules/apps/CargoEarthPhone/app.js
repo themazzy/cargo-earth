@@ -993,23 +993,15 @@ angular.module('beamng.apps')
             '(st.cameras.helper === "failed" ? "Could not load cameras; trying again" : st.cameras.known + " real cameras around you (OpenStreetMap)"))) }}</small></div>' +
           '<b>{{ st.cameras.on ? "On" : "Off" }}</b></div>' +
         '<div class="cep-label" ng-if="st.dash">VR</div>' +
-        '<div class="cep-li" ng-if="st.dash" ng-click="sdo(\'dash\', \'show\')">' +
-          '<div><div class="cep-name">Screen on the dashboard</div><small>{{ st.dash.show === "vr" ? "In VR, in the cockpit view. Press its buttons with a controller" : ' +
-            '(st.dash.show === "always" ? "In the cockpit view, also on a monitor (click its buttons)" : "Never shown") }}</small></div>' +
-          '<b>{{ st.dash.show === "vr" ? "VR" : (st.dash.show === "always" ? "Always" : "Off") }}</b></div>' +
-        '<div class="cep-card" ng-if="st.dash && st.dash.show !== \'off\'">' +
-          '<div class="cep-sub" ng-if="!st.dash.shown">Sit in the cockpit view to place it. Each car model keeps its own place.</div>' +
-          '<div class="cep-sub" ng-if="st.dash.shown">Place it for this car{{ st.dash.moved ? " (moved)" : "" }}:</div>' +
-          '<div class="cep-nudge" ng-if="st.dash.shown">' +
-            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z\', 1)">Up</button>' +
-            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'y\', -1)">Closer</button>' +
-            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'size\', 1)">Bigger</button>' +
-            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x\', -1)">Left</button>' +
-            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x\', 1)">Right</button>' +
-            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'size\', -1)">Smaller</button>' +
-            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z\', -1)">Down</button>' +
-            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'y\', 1)">Further</button></div>' +
-          '<button class="cep-sm ghost" ng-if="st.dash.moved" style="margin-top:6px" ng-click="sdo(\'dash\', \'reset\')">Put it back in its usual place</button></div>' +
+        '<div class="cep-card" ng-if="st.dash">' +
+          '<div class="cep-name">Phone on the dashboard</div>' +
+          '<div class="cep-sub" ng-if="!st.dash.car">Sit in a car to fit a phone holder.</div>' +
+          '<div class="cep-sub" ng-if="st.dash.car && !st.dash.supported">No phone holder for this car yet. The Pigeon has one.</div>' +
+          '<div class="cep-sub" ng-if="st.dash.supported && !st.dash.fitted">A holder on the dash with this whole phone in it. In VR, point a controller at it and pull the trigger; on a monitor, click it.</div>' +
+          '<div class="cep-sub" ng-if="st.dash.fitted">Fitted{{ st.dash.running ? "" : " (its screen starts when the car is loaded)" }}. Point a controller at the screen and pull the trigger.</div>' +
+          '<div class="cep-sub" ng-if="st.dash.error">{{ st.dash.error }}</div>' +
+          '<button class="cep-sm" ng-if="st.dash.supported && !st.dash.fitted" style="margin-top:6px" ng-click="sdo(\'dash\', \'fit\')">Fit phone holder</button>' +
+          '<button class="cep-sm ghost" ng-if="st.dash.fitted" style="margin-top:6px" ng-click="sdo(\'dash\', \'remove\')">Take the holder off</button></div>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'reset\')">Back to the defaults</button>' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'window\')">{{ st.window ? "Close" : "Open" }} the debug window</button>' +

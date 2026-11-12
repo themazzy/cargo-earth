@@ -231,6 +231,14 @@ function M.applyTree(tree)
   if not ok then error(err) end
 end
 
+-- Puts a parts tree on the player's car like BeamNG's Vehicle Config does: unlike applyTree, the career sees the change
+-- (onPartsTreeConfigChanged) and asks the player to pay for new parts.
+function M.fitTree(tree)
+  local pm = extensions and extensions.core_vehicle_partmgmt or core_vehicle_partmgmt
+  if not pm or not pm.setPartsTreeConfig then error('core_vehicle_partmgmt.setPartsTreeConfig missing') end
+  pm.setPartsTreeConfig(tree)
+end
+
 function M.applyConfig(vehicle, config)
   local v = playerVeh()
   if not v or v:getID() ~= vehicle.id or vehData(vehicle.id) ~= vehicle.data or not M.isOwned(vehicle) then
