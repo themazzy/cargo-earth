@@ -31,6 +31,7 @@ local records = require('cargoEarth/stats')
 local cameras = require('cargoEarth/cameras')
 local speedlimit = require('cargoEarth/speedlimit')
 local upkeep = require('cargoEarth/upkeep')
+local special = require('cargoEarth/special')
 local firm = require('cargoEarth/firm')
 local parcel = require('cargoEarth/parcel')
 
@@ -573,6 +574,7 @@ function M.generate()
       end
       for _, offer in ipairs(offers) do
         if offer.route or haul.prepare(offer, tier, rows, S.idx) then
+          if not offer.route then special.roll(offer, tier, M.random) end
           if ownTruck then
             offer.fuelAllowance = math.floor(offer.km * haul.FUEL_ALLOWANCE[tier] / 5 + 0.5) * 5
             offer.pay = offer.pay + offer.fuelAllowance
@@ -847,9 +849,10 @@ local function finishDelivery(force)
     tip = harsh == 0 and fast + smooth or math.floor(fast * math.max(0, 1 - M.HARSH_TIP_LOSS * harsh) / 5 + 0.5) * 5
     tipWhy = { fast = fast > 0 or nil, smooth = smooth > 0 or nil, harsh = harsh > 0 and harsh or nil }
   end
+  if j.special == 'chilled' then special.warm(j, late) end
   local condition = cargo.supports(j) and cargo.condition(j) or 100
   local conditionFactor = j.kind == 'food' and (0.6 + 0.004 * condition) or condition / 100
-  pay = math.floor(pay * conditionFactor + 0.5)
+  pay = math.floor(pay * conditionFactor * (1 - special.penalty(j) / 100) + 0.5)
   tip = math.floor(tip * condition / 100 + 0.5)
   local c = S.career
   local toDebt = 0
@@ -877,7 +880,7 @@ local function finishDelivery(force)
     cargoCondition = condition < 100 and condition or nil, held = j.companyShift ~= nil,
     ownerOperator = c.employment and c.employment.ownerOperator,
     stars = stars, note = note, track = track, records = #newRecords > 0 and newRecords or nil, premium = j.premium,
-    tipWhy = tip > 0 and tipWhy or (tipWhy and tipWhy.harsh and tipWhy) or nil }
+    tipWhy = tip > 0 and tipWhy or (tipWhy and tipWhy.harsh and tipWhy) or nil, special = special.info(j) }
   nextPing()
   c.km = (c.km or 0) + j.km
   table.insert(c.history, 1, { date = os.date('%Y-%m-%d %H:%M'), kind = j.kind or 'cargo', from = j.from.n,
@@ -982,12 +985,21 @@ end
 function M.onCargoEarthHarsh(id, token, g)
   if S.pendingCareer or type(g) ~= 'number' or g ~= g then return end
   if M.G.playerId() ~= id then return end
-  local counted = 0
+  local counted, cracked, ruined = 0, 0, {}
   for _, order in ipairs(S.orders) do
     local job = order.job
     if order.phase == 'toDelivery' and (job.kind == 'food' or job.route) then
       job.harsh, counted = (job.harsh or 0) + 1, counted + 1
     end
+    if order.phase == 'toDelivery' and special.harsh(job) > 0 then
+      cracked = cracked + 1
+      if special.condition(job) == 0 then ruined[job] = true end
+    end
+  end
+  if next(ruined) then M.spoil(nil, ruined) return end
+  if cracked > 0 then
+    say(string.format('The fragile load felt that: %d %% intact.', special.condition(S.job or {})), 4)
+    return
   end
   if counted > 0 and S.clock >= (S.harshSaidAt or -math.huge) + 20 then
     S.harshSaidAt = S.clock
@@ -1032,6 +1044,20 @@ local function tick(dt)
     and (not S.freightLoad or (S.freightLoad.command ~= 'unload' and S.freightLoad.command ~= 'unloadDone'
       and not (S.freightLoad.command or ''):match('^stop'))) then
     workFreight(S.job, false)
+  end
+  -- special cargo on board: a chilled load warms up after its time limit, an oversize one has an escort
+  if S.job.special and S.phase == 'toDelivery' then
+    local j = S.job
+    if j.special == 'chilled' then
+      local before = special.condition(j)
+      if special.warm(j, M.elapsed(j) / 60 - j.minutes) < before then
+        if special.condition(j) == 0 then M.spoil(nil, { [j] = true }) return end
+        if before == 100 then say('The chilled load is warming up: it spoils by the minute now.', 6) end
+      end
+    elseif p and not p.camera and special.speed(j, (p.speed or 0) * 3.6, dt) then
+      say(string.format('Escort: too fast for an oversize load (%d km/h max). Pay now %d %% lower.',
+        special.KINDS.oversize.maxKmh, special.penalty(j)), 5)
+    end
   end
   S.dist = distToTarget(p)
   -- the road distance of the GPS route, for the phone and window (arrival still uses the straight distance)
@@ -1128,6 +1154,7 @@ local function incomingInfo(inc)
     orderType = j.orderType, sizeBonus = j.sizeBonus, freight = j.haul, handling = j.kind == 'food' and cargo.handling(j) or nil,
     slots = j.kind == 'food' and cargo.size(j) or nil,
     pickupKm = r1(j.pickupKm), km = r1(j.km), pay = j.pay, minutes = j.minutes, adr = j.adr or false,
+    special = special.info(j),
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
     fuelAllowance = j.fuelAllowance,
@@ -1463,7 +1490,7 @@ function M.phoneState()
       toDebt = receipt.toDebt, net = receipt.net, rankUp = receipt.rankUp, truckUnlock = receipt.truckUnlock,
       cargoCondition = receipt.cargoCondition, held = receipt.held, ownerOperator = receipt.ownerOperator,
       stars = receipt.stars, note = receipt.note, track = receipt.track, records = receipt.records, premium = receipt.premium,
-      tipWhy = receipt.tipWhy }
+      tipWhy = receipt.tipWhy, special = receipt.special }
   end
   if ph.lastFailure and S.clock < ph.lastFailure.untilT then
     out.failure = { count = ph.lastFailure.count, g = ph.lastFailure.g }
@@ -1481,6 +1508,7 @@ function M.phoneState()
       freight = j.haul, freightStatus = S.freightStatus, route = j.route and parcel.state(j),
       canRestoreTrailer = j.trailer and not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested) or nil,
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
+      special = special.info(j),
       slots = j.kind == 'food' and cargo.size(j) or nil,
       distM = distRoad and math.floor(S.roadM + 0.5)
         or (S.dist and math.floor(S.dist + 0.5)) or nil,

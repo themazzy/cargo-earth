@@ -1598,4 +1598,106 @@ test('customers tip a fast, smooth ride; harsh moments cost the tip', function()
   assert(done.tip <= math.floor(food.tip(job.pay, 0, job.minutes) * (1 - 2 * core.HARSH_TIP_LOSS) / 5 + 0.5) * 5, 'no smooth tip, less for speed')
 end)
 
+------------------------------------------------------------------------------------------ 0.6: special cargo
+
+local special = require('cargoEarth/special')
+
+test('special cargo rules: which loads qualify, pay, fragile jolts, chilled spoiling, oversize escort', function()
+  local function job(cargoId, kind) return { cargo = cargoId, haul = { kind = kind }, pay = 1000, minutes = 50 } end
+  local list = special.candidates(job('furniture', 'parcel'), 'rigid')
+  assert(#list == 2 and list[1] == 'fragile' and list[2] == 'oversize')
+  assert(#special.candidates(job('furniture', 'parcel'), 'van') == 1, 'no oversize load in a van')
+  assert(special.candidates(job('milk', 'fluid'), 'semi')[1] == 'chilled')
+  assert(#special.candidates(job('gravel', 'dryBulk'), 'semi') == 0)
+  assert(#special.candidates({ route = {}, haul = { kind = 'parcel' } }, 'van') == 0, 'parcel routes stay ordinary')
+  assert(special.roll(job('furniture', 'parcel'), 'rigid', function() return 0.99 end) == nil)
+  -- fragile: more pay, every harsh moment costs condition
+  local f = job('electronics', 'parcel')
+  special.apply(f, 'fragile')
+  assert(f.pay == 1400 and f.specialBonus == 400 and f.handling == 'Fragile' and cargo.handling(f) == 'Fragile')
+  assert(special.harsh(f) == 8 and special.condition(f) == 92)
+  assert(special.harsh(job('electronics', 'parcel')) == 0, 'an ordinary load does not mind')
+  -- chilled: a shorter limit, then it spoils by the minute (counted once)
+  local c = job('milk', 'fluid')
+  special.apply(c, 'chilled')
+  assert(c.minutes == 40 and c.pay == 1300)
+  assert(special.warm(c, -5) == 100 and special.warm(c, 2.5) == 94 and special.warm(c, 2.9) == 94 and special.warm(c, 4) == 88)
+  -- oversize: escort reports every 10 s too fast
+  local o = job('furniture', 'parcel')
+  special.apply(o, 'oversize')
+  assert(not special.speed(o, 55, 30) and special.penalty(o) == 0)
+  assert(not special.speed(o, 80, 9) and special.speed(o, 80, 2) and special.penalty(o) == 3)
+  special.speed(o, 90, 1000)
+  assert(special.penalty(o) == special.KINDS.oversize.maxLoss, 'the escort takes at most a share')
+  assert(special.info(o).penalty == 60 and special.info(f).note:find('8'))
+end)
+
+test('a special freight job shows on the phone, a fragile load cracks with harsh driving and pays less', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if not offer.route and offer.haul and offer.haul.kind == 'parcel' then i, job = k, offer break end end
+  assert(job, 'a parcel freight job is offered in a van')
+  assert(not job.special, 'tests roll no special loads unless asked')
+  local base = job.pay
+  special.apply(job, 'fragile')
+  assert(job.pay > base)
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery')
+  local state = core.phoneState()
+  assert(state.active.special and state.active.special.kind == 'fragile' and state.active.cargoCondition == 100)
+  core.onCargoEarthHarsh(vehicle.id, 1, 0.7)
+  core.onCargoEarthHarsh(vehicle.id, 1, 0.7)
+  assert(job.cargoCondition == 84, 'two harsh moments cost 16 %')
+  local money = c.money
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(not s.job and c.money > money)
+  assert(s.phone.lastDone.pay <= math.floor(job.pay * 0.84 + 0.5) and s.phone.lastDone.special.kind == 'fragile')
+end)
+
+test('an oversize load driven too fast loses pay to escort reports; a ruined fragile load fails', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if not offer.route and offer.haul and offer.haul.kind == 'parcel' then i, job = k, offer break end end
+  special.apply(job, 'oversize')
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  pose.speed = 25   -- 90 km/h
+  advance(core, 50)
+  pose.speed = 0
+  assert(special.penalty(job) > 0 and core.phoneState().active.special.penalty == special.penalty(job))
+  local penalty = special.penalty(job)
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(not s.job and s.phone.lastDone.special.penalty == penalty)
+  assert(s.phone.lastDone.pay <= math.floor(job.pay * (1 - penalty / 100) + 0.5))
+  -- a fragile load shaken to pieces is lost
+  core.generate()
+  for k, offer in ipairs(s.offers) do if not offer.route and offer.haul and offer.haul.kind == 'parcel' then i, job = k, offer break end end
+  special.apply(job, 'fragile')
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  local failed = c.failed or 0
+  for _ = 1, 13 do core.onCargoEarthHarsh(vehicle.id, 1, 0.7) end
+  assert(not s.job and (c.failed or 0) == failed + 1, 'ruined')
+end)
+
 print(string.format('%d career tests passed', total))
