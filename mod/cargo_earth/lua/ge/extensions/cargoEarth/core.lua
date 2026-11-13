@@ -3616,7 +3616,7 @@ function M.onBeforeVehicleReplaced(id)
   end
 end
 
-function M.onVehicleDestroyed(id) dash.dropCar(id) dashTried[id] = nil dashReloaded[id] = nil end
+function M.onVehicleDestroyed(id) dash.dropCar(id) dash.dropLoaded(id) dashTried[id] = nil dashReloaded[id] = nil end
 -- the game is putting a car together: its nodes still carry all their groups (cargoEarth/dash.lua)
 function M.onJbeamLoadingPhase2(_, objID, vehicle) dash.captureLoading(objID, vehicle) end
 function M.onVehicleSwitched() M.dashCheckSoon() end
@@ -3643,6 +3643,7 @@ function M.onPartsTreeConfigChanged(_, respawn)
 end
 
 function M.onClientEndMission()
+  dash.forgetLoaded()
   dash.forget()
   S.resumeTrip = nil
   releaseStorage()

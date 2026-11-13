@@ -126,7 +126,10 @@ end
 M.KEEP_LOADED = 6
 local loaded, loadedOrder = {}, {}
 function M.captureLoading(objID, vehicle)
-  if not cfg_on() or objID == nil or type(vehicle) ~= 'table' then return end
+  if objID == nil then return end
+  -- whatever was kept for this car no longer describes it, even when nothing new is kept
+  M.dropLoaded(objID)
+  if not cfg_on() or type(vehicle) ~= 'table' then return end
   local nodes = M.nodesOf(vehicle)
   if #nodes == 0 then return end
   if not loaded[objID] then loadedOrder[#loadedOrder + 1] = objID end
@@ -141,6 +144,11 @@ function M.loadedNodes(objID, model, skipName)
   local out = {}
   for _, n in ipairs(l.nodes) do if n.name ~= skipName then out[#out + 1] = n end end
   return out
+end
+function M.dropLoaded(objID)
+  if loaded[objID] == nil then return end
+  loaded[objID] = nil
+  for i, id in ipairs(loadedOrder) do if id == objID then table.remove(loadedOrder, i) break end end
 end
 function M.forgetLoaded() loaded, loadedOrder = {}, {} end
 

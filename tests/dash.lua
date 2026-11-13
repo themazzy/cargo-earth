@@ -191,6 +191,10 @@ test('a loaded car keeps only first groups; the car as it loaded keeps them all'
   local l = dash.loadedNodes(7, 'ferax', 'cam')
   assert(#l == 1 and l[1].groups[1] == 'a' and l[1].groups[2] == 'b', 'all groups kept, camera node left out')
   assert(dash.loadedNodes(7, 'pigeon') == nil, 'another model is not mixed up')
+  reset({ on = false })
+  dash.captureLoading(7, { model = 'ferax', nodes = {} })
+  reset({ on = true })
+  assert(dash.loadedNodes(7) == nil, 'a reload while the switch is off forgets the old nodes')
   for i = 1, dash.KEEP_LOADED do dash.captureLoading(100 + i, { model = 'x', nodes = { a = { name = 'a', pos = { x = 0, y = 0, z = 0 } } } }) end
   assert(dash.loadedNodes(7) == nil, 'only the last few cars are kept')
   dash.forgetLoaded()
