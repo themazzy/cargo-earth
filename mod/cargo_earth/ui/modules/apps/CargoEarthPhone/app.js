@@ -9,6 +9,9 @@
 // the radio (cargoEarth_core.radioDo); this player checks in twice a second, plays the station when the game says the
 // page should, and says how it goes. A station the page cannot play goes to the helper (the game decides).
 var cargoEarthRadioPlayer = null
+// The Menu window, one per page: the app whose window is open. Opening one closes any other, so two never lie over
+// each other, however many copies of an app the page holds (a layout reload can leave an old one listening).
+var cargoEarthMenu = {open: null}
 function pagePlayer() {
   if (cargoEarthRadioPlayer || typeof Audio === 'undefined' || typeof bngApi === 'undefined') return cargoEarthRadioPlayer
   var audio = new Audio(), me = {seq: -1, status: 'idle', why: '', busy: false, on: false, at: 0, retries: 0, retry: null}
@@ -1422,6 +1425,11 @@ angular.module('beamng.apps')
         }
         if (p === 'garage' && scope.panel !== 'garage') scope.gview = 'home'
         if (p === 'career' && view) scope.careerView = view
+        if (!scope.dash) {
+          var other = cargoEarthMenu.open
+          if (other && other !== scope && other.panel) other.$evalAsync(function () { other.closePanel() })
+          cargoEarthMenu.open = scope
+        }
         scope.panel = lastPanel = p
         scope.min = false
         resetAsks()
@@ -1436,8 +1444,11 @@ angular.module('beamng.apps')
         var hostKind = scope.menuOnly ? 'menu' : 'phone'
         scope.$on('CargoEarthOpenMenu', function (event, d) {
           if (!d || !d.panel || (d.to || 'phone') !== hostKind) return
+          if (d.taken) return // one request, one app: every listener gets the same message
+          d.taken = true
           scope.$evalAsync(function () {
             if (d.panel !== 'toggle') scope.openPanel(d.panel, d.view || undefined, true)
+            else if (cargoEarthMenu.open && cargoEarthMenu.open.panel) cargoEarthMenu.open.closePanel()
             else if (scope.panel) scope.closePanel()
             else scope.openPanel(lastPanel || 'garage', undefined, true)
           })
@@ -1446,7 +1457,10 @@ angular.module('beamng.apps')
         var hostHere = function () { bngApi.engineLua('cargoEarth_core and cargoEarth_core.menuHost("' + hostKind + '")', function () {}) }
         hostHere()
         var hostTimer = setInterval(hostHere, 3000)
-        scope.$on('$destroy', function () { clearInterval(hostTimer) })
+        scope.$on('$destroy', function () {
+          clearInterval(hostTimer)
+          if (cargoEarthMenu.open === scope) cargoEarthMenu.open = null
+        })
       }
       // Menu button: closes an open window, else opens the last section. A window in another app (the Menu app or the
       // floating phone) is toggled there, where its open/closed state and last section live.
