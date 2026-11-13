@@ -9,9 +9,13 @@ Phone app → Menu → Settings → VR → **Phone on the dashboard: On**. It wo
 you drive gets the phone, and so does each car you spawn or switch to afterwards (a moment after it appears, the car is
 reloaded once with the phone). Traffic never gets one. It costs nothing and is not a career part.
 
-Below the switch, **Up / down**, **Closer / further** and **Left / right** move it 1 cm per press (the car reloads to
-show it), kept per car model. **Back to where it started** drops the nudges; **Measure this car again** measures the
-car again.
+Below the switch, **Up / down**, **Closer / further** and **Left / right** move it 1 cm per press, kept per car model.
+The car reloads once, 1.5 s after the last press. **Move it with a small pad** closes the big window and shows the same
+buttons in a small pad in the corner, so the phone stays in sight; **Done** brings the window back. **Back to where it
+started** drops the nudges; **Measure this car again** measures the car again.
+
+Beside the phone are six labelled buttons: on the left **Go online / offline**, **Accept the order** and **Decline
+the order**; on the right **Scroll up**, **Scroll down** and **Route to the next stop**.
 
 The older floating VR screen (a Skia billboard in front of the driver) is removed: a billboard always turns toward the
 camera and was placed from the seat node, so it turned with your head, shook with g-forces and flickered, and its
@@ -38,10 +42,14 @@ runtime trigger boxes never ended up in the right place (beamng.log showed their
 * **Calls:** the page has no `bngApi`; `dash.js` stands in for it and sends each call through
   `beamng.sendEngineLua` to `cargoEarth_core.dashCall`, which only runs the phone app's own call shapes
   (`dashAllowed`) and sends the answer back to the page through the car.
-* **Pressing:** 72 cockpit trigger boxes (6 × 12 grid) lie 4 mm in front of the screen, in the same jbeam
-  `triggers2` / `triggerEventLinks2` format as the stock hazard and sun visor buttons. Point the VR controller
+* **Pressing:** 72 nearly clear cockpit trigger boxes (6 × 12 grid) lie 4 mm in front of the screen, in the same
+  jbeam `triggers2` / `triggerEventLinks2` format as the stock hazard and sun visor buttons. Point the VR controller
   (or the mouse) at a spot and pull the trigger: the cell's input action asks the page to click whatever is
-  under the middle of that cell.
+  under the middle of that cell. The rows use the stock `triggers2` header (`dash.TRIGGER_HEADER`): the game keeps
+  only the first part's header when it merges parts.
+* **Buttons beside the phone:** six more triggers (`dash.BUTTONS`), each with a label and its own input action
+  (`cargoEarthButton_<id>`); the controller scrolls the page itself and sends the rest to
+  `cargoEarth_core.dashButton`.
 
 Regenerate the meshes, materials and the click grid's input actions with `python3 tools/make-dash-phone.py` (it uses
 `tools/make-phone-mesh.py`). beamng.log shows `dash phone: <model> measured, phone at ...` when a car is measured, and

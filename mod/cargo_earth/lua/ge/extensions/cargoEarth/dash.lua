@@ -300,14 +300,34 @@ function M.cellCentre(centre, yaw, col, row)
   return add(centre, turn(v3(M.SCREEN_W / 2 - (col - 0.5) * cw, 0.004, M.SCREEN_H / 2 - (row - 0.5) * ch), yaw))
 end
 
--- The size of each click box in its trigger's frame: the box is square to that frame while the cell is turned, so it
--- is made as large as the turned cell along each of the frame's axes.
-function M.boxSize(spot, yaw)
+-- The size of a click box w wide and h high on the phone, in its trigger's frame: the box is square to that frame
+-- while the phone is turned, so it is made as large as the turned box along each of the frame's axes.
+function M.boxSize(spot, yaw, w, h)
   local _, fx, fy, fz = frame(spot)
-  local cw, ch = M.SCREEN_W / M.COLS * 0.98, M.SCREEN_H / M.ROWS * 0.98
+  local cw, ch = w or M.SCREEN_W / M.COLS * 0.98, h or M.SCREEN_H / M.ROWS * 0.98
   local across, up, out = turn(v3(1, 0, 0), yaw), v3(0, 0, 1), turn(v3(0, 1, 0), yaw)
   local function along(a) return round(cw * math.abs(dot(across, a)) + ch * math.abs(dot(up, a)) + M.DEPTH * math.abs(dot(out, a)), 4) end
   return { x = along(fx), y = along(fy), z = along(fz) }
+end
+
+-- Labelled buttons beside the phone, for what you do most while driving. side: 'left' or 'right' as the driver sees
+-- it; slot: 1 at the top. The car's controller (lua/vehicle/controller/cargoEarthPhone.lua) runs them: scrolling in
+-- the page, the rest through cargoEarth_core.dashButton. Their titles are in cargo_earth_phone.interaction.json
+-- (tools/make-dash-phone.py).
+M.BUTTONS = {
+  { id = 'online', label = 'Go online / offline', side = 'left', slot = 1 },
+  { id = 'accept', label = 'Accept the order', side = 'left', slot = 2 },
+  { id = 'decline', label = 'Decline the order', side = 'left', slot = 3 },
+  { id = 'up', label = 'Scroll up', side = 'right', slot = 1 },
+  { id = 'down', label = 'Scroll down', side = 'right', slot = 2 },
+  { id = 'gps', label = 'Route to the next stop', side = 'right', slot = 3 },
+}
+M.BUTTON_W, M.BUTTON_H, M.BUTTON_GAP = 0.030, 0.045, 0.012
+function M.buttonAction(id) return 'cargoEarthButton_' .. id end
+function M.buttonCentre(centre, yaw, b)
+  local x = M.SCREEN_W / 2 + 0.006 + M.BUTTON_GAP + M.BUTTON_W / 2   -- past the phone's rim
+  local z = M.SCREEN_H / 2 - M.BUTTON_H / 2 - (b.slot - 1) * (M.BUTTON_H + M.BUTTON_GAP)
+  return add(centre, turn(v3(b.side == 'left' and x or -x, 0.004, z), yaw))
 end
 
 local function xyz(p) return { x = round(p.x, 4), y = round(p.y, 4), z = round(p.z, 4) } end
@@ -330,9 +350,18 @@ function M.buildPart(spot, nudge)
         { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 },
         -- the box's middle in jbeam coordinates: the game turns it into the trigger's own frame
         -- (lua/common/jbeam/sections/events.lua)
-        { baseTranslationGlobal = xyz(M.cellCentre(centre, yaw, col, row)), color = { 0.91, 0.27, 0.17, 0.6 } } }
+        -- nearly clear: the screen shows what is under them
+        { baseTranslationGlobal = xyz(M.cellCentre(centre, yaw, col, row)), color = { 1, 1, 1, 0.04 } } }
       links[#links + 1] = { id, 'action0', M.action(col, row) }
     end
+  end
+  local bsize = M.boxSize(spot, yaw, M.BUTTON_W, M.BUTTON_H)
+  for _, b in ipairs(M.BUTTONS) do
+    local id = 'ceb_' .. b.id
+    triggers[#triggers + 1] = { id, spot.ref.name, spot.x.name, spot.y.name, 'box', bsize,
+      { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 },
+      { baseTranslationGlobal = xyz(M.buttonCentre(centre, yaw, b)), color = { 0.91, 0.27, 0.17, 0.85 }, label = b.label } }
+    links[#links + 1] = { id, 'action0', M.buttonAction(b.id) }
   end
   local at = { pos = xyz(centre) }
   return {

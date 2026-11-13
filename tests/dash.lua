@@ -84,12 +84,13 @@ test('the part covers the screen with a 6 x 12 click grid and moves with the nud
   local spot = assert(dash.findSpot(car(EYE), EYE))
   local part = dash.buildPart(spot)
   assert(part.slotType == dash.SLOT and part.partName == dash.PART and part.information.value == 0)
-  assert(#part.triggers2 == 1 + dash.COLS * dash.ROWS and #part.triggerEventLinks2 == 1 + dash.COLS * dash.ROWS)
+  local n = 1 + dash.COLS * dash.ROWS + #dash.BUTTONS
+  assert(#part.triggers2 == n and #part.triggerEventLinks2 == n)
   local centre, yaw = dash.placement(spot)
   assert(part.flexbodies[2][1] == 'cargo_earth_phone_body' .. dash.meshSuffix(yaw))
   assert(part.flexbodies[3][1] == 'cargo_earth_phone_screen' .. dash.meshSuffix(yaw))
   assert(part.flexbodies[2][2][1] == spot.group and near(part.flexbodies[2][4].pos.z, centre.z, 1e-4))
-  local first, last = part.triggers2[2], part.triggers2[#part.triggers2]
+  local first, last = part.triggers2[2], part.triggers2[1 + dash.COLS * dash.ROWS]
   -- the game reads every part's rows in the first part's header order, so the header is the stock cars' one, in order
   local stock = { 'id', 'idRef:', 'idX:', 'idY:', 'type', 'size', 'baseRotation', 'rotation', 'translation', 'baseTranslation' }
   for i, h in ipairs(stock) do assert(part.triggers2[1][i] == h, 'header column ' .. i) end
@@ -101,6 +102,18 @@ test('the part covers the screen with a 6 x 12 click grid and moves with the nud
   local size = first[6]
   assert(size.x > 0 and size.y > 0 and size.z > 0)
   assert(part.triggerEventLinks2[2][3] == 'cargoEarthTap_1_1')
+  -- the labelled buttons stand beside the screen, left and right of it, and run their own actions
+  local accept, up
+  for i = n - #dash.BUTTONS + 1, n do
+    local row = part.triggers2[i]
+    if row[1] == 'ceb_accept' then accept = row end
+    if row[1] == 'ceb_up' then up = row end
+    assert(type(row[11].label) == 'string' and row[11].label ~= '')
+  end
+  assert(accept and up and part.triggerEventLinks2[n][3] == dash.buttonAction(dash.BUTTONS[#dash.BUTTONS].id))
+  local pa, pu = accept[11].baseTranslationGlobal, up[11].baseTranslationGlobal
+  local function side(p) return dash.vec.dot(dash.vec.sub(p, centre), { x = math.cos(math.rad(yaw)), y = math.sin(math.rad(yaw)), z = 0 }) end
+  assert(side(pa) > dash.SCREEN_W / 2 and side(pu) < -dash.SCREEN_W / 2, 'left and right of the screen')
   -- nudged 3 cm up: everything moves with it
   local up = dash.buildPart(spot, { x = 0, y = 0, z = 0.03 })
   assert(near(up.flexbodies[2][4].pos.z, part.flexbodies[2][4].pos.z + 0.03, 1e-4))

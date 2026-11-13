@@ -2,7 +2,8 @@
 // a car's screen page has no bngApi, only beamng.sendEngineLua (one way). So this file stands in for bngApi: each
 // question goes to cargoEarth_core.dashCall with a number, and the answer comes back as cargoEarthDash.reply(number,
 // value) through the car (controller cargoEarthPhone). Presses on the screen come in as cargoEarthDash.tap(u, v):
-// u, v from 0 to 1 across and down the screen; the element there is clicked.
+// u, v from 0 to 1 across and down the screen; the element there is clicked. The scroll buttons beside the phone come in
+// as scroll(dir); the page sees the other buttons' effect at its next look (twice a second).
 (function () {
   'use strict'
   var params = new URLSearchParams(window.location.search)
@@ -65,12 +66,11 @@
     var target = el.closest ? (el.closest('button, a, input, select, [ng-click]') || el) : el
     if (target.focus) target.focus()
     target.click()
-    setTimeout(showArrows, 150)   // the press may have opened a longer or shorter page
   }
 
 
-  // Scrolling: a cockpit trigger can only press, not drag, so long pages (Settings, Garage) get two arrow buttons on
-  // the right edge while something on the screen can scroll. They sit over grid column 6, rows 5-6 and 7-8.
+  // Scrolling: a cockpit trigger can only press, not drag, so the buttons beside the phone scroll the longest part of
+  // the screen that can scroll (the car's controller calls scroll(-1) or scroll(1)).
   function scroller() {
     var best = null
     var list = document.querySelectorAll('.cep-scroll')
@@ -81,33 +81,10 @@
     }
     return best
   }
-  var arrows = null
-  function makeArrows() {
-    if (arrows || !document.body) return
-    arrows = {}
-    ;[['up', -1, '\u25B2', 380], ['down', 1, '\u25BC', 570]].forEach(function (a) {
-      var b = document.createElement('button')
-      b.className = 'cep-arrow'
-      b.textContent = a[2]
-      b.style.top = a[3] + 'px'
-      b.addEventListener('click', function () {
-        var el = scroller()
-        if (el) el.scrollTop += a[1] * Math.round(el.clientHeight * 0.7)
-        showArrows()
-      })
-      document.body.appendChild(b)
-      arrows[a[0]] = b
-    })
-  }
-  function showArrows() {
-    makeArrows()
-    if (!arrows) return
+  function scroll(dir) {
     var el = scroller()
-    arrows.up.style.display = el && el.scrollTop > 2 ? 'block' : 'none'
-    arrows.down.style.display = el && el.scrollTop + el.clientHeight < el.scrollHeight - 2 ? 'block' : 'none'
+    if (el) el.scrollTop += dir * Math.round(el.clientHeight * 0.7)
   }
-  setInterval(showArrows, 1000)   // each look measures the page; presses check again at once (tap)
-
   window.bngApi = { engineLua: engineLua, serializeToLua: toLua }
-  window.cargoEarthDash = { tap: tap, reply: reply, page: true, scroller: scroller, showArrows: showArrows }
+  window.cargoEarthDash = { tap: tap, reply: reply, page: true, scroller: scroller, scroll: scroll }
 }())
