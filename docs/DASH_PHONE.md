@@ -35,3 +35,10 @@ beamng.log shows `phone holder screen started` and `dash phone holder running in
 
 Flexbody placement on the dash, the trigger frame axes, the emissive screen material, `beamng.sendEngineLua`
 inside a vehicle web view, and loading the app script from `local://local/ui/...`.
+
+## The Menu window
+
+The Menu (Garage, Home, Companies, Progress, Finances, Delivery map, Firm, Settings) is its own UI app,
+**Cargo Earth: Menu** (`ui/modules/apps/CargoEarthMenu`, the phone app's code in menu mode). Either phone asks the game
+(`cargoEarth_core.openMenu`) and the window opens in the Menu app; without it, in the floating phone; without either,
+on the asking phone itself. The Menu app is added to the .Earth layout once, top left, like the phone.

@@ -168,8 +168,11 @@ assert.equal(commands.length - before, 5, 'Folded phone should poll once every t
 scope.fold(false)
 scope.s = {screen: 'offline'}
 hold = true
-const start = commands.length
 scope.setTab('career')
+// the phone first asks the game to show the Menu window elsewhere (the Menu app); no Menu app here, so it opens on the phone
+assert(commands[commands.length - 1].includes('cargoEarth_core.openMenu("career"'))
+const start = commands.length
+pending.shift()(false)
 slow(); slow()
 assert.equal(commands.length - start, 1, 'A delayed page response must not create overlapping requests')
 // A lost callback must time out, and an old response must not replace a newer page.
@@ -181,6 +184,7 @@ assert.notEqual(scope.career && scope.career.rank, 'stale')
 pending.shift()({rank: 'fresh'})
 assert.equal(scope.career.rank, 'fresh')
 scope.setTab('garage')
+pending.shift()(false)
 pending.shift()({_phoneError: 'pricing failed'})
 assert(scope.pageErrors.g.includes('pricing failed'))
 scope.s = {screen: 'parts'}

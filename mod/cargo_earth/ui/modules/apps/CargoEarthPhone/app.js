@@ -801,10 +801,10 @@ angular.module('beamng.apps')
           '<button class="cep-sm ghost" ng-click="closeReport()">Close</button></div>' +
       '</div></div>' +
       '</div></div></div>' +
-      '<div class="cep-pill" ng-if="min" ng-click="fold(false)"><span>Cargo<b>Earth</b><span ng-if="radio.status === \'playing\'" style="font-weight:500"> ♪ {{ radio.station.name | limitTo: 18 }}</span></span>' +
+      '<div class="cep-pill" ng-if="min && !menuOnly" ng-click="fold(false)"><span>Cargo<b>Earth</b><span ng-if="radio.status === \'playing\'" style="font-weight:500"> ♪ {{ radio.station.name | limitTo: 18 }}</span></span>' +
         '<span><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}">{{ s.limit.sign }}</span>' +
         '{{ s.online ? "● online" : "" }} {{ fmt.money(s.money) }} ▴</span></div>' +
-      '<div class="cep" ng-if="!min"><div class="cep-screen">' +
+      '<div class="cep" ng-if="!min && !menuOnly"><div class="cep-screen">' +
       '<div class="cep-notch"></div>' +
       '<div class="cep-bar"><span>{{ s.clock }}</span><span>{{ s.online ? "● online" : "" }} ' +
         '<button class="cep-min" title="Fold the phone" ng-if="!dash" ng-click="fold(true)">–</button></span></div>' +
@@ -1136,6 +1136,7 @@ angular.module('beamng.apps')
       }
       function poll() {
         if (busy || destroyed) return
+        if (scope.menuOnly && !scope.panel) return // the Menu app asks only while its window is open
         var now = Date.now()
         if ((scope.min || (scope.s && scope.s.hidden)) && now - lastPoll < 2000) return
         lastPoll = now
@@ -1158,6 +1159,9 @@ angular.module('beamng.apps')
       scope.tab = 'orders'
       scope.min = false
       scope.dash = !!(typeof window !== 'undefined' && window.cargoEarthDash && window.cargoEarthDash.page) // on a car screen
+      // The "Cargo Earth: Menu" app (<cargo-earth-phone mode="menu">): no phone, only the Menu window, opened from either
+      // phone. It is its own UI app so the Menu works with the floating phone, the dash phone, or both.
+      scope.menuOnly = !!(element && element.attr && element.attr('mode') === 'menu')
       scope.storageHelpOpen = false
       scope.career = null
       scope.places = null
@@ -1302,10 +1306,10 @@ angular.module('beamng.apps')
       }
       scope.openPanel = function (p, view, local) {
         if (PANELS.indexOf(p) === -1) return
-        // The phone on the dash is too small for the Menu window: it opens in the game's own UI instead (the floating
-        // phone app listens for CargoEarthOpenMenu), where in VR it shows on BeamNG's UI panel. Without a floating
-        // phone in the UI the game says no, and the section opens here after all.
-        if (scope.dash && !local) {
+        // A phone asks the game to open the Menu window: the game sends it to the Menu app when that is in the UI,
+        // else to the floating phone (CargoEarthOpenMenu). In VR it shows on BeamNG's UI panel. When neither is there
+        // the game says no, and the section opens on this phone after all.
+        if (!local && !scope.menuOnly) {
           bngApi.engineLua('cargoEarth_core and cargoEarth_core.openMenu(' + bngApi.serializeToLua(p) + ',' +
             bngApi.serializeToLua(view || null) + ')', function (shown) {
             if (shown !== true) scope.$evalAsync(function () { scope.openPanel(p, view, true) })
@@ -1319,18 +1323,36 @@ angular.module('beamng.apps')
         resetAsks()
         loadPanel(p)
       }
-      scope.closePanel = function () { scope.panel = null; resetAsks() }
+      scope.closePanel = function () {
+        scope.panel = null
+        resetAsks()
+        if (scope.menuOnly) scope.s = null // stops asking while closed: forget the old answer, it is no news on reopening
+      }
       if (!scope.dash) {
+        var hostKind = scope.menuOnly ? 'menu' : 'phone'
         scope.$on('CargoEarthOpenMenu', function (event, d) {
-          scope.$evalAsync(function () { if (d && d.panel) scope.openPanel(d.panel, d.view || undefined) })
+          if (!d || !d.panel || (d.to || 'phone') !== hostKind) return
+          scope.$evalAsync(function () {
+            if (d.panel !== 'toggle') scope.openPanel(d.panel, d.view || undefined, true)
+            else if (scope.panel) scope.closePanel()
+            else scope.openPanel(lastPanel || 'garage', undefined, true)
+          })
         })
-        // tell the game this app is here to show the dash phone's Menu
-        var hostHere = function () { bngApi.engineLua('cargoEarth_core and cargoEarth_core.menuHost()', function () {}) }
+        // tell the game this app is here to show the Menu window
+        var hostHere = function () { bngApi.engineLua('cargoEarth_core and cargoEarth_core.menuHost("' + hostKind + '")', function () {}) }
         hostHere()
         var hostTimer = setInterval(hostHere, 3000)
         scope.$on('$destroy', function () { clearInterval(hostTimer) })
       }
-      scope.togglePanel = function () { if (scope.panel) scope.closePanel(); else scope.openPanel(lastPanel || 'garage') }
+      // Menu button: closes an open window, else opens the last section. A window in another app (the Menu app or the
+      // floating phone) is toggled there, where its open/closed state and last section live.
+      scope.togglePanel = function () {
+        if (scope.panel) { scope.closePanel(); return }
+        if (scope.menuOnly) { scope.openPanel(lastPanel || 'garage', undefined, true); return }
+        bngApi.engineLua('cargoEarth_core and cargoEarth_core.openMenu("toggle")', function (shown) {
+          if (shown !== true) scope.$evalAsync(function () { scope.openPanel(lastPanel || 'garage', undefined, true) })
+        })
+      }
       scope.panelOn = function (p, view) { return scope.panel === p && (!view || scope.careerView === view) }
       scope.panelTitle = function () {
         if (scope.panel === 'career') return {progress: 'Progress', money: 'Finances', map: 'Delivery map', firm: 'Firm'}[scope.careerView]
@@ -1613,7 +1635,9 @@ angular.module('beamng.apps')
         if (helperPlays() && scope.radio.status !== 'idle') bngApi.engineLua('if cargoEarth_core then cargoEarth_core.radioDo("helperStop") end')
       })
       // The editor can remount the phone. Open straight to checkout while a preview is active.
-      scope.$watch('s.screen', function (v) {
+      scope.$watch('s.screen', function (v, old) {
+        // the Menu app asks only while its window is open: its first answer after opening is no new offer
+        if (scope.menuOnly && (old === null || old === undefined)) return
         scope.storageHelpOpen = false
         if (v === 'incoming' || v === 'resume') { scope.min = false; scope.panel = null; scope.tab = 'orders' }
         if (v === 'parts') { scope.min = false; scope.setTab('garage') }

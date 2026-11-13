@@ -1,0 +1,20 @@
+{
+  "domElement": "<cargo-earth-menu></cargo-earth-menu>",
+  "name": "Cargo Earth: Menu",
+  "types": [
+    "ui.apps.categories.gameplay"
+  ],
+  "description": "The Cargo Earth Menu window (Garage, Home, Companies, Progress, Finances, Delivery map, Firm, Settings). Opened from the phone or the phone on the dash. Keep it in the layout when you remove the floating phone.",
+  "css": {
+    "top": "0px",
+    "left": "0px",
+    "height": "24px",
+    "width": "24px"
+  },
+  "author": "Cargo Earth",
+  "version": "1.0",
+  "directive": "cargoEarthMenu",
+  "appName": "cargoEarthMenu",
+  "category": "Cargo Earth",
+  "isAuxiliary": false
+}
