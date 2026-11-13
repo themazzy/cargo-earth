@@ -1714,6 +1714,7 @@ function M.phoneState()
   local gauge = c.garage.started and c.garage.car and fuel.state(c.garage.car)
   if gauge then
     out.fuel = { pct = math.floor(gauge.share * 100 + 0.5), low = gauge.low, empty = gauge.empty, rangeKm = gauge.rangeKm }
+    out.pump = M.pumpOffer(gauge)
   end
   local here = earth.pose()
   local limit = limitHere(here)
@@ -1843,6 +1844,17 @@ function M.phoneAction(a, orderId)
     M.garageStart()
     return M.phoneState()
   elseif unchosen and (a == 'online' or a == 'accept') then
+    return M.phoneState()
+  end
+  if a == 'pumpFill' then
+    -- the fuel offer on the Work screen: up to 25 / 50 / 75 %, or 100 for a full tank
+    local pct = tonumber(orderId)
+    local page = (pct and pct < 100) and M.garageDo('refuelTo', pct) or M.garageDo('refuel')
+    S.pumpMsg = { text = page.msg, untilT = S.clock + 6 }
+    return M.phoneState()
+  elseif a == 'pumpHide' then
+    local near = S.fuelNear
+    S.pumpHidden = near and near.station and near.station.id or S.pumpHidden
     return M.phoneState()
   end
   if a == 'online' and S.career.garage.car and S.career.garage.car.loaner and not S.career.employment then
@@ -2707,6 +2719,30 @@ local function fuelState()
   local delivery = fuel.quote(g.car, { gasoline = true, diesel = true, electric = true }, fuel.DELIVERY_FACTOR, fuel.DELIVERY_UNITS, nil, st.free)
   st.delivery = delivery and { cost = delivery.cost + (st.free and 0 or fuel.DELIVERY_FEE), units = unitsText(delivery.units) } or nil
   return st
+end
+
+-- The Work screen's fuel offer while the car stands at a station's pumps: { name, free, options = { pct, cost,
+-- afford } } or nil. Hidden for that station after "Not now" until the car leaves it; not shown on a near-full tank.
+function M.pumpOffer(gauge)
+  local g = S.career.garage
+  if S.pumpMsg and S.clock > S.pumpMsg.untilT then S.pumpMsg = nil end
+  if not g.started or not g.car or S.parts or g.preview or g.pendingUsed or not garage.inOwnCar(M.G, g) then return nil end
+  local near = fuelNear()
+  local s = near and near.at and near.station
+  if not s then S.pumpHidden = nil return nil end
+  if S.pumpHidden == s.id then return nil end
+  local msg = S.pumpMsg and S.pumpMsg.text
+  if fuelPending then return { name = s.n, busy = true, msg = msg, options = {} } end
+  if (fuelWatch and fuelWatch.off) or (gauge and gauge.share >= 0.9 and not msg) then return nil end
+  local free = g.car.loaner == true
+  local money = math.max(0, S.career.money or 0)
+  local out = { name = s.n, free = free, msg = msg, options = {} }
+  for _, pct in ipairs({ 25, 50, 75, 100 }) do
+    local q = fuel.quote(g.car, fuel.sells(s.kind), fuelFactor(s), nil, nil, free, pct < 100 and pct / 100 or nil)
+    if q then out.options[#out.options + 1] = { pct = pct, cost = q.cost, afford = free or q.cost <= money } end
+  end
+  if #out.options == 0 and not msg then return nil end
+  return out
 end
 
 local function garageSay(ok, msg)

@@ -193,6 +193,11 @@ angular.module('beamng.apps')
     '.cep-msg{font-size:12px;padding:8px 10px;border-radius:10px;background:#fff4e5;color:#6b4a00}' +
     '.cep-update{display:flex;align-items:center;gap:6px;font-size:12px;padding:6px 8px 6px 10px;border-radius:10px;background:#e8f1ff;color:#123a73}' +
     '.cep-update span{flex:1}.cep-update .cep-sm{margin:0;padding:4px 8px}' +
+    '.cep-pump{font-size:12px;padding:6px 8px 8px 10px;border-radius:10px;background:#fff4dc;color:#5a3d00}' +
+    '.cep-pump-head{display:flex;align-items:center;gap:6px}.cep-pump-head span{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+    '.cep-pump-head .cep-sm{margin:0;padding:3px 8px}.cep-pump-msg{margin-top:3px}' +
+    '.cep-pump-row{display:flex;gap:4px;margin-top:5px}.cep-pump-row .cep-sm{flex:1;margin:0;padding:4px 2px;display:flex;flex-direction:column;align-items:center;line-height:1.2}' +
+    '.cep-pump-row small{font-size:10px;font-weight:500;color:inherit;opacity:.85}' +
     '.cep-step2{display:flex;align-items:center;gap:8px}.cep-step2 b{min-width:62px;text-align:center;font-variant-numeric:tabular-nums}' +
     '.cep-li>div{min-width:0}' +
     '.cep-radio-now{display:flex;flex-direction:column;gap:8px}.cep-radio-now .cep-name{font-size:16px;white-space:normal}' +
@@ -1221,6 +1226,15 @@ angular.module('beamng.apps')
         '<span>Cargo Earth {{ s.update.latest }} is out{{ s.update.modOld && s.update.helperOld ? "" : (s.update.modOld ? " (new mod)" : " (new helper)") }}</span>' +
         '<button class="cep-sm" ng-click="updateDo(\'open\')">Get it</button>' +
         '<button class="cep-sm ghost" aria-label="Hide until the next update" ng-click="updateDo(\'hide\')">Later</button></div>' +
+      // at a station's pumps: fill from the Work screen (Not now hides it until the car leaves the station)
+      '<div class="cep-pump" ng-if="tab === \'orders\' && s.pump && s.screen !== \'incoming\'">' +
+        '<div class="cep-pump-head"><span>⛽ {{ s.pump.name }}</span>' +
+          '<button class="cep-sm ghost" aria-label="Hide until you leave this station" ng-click="act(\'pumpHide\')">Not now</button></div>' +
+        '<div class="cep-pump-msg" ng-if="s.pump.msg">{{ s.pump.msg }}</div>' +
+        '<div class="cep-pump-msg" ng-if="s.pump.busy">Refuelling…</div>' +
+        '<div class="cep-pump-row" ng-if="s.pump.options.length">' +
+          '<button class="cep-sm" ng-repeat="o in s.pump.options track by o.pct" ng-disabled="!o.afford" ng-click="act(\'pumpFill\', o.pct)">' +
+            '{{ o.pct === 100 ? "Full" : o.pct + " %" }}<small ng-if="!s.pump.free">{{ fmt.money(o.cost) }}</small></button></div></div>' +
       '<div class="cep-msg" role="alert" ng-if="s.saveError">{{ s.saveError }}</div>' +
       '<div class="cep-msg" role="alert" ng-if="s.flash">Speed camera: {{ s.flash.speed }} km/h, limit {{ s.flash.limit }}. Fine {{ fmt.money(s.flash.fine) }}' +
         '<span ng-if="s.flash.owed > 0"> ({{ fmt.money(s.flash.owed) }} added to your debt)</span>' +
