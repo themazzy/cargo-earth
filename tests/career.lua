@@ -995,7 +995,10 @@ test('a game pump fill without the money goes on the debt; an old pump press exp
   core.onGameRefuel(vehicle.id, {facility = {id = 'p', name = 'Pump'}}, {any = true})
   tank.ratio = 0.75
   fuelReport(core)
-  assert(tank.ratio == 0.75 and s.career.money == 10 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.stationFactor('p')) - 1e-6))
+  -- the wallet pays what it has (shown in Finances), the rest is owed
+  assert(tank.ratio == 0.75 and s.career.money == 0 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.stationFactor('p')) - 1e-6) - 10)
+  assert(s.career.accounts.history[1].category == 'fuel' and s.career.accounts.history[1].amount == -10)
+  assert(require('cargoEarth/garage').debtInfo(s.career.garage).sources[1].kind == 'fuel')
   core.onGameRefuel(vehicle.id, {facility = {id = 'p'}}, {any = true})
   advance(core, (core.PUMP_WAIT_S + 5) * 2)
   fuelReport(core)
@@ -1032,7 +1035,7 @@ test('refuelling away from a station is refused; delivery works anywhere and can
   s.career.money, s.career.garage.debt = 20, 0
   local page = core.garageDo('fuelDelivery')
   assert(page.msg:find('added to your debt') and tank.ratio == 0.75)
-  assert(s.career.money == 20 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.DELIVERY_FACTOR)) + fuel.DELIVERY_FEE)
+  assert(s.career.money == 0 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.DELIVERY_FACTOR)) + fuel.DELIVERY_FEE - 20)
   assert(core.garageDo('fuelGps').msg:find('Test pump') and gps and math.abs(gps.lat - 50.2) < 1e-9)
 end)
 
