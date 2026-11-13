@@ -99,7 +99,8 @@ local function same(a, b, depth)
 end
 
 local function write(writer, reader, path, c)
-  local ok, written = pcall(writer, path, c, true, nil, true)
+  -- compact JSON: the game's pretty printer is several times slower, and a save runs on accept, pickup and delivery
+  local ok, written = pcall(writer, path, c, false, nil, true)
   if not ok or not written then return false end
   local check = read(reader, path)
   return check ~= nil and check.money == c.money and same(c, check, 0)

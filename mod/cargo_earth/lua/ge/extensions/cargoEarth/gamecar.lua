@@ -249,14 +249,6 @@ function M.applyTree(tree)
   if not ok then error(err) end
 end
 
--- Puts a parts tree on the player's car like BeamNG's Vehicle Config does: unlike applyTree, the career sees the change
--- (onPartsTreeConfigChanged) and asks the player to pay for new parts.
-function M.fitTree(tree)
-  local pm = extensions and extensions.core_vehicle_partmgmt or core_vehicle_partmgmt
-  if not pm or not pm.setPartsTreeConfig then error('core_vehicle_partmgmt.setPartsTreeConfig missing') end
-  pm.setPartsTreeConfig(tree)
-end
-
 function M.applyConfig(vehicle, config)
   local v = playerVeh()
   if not v or v:getID() ~= vehicle.id or vehData(vehicle.id) ~= vehicle.data or not M.isOwned(vehicle) then
@@ -266,6 +258,29 @@ function M.applyConfig(vehicle, config)
   local previousData = replacedData
   replacedData, M.spawning = vehicle.data, true
   local ok, err = pcall(v.respawn, v, serialized)
+  M.spawning = false
+  if not ok then
+    replacedData = previousData
+    error(err)
+  end
+end
+
+-- Respawns the player's car with its own config after edit(config) changed it (the dash phone fits itself this way).
+-- The career keeps owning the car, and the game's jbeam cache is cleared so a changed generated part is built again.
+function M.respawnPlayer(edit)
+  local v = playerVeh()
+  if not v then error('no player vehicle') end
+  local id = v:getID()
+  local d = vehData(id)
+  if not d or type(d.config) ~= 'table' then error('no vehicle data') end
+  local config = deepcopy(d.config)
+  edit(config)
+  local loader = package and package.loaded and package.loaded['jbeam/loader']
+  if type(loader) == 'table' and loader.onFileChanged then pcall(loader.onFileChanged) end
+  local previousData = replacedData
+  if ownedId == id then replacedData = d end
+  M.spawning = true
+  local ok, err = pcall(v.respawn, v, serialize(config))
   M.spawning = false
   if not ok then
     replacedData = previousData

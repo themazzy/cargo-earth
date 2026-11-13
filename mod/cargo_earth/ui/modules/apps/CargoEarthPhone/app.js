@@ -59,7 +59,7 @@ angular.module('beamng.apps')
     '.cep-step{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;background:var(--tomato);color:#fff}' +
     '.cep-step.to{background:var(--ink)}' +
     '.cep-pulse{width:74px;height:74px;border-radius:50%;background:rgba(232,69,44,.12);display:flex;align-items:center;justify-content:center}' +
-    '.cep-pulse i{width:22px;height:22px;border-radius:50%;background:var(--tomato);animation:cepP 1.6s ease-in-out infinite}' +
+    '.cep-pulse i{width:22px;height:22px;border-radius:50%;background:var(--tomato);animation:cepP 1.6s ease-in-out 3}' +
     '@keyframes cepP{0%,100%{transform:scale(.8);opacity:.6}50%{transform:scale(1.15);opacity:1}}' +
     '.cep-adr{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;background:var(--warn);color:#fff;font-size:10px;font-weight:800}' +
     '.cep-foot{padding:6px 16px 4px;font-size:11px;color:var(--muted);text-align:center}' +
@@ -128,7 +128,7 @@ angular.module('beamng.apps')
     '.cep-vol{flex:1;height:6px;border-radius:3px;background:var(--line);overflow:hidden}.cep-vol i{display:block;height:100%;background:var(--tomato)}' +
     '.cep-li.on{box-shadow:inset 0 0 0 2px var(--tomato)}.cep-fav{border:0;background:transparent;font-size:17px;cursor:pointer;color:#e0a100;padding:0 2px}' +
     '.cep-eq{display:inline-flex;gap:2px;align-items:flex-end;height:12px;margin-right:6px;vertical-align:-1px}' +
-    '.cep-eq i{width:3px;background:var(--tomato);animation:cepEq .9s ease-in-out infinite}.cep-eq i:nth-child(2){animation-delay:.3s}.cep-eq i:nth-child(3){animation-delay:.6s}' +
+    '.cep-eq i{width:3px;height:7px;background:var(--tomato);animation:cepEq .9s ease-in-out 4}.cep-eq i:nth-child(2){animation-delay:.3s}.cep-eq i:nth-child(3){animation-delay:.6s}' +
     '@keyframes cepEq{0%,100%{height:3px}50%{height:12px}}' +
     '.cep-input{flex:1;min-width:0;border:1.5px solid var(--line);border-radius:10px;padding:7px 10px;font:inherit;font-size:13px;background:#fff}' +
     '.cep-stars{color:#e0a100;letter-spacing:1px;font-size:15px;white-space:nowrap}.cep-stars.big{font-size:24px}' +
@@ -775,15 +775,25 @@ angular.module('beamng.apps')
             '(st.cameras.helper === "failed" ? "Could not load cameras; trying again" : st.cameras.known + " real cameras around you (OpenStreetMap)"))) }}</small></div>' +
           '<b>{{ st.cameras.on ? "On" : "Off" }}</b></div>' +
         '<div class="cep-label" ng-if="st.dash">VR</div>' +
-        '<div class="cep-card" ng-if="st.dash">' +
-          '<div class="cep-name">Phone on the dashboard</div>' +
-          '<div class="cep-sub" ng-if="!st.dash.car">Sit in a car to fit a phone holder.</div>' +
-          '<div class="cep-sub" ng-if="st.dash.car && !st.dash.supported">No phone holder for this car yet. The Pigeon has one.</div>' +
-          '<div class="cep-sub" ng-if="st.dash.supported && !st.dash.fitted">A holder on the dash with this whole phone in it. In VR, point a controller at it and pull the trigger; on a monitor, click it.</div>' +
-          '<div class="cep-sub" ng-if="st.dash.fitted">Fitted{{ st.dash.running ? "" : " (its screen starts when the car is loaded)" }}. Point a controller at the screen and pull the trigger.</div>' +
-          '<div class="cep-sub" ng-if="st.dash.error">{{ st.dash.error }}</div>' +
-          '<button class="cep-sm" ng-if="st.dash.supported && !st.dash.fitted" style="margin-top:6px" ng-click="sdo(\'dash\', \'fit\')">Fit phone holder</button>' +
-          '<button class="cep-sm ghost" ng-if="st.dash.fitted" style="margin-top:6px" ng-click="sdo(\'dash\', \'remove\')">Take the holder off</button></div>' +
+        '<div class="cep-li" ng-if="st.dash" ng-click="sdo(\'dash\', st.dash.on ? \'off\' : \'on\')">' +
+          '<div><div class="cep-name">Phone on the dashboard</div><small>{{ !st.dash.on ? "This whole phone on the dash of any car you drive. In VR, point a controller at it and pull the trigger; on a monitor, click it." : ' +
+            '(!st.dash.car ? "Sit in a car: the phone appears on its dash." : ' +
+            '(st.dash.fitted ? ("On the dash" + (st.dash.running ? "" : " (its screen starts when the car is loaded)") + ". Point a controller at the screen and pull the trigger.") : "Putting it on this car’s dash…")) }}</small></div>' +
+          '<b>{{ st.dash.on ? "On" : "Off" }}</b></div>' +
+        '<div class="cep-sub" ng-if="st.dash.error">{{ st.dash.error }}</div>' +
+        '<div class="cep-card" ng-if="st.dash.on && st.dash.car && st.dash.placed">' +
+          '<div class="cep-sub">Move it in this {{ st.dash.model }}. Each press moves it 1 cm and reloads the car.</div>' +
+          '<div class="cep-li" style="cursor:default"><div class="cep-name">Up / down</div><div class="cep-step2">' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z-\')">Down</button><b>{{ st.dash.nudge.z }}</b>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z+\')">Up</button></div></div>' +
+          '<div class="cep-li" style="cursor:default"><div class="cep-name">Closer / further</div><div class="cep-step2">' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'y-\')">Further</button><b>{{ st.dash.nudge.y }}</b>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'y+\')">Closer</button></div></div>' +
+          '<div class="cep-li" style="cursor:default"><div class="cep-name">Left / right</div><div class="cep-step2">' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x+\')">Left</button><b>{{ -st.dash.nudge.x }}</b>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x-\')">Right</button></div></div>' +
+          '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-if="st.dash.nudged" ng-click="sdo(\'dash\', \'reset\')">Back to where it started</button>' +
+          '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'measure\')">Measure this car again</button></div></div>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'reset\')">Back to the defaults</button>' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'window\')">{{ st.window ? "Close" : "Open" }} the debug window</button>' +
@@ -801,10 +811,10 @@ angular.module('beamng.apps')
           '<button class="cep-sm ghost" ng-click="closeReport()">Close</button></div>' +
       '</div></div>' +
       '</div></div></div>' +
-      '<div class="cep-pill" ng-if="min" ng-click="fold(false)"><span>Cargo<b>Earth</b><span ng-if="radio.status === \'playing\'" style="font-weight:500"> ♪ {{ radio.station.name | limitTo: 18 }}</span></span>' +
+      '<div class="cep-pill" ng-if="min && !menuOnly" ng-click="fold(false)"><span>Cargo<b>Earth</b><span ng-if="radio.status === \'playing\'" style="font-weight:500"> ♪ {{ radio.station.name | limitTo: 18 }}</span></span>' +
         '<span><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}">{{ s.limit.sign }}</span>' +
         '{{ s.online ? "● online" : "" }} {{ fmt.money(s.money) }} ▴</span></div>' +
-      '<div class="cep" ng-if="!min"><div class="cep-screen">' +
+      '<div class="cep" ng-if="!min && !menuOnly"><div class="cep-screen">' +
       '<div class="cep-notch"></div>' +
       '<div class="cep-bar"><span>{{ s.clock }}</span><span>{{ s.online ? "● online" : "" }} ' +
         '<button class="cep-min" title="Fold the phone" ng-if="!dash" ng-click="fold(true)">–</button></span></div>' +
@@ -1124,20 +1134,35 @@ angular.module('beamng.apps')
         if (!a) return 0
         return Math.max(2, Math.min(100, 100 * a.leftS / Math.max(1, a.minutes * 60)))
       }
-      var busy = false, destroyed = false, lastPoll = -Infinity
+      var busy = false, destroyed = false, lastPoll = -Infinity, lastState = null, shown
       function apply(r) {
         if (destroyed) return
+        // Most answers are the same as the last one (waiting, offline, driving between ticks). An unchanged answer
+        // needs no Angular digest, so the UI is not re-checked and redrawn for nothing. (Only while the phone still
+        // shows that answer: closing the Menu window clears scope.s, and the next answer must bring it back.)
+        var key = JSON.stringify(r === undefined ? null : r)
+        if (key === lastState && scope.s === shown) return
+        lastState = key
         scope.$evalAsync(function () {
           if (destroyed) return
-          scope.s = r || null
+          scope.s = shown = r || null
           if (r && r.currency) CUR = r.currency
           if (!r || r.screen !== 'active') scope.cancelAsk = false
         })
       }
+      // How often the phone asks the game: 4 times a second only while the stop bar fills; twice a second otherwise
+      // (the game moves the order's distance and timers on its 0.5 s tick anyway); folded or hidden every 2 s.
+      function pollGap() {
+        var s = scope.s
+        if (scope.min || (s && s.hidden)) return 2000
+        var stop = s && s.screen === 'active' && s.active && s.active.stop
+        return stop && stop.inZone ? 250 : 500
+      }
       function poll() {
         if (busy || destroyed) return
+        if (scope.menuOnly && !scope.panel) return // the Menu app asks only while its window is open
         var now = Date.now()
-        if ((scope.min || (scope.s && scope.s.hidden)) && now - lastPoll < 2000) return
+        if (now - lastPoll < pollGap()) return
         lastPoll = now
         busy = true
         bngApi.engineLua(STATE, function (r) { busy = false; apply(r) })
@@ -1158,6 +1183,9 @@ angular.module('beamng.apps')
       scope.tab = 'orders'
       scope.min = false
       scope.dash = !!(typeof window !== 'undefined' && window.cargoEarthDash && window.cargoEarthDash.page) // on a car screen
+      // The "Cargo Earth: Menu" app (<cargo-earth-phone mode="menu">): no phone, only the Menu window, opened from either
+      // phone. It is its own UI app so the Menu works with the floating phone, the dash phone, or both.
+      scope.menuOnly = !!(element && element.attr && element.attr('mode') === 'menu')
       scope.storageHelpOpen = false
       scope.career = null
       scope.places = null
@@ -1300,8 +1328,18 @@ angular.module('beamng.apps')
         resetAsks()
         if (t === 'radio') loadRadio()
       }
-      scope.openPanel = function (p, view) {
+      scope.openPanel = function (p, view, local) {
         if (PANELS.indexOf(p) === -1) return
+        // A phone asks the game to open the Menu window: the game sends it to the Menu app when that is in the UI,
+        // else to the floating phone (CargoEarthOpenMenu). In VR it shows on BeamNG's UI panel. When neither is there
+        // the game says no, and the section opens on this phone after all.
+        if (!local && !scope.menuOnly) {
+          bngApi.engineLua('cargoEarth_core and cargoEarth_core.openMenu(' + bngApi.serializeToLua(p) + ',' +
+            bngApi.serializeToLua(view || null) + ')', function (shown) {
+            if (shown !== true) scope.$evalAsync(function () { scope.openPanel(p, view, true) })
+          })
+          return
+        }
         if (p === 'garage' && scope.panel !== 'garage') scope.gview = 'home'
         if (p === 'career' && view) scope.careerView = view
         scope.panel = lastPanel = p
@@ -1309,8 +1347,36 @@ angular.module('beamng.apps')
         resetAsks()
         loadPanel(p)
       }
-      scope.closePanel = function () { scope.panel = null; resetAsks() }
-      scope.togglePanel = function () { if (scope.panel) scope.closePanel(); else scope.openPanel(lastPanel || 'garage') }
+      scope.closePanel = function () {
+        scope.panel = null
+        resetAsks()
+        if (scope.menuOnly) scope.s = null // stops asking while closed: forget the old answer, it is no news on reopening
+      }
+      if (!scope.dash) {
+        var hostKind = scope.menuOnly ? 'menu' : 'phone'
+        scope.$on('CargoEarthOpenMenu', function (event, d) {
+          if (!d || !d.panel || (d.to || 'phone') !== hostKind) return
+          scope.$evalAsync(function () {
+            if (d.panel !== 'toggle') scope.openPanel(d.panel, d.view || undefined, true)
+            else if (scope.panel) scope.closePanel()
+            else scope.openPanel(lastPanel || 'garage', undefined, true)
+          })
+        })
+        // tell the game this app is here to show the Menu window
+        var hostHere = function () { bngApi.engineLua('cargoEarth_core and cargoEarth_core.menuHost("' + hostKind + '")', function () {}) }
+        hostHere()
+        var hostTimer = setInterval(hostHere, 3000)
+        scope.$on('$destroy', function () { clearInterval(hostTimer) })
+      }
+      // Menu button: closes an open window, else opens the last section. A window in another app (the Menu app or the
+      // floating phone) is toggled there, where its open/closed state and last section live.
+      scope.togglePanel = function () {
+        if (scope.panel) { scope.closePanel(); return }
+        if (scope.menuOnly) { scope.openPanel(lastPanel || 'garage', undefined, true); return }
+        bngApi.engineLua('cargoEarth_core and cargoEarth_core.openMenu("toggle")', function (shown) {
+          if (shown !== true) scope.$evalAsync(function () { scope.openPanel(lastPanel || 'garage', undefined, true) })
+        })
+      }
       scope.panelOn = function (p, view) { return scope.panel === p && (!view || scope.careerView === view) }
       scope.panelTitle = function () {
         if (scope.panel === 'career') return {progress: 'Progress', money: 'Finances', map: 'Delivery map', firm: 'Firm'}[scope.careerView]
@@ -1593,15 +1659,19 @@ angular.module('beamng.apps')
         if (helperPlays() && scope.radio.status !== 'idle') bngApi.engineLua('if cargoEarth_core then cargoEarth_core.radioDo("helperStop") end')
       })
       // The editor can remount the phone. Open straight to checkout while a preview is active.
-      scope.$watch('s.screen', function (v) {
+      scope.$watch('s.screen', function (v, old) {
+        // the Menu app asks only while its window is open: its first answer after opening is no new offer
+        if (scope.menuOnly && (old === null || old === undefined)) return
         scope.storageHelpOpen = false
         if (v === 'incoming' || v === 'resume') { scope.min = false; scope.panel = null; scope.tab = 'orders' }
         if (v === 'parts') { scope.min = false; scope.setTab('garage') }
       })
+      var slowTicks = 0
       var slow = setInterval(function () {
         if (scope.hqOpen) loadHq()
         if (scope.min || (scope.s && (scope.s.hidden || scope.s.screen === 'resume'))) return
-        if (scope.panel) loadPanel(scope.panel)
+        // an open Menu section follows the game every 2 s (an action's answer updates it at once)
+        if (scope.panel && slowTicks++ % 2 === 0) loadPanel(scope.panel)
         if (scope.tab === 'radio' && Date.now() - radioLoadedAt > 4000) loadRadio()
       }, 1000)
       scope.$on('$destroy', function () { clearInterval(slow) })

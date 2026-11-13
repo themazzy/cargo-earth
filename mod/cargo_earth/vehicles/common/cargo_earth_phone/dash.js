@@ -65,6 +65,7 @@
     var target = el.closest ? (el.closest('button, a, input, select, [ng-click]') || el) : el
     if (target.focus) target.focus()
     target.click()
+    setTimeout(showArrows, 150)   // the press may have opened a longer or shorter page
   }
 
 
@@ -105,7 +106,7 @@
     arrows.up.style.display = el && el.scrollTop > 2 ? 'block' : 'none'
     arrows.down.style.display = el && el.scrollTop + el.clientHeight < el.scrollHeight - 2 ? 'block' : 'none'
   }
-  setInterval(showArrows, 400)
+  setInterval(showArrows, 1000)   // each look measures the page; presses check again at once (tap)
 
   window.bngApi = { engineLua: engineLua, serializeToLua: toLua }
   window.cargoEarthDash = { tap: tap, reply: reply, page: true, scroller: scroller, showArrows: showArrows }

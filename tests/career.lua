@@ -2062,37 +2062,137 @@ test('a wreck never costs more to repair than the car is worth', function()
   assert(garage.trackDamage(g, 0) == 'debt' and g.debt == cap and g.repair == 0)
 end)
 
-test('Settings fits and removes the dash phone holder through the parts tree', function()
+test('Settings puts the phone on the dash of the car you drive, and each new car gets it', function()
   local core = fresh()
-  local fitted
-  local v = {id = 9, model = 'pigeon', ioCtx = {},
-    tree = {chosenPartName = 'pigeon', children = {pigeon_mod = {chosenPartName = ''}}},
-    slotPartMap = {['/pigeon_mod/'] = ''}}
+  local dash = require('cargoEarth/dash')
+  dash.store = { read = function() return nil end, write = function() end }
+  dash.load()
+  -- a small right-hand drive car: dash nodes across the car, and the driver camera
+  local nodes, cid = {}, 0
+  for i = -3, 3 do
+    for _, row in ipairs({ { 'dsh2_', 0.87 }, { 'dsh1_', 0.99 } }) do
+      nodes[cid] = { cid = cid, name = row[1] .. i, pos = { x = i * 0.2, y = -0.457, z = row[2] }, group = { [0] = 'dash' } }
+      cid = cid + 1
+    end
+  end
+  local vdata = { nodes = nodes, cameras = { onboard = { { name = 'driver', x = -0.316, y = 0.1, z = 1.25 } } } }
+  local function copy(t) local o = {} for k, x in pairs(t) do o[k] = type(x) == 'table' and copy(x) or x end return o end
+  local respawns = {}
+  local v = { id = 9, model = 'pigeon', config = { partsTree = { chosenPartName = 'pigeon', children = { pigeon_mod = { chosenPartName = '' } } } },
+    data = { vdata = vdata } }
   core.G.vehicle = function() return v end
-  core.G.part = function(_, name) if name == 'pigeon' then return {slots2 = {{name = 'pigeon_mod'}}} end end
-  core.G.compatible = function(_, def) return def.name == 'pigeon_mod' and {'cargo_earth_phone_pigeon'} or {} end
-  core.G.fitTree = function(tree) fitted = tree end
+  core.G.respawnPlayer = function(edit)
+    local config = copy(v.config)
+    edit(config)
+    respawns[#respawns + 1] = config
+  end
   local st = core.settingsState().dash
-  assert(st.car and st.supported and not st.fitted, 'a Pigeon without the holder can fit one')
-  -- the game's slot map has no empty slots: the slot is found in the parts tree by the part's slot type
-  v.slotPartMap = {}
-  core.G.part = function(_, name) if name == 'cargo_earth_phone_pigeon' then return {slotType = 'pigeon_mod'} end end
-  core.settingsDo('dash', 'fit')
-  assert(fitted and fitted.children.pigeon_mod.chosenPartName == 'cargo_earth_phone_pigeon', 'found through the tree')
-  fitted = nil
-  v.slotPartMap = {['/pigeon_mod/'] = ''}
-  core.G.part = function(_, name) if name == 'pigeon' then return {slots2 = {{name = 'pigeon_mod'}}} end end
-  core.settingsDo('dash', 'fit')
-  assert(fitted and fitted.children.pigeon_mod.chosenPartName == 'cargo_earth_phone_pigeon')
-  assert(v.tree.children.pigeon_mod.chosenPartName == '', 'the car\'s own tree is left for the game to change')
-  v.slotPartMap['/pigeon_mod/'] = 'cargo_earth_phone_pigeon'
+  assert(st.car and not st.on and not st.fitted)
+  st = core.settingsDo('dash', 'on').dash
+  assert(st.on and st.placed and not st.error and #respawns == 1, 'measured and respawned with the phone')
+  assert(dash.treeHasPhone(respawns[1].partsTree) and respawns[1].partsTree.children.pigeon_mod)
+  assert(not dash.treeHasPhone(v.config.partsTree), 'the car\'s own tree is left for the game to change')
+  v.config = respawns[1]
   assert(core.settingsState().dash.fitted)
-  fitted = nil
-  core.settingsDo('dash', 'remove')
-  assert(fitted and fitted.children.pigeon_mod.chosenPartName == '')
-  v.model = 'covet'
-  st = core.settingsDo('dash', 'fit').dash
-  assert(not st.supported and st.error, 'a car without a holder says so')
+  core.settingsDo('dash', 'on')
+  assert(#respawns == 1, 'already on this car')
+  -- each press moves it 1 cm and rebuilds the car
+  st = core.settingsDo('dash', 'z+').dash
+  assert(#respawns == 2, 'respawns ' .. #respawns .. ' ' .. tostring(st.error)) assert(st.nudge.z == 1, tostring(st.nudge.z)) assert(dash.treeHasPhone(respawns[2].partsTree))
+  core.settingsDo('dash', 'reset')
+  assert(#respawns == 3 and not core.settingsState().dash.nudged)
+  -- a new car: a moment after it appears, it gets the phone too, and only one try
+  v = { id = 10, model = 'pigeon', config = { partsTree = { children = {} } }, data = { vdata = vdata } }
+  core.onVehicleSpawned(10)
+  assert(#respawns == 3)
+  advance(core, 4)
+  assert(#respawns == 4 and dash.treeHasPhone(respawns[4].partsTree), 'the new car got it')
+  core.onVehicleSpawned(10)
+  advance(core, 4)
+  assert(#respawns == 4, 'a car the phone did not stay in is not respawned again and again')
+  -- switched off while the car is busy being changed: it is taken out once the car is free
+  v.config = respawns[4]
+  core.G.applyingParts = true
+  st = core.settingsDo('dash', 'off').dash
+  assert(not st.on and st.error and #respawns == 4, 'busy: nothing changes yet')
+  advance(core, 4)
+  assert(#respawns == 4)
+  core.G.applyingParts = false
+  advance(core, 8)
+  assert(#respawns == 5 and not dash.treeHasPhone(respawns[5].partsTree), 'taken out once the car is free')
+  v.config = respawns[5]
+  advance(core, 8)
+  assert(#respawns == 5)
+  -- a nudge while the car is busy moves the phone once the car is free, and so does switching back on right after
+  -- switching off (the retry cooldown is for new cars only)
+  core.G.applyingParts = true
+  st = core.settingsDo('dash', 'on').dash
+  assert(st.on and #respawns == 5)
+  core.G.applyingParts = false
+  advance(core, 8)
+  assert(#respawns == 6 and dash.treeHasPhone(respawns[6].partsTree), 'back on despite the cooldown')
+  v.config = respawns[6]
+  core.G.applyingParts = true
+  st = core.settingsDo('dash', 'y+').dash
+  assert(#respawns == 6 and st.nudge.y == 1)
+  core.G.applyingParts = false
+  advance(core, 8)
+  assert(#respawns == 7 and dash.treeHasPhone(respawns[7].partsTree), 'the nudge is applied once the car is free')
+  v.config = respawns[7]
+  advance(core, 8)
+  assert(#respawns == 7)
+  core.settingsDo('dash', 'reset')
+  assert(#respawns == 8)
+  -- switched off normally: taken out of the car
+  v.config = respawns[4]
+  v.id = 12
+  st = core.settingsDo('dash', 'off').dash
+  assert(not st.on and #respawns == 9 and not dash.treeHasPhone(respawns[9].partsTree))
+  v.config = respawns[9]
+  core.onVehicleSpawned(12)
+  advance(core, 4)
+  assert(#respawns == 9, 'off: new cars stay as they are')
+  -- a damaged career car is not reloaded for the phone (the reload would mend it)
+  local g = core.state().career.garage
+  core.G.isOwned = function(car) return car == v end
+  g.repair = 50
+  st = core.settingsDo('dash', 'on').dash
+  assert(st.on and st.error and #respawns == 9, 'damaged: not reloaded')
+  g.repair = 0
+  -- an undamaged career car: reloaded, then its mileage and paint wear go back on
+  local conditions = 0
+  core.G.applyCondition = function() conditions = conditions + 1 end
+  st = core.settingsDo('dash', 'on').dash
+  assert(#respawns == 10 and not st.error)
+  advance(core, 10)
+  assert(conditions >= 1, 'condition restored after the reload')
+  core.G.isOwned = function() return false end
+  dash.setOn(false)
+  -- no dash to stand on
+  v = { id = 11, model = 'unicycle', config = { partsTree = { children = {} } }, data = {} }
+  st = core.settingsDo('dash', 'on').dash
+  assert(st.error and #respawns == 10)
+  dash.setOn(false)
+end)
+
+test('the Menu window opens in the Menu app, else the floating phone, else on the asking phone', function()
+  local core = fresh()
+  local sent = {}
+  guihooks = {trigger = function(name, data) sent[#sent + 1] = {name, data} end}
+  local t = 100
+  core.now = function() return t end
+  assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.openMenu("career","firm")'))
+  assert(core.openMenu('career', 'firm') == false and #sent == 0, 'no floating phone: the dash shows it itself')
+  core.menuHost('phone')
+  assert(core.openMenu('career', 'firm') == true)
+  assert(sent[1][1] == 'CargoEarthOpenMenu' and sent[1][2].panel == 'career' and sent[1][2].view == 'firm' and sent[1][2].to == 'phone')
+  assert(core.openMenu('os.exit', nil) == false and #sent == 1)
+  core.menuHost('menu')
+  assert(core.openMenu('settings') == true and sent[2][2].to == 'menu', 'the Menu app wins over the floating phone')
+  assert(core.openMenu('toggle') == true and sent[3][2].panel == 'toggle' and sent[3][2].to == 'menu', 'the Menu button toggles the window where it is')
+  t = 110
+  assert(core.openMenu('settings') == false, 'apps not heard from lately are gone')
+  guihooks = nil
 end)
 
 print(string.format('%d career tests passed', total))
@@ -2109,12 +2209,16 @@ do
     current = function() return layouts[2] end, setCurrent = function(fn) current = fn end}
   local flag = {read = function() return written end, write = function(t) written = t end}
   assert(layout.ensure(api, flag) == 'added')
-  assert(#added == 1 and added[1][1]:find('beamngEarth') and added[1][2] == 'cargoEarthPhone' and added[1][3].bottom == '310px')
-  assert(current == layouts[2].filename and written.phoneAdded)
-  assert(layout.ensure(api, flag) == 'done' and #added == 1, 'only once: a player who removes it keeps that')
+  assert(#added == 2 and added[1][1]:find('beamngEarth') and added[1][2] == 'cargoEarthPhone' and added[1][3].bottom == '310px')
+  assert(added[2][2] == 'cargoEarthMenu', 'the Menu app comes along')
+  assert(current == layouts[2].filename and written.phoneAdded and written.menuAdded)
+  assert(layout.ensure(api, flag) == 'done' and #added == 2, 'only once: a player who removes it keeps that')
+  written = {phoneAdded = true}
+  assert(layout.ensure(api, flag) == 'added' and #added == 3 and added[3][2] == 'cargoEarthMenu', 'players from before get the Menu app once')
   written = nil
   layouts[2].apps[2] = {appName = 'cargoEarthPhone'}
-  assert(layout.ensure(api, flag) == 'present' and #added == 1, 'a phone the player placed is left alone')
+  layouts[2].apps[3] = {appName = 'cargoEarthMenu'}
+  assert(layout.ensure(api, flag) == 'present' and #added == 3, 'apps the player placed are left alone')
   written = nil
   assert(layout.ensure({layouts = function() return {layouts[1]} end}, flag) == 'none' and written == nil)
   assert(layout.ensure(nil, flag) == nil)

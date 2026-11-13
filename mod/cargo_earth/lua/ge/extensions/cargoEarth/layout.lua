@@ -1,19 +1,24 @@
--- Puts the phone into BeamNG.Earth's UI layout (".Earth", type beamngEarth) the first time Cargo Earth runs, just
+-- Puts the phone (and the Menu app) into BeamNG.Earth's UI layout (".Earth", type beamngEarth) the first time Cargo Earth runs, just
 -- above the speedometer (tacho2, bottom right), so new players do not have to find the UI Apps editor. Only that
 -- layout, only when the phone is not in it, and only once: a player who moves or removes the phone afterwards keeps
 -- their choice. Uses the game's own layout extension (ui_appLayouts), so the file is written the way the editor
 -- writes it.
 local M = {}
 
-M.APP = 'cargoEarthPhone'
 M.TYPE = 'beamngEarth'
 M.FLAG = '/settings/cargoEarth/layout.json'
--- tacho2 in Earth's layout: bottom 5px, right 5px, 300 x 300
-M.PLACEMENT = { position = 'absolute', bottom = '310px', right = '5px', width = '290px', height = '540px' }
+-- Each app is added once (its own flag): the phone just above the speedometer (tacho2 in Earth's layout: bottom 5px,
+-- right 5px, 300 x 300), and the Menu app (the Menu window's host, a small corner box) top left.
+M.APPS = {
+  { name = 'cargoEarthPhone', flag = 'phoneAdded',
+    placement = { position = 'absolute', bottom = '310px', right = '5px', width = '290px', height = '540px' } },
+  { name = 'cargoEarthMenu', flag = 'menuAdded',
+    placement = { position = 'absolute', top = '0px', left = '0px', width = '24px', height = '24px' } },
+}
 
-local function hasApp(layout)
+local function hasApp(layout, name)
   for _, app in ipairs(type(layout.apps) == 'table' and layout.apps or {}) do
-    if type(app) == 'table' and type(app.appName) == 'string' and app.appName:lower() == M.APP:lower() then return true end
+    if type(app) == 'table' and type(app.appName) == 'string' and app.appName:lower() == name:lower() then return true end
   end
   return false
 end
@@ -25,7 +30,10 @@ end
 function M.ensure(api, flag)
   if not api then return nil end
   local seen = flag.read()
-  if type(seen) == 'table' and seen.phoneAdded then return 'done' end
+  seen = type(seen) == 'table' and seen or {}
+  local todo = {}
+  for _, app in ipairs(M.APPS) do if not seen[app.flag] then todo[#todo + 1] = app end end
+  if #todo == 0 then return 'done' end
   local ok, list = pcall(api.layouts)
   if not ok or type(list) ~= 'table' then return nil end
   local target
@@ -37,17 +45,23 @@ function M.ensure(api, flag)
   end
   if not target then return 'none' end
   local result = 'present'
-  if not hasApp(target) then
-    local placement = {}
-    for k, v in pairs(M.PLACEMENT) do placement[k] = v end
-    local okAdd, added = pcall(api.addApp, target.filename, M.APP, placement)
-    if not okAdd or added == false then return nil end     -- tried again next time
-    result = 'added'
-    -- the layout on screen is this one: show the phone now, not after a reload
+  for _, app in ipairs(todo) do
+    if not hasApp(target, app.name) then
+      local placement = {}
+      for k, v in pairs(app.placement) do placement[k] = v end
+      local okAdd, added = pcall(api.addApp, target.filename, app.name, placement)
+      if not okAdd or added == false then return nil end     -- tried again next time
+      result = 'added'
+    end
+  end
+  if result == 'added' then
+    -- the layout on screen is this one: show the apps now, not after a reload
     local okCur, cur = pcall(api.current)
     if okCur and type(cur) == 'table' and cur.filename == target.filename then pcall(api.setCurrent, target.filename) end
   end
-  flag.write({ phoneAdded = true, result = result, layout = target.filename })
+  for _, app in ipairs(todo) do seen[app.flag] = true end
+  seen.result, seen.layout = result, target.filename
+  flag.write(seen)
   return result
 end
 
