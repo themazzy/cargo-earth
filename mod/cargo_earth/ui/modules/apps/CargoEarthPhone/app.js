@@ -11,7 +11,7 @@
 var cargoEarthRadioPlayer = null
 // The Menu window, one per page: the app whose window is open. Opening one closes any other, so two never lie over
 // each other, however many copies of an app the page holds (a layout reload can leave an old one listening).
-var cargoEarthMenu = {open: null}
+var cargoEarthMenu = {open: null, last: null} // last: the section shown last, where the Menu button reopens
 function pagePlayer() {
   if (cargoEarthRadioPlayer || typeof Audio === 'undefined' || typeof bngApi === 'undefined') return cargoEarthRadioPlayer
   var audio = new Audio(), me = {seq: -1, status: 'idle', why: '', busy: false, on: false, at: 0, retries: 0, retry: null}
@@ -701,6 +701,7 @@ angular.module('beamng.apps')
             '{{ fmt.money(g.preview.tradeIn) }}: you pay {{ fmt.money(g.preview.price - g.preview.tradeIn) }}</span>.</div>' +
           '<div class="cep-sub" ng-if="g.preview.keepCar">Your current car will be parked in My cars.</div>' +
           '<button class="cep-btn go" ng-disabled="!g.preview.ready" ng-click="gdo(\'buyListing\', g.preview.id)">Buy it</button>' +
+          '<button class="cep-btn ghost" ng-click="openCars()">‹ Other cars</button>' +
           '<button class="cep-btn ghost" ng-click="gdo(\'back\')">Back to my car</button>' +
         '</div>' +
         '<div ng-if="g && g.started && gview === \'home\' && !g.preview && !g.parts" class="cep-scroll">' +
@@ -802,6 +803,14 @@ angular.module('beamng.apps')
               '<button class="cep-sm ghost" ng-if="v.driver" ng-click="gdo(\'releaseDriver\', v.id)">Release driver</button></div>' +
           '</div></div>' +
         '<div ng-if="g && g.started && gview === \'cars\' && !g.parts" class="cep-scroll">' +
+          // the car being looked at stays on top of the list, so the next one is a tap away
+          '<div class="cep-card" ng-if="g.preview"><div class="cep-label">Looking at</div>' +
+            '<div class="cep-keyval"><strong style="white-space:normal">{{ g.preview.name }}</strong><strong style="white-space:nowrap">{{ fmt.money(g.preview.price - (g.preview.tradeIn || 0)) }}</strong></div>' +
+            '<div class="cep-sub" ng-if="!g.preview.ready && !g.preview.error">Checking the car…</div>' +
+            '<div class="cep-sub" ng-if="g.preview.error">{{ g.preview.error }}</div>' +
+            '<div class="cep-row" style="margin-top:6px"><button class="cep-sm go" ng-disabled="!g.preview.ready" ng-click="gdo(\'buyListing\', g.preview.id)">Buy it</button>' +
+              '<button class="cep-sm ghost" ng-click="gview = \'home\'">Details</button>' +
+              '<button class="cep-sm ghost" ng-click="gdo(\'back\')">Back to my car</button></div></div>' +
           '<div class="cep-row"><button class="cep-sm ghost" ng-click="goHome()">‹ Back</button>' +
             '<input class="cep-input" placeholder="Find a car" aria-label="Find a car" ng-model="cf.text">' +
             '<button class="cep-sm" ng-click="loadCars()">Search</button></div>' +
@@ -1380,7 +1389,7 @@ angular.module('beamng.apps')
       scope.fold = function (v) { scope.min = v }
       scope.goHome = function () { scope.gview = 'home'; loadGarage() }
       // The phone keeps what you need while driving (Work, Radio). Everything else opens in the menu window.
-      var PANELS = ['garage', 'home', 'companies', 'career', 'settings'], lastPanel = null
+      var PANELS = ['garage', 'home', 'companies', 'career', 'settings']
       function loadPanel(p) {
         if (p === 'garage') loadGarage()
         if (p === 'career') loadCareer()
@@ -1423,14 +1432,15 @@ angular.module('beamng.apps')
           })
           return
         }
-        if (p === 'garage' && scope.panel !== 'garage') scope.gview = 'home'
+        // another section → Garage starts on its first page; reopening the Menu keeps the page it was on (the car list…)
+        if (p === 'garage' && scope.panel && scope.panel !== 'garage') scope.gview = 'home'
         if (p === 'career' && view) scope.careerView = view
         if (!scope.dash) {
           var other = cargoEarthMenu.open
           if (other && other !== scope && other.panel) other.$evalAsync(function () { other.closePanel() })
           cargoEarthMenu.open = scope
         }
-        scope.panel = lastPanel = p
+        scope.panel = cargoEarthMenu.last = p
         scope.min = false
         resetAsks()
         loadPanel(p)
@@ -1450,7 +1460,7 @@ angular.module('beamng.apps')
             if (d.panel !== 'toggle') scope.openPanel(d.panel, d.view || undefined, true)
             else if (cargoEarthMenu.open && cargoEarthMenu.open.panel) cargoEarthMenu.open.closePanel()
             else if (scope.panel) scope.closePanel()
-            else scope.openPanel(lastPanel || 'garage', undefined, true)
+            else scope.openPanel(cargoEarthMenu.last || 'garage', undefined, true)
           })
         })
         // tell the game this app is here to show the Menu window
@@ -1466,9 +1476,9 @@ angular.module('beamng.apps')
       // floating phone) is toggled there, where its open/closed state and last section live.
       scope.togglePanel = function () {
         if (scope.panel) { scope.closePanel(); return }
-        if (scope.menuOnly) { scope.openPanel(lastPanel || 'garage', undefined, true); return }
+        if (scope.menuOnly) { scope.openPanel(cargoEarthMenu.last || 'garage', undefined, true); return }
         bngApi.engineLua('cargoEarth_core and cargoEarth_core.openMenu("toggle")', function (shown) {
-          if (shown !== true) scope.$evalAsync(function () { scope.openPanel(lastPanel || 'garage', undefined, true) })
+          if (shown !== true) scope.$evalAsync(function () { scope.openPanel(cargoEarthMenu.last || 'garage', undefined, true) })
         })
       }
       scope.panelOn = function (p, view) { return scope.panel === p && (!view || scope.careerView === view) }
@@ -1516,7 +1526,7 @@ angular.module('beamng.apps')
       scope.loadCars = function () { lua('garageDealer', [scope.cf.text || ''], function (r) { scope.market = r || {}; scope.cars = (r && r.cars) || [] }) }
       scope.carPrice = function (car) { return car.price - (scope.purchase.keep ? 0 : (scope.market.tradeIn || 0)) }
       scope.buyCar = function (id) { scope.gdo('buyListing', id, scope.purchase.keep || !scope.market.tradeIn) }
-      scope.look = function (id) { scope.gdo('preview', id, scope.purchase.keep || !scope.market.tradeIn); scope.gview = 'home' }
+      scope.look = function (id) { scope.gdo('preview', id, scope.purchase.keep || !scope.market.tradeIn) } // stays on the car list
       scope.openCars = function () { scope.gview = 'cars'; scope.loadCars() }
       scope.openFleet = function () { scope.gview = 'fleet'; loadGarage() }
       scope.pdo = function (name, value) {
