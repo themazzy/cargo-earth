@@ -21,6 +21,9 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
 })
 assert(directive.template.includes('placeSearch.text'))
 assert(directive.template.includes('startCompany'))
+// while looking at a car the deal is fixed: no keep-car toggle, no Buy on other rows
+assert(directive.template.includes('market.tradeIn > 0 && !g.preview"><input type="checkbox" ng-model="purchase.keep"'), 'keep-car toggle hidden during a preview')
+assert(directive.template.includes('align-items:stretch" ng-if="!g.preview"'), 'listing Buy buttons hidden during a preview')
 // Validate template nesting independently of the string concatenation used to author it.
 const voids = new Set(['input', 'br', 'img', 'hr', 'meta', 'link'])
 const stack = []
@@ -302,4 +305,16 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   const toggle = {panel: 'toggle', to: 'menu'}
   for (const m of menus) m.on.CargoEarthOpenMenu({}, toggle)
   assert(!menus[0].s.panel && !menus[1].s.panel, 'the Menu button closes the open window, wherever it is')
+  // the Menu button reopens the page shown last: the car list while looking at cars
+  menus[0].s.openPanel('garage', undefined, true)
+  menus[0].s.openCars()
+  menus[0].s.look('listing-1')
+  assert.equal(menus[0].s.gview, 'cars', 'looking at a car stays on the car list')
+  menus[0].s.closePanel()
+  const again = {panel: 'toggle', to: 'menu'}
+  for (const m of menus) m.on.CargoEarthOpenMenu({}, again)
+  assert(menus[0].s.panel === 'garage' && menus[0].s.gview === 'cars', 'the Menu reopens on the car list')
+  menus[0].s.openPanel('settings', undefined, true)
+  menus[0].s.openPanel('garage', undefined, true)
+  assert.equal(menus[0].s.gview, 'home', 'Garage chosen from another section starts on its first page')
 }
