@@ -162,9 +162,10 @@ function M.price(kind, factor)
 end
 
 -- What a refill would take. sells: { gasoline = true, ... } the kinds on offer; factor: price factor;
--- limit: units at most (nil: full); budget: money at hand (nil: no limit); free: a company car.
+-- limit: units at most (nil: full); budget: money at hand (nil: no limit); free: a company car;
+-- upTo: fill each tank to this share (0..1, nil: full).
 -- Returns { units = { kind = n }, cost, levels = { name = ratio }, full } or nil when nothing fits.
-function M.quote(car, sells, factor, limit, budget, free)
+function M.quote(car, sells, factor, limit, budget, free, upTo)
   local f = car and car.fuel
   if type(f) ~= 'table' or type(f.tanks) ~= 'table' then return nil end
   local names = {}
@@ -175,7 +176,7 @@ function M.quote(car, sells, factor, limit, budget, free)
   for _, name in ipairs(names) do
     local t = f.tanks[name]
     if sells[t.kind] then
-      local want = (1 - t.ratio) * t.cap
+      local want = math.max(0, (upTo or 1) - t.ratio) * t.cap
       local price = free and 0 or M.price(t.kind, factor)
       local take = want
       if left then take = math.min(take, left) end

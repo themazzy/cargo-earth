@@ -747,6 +747,9 @@ angular.module('beamng.apps')
               '<button class="cep-btn go" ng-if="g.fuel.fill" ng-disabled="g.fuel.busy || g.fuel.locked || !(g.fuel.fill.canCost > 0 || g.fuel.free)" ng-click="gdo(\'refuel\')">' +
                 '{{ g.fuel.busy ? "Refuelling…" : (g.fuel.free ? "Fill up" : (g.fuel.fill.afford ? "Fill up · " + fmt.money(g.fuel.fill.cost) : ' +
                   '(g.fuel.fill.canCost > 0 ? "Buy " + g.fuel.fill.units + " · " + fmt.money(g.fuel.fill.canCost) : "Not enough money"))) }}</button>' +
+              '<div class="cep-row" ng-if="g.fuel.fill && g.fuel.partial.length" style="margin-top:6px;flex-wrap:wrap;gap:6px">' +
+                '<button class="cep-sm" ng-repeat="p in g.fuel.partial track by p.pct" ng-disabled="g.fuel.busy || g.fuel.locked || !p.afford" ' +
+                  'title="{{ p.units }}" ng-click="gdo(\'refuelTo\', p.pct)">To {{ p.pct }} %{{ g.fuel.free ? "" : " · " + fmt.money(p.cost) }}</button></div>' +
               '<button class="cep-sm ghost" ng-if="g.fuel.station && !g.fuel.station.at" ng-disabled="g.busy" ng-click="gdo(\'fuelGps\')">Route there</button>' +
               '<button class="cep-sm ghost" ng-if="g.fuel.delivery && (!g.fuel.station.at || !g.fuel.fill || g.fuel.fill.canCost <= 0)" ng-disabled="g.fuel.busy || g.fuel.locked" ng-click="confirmDelivery()">' +
                 '{{ deliveryAsk ? "Press again · " + fmt.money(g.fuel.delivery.cost) : "Bring fuel here · " + g.fuel.delivery.units + " for " + fmt.money(g.fuel.delivery.cost) }}</button>' +

@@ -951,6 +951,23 @@ test('refuelling at a station charges the ledger once and fills the real tank', 
   assert(core.garageDo('refuel').msg == 'The tank is full.' and s.career.money == money - cost)
 end)
 
+test('a station sells part fills up to 25, 50 or 75 % of the tank', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  withStation(s, 50, 14)
+  advance(core, 2)
+  fuelReport(core)   -- tank at 50 % of 40 l
+  local partial = core.garageState().fuel.partial
+  assert(#partial == 1 and partial[1].pct == 75 and partial[1].afford, 'only levels above the tank are offered')
+  local money, cost = s.career.money, partial[1].cost
+  local page = core.garageDo('refuelTo', 75)
+  assert(page.msg:find('Filled 10.0') and tank.ratio == 0.75 and s.career.money == money - cost)
+  assert(s.career.accounts.history[1].category == 'fuel' and s.career.accounts.history[1].amount == -cost)
+  fuelReport(core)
+  assert(#core.garageState().fuel.partial == 0)
+  assert(core.garageDo('refuelTo', 50).msg == 'The tank is already above 50 %.' and s.career.money == money - cost)
+end)
+
 test('a tank refilled by a game reset is put back and costs nothing', function()
   local core, s = fresh()
   fuelAdapter(core)
