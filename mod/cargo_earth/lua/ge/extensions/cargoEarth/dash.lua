@@ -279,14 +279,6 @@ function M.meshSuffix(yaw)
   return '_y' .. (yaw < 0 and 'm' or 'p') .. math.floor(math.abs(yaw) + 0.5)
 end
 
-local function frame(spot)
-  local o = spot.ref.pos
-  local x = unit(sub(spot.x.pos, o))
-  local y0 = sub(spot.y.pos, o)
-  local y = unit(sub(y0, mul(x, dot(y0, x))))
-  return o, x, y, cross(x, y)
-end
-
 -- where the phone's screen is: its middle and how far it is turned
 function M.placement(spot, nudge)
   local n = clampNudge(nudge)
@@ -300,14 +292,111 @@ function M.cellCentre(centre, yaw, col, row)
   return add(centre, turn(v3(M.SCREEN_W / 2 - (col - 0.5) * cw, 0.004, M.SCREEN_H / 2 - (row - 0.5) * ch), yaw))
 end
 
--- The size of a click box w wide and h high on the phone, in its trigger's frame: the box is square to that frame
--- while the phone is turned, so it is made as large as the turned box along each of the frame's axes.
-function M.boxSize(spot, yaw, w, h)
-  local _, fx, fy, fz = frame(spot)
-  local cw, ch = w or M.SCREEN_W / M.COLS * 0.98, h or M.SCREEN_H / M.ROWS * 0.98
-  local across, up, out = turn(v3(1, 0, 0), yaw), v3(0, 0, 1), turn(v3(0, 1, 0), yaw)
-  local function along(a) return round(cw * math.abs(dot(across, a)) + ch * math.abs(dot(up, a)) + M.DEPTH * math.abs(dot(out, a)), 4) end
-  return { x = along(fx), y = along(fy), z = along(fz) }
+-- How the game turns a box trigger. It does not lay the box along the trigger's three nodes as they are: it points the
+-- box's local y along the frame's normal (quatFromDir, world up), turns it about that normal to the frame's "up", then
+-- applies baseRotation (game Lua mirror of the engine: lua/ge/extensions/core/vehicle/triggerLabelPlacement.lua).
+-- The quaternions below follow the game's own conventions (lua/common/mathlib.lua), written out here so the turn can
+-- be worked out while the part is built.
+local function qmul(a, b)
+  return { x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, y = a.w * b.y + a.y * b.w + a.z * b.x - a.x * b.z,
+    z = a.w * b.z + a.z * b.w + a.x * b.y - a.y * b.x, w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z }
+end
+local function qrot(q, v)
+  local qv = mul(cross(q, v), 2)
+  return add(sub(v, mul(qv, q.w)), cross(q, qv))
+end
+local function qeuler(x, y, z)
+  x, y, z = x * 0.5, y * 0.5, z * 0.5
+  local sx, cx, sy, cy, sz, cz = math.sin(x), math.cos(x), math.sin(y), math.cos(y), math.sin(z), math.cos(z)
+  local cycz, sysz, sycz, cysz = cy * cz, sy * sz, sy * cz, cy * sz
+  return { x = cycz * sx + sysz * cx, y = sycz * cx + cysz * sx, z = cysz * cx - sycz * sx, w = cycz * cx - sysz * sx }
+end
+local function qdir(dir)
+  local d = unit(dir)
+  local up = v3(0, 0, 1)
+  if math.abs(dot(d, up)) > 0.9999 then d = unit(add(d, v3(1e-5, 0, 0))) end
+  local r0 = unit(cross(d, up))
+  local r2 = unit(cross(r0, d))
+  local m = { [0] = { [0] = r0.x, r0.y, r0.z }, { [0] = d.x, d.y, d.z }, { [0] = r2.x, r2.y, r2.z } }
+  local q = {}
+  local trace = m[0][0] + m[1][1] + m[2][2]
+  if trace > 0 then
+    local s = math.sqrt(trace + 1)
+    q.w = s * 0.5
+    s = 0.5 / s
+    q.x, q.y, q.z = (m[2][1] - m[1][2]) * s, (m[0][2] - m[2][0]) * s, (m[1][0] - m[0][1]) * s
+  else
+    local i = 0
+    if m[1][1] > m[0][0] then i = 1 end
+    if m[2][2] > m[i][i] then i = 2 end
+    local j, k = (i + 1) % 3, (i + 2) % 3
+    local c = { [0] = 0, 0, 0 }
+    local s = math.sqrt((m[i][i] - m[j][j]) - (m[k][k] - 1))
+    c[i] = s * 0.5
+    s = 0.5 / s
+    c[j] = (m[j][i] + m[i][j]) * s
+    c[k] = (m[k][i] + m[i][k]) * s
+    q.w = (m[k][j] - m[j][k]) * s
+    q.x, q.y, q.z = c[0], c[1], c[2]
+  end
+  local n = math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w)
+  return { x = q.x / n, y = q.y / n, z = q.z / n, w = q.w / n }
+end
+
+-- the box's own x, y and z axes, in jbeam coordinates, for a trigger on the spot's three nodes turned by
+-- baseRotation b (radians)
+function M.boxAxes(spot, b)
+  local o = spot.ref.pos
+  local xa = unit(sub(spot.x.pos, o))
+  local za = unit(cross(sub(spot.y.pos, o), xa))
+  local camUp = unit(mul(cross(za, xa), -1))
+  local q = qdir(za)
+  local rup = qrot(q, v3(0, 0, 1))
+  local autoYaw = (math.atan2 or math.atan)(dot(rup, xa), dot(rup, camUp))
+  q = qmul(qeuler(0, autoYaw + b.y, 0), q)
+  q = qmul(qeuler(0, 0, -b.z), q)
+  q = qmul(qeuler(-b.x, 0, 0), q)
+  return qrot(q, v3(1, 0, 0)), qrot(q, v3(0, 1, 0)), qrot(q, v3(0, 0, 1))
+end
+
+-- The baseRotation (degrees, as a jbeam row holds it) that lays the boxes flat on the phone turned by yaw: the box's
+-- x across the screen, its z up it. Found by search, since the game's turn is a chain of three; err is how far off
+-- (0 when exact).
+function M.boxTurn(spot, yaw)
+  local across, up = turn(v3(1, 0, 0), yaw), v3(0, 0, 1)
+  local function cost(b)
+    local bx, _, bz = M.boxAxes(spot, b)
+    return (1 - dot(bx, across)) + (1 - dot(bz, up))
+  end
+  local best, bestCost
+  local step = math.pi / 6
+  for i = -6, 5 do
+    for j = -6, 5 do
+      for k = -6, 5 do
+        local b = { x = i * step, y = j * step, z = k * step }
+        local c = cost(b)
+        if not bestCost or c < bestCost then best, bestCost = b, c end
+      end
+    end
+  end
+  while step > 1e-5 do
+    local moved = false
+    for _, axis in ipairs({ 'x', 'y', 'z' }) do
+      for _, d in ipairs({ step, -step }) do
+        local b = { x = best.x, y = best.y, z = best.z }
+        b[axis] = b[axis] + d
+        local c = cost(b)
+        if c < bestCost - 1e-12 then best, bestCost, moved = b, c, true end
+      end
+    end
+    if not moved then step = step / 2 end
+  end
+  return { x = round(math.deg(best.x), 3), y = round(math.deg(best.y), 3), z = round(math.deg(best.z), 3) }, bestCost
+end
+
+-- A box w wide and h high on the phone: { x = across, y = through, z = up }, for boxes turned by boxTurn.
+function M.boxSize(w, h)
+  return { x = w or M.SCREEN_W / M.COLS * 0.98, y = M.DEPTH, z = h or M.SCREEN_H / M.ROWS * 0.98 }
 end
 
 -- Labelled buttons beside the phone, for what you do most while driving. side: 'left' or 'right' as the driver sees
@@ -338,7 +427,8 @@ function M.action(col, row) return 'cargoEarthTap_' .. col .. '_' .. row end
 function M.buildPart(spot, nudge)
   local centre, yaw = M.placement(spot, nudge)
   local suffix = M.meshSuffix(yaw)
-  local size = M.boxSize(spot, yaw)
+  local size = M.boxSize()
+  local rot = M.boxTurn(spot, yaw)
   -- The game keeps only the first part's header when it merges a section from several parts, and reads every other
   -- part's rows in that order (lua/common/jbeam/slotSystem.lua unifyParts), so this must be the cars' own header.
   local triggers = { M.TRIGGER_HEADER }
@@ -347,7 +437,7 @@ function M.buildPart(spot, nudge)
     for col = 1, M.COLS do
       local id = 'cep_' .. col .. '_' .. row
       triggers[#triggers + 1] = { id, spot.ref.name, spot.x.name, spot.y.name, 'box', size,
-        { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 },
+        rot, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 },
         -- the box's middle in jbeam coordinates: the game turns it into the trigger's own frame
         -- (lua/common/jbeam/sections/events.lua)
         -- nearly clear: the screen shows what is under them
@@ -355,11 +445,11 @@ function M.buildPart(spot, nudge)
       links[#links + 1] = { id, 'action0', M.action(col, row) }
     end
   end
-  local bsize = M.boxSize(spot, yaw, M.BUTTON_W, M.BUTTON_H)
+  local bsize = M.boxSize(M.BUTTON_W, M.BUTTON_H)
   for _, b in ipairs(M.BUTTONS) do
     local id = 'ceb_' .. b.id
     triggers[#triggers + 1] = { id, spot.ref.name, spot.x.name, spot.y.name, 'box', bsize,
-      { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 },
+      rot, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 },
       { baseTranslationGlobal = xyz(M.buttonCentre(centre, yaw, b)), color = { 0.91, 0.27, 0.17, 0.85 }, label = b.label } }
     links[#links + 1] = { id, 'action0', M.buttonAction(b.id) }
   end

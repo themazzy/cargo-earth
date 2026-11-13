@@ -1274,6 +1274,7 @@ local function phoneTick()
   end
   ph.incoming = { job = j, expiresAt = S.clock + M.PHONE.acceptS }
   S.phoneHidden = false   -- a ringing phone shows itself
+  S.phoneTab = 'orders'   -- on its Work page, on both phones
   phoneSound('offer')
   earth.notify('New order: ' .. j.cargoName .. ', ' .. j.from.n, 4)
 end
@@ -1589,7 +1590,7 @@ function M.phoneState()
     todayCount = today.count, status = earth.status(), clock = os.date('%H:%M'), hidden = S.phoneHidden,
       helper = M.helperInfo(), saveError = S.saveError, company = c.employment and c.employment.companyName,
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
-      currency = moneyInfo(), update = M.updateInfo() }
+      currency = moneyInfo(), update = M.updateInfo(), tab = S.phoneTab or 'orders', radio = M.radioBrief() }
   if S.pendingCareer then
     out.screen, out.money = 'resume', S.pendingCareer.money or 0
     local savedGarage = S.pendingCareer.garage
@@ -1875,6 +1876,7 @@ local function learnCameraLimits(p)
 end
 
 local radioAlive   -- (the radio, below)
+local radioView    -- (the shared radio, below)
 local askUpdate    -- (the update notice, with the support report below)
 local function helperTick(p)
   if not p then return end
@@ -1977,33 +1979,197 @@ function M.radioState()
     state = not helper.enabled and 'disabled' or (not radio.cc and (p and 'nowhere' or 'noworld')) or radio.state or 'loading' }
   if radio.data then out.near, out.top = radio.data.near, radio.data.top end
   out.player = radio.player
+  out.radio = radioView()
   -- the phone's <audio> plays the station through the helper: the game's UI refuses web streams, not local ones
   if helper.enabled then out.stream = string.format('http://%s:%d/v1/stream?id=', helper.HOST, helper.PORT) end
   return out
 end
 
--- name: refresh | played (a = station id: Radio Browser counts what is listened to) | helperPlay (a = station id,
--- b = volume 0..1) | helperVolume (a = volume) | helperStop
-function M.radioDo(name, a, b)
+------------------------------------------------------------------------------------------ the radio, shared
+-- One radio for both phones (the floating UI phone and the phone in its holder on the dash): what should play, how loud,
+-- the saved stations, all kept here. Something must turn that into sound:
+--   * the game's UI page (the floating phone's app.js keeps one player on the page, alive while the phone app is
+--     hidden in the cockpit or folded) checks in with radioDo('page', ...) and plays the stream through the helper;
+--   * the helper plays it on the computer when the setting says so, when the game cannot play that station (no AAC,
+--     a refused stream), or when no UI page checks in (the dash phone alone: a car screen page plays no sound).
+M.RADIO_FILE = '/settings/cargoEarth/radio.json'
+M.RADIO_PAGE_S = 5         -- a page player that has not checked in for this long is gone: the helper plays
+M.RADIO_SAVED_MAX = 50
+radio.want = { on = false, station = nil, vol = 0.6, via = 'page', alone = false, why = '', err = false, seq = 0 }
+radio.saved = {}
+radio.page = { at = -math.huge, seq = -1, status = 'idle', why = '' }
+M.radioStore = {
+  read = function() return jsonReadFile and jsonReadFile(M.RADIO_FILE) or nil end,
+  write = function(t) if jsonWriteFile then jsonWriteFile(M.RADIO_FILE, t, true) end end,
+}
+
+local function isStationId(id) return type(id) == 'string' and #id <= 64 and id:match('^[%w%-]+$') ~= nil end
+local function radioClip(v, n) return type(v) == 'string' and v:sub(1, n) or '' end
+-- a station as the phones send it, cleaned: nil unless it has an id and a web stream
+local function keepStation(st)
+  if type(st) ~= 'table' or not isStationId(st.id) or type(st.url) ~= 'string' or not st.url:match('^https?://') then return nil end
+  return { id = st.id, name = radioClip(st.name, 120), url = st.url:sub(1, 600), codec = radioClip(st.codec, 20),
+    kbps = tonumber(st.kbps) or 0, region = radioClip(st.region, 80),
+    country = type(st.country) == 'string' and st.country:match('^%u%u$') and st.country or nil }
+end
+
+local function radioApplyPrefs(t)
+  local w = radio.want
+  if type(t.vol) == 'number' then w.vol = math.max(0, math.min(1, t.vol)) end
+  if t.via == 'helper' or t.via == 'page' then w.via = t.via end
+  w.station = keepStation(t.last) or w.station
+  if type(t.saved) == 'table' then
+    radio.saved = {}
+    for _, st in ipairs(t.saved) do
+      local k = keepStation(st)
+      if k and #radio.saved < M.RADIO_SAVED_MAX then radio.saved[#radio.saved + 1] = k end
+    end
+  end
+end
+local function radioLoadPrefs()
+  if radio.prefsLoaded then return end
+  radio.prefsLoaded = true
+  local ok, t = pcall(M.radioStore.read)
+  if ok and type(t) == 'table' then radio.prefsFound = true radioApplyPrefs(t) end
+end
+local function radioSavePrefs()
+  radio.prefsFound = true
+  local w = radio.want
+  pcall(M.radioStore.write, { v = 1, vol = w.vol, via = w.via, last = w.station, saved = radio.saved })
+end
+
+-- who makes the sound now: 'page' (the game's UI) or 'helper'
+local function radioMode()
+  local w = radio.want
+  if w.via == 'helper' or w.alone or S.clock - radio.page.at > M.RADIO_PAGE_S then return 'helper' end
+  return 'page'
+end
+
+-- the helper plays what should play, and only then
+local function radioSync()
+  local w = radio.want
+  if w.on and w.station and radioMode() == 'helper' then
+    if radio.helperSeq ~= w.seq then
+      radio.helperSeq = w.seq
+      radio.gen = (radio.gen or 0) + 1
+      radio.helperOn, radio.aliveAt = true, S.clock
+      radio.player = { playing = true, secs = 0 }
+      helper.command(string.format('/v1/player/play?id=%s&vol=%.2f', w.station.id, w.vol), onPlayer(radio.gen), '/v1/player/')
+    end
+  elseif radio.helperSeq then
+    radio.helperSeq = nil
+    radio.gen = (radio.gen or 0) + 1
+    if radio.helperOn then helper.command('/v1/player/stop', nil, '/v1/player/') end
+    radio.helperOn, radio.player = false, nil
+  end
+end
+M.radioSync = radioSync
+
+-- What both phones show: { on, station, status (idle | loading | playing | error), why, vol, via, alone, seq, mode,
+-- saved (unless light) }
+radioView = function(light)
+  radioLoadPrefs()
+  local w = radio.want
+  local status, why = 'idle', w.why
+  if w.err then status = 'error'
+  elseif w.on and w.station then
+    if radioMode() == 'helper' then
+      local p = radio.player
+      if not p or radio.helperSeq ~= w.seq then status = 'loading'
+      elseif p.playing then status = (p.sound or (tonumber(p.secs) or 0) > 0) and 'playing' or 'loading'
+      elseif p.error then
+        status = 'error'
+        why = p.error == 'old' and 'update the Cargo Earth helper'
+          or (p.error == 'helper' and 'the Cargo Earth helper is not running' or tostring(p.error))
+      else
+        -- the helper's player stopped by itself (restarted, or its watchdog): stopped, so Play starts it again
+        w.on = false
+        radioSync()
+      end
+    else
+      status = radio.page.seq == w.seq and radio.page.status or 'loading'
+      if status == 'error' then status = 'loading' end -- the helper takes over at once (radioDo 'page')
+    end
+  end
+  local out = { on = w.on, station = w.station, status = status, why = why, vol = w.vol, via = w.via, alone = w.alone,
+    seq = w.seq, mode = radioMode() }
+  if not light then out.saved = radio.saved end
+  return out
+end
+
+-- For the phones' quick poll: what plays, in short (nil while nothing does).
+function M.radioBrief()
+  local w = radio.want
+  if not (w.on or w.err) or not w.station then return nil end
+  local v = radioView(true)
+  return { status = v.status, name = w.station.name, seq = w.seq }
+end
+
+-- name:
+--   play (a = station) | stop | vol (a = 0..1) | via (a = 'page' | 'helper') | fav (a = station: saved or not)
+--   page (a = seq, b = status, c = why): the UI page's player checks in; answers in short
+--   import (a = { vol, via, last, saved }): the radio settings an older version kept in the UI page, taken once
+--   refresh | played (a = station id: Radio Browser counts what is listened to)
+function M.radioDo(name, a, b, c)
+  radioLoadPrefs()
+  local w = radio.want
   if name == 'refresh' then
     radio.askedAt = -math.huge
-  elseif name == 'played' and type(a) == 'string' and a:match('^[%x%-]+$') and #a == 36 then
+  elseif name == 'played' and isStationId(a) and #a == 36 then
     helper.ask('/v1/radioclick?id=' .. a, nil)
-  elseif name == 'helperPlay' and type(a) == 'string' and a:match('^[%x%-]+$') and #a == 36 then
-    -- the game's UI cannot play the stream: the helper plays this station on the computer
-    local vol = math.max(0, math.min(1, tonumber(b) or 0.6))
-    radio.gen = (radio.gen or 0) + 1
-    radio.helperOn, radio.aliveAt = true, S.clock
-    radio.player = { playing = true, secs = 0 }
-    helper.command(string.format('/v1/player/play?id=%s&vol=%.2f', a, vol), onPlayer(radio.gen), '/v1/player/')
-  elseif name == 'helperVolume' and radio.helperOn then
-    helper.command(string.format('/v1/player/volume?vol=%.2f', math.max(0, math.min(1, tonumber(a) or 0.6))), onPlayer(radio.gen),
-      '/v1/player/volume')
-  elseif name == 'helperStop' then
-    radio.gen = (radio.gen or 0) + 1
-    radio.helperOn, radio.player = false, nil
-    helper.command('/v1/player/stop', nil, '/v1/player/')
+  elseif name == 'play' then
+    local st = keepStation(a)
+    if not st then
+      w.on, w.err, w.why = false, true, 'not a web stream'
+    elseif not (w.on and w.station and w.station.id == st.id and radioView(true).status ~= 'error') then
+      -- (the same station again only after an error: then it is tried again, in a new session)
+      w.station, w.on, w.err, w.why = st, true, false, ''
+      w.seq = w.seq + 1
+      -- the game's UI has no AAC, and plays only through the helper's relay: otherwise the helper plays it
+      w.alone = w.via ~= 'helper' and (not helper.enabled or st.codec:lower():match('^aac') ~= nil)
+      if #st.id == 36 then helper.ask('/v1/radioclick?id=' .. st.id, nil) end
+      radioSavePrefs()
+    end
+  elseif name == 'stop' then
+    w.on, w.err, w.alone = false, false, false
+  elseif name == 'vol' and tonumber(a) then
+    w.vol = math.max(0, math.min(1, math.floor(tonumber(a) * 100 + 0.5) / 100))
+    if radio.helperOn then
+      helper.command(string.format('/v1/player/volume?vol=%.2f', w.vol), onPlayer(radio.gen), '/v1/player/volume')
+    end
+    radioSavePrefs()
+  elseif name == 'via' and (a == 'page' or a == 'helper') then
+    if a ~= w.via then
+      w.via, w.alone = a, false
+      if w.on then w.seq = w.seq + 1 end -- plays again in the other player
+      radioSavePrefs()
+    end
+  elseif name == 'fav' then
+    local st = keepStation(a)
+    if st then
+      local at
+      for i, x in ipairs(radio.saved) do if x.id == st.id then at = i end end
+      if at then table.remove(radio.saved, at)
+      elseif #radio.saved < M.RADIO_SAVED_MAX then radio.saved[#radio.saved + 1] = st end
+      radioSavePrefs()
+    end
+  elseif name == 'page' then
+    radio.page.at = S.clock
+    if tonumber(a) == w.seq then
+      radio.page.seq = w.seq
+      radio.page.status = (b == 'playing' or b == 'loading' or b == 'error') and b or 'idle'
+      if b == 'error' and w.on and radioMode() == 'page' then
+        -- this station only: the helper plays it on the computer (the setting stays as the player set it)
+        w.alone, w.why = true, 'the game could not play it' .. (type(c) == 'string' and c ~= '' and ' (' .. c:sub(1, 40) .. ')' or '')
+      end
+    end
+    radioSync()
+    return { radio = radioView(true),
+      stream = helper.enabled and string.format('http://%s:%d/v1/stream?id=', helper.HOST, helper.PORT) or nil }
+  elseif name == 'import' and type(a) == 'table' then
+    if not radio.prefsFound then radioApplyPrefs(a) radioSavePrefs() end
   end
+  radioSync()
   return M.radioState()
 end
 
@@ -3228,6 +3394,11 @@ function M.gpsAgain() gpsToTarget() end
 
 function M.toggleWindow() S.window = not S.window end
 function M.togglePhone() S.phoneHidden = not S.phoneHidden end
+-- The phone's page (Work or Radio), the same on both phones: each one shows what the other chose last.
+function M.phoneTab(t)
+  if t == 'orders' or t == 'radio' then S.phoneTab = t end
+  return S.phoneTab or 'orders'
+end
 
 function M.state() return S end
 
@@ -3486,6 +3657,7 @@ function M.onUpdate(dtReal, dtSim)
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
   if helper.commanding() then helper.pump(S.clock) end     -- radio presses: answered within frames, not ticks
+  if S.clock >= (S.radioSyncAt or 0) then S.radioSyncAt = S.clock + 0.5 M.radioSync() end -- the UI page went away: the helper plays
   local worldReady = earth.status() == 'ok'
   local activeDt = careerClock.advance(S.career, dtReal, dtSim, worldReady and not S.parts)
   S.workTick = (S.workTick or 0) + activeDt

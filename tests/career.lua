@@ -2225,6 +2225,97 @@ test('the buttons beside the dash phone switch online and offline, and pass the 
   assert(#asked == 3 and asked[1] == 'accept' and asked[2] == 'decline' and asked[3] == 'gps')
 end)
 
+test('one radio for both phones: the UI page plays it while it checks in, else the helper', function()
+  local helper = require('cargoEarth/helper')
+  local ask, command, enabled, commanding = helper.ask, helper.command, helper.enabled, helper.commanding
+  local cmds, stored = {}, nil
+  local host, port = helper.HOST, helper.PORT
+  helper.enabled, helper.HOST, helper.PORT = true, '127.0.0.1', 47820
+  helper.ask = function() end
+  helper.command = function(path, cb) cmds[#cmds + 1] = { path, cb } end
+  helper.commanding = function() return false end
+  local ok, why = pcall(function()
+    local core = fresh()
+    core.radioStore = { read = function() return stored end, write = function(t) stored = t end }
+    local ID = '96202f73-0601-11e8-ae97-52543be04c81'
+    local st = { id = ID, name = 'Rádio Jih', url = 'http://a/stream', codec = 'MP3', kbps = 128, country = 'CZ', ['$$hashKey'] = 'x' }
+    local function last() return cmds[#cmds] and cmds[#cmds][1] or '' end
+    assert(core.phoneState().radio == nil and core.radioState().radio.status == 'idle')
+    -- the dash phone alone (no UI page checks in): the helper plays
+    local r = core.radioDo('play', st).radio
+    assert(r.on and r.seq == 1 and r.mode == 'helper' and r.status == 'loading' and r.station.name == 'Rádio Jih')
+    assert(last():find('/v1/player/play?id=' .. ID, 1, true), last())
+    assert(stored and stored.last.id == ID, 'the last station is kept')
+    assert(core.phoneState().radio.name == 'Rádio Jih' and core.phoneState().radio.seq == 1)
+    -- the UI page checks in: it plays, the helper stops
+    local n = #cmds
+    local p = core.radioDo('page', -1, 'idle', '')
+    assert(p.radio.mode == 'page' and p.radio.on and p.stream and p.radio.saved == nil, 'the page hears it in short')
+    assert(#cmds == n + 1 and last() == '/v1/player/stop')
+    core.radioDo('page', 1, 'playing', '')
+    assert(core.radioState().radio.status == 'playing' and core.phoneState().radio.status == 'playing')
+    -- the page cannot play a stream: the helper plays that one
+    core.radioDo('page', 1, 'error', 'error 4')
+    r = core.radioState().radio
+    assert(r.alone and r.mode == 'helper' and r.why:find('error 4', 1, true) and last():find('/v1/player/play', 1, true))
+    cmds[#cmds][2]({ playing = true, sound = true, secs = 2 })
+    assert(core.radioState().radio.status == 'playing')
+    -- the helper's player stopped by itself: stopped, Play works again
+    cmds[#cmds][2]({ playing = false })
+    assert(core.radioState().radio.status == 'idle' and not core.radioState().radio.on)
+    -- a new station from the other phone, played by the page again
+    local two = { id = '96202f73-0601-11e8-ae97-52543be04c82', name = 'Two', url = 'https://b/s', codec = 'OGG' }
+    r = core.radioDo('play', two).radio
+    assert(r.seq == 2 and not r.alone and r.mode == 'page')
+    assert(core.radioDo('play', two).radio.seq == 2, 'pressing the playing station again changes nothing')
+    -- the page went away (the UI reloaded): after a few seconds the helper plays
+    advance(core, math.ceil(core.RADIO_PAGE_S / 0.5) + 2)
+    assert(core.radioState().radio.mode == 'helper' and last():find('/v1/player/play?id=' .. two.id, 1, true))
+    core.radioDo('stop')
+    assert(last() == '/v1/player/stop' and not core.radioState().radio.on)
+    -- the helper failed (not running): Play on the same station tries again
+    core.radioDo('play', st)
+    cmds[#cmds][2](nil, 'connection refused')
+    assert(core.radioState().radio.status == 'error')
+    local n2 = #cmds
+    local again = core.radioDo('play', st).radio
+    assert(#cmds == n2 + 1 and last():find('/v1/player/play?id=' .. ID, 1, true) and again.status == 'loading', 'tried again')
+    core.radioDo('stop')
+    -- AAC goes to the helper, bad streams to an error
+    r = core.radioDo('play', { id = 'c', name = 'AAC', url = 'http://c/s', codec = 'AAC+' }).radio
+    assert(r.alone)
+    r = core.radioDo('play', { id = 'x', name = 'Bad', url = 'javascript:alert(1)' }).radio
+    assert(r.status == 'error' and not r.on)
+    -- volume, the player setting and saved stations are kept for both phones
+    core.radioDo('vol', 0.3)
+    core.radioDo('via', 'helper')
+    core.radioDo('fav', st)
+    core.radioDo('fav', two)
+    core.radioDo('fav', st)
+    r = core.radioState().radio
+    assert(r.vol == 0.3 and r.via == 'helper' and #r.saved == 1 and r.saved[1].id == two.id and r.saved[1]['$$hashKey'] == nil)
+    assert(stored.vol == 0.3 and stored.via == 'helper' and #stored.saved == 1)
+    -- an older version's settings from the UI page come in once, and only when nothing is kept yet
+    core.radioDo('import', { vol = 0.9, saved = {} })
+    assert(core.radioState().radio.vol == 0.3, 'kept settings win')
+    local again = fresh()
+    stored = nil
+    again.radioStore = { read = function() return stored end, write = function(t) stored = t end }
+    again.radioDo('import', { vol = 0.9, via = 'page', last = st, saved = { st, { id = 'bad' } } })
+    r = again.radioState().radio
+    assert(r.vol == 0.9 and #r.saved == 1 and r.station.id == ID and not r.on)
+    -- Work or Radio is the same on both phones; a ringing order shows Work
+    assert(again.phoneState().tab == 'orders')
+    again.phoneTab('radio')
+    assert(again.phoneState().tab == 'radio')
+    again.phoneTab('os.exit')
+    assert(again.phoneState().tab == 'radio')
+  end)
+  helper.ask, helper.command, helper.enabled, helper.commanding = ask, command, enabled, commanding
+  helper.HOST, helper.PORT = host, port
+  assert(ok, why)
+end)
+
 test('the Menu window opens in the Menu app, else the floating phone, else on the asking phone', function()
   local core = fresh()
   local sent = {}
