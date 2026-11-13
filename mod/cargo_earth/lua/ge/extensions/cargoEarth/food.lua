@@ -329,8 +329,11 @@ function M.inTown(idx, r, lat, lon, label)
   if type(r.town) ~= 'string' or r.town == '' then return nil end
   if label == r.town then return true end
   local grid, row, col = townGrid(idx), math.floor(lat / GRID_LAT), math.floor(lon / GRID_LON)
-  for i = -1, 1 do
-    for j = -1, 1 do
+  -- cells to look at each way: a longitude cell narrows away from the equator
+  local rows = math.ceil(M.TOWN_KM / (111.2 * GRID_LAT))
+  local cols = math.min(60, math.ceil(M.TOWN_KM / (111.32 * math.max(0.01, math.cos(lat * rad)) * GRID_LON)))
+  for i = -rows, rows do
+    for j = -cols, cols do
       for _, o in ipairs(grid[(row + i) .. ':' .. (col + j)] or {}) do
         if o.town == r.town and M.km(lat, lon, o.g[1], o.g[2]) <= M.TOWN_KM then return true end
       end
