@@ -806,6 +806,8 @@ angular.module('beamng.apps')
           // the car being looked at stays on top of the list, so the next one is a tap away
           '<div class="cep-card" ng-if="g.preview"><div class="cep-label">Looking at</div>' +
             '<div class="cep-keyval"><strong style="white-space:normal">{{ g.preview.name }}</strong><strong style="white-space:nowrap">{{ fmt.money(g.preview.price - (g.preview.tradeIn || 0)) }}</strong></div>' +
+            '<div class="cep-sub" ng-if="g.preview.keepCar">Your current car will be parked in My cars.</div>' +
+            '<div class="cep-sub" ng-if="!g.preview.keepCar && g.preview.tradeIn > 0">Trade-in credit · {{ fmt.money(g.preview.tradeIn) }}</div>' +
             '<div class="cep-sub" ng-if="!g.preview.ready && !g.preview.error">Checking the car…</div>' +
             '<div class="cep-sub" ng-if="g.preview.error">{{ g.preview.error }}</div>' +
             '<div class="cep-row" style="margin-top:6px"><button class="cep-sm go" ng-disabled="!g.preview.ready" ng-click="gdo(\'buyListing\', g.preview.id)">Buy it</button>' +
@@ -814,16 +816,18 @@ angular.module('beamng.apps')
           '<div class="cep-row"><button class="cep-sm ghost" ng-click="goHome()">‹ Back</button>' +
             '<input class="cep-input" placeholder="Find a car" aria-label="Find a car" ng-model="cf.text">' +
             '<button class="cep-sm" ng-click="loadCars()">Search</button></div>' +
-          '<label class="cep-sub" ng-if="market.tradeIn > 0"><input type="checkbox" ng-model="purchase.keep"> Keep my current car</label>' +
-          '<div class="cep-sub" ng-if="market.tradeIn > 0 && !purchase.keep">Trade-in credit · {{ fmt.money(market.tradeIn) }}</div>' +
+          '<label class="cep-sub" ng-if="market.tradeIn > 0 && !g.preview"><input type="checkbox" ng-model="purchase.keep"> Keep my current car</label>' +
+          '<div class="cep-sub" ng-if="market.tradeIn > 0 && !purchase.keep && !g.preview">Trade-in credit · {{ fmt.money(market.tradeIn) }}</div>' +
           '<div class="cep-sub" ng-if="market.debt > 0" style="color:var(--tomato)">Pay your debt first ({{ fmt.money(market.debt) }}).</div>' +
+          '<div class="cep-sub" ng-if="g.preview">Go back to your car to look at another one.</div>' +
           '<div class="cep-sub" ng-if="!cars.length">No cars for sale. New ones come every few minutes.</div>' +
           '<div class="cep-li" ng-repeat="c in cars" style="align-items:flex-start;cursor:default"><div style="flex:1">' +
             '<div class="cep-name" style="white-space:normal">{{ c.name }} <span class="cep-adr" ng-if="c.isNew" style="background:var(--ok)">NEW</span></div>' +
             '<small>{{ fmt.int(c.km) }} km · condition {{ fmt.cond(c.condition) }} · gone in {{ fmt.left(c.leftMin) }}' +
               '<span ng-if="c.missing !== undefined && c.missing !== null"> · {{ c.missing }} parts missing</span><br>about {{ fmt.hrs(c.hours) }} of deliveries</small>' +
             '<div class="cep-time" style="height:4px;margin-top:5px" ng-class="{warn: c.condition < 0.6, late: c.condition < 0.35}"><i ng-style="{width: (c.condition * 100) + \'%\'}"></i></div></div>' +
-            '<div style="display:flex;flex-direction:column;gap:5px;align-items:stretch">' +
+            // while looking at a car, only that car can be bought (from the card above) and the deal is fixed
+            '<div style="display:flex;flex-direction:column;gap:5px;align-items:stretch" ng-if="!g.preview">' +
             '<button class="cep-sm" ng-class="{ghost: carPrice(c) > market.money}" ng-click="buyCar(c.id)">' +
               'Buy {{ fmt.money(carPrice(c)) }}</button>' +
             '<button class="cep-sm ghost" ng-click="look(c.id)">Look at it</button></div></div>' +

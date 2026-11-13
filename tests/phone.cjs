@@ -21,6 +21,9 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
 })
 assert(directive.template.includes('placeSearch.text'))
 assert(directive.template.includes('startCompany'))
+// while looking at a car the deal is fixed: no keep-car toggle, no Buy on other rows
+assert(directive.template.includes('market.tradeIn > 0 && !g.preview"><input type="checkbox" ng-model="purchase.keep"'), 'keep-car toggle hidden during a preview')
+assert(directive.template.includes('align-items:stretch" ng-if="!g.preview"'), 'listing Buy buttons hidden during a preview')
 // Validate template nesting independently of the string concatenation used to author it.
 const voids = new Set(['input', 'br', 'img', 'hr', 'meta', 'link'])
 const stack = []
