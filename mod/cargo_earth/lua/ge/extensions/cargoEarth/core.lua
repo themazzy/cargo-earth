@@ -2631,18 +2631,20 @@ function M.payPump(car, report)
   return true
 end
 
--- amount: units to buy, or nil for a full tank
-local function fuelRefuel(amount)
+-- amount: units to buy, or nil for a full tank; pct: fill the tank up to this percentage instead (25, 50, 75)
+local function fuelRefuel(amount, pct)
   local car, why = fuelCar()
   if not car then return false, why end
   local near = fuelNear()
   if not near or not near.station or not near.at then return false, 'Park at a station first. Garage shows the nearest one.' end
   local free = car.loaner == true
   local money = math.max(0, S.career.money or 0)
-  local quote = fuel.quote(car, fuel.sells(near.station.kind), fuelFactor(near.station), tonumber(amount), not free and money or nil, free)
+  local upTo = tonumber(pct) and math.max(0.05, math.min(1, tonumber(pct) / 100)) or nil
+  local quote = fuel.quote(car, fuel.sells(near.station.kind), fuelFactor(near.station), tonumber(amount), not free and money or nil, free, upTo)
   if not quote then
-    local full = fuel.quote(car, fuel.sells(near.station.kind), fuelFactor(near.station), nil, nil, true)
-    return false, full and 'Not enough money for fuel. Fuel delivery can go on your debt.' or 'The tank is full.'
+    local full = fuel.quote(car, fuel.sells(near.station.kind), fuelFactor(near.station), nil, nil, true, upTo)
+    return false, full and 'Not enough money for fuel. Fuel delivery can go on your debt.'
+      or (upTo and upTo < 1 and string.format('The tank is already above %d %%.', math.floor(upTo * 100 + 0.5)) or 'The tank is full.')
   end
   local ok, cost = fuelBuy(car, quote, 0, near.station.n)
   if not ok then return false, cost end
@@ -2691,6 +2693,15 @@ local function fuelState()
       local can = fuel.quote(g.car, fuel.sells(s.kind), fuelFactor(s), nil, not st.free and money or nil, st.free)
       st.fill = full and { cost = full.cost, afford = can and can.full or false, canCost = can and can.cost or 0,
         units = can and unitsText(can.units) or nil }
+      -- part fills: up to 25 / 50 / 75 % of the tank (only the ones above the current level)
+      st.partial = {}
+      for _, pct in ipairs({ 25, 50, 75 }) do
+        local q = fuel.quote(g.car, fuel.sells(s.kind), fuelFactor(s), nil, nil, st.free, pct / 100)
+        if q then
+          st.partial[#st.partial + 1] = { pct = pct, cost = q.cost, units = unitsText(q.units),
+            afford = st.free or q.cost <= money }
+        end
+      end
     end
   end
   local delivery = fuel.quote(g.car, { gasoline = true, diesel = true, electric = true }, fuel.DELIVERY_FACTOR, fuel.DELIVERY_UNITS, nil, st.free)
@@ -2767,7 +2778,7 @@ local function garageSwitchCar(id)
   end
   return garageSay(ok, why)
 end
-local function garageRefuel(amount) local ok, msg = fuelRefuel(amount) say(msg) return ok, msg end
+local function garageRefuel(amount, pct) local ok, msg = fuelRefuel(amount, pct) say(msg) return ok, msg end
 local function garageFuelDelivery() local ok, msg = fuelDelivery() say(msg) return ok, msg end
 local function garageFuelGps() return fuelGps() end
 local function garageHireDriver(id, applicant)
@@ -3054,7 +3065,7 @@ end
 -- Runs a garage action for the phone and returns the new garage page with its message.
 function M.garageDo(name, a, b)
   if S.pendingCareer then return M.garageState() end
-  local fuelAction = name == 'refuel' or name == 'fuelDelivery' or name == 'fuelGps'
+  local fuelAction = name == 'refuel' or name == 'refuelTo' or name == 'fuelDelivery' or name == 'fuelGps'
   if S.career.employment and name ~= 'bring' and not fuelAction then
     S.garageMsg = 'Company equipment is fixed. End company work in Places to use your garage.'
     return M.garageState()
@@ -3065,7 +3076,8 @@ function M.garageDo(name, a, b)
     buyListing = M.garageBuyListing, preview = M.garagePreview, back = M.garagePreviewEnd, bring = M.garageBringCar,
     switchCar = garageSwitchCar, hireDriver = garageHireDriver, releaseDriver = garageReleaseDriver,
     roadside = garageRoadside, service = garageService, repairParked = garageRepairParked,
-    refuel = garageRefuel, fuelDelivery = garageFuelDelivery, fuelGps = garageFuelGps,
+    refuel = garageRefuel, refuelTo = function(pct) return garageRefuel(nil, pct) end,
+    fuelDelivery = garageFuelDelivery, fuelGps = garageFuelGps,
     sell = M.garageSell, openParts = openParts, buyParts = buyParts, cancelParts = cancelParts }
   local f = fns[name]
   local ok, msg = false, 'Unknown action'
