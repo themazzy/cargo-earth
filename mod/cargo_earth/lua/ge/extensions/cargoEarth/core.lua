@@ -2121,7 +2121,8 @@ function M.radioDo(name, a, b, c)
     local st = keepStation(a)
     if not st then
       w.on, w.err, w.why = false, true, 'not a web stream'
-    elseif not (w.on and w.station and w.station.id == st.id) then
+    elseif not (w.on and w.station and w.station.id == st.id and radioView(true).status ~= 'error') then
+      -- (the same station again only after an error: then it is tried again, in a new session)
       w.station, w.on, w.err, w.why = st, true, false, ''
       w.seq = w.seq + 1
       -- the game's UI has no AAC, and plays only through the helper's relay: otherwise the helper plays it

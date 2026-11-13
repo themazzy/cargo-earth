@@ -2273,6 +2273,14 @@ test('one radio for both phones: the UI page plays it while it checks in, else t
     assert(core.radioState().radio.mode == 'helper' and last():find('/v1/player/play?id=' .. two.id, 1, true))
     core.radioDo('stop')
     assert(last() == '/v1/player/stop' and not core.radioState().radio.on)
+    -- the helper failed (not running): Play on the same station tries again
+    core.radioDo('play', st)
+    cmds[#cmds][2](nil, 'connection refused')
+    assert(core.radioState().radio.status == 'error')
+    local n2 = #cmds
+    local again = core.radioDo('play', st).radio
+    assert(#cmds == n2 + 1 and last():find('/v1/player/play?id=' .. ID, 1, true) and again.status == 'loading', 'tried again')
+    core.radioDo('stop')
     -- AAC goes to the helper, bad streams to an error
     r = core.radioDo('play', { id = 'c', name = 'AAC', url = 'http://c/s', codec = 'AAC+' }).radio
     assert(r.alone)
