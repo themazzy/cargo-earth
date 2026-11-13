@@ -604,14 +604,14 @@ angular.module('beamng.apps')
           '<div class="cep-sub" ng-if="places.discovery.state === \'off\'">Start the Cargo Earth helper to find workplaces here.</div>' +
           '<div class="cep-sub" ng-if="places.discovery.supportsDepots === false">Update the helper to 0.3.0 for workplace discovery.</div>' +
           '<div class="cep-sub" ng-if="places.discovery.msg">{{ fmt.text(places.discovery.msg) }}</div>' +
-          '<div class="cep-sub">The company lends you a van and pays its costs. You get 80 % of the delivery pay when the work ends; damaged loads pay less, ruined ones nothing.</div>' +
+          '<div class="cep-sub">The company lends you a van, or a truck once you unlock it, and pays its costs. You get 80 % of the delivery pay when the work ends; damaged loads pay less, ruined ones nothing.</div>' +
           '<div class="cep-card" ng-if="places.shift"><div class="cep-name" style="white-space:normal">{{ places.shift.company }}</div>' +
             '<div class="cep-label" ng-if="places.shift.ownerOperator">Your own van</div>' +
             '<div class="cep-sub">{{ places.shift.completed }} of {{ places.shift.total }} deliveries · {{ fmt.money(places.shift.held) }} held</div>' +
             '<div class="cep-impact-note" ng-if="places.shift.failed">{{ places.shift.failed }} ruined, unpaid.</div>' +
-            '<div class="cep-sub" ng-if="places.shift.vehicleDamage > 0">Van damage {{ fmt.money(places.shift.vehicleDamage) }}{{ places.shift.ownerOperator ? "" : ": the company pays, your reputation suffers" }}.</div>' +
+            '<div class="cep-sub" ng-if="places.shift.vehicleDamage > 0">Vehicle damage {{ fmt.money(places.shift.vehicleDamage) }}{{ places.shift.ownerOperator ? "" : ": the company pays, your reputation suffers" }}.</div>' +
             '<div class="cep-sub">Reputation {{ places.shift.reputationScore > 0 ? "+" : "" }}{{ places.shift.reputationScore }} so far.</div>' +
-            '<div class="cep-sub" ng-if="places.shift.phase === \'preparing\'">Getting the van ready…</div>' +
+            '<div class="cep-sub" ng-if="places.shift.phase === \'preparing\'">Getting the {{ places.shift.vehicle || "van" }} ready…</div>' +
             '<div class="cep-sub" ng-if="places.shift.phase === \'working\'">The deliveries are on the phone under Work.</div>' +
             '<div class="cep-sub" ng-if="places.shift.phase === \'returning\'">Drive back to the yard and park to collect your wages.</div>' +
             '<div class="cep-sub" ng-if="places.shift.phase === \'settled\'">Wages paid. Bringing back your car…</div>' +
@@ -625,14 +625,14 @@ angular.module('beamng.apps')
             '<div class="cep-empty cep-sub" ng-if="!places.companies.length">No contracts nearby yet. Try again in a moment or somewhere else.</div>' +
             '<div class="cep-card" ng-repeat="company in places.companies track by company.id">' +
               '<div class="cep-name" style="white-space:normal">{{ company.name }}</div>' +
-              '<div class="cep-sub">Yard {{ fmt.num(company.km) }} km away · 2 deliveries · about {{ company.minutes }} min</div>' +
+              '<div class="cep-sub">{{ company.vehicle }} · yard {{ fmt.num(company.km) }} km away · 2 deliveries · about {{ company.minutes }} min</div>' +
               '<div class="cep-keyval"><span class="cep-sub">Wages</span><strong>about {{ fmt.money(company.wages) }}</strong></div>' +
               '<div class="cep-sub">Reputation {{ company.reputation }} / 100</div>' +
               '<button class="cep-sm ghost" ng-disabled="places.busy" ng-click="pdo(\'companyGps\', company.id)">Route to yard</button>' +
               '<button class="cep-btn go" ng-disabled="places.busy || !places.started || !company.atYard" ng-click="pdo(\'startCompany\', company.id)">' +
                 '{{ company.atYard ? "Start" : "Park at the yard to start" }}</button>' +
-              '<div class="cep-sub" ng-if="!company.independentUnlocked">Your own van: at 20 reputation.</div>' +
-              '<button class="cep-btn ghost" ng-if="company.independentUnlocked" ng-disabled="places.busy || !company.atYard" ng-click="pdo(\'startIndependent\', company.id)">' +
+              '<div class="cep-sub" ng-if="company.van && !company.independentUnlocked">Your own van: at 20 reputation.</div>' +
+              '<button class="cep-btn ghost" ng-if="company.van && company.independentUnlocked" ng-disabled="places.busy || !company.atYard" ng-click="pdo(\'startIndependent\', company.id)">' +
                 'Use my own van · {{ fmt.money(company.independentPay) }}</button></div></div>' +
           '<div class="cep-card" ng-if="places.last && !places.shift"><div class="cep-label">Last company settlement</div>' +
             '<div class="cep-name" style="white-space:normal">{{ places.last.company }}</div>' +
@@ -909,13 +909,13 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="s.trucking.hint">{{ s.trucking.hint }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
       '</div>' +
-      // freight without a van or truck of your own: the nearest company contracts, the van comes at the yard
+      // freight without a van or truck of your own: the nearest company contracts, the vehicle comes at the yard
       '<div class="cep-scroll" ng-if="s.trucking && !s.trucking.carrier">' +
         '<div class="cep-label">Contracts nearby</div>' +
         '<div class="cep-sub" ng-if="!s.trucking.contracts.length">Looking for workplaces nearby…</div>' +
         '<div class="cep-card" ng-repeat="c in s.trucking.contracts track by c.id">' +
           '<div class="cep-keyval"><strong style="white-space:normal">{{ c.name }}</strong><strong style="white-space:nowrap">{{ fmt.money(c.wages) }}</strong></div>' +
-          '<div class="cep-sub">Yard {{ fmt.km(c.km) }} away · 2 deliveries · about {{ c.minutes }} min</div>' +
+          '<div class="cep-sub">{{ c.vehicle }} · yard {{ fmt.km(c.km) }} away · 2 deliveries · about {{ c.minutes }} min</div>' +
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'contractGps\', c.id)">Route</button>' +
             '<button class="cep-sm go" ng-disabled="!c.atYard" ng-click="act(\'contractStart\', c.id)">Start</button></div></div>' +
         '<button class="cep-sm ghost" ng-click="setTab(\'companies\')">All contracts</button></div>' +
