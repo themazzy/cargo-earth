@@ -3257,6 +3257,15 @@ function M.dashAllowed(cmd)
     or cmd:find('^%(function%(%) if not cargoEarth_core then return nil end; local ok, value = pcall%(cargoEarth_core%.[%w_]+') ~= nil
 end
 
+-- The Menu tapped on the dash phone: open the Menu window in the game's UI (the floating phone app shows it)
+local MENU_PANELS = { garage = true, home = true, companies = true, career = true, settings = true }
+function M.openMenu(panel, view)
+  if not MENU_PANELS[panel] then return end
+  if guihooks and guihooks.trigger then
+    guihooks.trigger('CargoEarthOpenMenu', { panel = panel, view = type(view) == 'string' and view or nil })
+  end
+end
+
 -- a car's phone holder has started its screen
 function M.dashPhonePart(vehId)
   log('I', 'cargoEarth', 'dash phone holder running in car ' .. tostring(vehId))

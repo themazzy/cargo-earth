@@ -1302,6 +1302,13 @@ angular.module('beamng.apps')
       }
       scope.openPanel = function (p, view) {
         if (PANELS.indexOf(p) === -1) return
+        // The phone on the dash is too small for the Menu window: it opens in the game's own UI instead (the floating
+        // phone app listens for CargoEarthOpenMenu), where in VR it shows on BeamNG's UI panel.
+        if (scope.dash) {
+          bngApi.engineLua('cargoEarth_core and cargoEarth_core.openMenu(' + bngApi.serializeToLua(p) + ',' +
+            bngApi.serializeToLua(view || null) + ')')
+          return
+        }
         if (p === 'garage' && scope.panel !== 'garage') scope.gview = 'home'
         if (p === 'career' && view) scope.careerView = view
         scope.panel = lastPanel = p
@@ -1310,6 +1317,11 @@ angular.module('beamng.apps')
         loadPanel(p)
       }
       scope.closePanel = function () { scope.panel = null; resetAsks() }
+      if (!scope.dash) {
+        scope.$on('CargoEarthOpenMenu', function (event, d) {
+          scope.$evalAsync(function () { if (d && d.panel) scope.openPanel(d.panel, d.view || undefined) })
+        })
+      }
       scope.togglePanel = function () { if (scope.panel) scope.closePanel(); else scope.openPanel(lastPanel || 'garage') }
       scope.panelOn = function (p, view) { return scope.panel === p && (!view || scope.careerView === view) }
       scope.panelTitle = function () {

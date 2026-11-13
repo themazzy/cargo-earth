@@ -2095,6 +2095,17 @@ test('Settings fits and removes the dash phone holder through the parts tree', f
   assert(not st.supported and st.error, 'a car without a holder says so')
 end)
 
+test('the Menu tapped on the dash phone opens in the game UI', function()
+  local core = fresh()
+  local sent = {}
+  guihooks = {trigger = function(name, data) sent[#sent + 1] = {name, data} end}
+  assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.openMenu("career","firm")'))
+  core.openMenu('career', 'firm')
+  core.openMenu('os.exit', nil)
+  guihooks = nil
+  assert(#sent == 1 and sent[1][1] == 'CargoEarthOpenMenu' and sent[1][2].panel == 'career' and sent[1][2].view == 'firm')
+end)
+
 print(string.format('%d career tests passed', total))
 
 do
