@@ -298,11 +298,45 @@ end
 
 -- Orders near (lat, lon), nearest restaurant first. stats: { pickups = restaurants in reach, noDest = without an
 -- address in range, reachKm = restaurant radius used, maxKm = longest order used, widened = reach grew }.
--- How likely a customer s km away in `town` orders from restaurant r (0..1).
-function M.customerWeight(r, s, town)
+-- How likely a customer s km away orders from restaurant r (0..1); inTown false: in another town or village.
+function M.customerWeight(s, inTown)
   local w = s <= M.NEAR_KM and 1 or (M.NEAR_KM / s) ^ M.FAR_FALLOFF
-  if r.town and r.town ~= '' and town and town ~= '' and town ~= r.town then w = w * M.OTHER_TOWN end
+  if inTown == false then w = w * M.OTHER_TOWN end
   return w
+end
+
+-- Is an address in the restaurant's town? Address labels name the part of town (Chodov, Vinohrady, Lobkovice), the
+-- restaurants the town itself (Praha, Neratovice), so an address counts as in town when a restaurant of that town is
+-- within TOWN_KM of it. nil when the restaurant has no town.
+M.TOWN_KM = 1.0
+local GRID_LAT, GRID_LON = 0.01, 0.015
+local function townGrid(idx)
+  local list = idx.restaurants
+  if idx._grid and idx._gridFor == list and idx._gridN == #list then return idx._grid end
+  local grid = {}
+  for _, r in ipairs(list) do
+    if r.g and type(r.town) == 'string' and r.town ~= '' then
+      local key = math.floor(r.g[1] / GRID_LAT) .. ':' .. math.floor(r.g[2] / GRID_LON)
+      grid[key] = grid[key] or {}
+      table.insert(grid[key], r)
+    end
+  end
+  idx._grid, idx._gridFor, idx._gridN = grid, list, #list
+  return grid
+end
+
+function M.inTown(idx, r, lat, lon, label)
+  if type(r.town) ~= 'string' or r.town == '' then return nil end
+  if label == r.town then return true end
+  local grid, row, col = townGrid(idx), math.floor(lat / GRID_LAT), math.floor(lon / GRID_LON)
+  for i = -1, 1 do
+    for j = -1, 1 do
+      for _, o in ipairs(grid[(row + i) .. ':' .. (col + j)] or {}) do
+        if o.town == r.town and M.km(lat, lon, o.g[1], o.g[2]) <= M.TOWN_KM then return true end
+      end
+    end
+  end
+  return false
 end
 
 -- roadKm(fromPoint, toPoint, maxKm) (optional): the road distance in km, false when longer than maxKm, nil unknown.
@@ -361,7 +395,7 @@ function M.generate(idx, opts, lat, lon, rnd, maxSlots, roadKm)
             if pick <= #t then
               local a = t[pick]
               local s = M.km(p.r.g[1], p.r.g[2], a[1], a[2])
-              if s >= o.minKm and s <= maxKm and rnd(1000) <= 1000 * M.customerWeight(p.r, s, a[6]) then
+              if s >= o.minKm and s <= maxKm and rnd(1000) <= 1000 * M.customerWeight(s, M.inTown(idx, p.r, a[1], a[2], a[6])) then
                 found = { a = a, s = s }
                 if roadKm and checks < M.ROAD_CHECKS then
                   checks = checks + 1

@@ -2386,11 +2386,16 @@ do
 end
 
 test('food customers: nearer and same-town addresses are likelier, a long road detour is skipped', function()
-  local r = {town = 'Neratovice'}
-  assert(food.customerWeight(r, 1, 'Neratovice') == 1)
-  assert(food.customerWeight(r, 1, 'Libiš') == food.OTHER_TOWN, 'another village is less likely')
-  assert(food.customerWeight(r, 4, 'Neratovice') < 0.3, 'a far address is less likely')
-  assert(food.customerWeight({town = ''}, 1, 'Libiš') == 1, 'no town known: no town weight')
+  assert(food.customerWeight(1, true) == 1)
+  assert(food.customerWeight(1, false) == food.OTHER_TOWN, 'another village is less likely')
+  assert(food.customerWeight(4, true) < 0.3, 'a far address is less likely')
+  assert(food.customerWeight(1, nil) == 1, 'no town known: no town weight')
+  -- a city: the address names its quarter, the restaurants the city
+  local city = food.index({cats = {}, tile = 0.05, restaurants = {{'a', 50.08, 14.42, 50.08, 14.42, 'A', 'pizza', 'Praha'},
+    {'b', 50.03, 14.49, 50.03, 14.49, 'B', 'pizza', 'Praha'}, {'c', 50.2, 14.6, 50.2, 14.6, 'C', 'pizza', 'Libiš'}}}, function() end)
+  assert(food.inTown(city, city.restaurants[1], 50.031, 14.491, 'Chodov') == true, 'Chodov is in Praha')
+  assert(food.inTown(city, city.restaurants[1], 50.2, 14.601, 'Libiš') == false, 'Libiš is not')
+  assert(food.inTown(city, {town = ''}, 50.2, 14.601, 'Libiš') == nil)
   -- a town of 9 addresses next to the restaurant and a village of 30 further out
   local rows = {}
   for i = 1, 9 do rows[#rows + 1] = {50 + 0.007 + 0.001 * (i % 3), 14 + 0.001 * math.floor(i / 3), 50 + 0.007, 14, 'Town ' .. i, 'Town'} end
