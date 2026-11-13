@@ -775,15 +775,25 @@ angular.module('beamng.apps')
             '(st.cameras.helper === "failed" ? "Could not load cameras; trying again" : st.cameras.known + " real cameras around you (OpenStreetMap)"))) }}</small></div>' +
           '<b>{{ st.cameras.on ? "On" : "Off" }}</b></div>' +
         '<div class="cep-label" ng-if="st.dash">VR</div>' +
-        '<div class="cep-card" ng-if="st.dash">' +
-          '<div class="cep-name">Phone on the dashboard</div>' +
-          '<div class="cep-sub" ng-if="!st.dash.car">Sit in a car to fit a phone holder.</div>' +
-          '<div class="cep-sub" ng-if="st.dash.car && !st.dash.supported">No phone holder for this car yet. The Pigeon has one.</div>' +
-          '<div class="cep-sub" ng-if="st.dash.supported && !st.dash.fitted">A holder on the dash with this whole phone in it. In VR, point a controller at it and pull the trigger; on a monitor, click it.</div>' +
-          '<div class="cep-sub" ng-if="st.dash.fitted">Fitted{{ st.dash.running ? "" : " (its screen starts when the car is loaded)" }}. Point a controller at the screen and pull the trigger.</div>' +
-          '<div class="cep-sub" ng-if="st.dash.error">{{ st.dash.error }}</div>' +
-          '<button class="cep-sm" ng-if="st.dash.supported && !st.dash.fitted" style="margin-top:6px" ng-click="sdo(\'dash\', \'fit\')">Fit phone holder</button>' +
-          '<button class="cep-sm ghost" ng-if="st.dash.fitted" style="margin-top:6px" ng-click="sdo(\'dash\', \'remove\')">Take the holder off</button></div>' +
+        '<div class="cep-li" ng-if="st.dash" ng-click="sdo(\'dash\', st.dash.on ? \'off\' : \'on\')">' +
+          '<div><div class="cep-name">Phone on the dashboard</div><small>{{ !st.dash.on ? "This whole phone on the dash of any car you drive. In VR, point a controller at it and pull the trigger; on a monitor, click it." : ' +
+            '(!st.dash.car ? "Sit in a car: the phone appears on its dash." : ' +
+            '(st.dash.fitted ? ("On the dash" + (st.dash.running ? "" : " (its screen starts when the car is loaded)") + ". Point a controller at the screen and pull the trigger.") : "Putting it on this car’s dash…")) }}</small></div>' +
+          '<b>{{ st.dash.on ? "On" : "Off" }}</b></div>' +
+        '<div class="cep-sub" ng-if="st.dash.error">{{ st.dash.error }}</div>' +
+        '<div class="cep-card" ng-if="st.dash.on && st.dash.car && st.dash.placed">' +
+          '<div class="cep-sub">Move it in this {{ st.dash.model }}. Each press moves it 1 cm and reloads the car.</div>' +
+          '<div class="cep-li" style="cursor:default"><div class="cep-name">Up / down</div><div class="cep-step2">' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z-\')">Down</button><b>{{ st.dash.nudge.z }}</b>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z+\')">Up</button></div></div>' +
+          '<div class="cep-li" style="cursor:default"><div class="cep-name">Closer / further</div><div class="cep-step2">' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'y-\')">Further</button><b>{{ st.dash.nudge.y }}</b>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'y+\')">Closer</button></div></div>' +
+          '<div class="cep-li" style="cursor:default"><div class="cep-name">Left / right</div><div class="cep-step2">' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x+\')">Left</button><b>{{ -st.dash.nudge.x }}</b>' +
+            '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x-\')">Right</button></div></div>' +
+          '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-if="st.dash.nudged" ng-click="sdo(\'dash\', \'reset\')">Back to where it started</button>' +
+          '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'measure\')">Measure this car again</button></div></div>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'reset\')">Back to the defaults</button>' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
         '<button class="cep-sm ghost" ng-click="sdo(\'window\')">{{ st.window ? "Close" : "Open" }} the debug window</button>' +

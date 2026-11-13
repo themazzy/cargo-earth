@@ -44,7 +44,7 @@ Helper API: `/v1/radio?cc=CZ&lat=..&lon=..` and `/v1/radioclick?id=<uuid>`. The 
 
 ## A phone screen on the dashboard for VR
 
-> Replaced after 0.8: the floating screen below is gone; see [DASH_PHONE.md](DASH_PHONE.md) for the phone holder part.
+> Replaced after 0.8: the floating screen below is gone; see [DASH_PHONE.md](DASH_PHONE.md) for the phone on the dashboard.
 
 Jan's ask on 12 November 2026: a phone on the centre of the dash. On a monitor the normal phone app stays as it is.
 In VR, BeamNG shows the whole UI on a floating panel anchored to the room or your head, not to the car, so the panel
