@@ -148,6 +148,13 @@ angular.module('beamng.apps')
     'position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:99998;display:flex;align-items:center;justify-content:center;' +
     'background:rgba(20,19,18,.55);font-family:"Segoe UI",Roboto,system-ui,sans-serif;color:var(--ink);pointer-events:auto;user-select:none;-webkit-user-select:none}' +
     '.cem *{box-sizing:border-box}' +
+    '.cem-pad{position:fixed;left:16px;bottom:16px;z-index:9999;width:270px;padding:12px;border-radius:16px;background:rgba(20,19,18,.92);' +
+    'color:#f3eee8;font-family:inherit;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.35)}' +
+    '.cem-pad-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.cem-pad-head span{color:#ff8a73;font-size:12px}' +
+    '.cem-pad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}' +
+    '.cem-pad button{border:0;border-radius:10px;padding:9px 4px;font:inherit;font-weight:700;background:#2b2825;color:#fff;cursor:pointer}' +
+    '.cem-pad button:hover{background:#3a3631}.cem-pad button.ok{background:#e8452c}' +
+    '.cem-pad-foot{display:flex;gap:6px;margin-top:8px}.cem-pad-foot button{flex:1}.cem-pad-error{margin-top:8px;color:#ff8a73;font-size:12px}' +
     '.cem-panel{width:92vw;max-width:980px;height:86vh;max-height:700px;display:flex;border-radius:20px;overflow:hidden;' +
     'background:var(--paper);box-shadow:0 24px 60px rgba(0,0,0,.5),inset 0 0 0 1px #2b2926}' +
     '.cem-side{width:200px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;padding:18px 12px;background:#141312;color:#f3eee8;overflow-y:auto}' +
@@ -378,6 +385,16 @@ angular.module('beamng.apps')
           '<button class="cehq-btn ghost" ng-disabled="hq.busy || hq.company" ng-click="moveHq()">{{ moveAsk ? "Press again to move · " + fmt.money(hq.moveFee) : "Move the headquarters to " + hq.place.name }}</button></div>' +
       '</div></div>' +
       // the menu: a big window outside the phone for everything that is not driving (garage, home, companies, career, settings)
+      // moving the dash phone: a small pad in the corner, so the phone on the dash stays in sight
+      '<div class="cem-pad" ng-show="movePad" role="dialog" aria-label="Move the dash phone">' +
+        '<div class="cem-pad-head"><b>Move the dash phone</b><span ng-if="st.dash.moving">moving…</span></div>' +
+        '<div class="cem-pad-grid">' +
+          '<span></span><button ng-click="sdo(\'dash\', \'z+\')">Up</button><span></span>' +
+          '<button ng-click="sdo(\'dash\', \'x+\')">Left</button><button ng-click="sdo(\'dash\', \'y+\')">Closer</button><button ng-click="sdo(\'dash\', \'x-\')">Right</button>' +
+          '<span></span><button ng-click="sdo(\'dash\', \'z-\')">Down</button><button ng-click="sdo(\'dash\', \'y-\')">Further</button></div>' +
+        '<div class="cem-pad-foot"><button ng-click="sdo(\'dash\', \'reset\')">Start over</button>' +
+          '<button class="ok" ng-click="closeMovePad()">Done</button></div>' +
+        '<div class="cem-pad-error" ng-if="st.dash.error">{{ st.dash.error }}</div></div>' +
       '<div class="cem" ng-show="panel" role="dialog" aria-label="Cargo Earth menu">' +
       '<div class="cem-panel" ng-if="panel">' +
       '<nav class="cem-side" aria-label="Menu sections">' +
@@ -782,7 +799,8 @@ angular.module('beamng.apps')
           '<b>{{ st.dash.on ? "On" : "Off" }}</b></div>' +
         '<div class="cep-sub" ng-if="st.dash.error">{{ st.dash.error }}</div>' +
         '<div class="cep-card" ng-if="st.dash.on && st.dash.car && st.dash.placed">' +
-          '<div class="cep-sub">Move it in this {{ st.dash.model }}. Each press moves it 1 cm and reloads the car.</div>' +
+          '<div class="cep-sub">Move it in this {{ st.dash.model }}. Each press moves it 1 cm; the car reloads once you stop pressing.</div>' +
+          '<button class="cep-sm" ng-if="!dash" ng-click="openMovePad()">Move it with a small pad (this window closes so you can see the phone)</button>' +
           '<div class="cep-li" style="cursor:default"><div class="cep-name">Up / down</div><div class="cep-step2">' +
             '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z-\')">Down</button><b>{{ st.dash.nudge.z }}</b>' +
             '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'z+\')">Up</button></div></div>' +
@@ -1482,12 +1500,25 @@ angular.module('beamng.apps')
       }
       // The headquarters covers the whole screen, so it lives on the page body, outside the phone's own box.
       // The menu window does the same, except on the dash screen: there it stays in the phone and covers just the phone.
-      ;(scope.dash ? ['.cehq'] : ['.cem', '.cehq']).forEach(function (sel) {
+      ;(scope.dash ? ['.cehq'] : ['.cem', '.cehq', '.cem-pad']).forEach(function (sel) {
         var overlay = element && element[0] && element[0].querySelector && element[0].querySelector(sel)
         if (!overlay || typeof document === 'undefined' || !document.body) return
         document.body.appendChild(overlay)
         scope.$on('$destroy', function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay) })
       })
+      // moving the dash phone with the small pad: the big window closes so the dash stays in sight, and opens again after
+      var padTimer = null
+      scope.openMovePad = function () {
+        scope.movePad = true
+        scope.closePanel()
+        if (!padTimer) padTimer = setInterval(function () { if (scope.movePad) loadSettings() }, 1000) // "moving…" ends
+      }
+      scope.closeMovePad = function () {
+        scope.movePad = false
+        if (padTimer) { clearInterval(padTimer); padTimer = null }
+        scope.openPanel('settings', undefined, true)
+      }
+      scope.$on('$destroy', function () { if (padTimer) clearInterval(padTimer) })
       scope.sdo = function (name, a, b) {
         var args = [name]
         if (a !== undefined) args.push(a)

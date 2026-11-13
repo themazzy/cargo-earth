@@ -2097,9 +2097,18 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   core.settingsDo('dash', 'on')
   assert(#respawns == 1, 'already on this car')
   -- each press moves it 1 cm and rebuilds the car
+  -- presses close together are applied with one reload, once they stop
   st = core.settingsDo('dash', 'z+').dash
-  assert(#respawns == 2, 'respawns ' .. #respawns .. ' ' .. tostring(st.error)) assert(st.nudge.z == 1, tostring(st.nudge.z)) assert(dash.treeHasPhone(respawns[2].partsTree))
+  assert(st.moving and #respawns == 1 and st.nudge.z == 1, 'not reloaded at once')
+  core.settingsDo('dash', 'z+')
+  core.settingsDo('dash', 'z-')
+  advance(core, 2)
+  assert(#respawns == 1, 'still waiting for the presses to stop')
+  advance(core, 2)
+  st = core.settingsState().dash
+  assert(#respawns == 2 and not st.moving, 'respawns ' .. #respawns .. ' ' .. tostring(st.error)) assert(st.nudge.z == 1, tostring(st.nudge.z)) assert(dash.treeHasPhone(respawns[2].partsTree))
   core.settingsDo('dash', 'reset')
+  advance(core, 4)
   assert(#respawns == 3 and not core.settingsState().dash.nudged)
   -- a new car: a moment after it appears, it gets the phone too, and only one try
   v = { id = 10, model = 'pigeon', config = { partsTree = { children = {} } }, data = { vdata = vdata } }
@@ -2142,6 +2151,7 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   advance(core, 8)
   assert(#respawns == 7)
   core.settingsDo('dash', 'reset')
+  advance(core, 4)
   assert(#respawns == 8)
   -- switched off normally: taken out of the car
   v.config = respawns[4]
@@ -2198,6 +2208,21 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   st = core.settingsDo('dash', 'on').dash
   assert(st.error and #respawns == before + 4)
   dash.setOn(false)
+end)
+
+test('the buttons beside the dash phone switch online and offline, and pass the rest to the phone', function()
+  local core, s = fresh()
+  assert(not s.phone.online)
+  core.dashButton('online')
+  assert(s.phone.online, 'online')
+  core.dashButton('online')
+  assert(not s.phone.online, 'and offline again')
+  local asked = {}
+  local real = core.phoneAction
+  core.phoneAction = function(a) asked[#asked + 1] = a end
+  core.dashButton('accept') core.dashButton('decline') core.dashButton('gps') core.dashButton('os.exit')
+  core.phoneAction = real
+  assert(#asked == 3 and asked[1] == 'accept' and asked[2] == 'decline' and asked[3] == 'gps')
 end)
 
 test('the Menu window opens in the Menu app, else the floating phone, else on the asking phone', function()

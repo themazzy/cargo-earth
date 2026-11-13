@@ -2959,6 +2959,7 @@ function M.settingsState()
   end
   out.dash = dash.state(M.G.vehicle and M.G.vehicle() or nil)
   out.dash.error = S.dashError
+  out.dash.moving = M.dashMoving()
   aboutHelper()
   out.update = M.updateInfo() or { mod = M.VERSION, unknown = true }
   out.cameras = { on = not S.career.camerasOff, known = #cams.list,
@@ -3281,6 +3282,15 @@ function M.openMenu(panel, view)
   return true
 end
 
+-- a labelled button beside the dash phone (cargoEarth/dash.lua M.BUTTONS)
+function M.dashButton(name)
+  if name == 'online' then
+    return M.phoneAction(S.phone and S.phone.online and 'offline' or 'online')
+  elseif name == 'accept' or name == 'decline' or name == 'gps' then
+    return M.phoneAction(name)
+  end
+end
+
 -- a car's phone holder has started its screen
 function M.dashPhonePart(vehId)
   log('I', 'cargoEarth', 'dash phone holder running in car ' .. tostring(vehId))
@@ -3391,6 +3401,14 @@ end
 -- Settings > Phone on the dashboard. a: on | off | reset | measure, or a nudge: x+ / x- (left / right as the driver
 -- sees it), y+ / y- (closer / further), z+ / z- (up / down). Nudges are kept per car model.
 local dashDoInner
+-- Moving the phone reloads the car, so presses that come close together are applied with one reload, once they stop.
+M.DASH_MOVE_S = 1.5
+local function dashMoveSoon()
+  dashPending = { rebuild = true }
+  dashCheckAt = dashClock + M.DASH_MOVE_S
+  return true
+end
+function M.dashMoving() return dashPending ~= nil end
 function M.dashDo(a)
   local ok, why, busy = dashDoInner(a)
   if busy then
@@ -3419,10 +3437,10 @@ dashDoInner = function(a)
   if type(a) == 'string' then axis, sign = a:match('^([xyz])([+-])$') end
   if axis then
     if not dash.nudge(v.model, axis, sign == '+' and 1 or -1) then return false, 'The phone can’t go further that way.' end
-    return M.dashFit(true, { rebuild = true })
+    return dashMoveSoon()
   elseif a == 'reset' then
     if not dash.nudge(v.model, 'reset') then return true end
-    return M.dashFit(true, { rebuild = true })
+    return dashMoveSoon()
   end
   return false, 'Unknown choice.'
 end
