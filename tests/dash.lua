@@ -121,6 +121,31 @@ test('the part covers the screen with a 6 x 12 click grid and moves with the nud
   assert(dash.meshSuffix(30) == '_yp30' and dash.meshSuffix(-5) == '_ym5' and dash.meshSuffix(0) == '_yp0')
 end)
 
+test('the click boxes lie flat on the turned phone, as the game turns a box trigger', function()
+  local spot = assert(dash.findSpot(car(EYE), EYE))
+  local v = dash.vec
+  for _, yaw in ipairs({ 0, 15, -35, 70 }) do
+    local rot, err = dash.boxTurn(spot, yaw)
+    assert(err < 1e-6, 'exact at yaw ' .. yaw .. ': ' .. err)
+    local bx, by, bz = dash.boxAxes(spot, { x = math.rad(rot.x), y = math.rad(rot.y), z = math.rad(rot.z) })
+    local across = dash.turn({ x = 1, y = 0, z = 0 }, yaw)
+    local out = dash.turn({ x = 0, y = 1, z = 0 }, yaw)
+    assert(near(v.dot(bx, across), 1, 1e-5) and near(bz.z, 1, 1e-5) and near(math.abs(v.dot(by, out)), 1, 1e-5))
+  end
+  -- a slanted frame (nodes not square to the car) still gives flat boxes
+  local skew = { ref = { name = 'a', pos = { x = 0, y = -0.5, z = 0.9 } }, x = { name = 'b', pos = { x = 0.5, y = -0.42, z = 0.95 } },
+    y = { name = 'c', pos = { x = 0.1, y = -0.7, z = 1.1 } } }
+  local _, err = dash.boxTurn(skew, 25)
+  assert(err < 1e-6, 'slanted frame: ' .. err)
+  -- without a turn the game lays the box with its y through the frame (the reason a turn is needed at all)
+  local _, by = dash.boxAxes(spot, { x = 0, y = 0, z = 0 })
+  assert(by and math.abs(by.z) < 1.000001)
+  local part = dash.buildPart(spot)
+  local row = part.triggers2[2]
+  assert(row[7].x == dash.boxTurn(spot, select(2, dash.placement(spot))).x, 'the grid rows carry the turn')
+  assert(near(row[6].x, dash.SCREEN_W / dash.COLS * 0.98) and near(row[6].y, dash.DEPTH), 'boxes the size of a cell')
+end)
+
 test('Settings: the switch, the measured spots and the nudges are kept, per car model', function()
   reset(nil)
   assert(not dash.isOn() and dash.partFor('pigeon') == nil)

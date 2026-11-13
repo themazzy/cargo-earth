@@ -8,7 +8,7 @@ const timers = [], destroy = [], pending = [], watches = {}
 let now = 0, hold = false, answer = {screen: 'offline'}, digests = 0
 vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPhone/app.js', 'utf8'), {
   angular: { module: () => ({ directive: (name, factory) => { directive = factory[factory.length - 1]() } }) },
-  bngApi: { serializeToLua: JSON.stringify, engineLua: (command, callback) => { commands.push(command); if (hold) pending.push(callback); else callback(JSON.parse(JSON.stringify(answer))) } },
+  bngApi: { serializeToLua: JSON.stringify, engineLua: (command, callback = () => {}) => { commands.push(command); if (hold) pending.push(callback); else callback(JSON.parse(JSON.stringify(answer))) } },
   Date: {now: () => now},
   Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {}; audios.push(this) } addEventListener (n, f) { this.on[n] = f }
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
@@ -97,62 +97,88 @@ scope.togglePanel()
 assert.equal(scope.panel, 'settings')
 scope.closePanel()
 for (const text of ['class="cem"', 'Back to the phone', 'Delivery map']) assert(directive.template.includes(text), 'Template is missing: ' + text)
-// radio: the list comes from the game, the stream plays in the page and keeps playing on other tabs
+// radio: one radio for both phones, kept by the game; the page's player makes the sound
 hold = false
 scope.setTab('radio')
 assert.equal(scope.tab, 'radio')
+assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("radio")')), 'The game hears which page the phone shows')
 assert(commands.at(-1).includes('pcall(cargoEarth_core.radioState'))
 const stations = [{id: 'a', name: 'Rádio Jih', url: 'http://a/stream', codec: 'MP3', kbps: 128}, {id: 'b', name: 'Two', url: 'https://b/s', codec: 'OGG'}]
 const STREAM = 'http://127.0.0.1:47820/v1/stream?id='
 scope.rs = {country: 'CZ', countryName: 'Czechia', state: 'ready', top: stations, near: [], stream: STREAM}
 scope.radioPlay(stations[0], stations)
 assert.equal(scope.radio.status, 'loading')
-assert.equal(audios[0].src, STREAM + 'a', 'The game plays the station through the helper, not straight from the web')
 assert.equal(scope.radio.station.country, 'CZ')
-assert(commands.some(command => command.includes('pcall(cargoEarth_core.radioDo, "played", "a"')))
+assert(commands.at(-1).includes('pcall(cargoEarth_core.radioDo, "play", {"id":"a"'), 'The press goes to the game')
 scope.radioSkip(1)
 assert.equal(scope.radio.station.id, 'b')
 scope.radioSkip(1)
 assert.equal(scope.radio.station.id, 'a', 'Next wraps around the list')
 scope.radioVol(1); scope.radioVol(1)
 assert.equal(scope.radio.vol, 0.8)
+assert(commands.at(-1).includes('"vol", 0.8'))
 scope.radioFav(stations[1], {stopPropagation () {}})
-assert(scope.isSaved(stations[1]))
+assert(scope.isSaved(stations[1]) && commands.at(-1).includes('"fav", {"id":"b"'))
 scope.radioToggle()
 assert.equal(scope.radio.status, 'idle')
-// the game's browser refuses the stream: the helper plays it, and keeps doing so
-scope.radioPlay(stations[0], stations)
-audios[0].error = {code: 4}
-audios[0].on.error()
-assert.equal(scope.radio.via, 'page', 'One station the game cannot play does not change the setting')
-assert(scope.radio.alone, 'but the helper plays that one')
-assert(commands.some(command => command.includes('pcall(cargoEarth_core.radioDo, "helperPlay", "a", 0.8')))
-scope.rs = {country: 'CZ', top: stations, near: [], stream: STREAM, player: {playing: true, sound: false, secs: 0, player: 'powershell'}}
+assert(commands.at(-1).includes('"stop"'))
+// the game's answer is what both phones show
+answer = {country: 'CZ', top: stations, near: [], stream: STREAM,
+  radio: {on: true, station: stations[1], status: 'playing', vol: 0.4, via: 'helper', seq: 7, saved: [stations[0]], mode: 'helper'}}
 scope.setTab('orders'); scope.setTab('radio')
-assert.equal(scope.radio.status, 'loading', 'No sound from the helper yet: still tuning in, not "playing"')
-scope.radioVol(-1)
-assert(commands.some(command => command.includes('"helperVolume", 0.7')))
-pending.length = 0; hold = true
-scope.setTab('radio')
-pending.shift()({country: 'CZ', top: stations, near: [], stream: STREAM, player: {playing: false, error: null}})
-hold = false
-assert.equal(scope.radio.status, 'idle', 'A player that stopped by itself shows as stopped, so Play works again')
-scope.radioPlay(stations[0], stations)
-scope.radioStop()
-assert(commands.at(-1).includes('"helperStop"'))
-assert(!scope.radio.alone)
-scope.radioPlay(stations[1], stations)
-assert(!audios[0].paused)
-scope.radioPlay({id: 'c', name: 'AAC', url: 'http://c/s', codec: 'AAC+'}, stations)
-assert(scope.radio.alone, 'The game has no AAC: the helper plays those')
-assert(audios[0].paused && !audios[0].src, 'The station the game played stops when the helper takes over')
-scope.radioStop()
-scope.radioVia('helper')
-assert.equal(scope.radio.via, 'helper')
+assert.equal(scope.radio.status, 'playing')
+assert.equal(scope.radio.station.id, 'b')
+assert.equal(scope.radio.vol, 0.4)
+assert(scope.radio.via === 'helper' && scope.isSaved(stations[0]) && !scope.isSaved(stations[1]))
+// the other phone changes the station: the quick poll says so, and this phone asks for the rest
+let asking = commands.length
+watches['s.radio']({status: 'loading', seq: 8, name: 'Other'})
+assert(commands.length > asking && commands.at(-1).includes('pcall(cargoEarth_core.radioState'))
+asking = commands.length
+watches['s.radio']({status: 'playing', seq: 9, name: 'Two'})
+assert.equal(commands.length, asking + 1, 'a new number each time asks again')
+watches['s.radio'](undefined)
+assert.equal(scope.radio.status, 'idle', 'Nothing plays: the phone shows it stopped')
 scope.radioVia('page')
-assert.equal(scope.radio.via, 'page')
+assert(commands.at(-1).includes('"via", "page"'))
 scope.radioPlay({id: 'x', name: 'Bad', url: 'javascript:alert(1)'})
 assert.equal(scope.radio.status, 'error', 'Only web streams are played')
+// The page's player: one on the page, it checks in with the game and plays what the game says the page should play
+assert.equal(audios.length, 1, 'one player for the page')
+const player = timers.find(timer => timer.interval === 500).fn
+answer = {radio: {on: true, mode: 'page', station: stations[0], seq: 3, vol: 0.5}, stream: STREAM}
+now += 3000; player()
+assert(commands.at(-1).includes('cargoEarth_core.radioDo("page", -1, "idle"'))
+assert.equal(audios[0].src, STREAM + 'a', 'The game plays the station through the helper, not straight from the web')
+assert.equal(audios[0].volume, 0.5)
+audios[0].on.playing()
+now += 500; player()
+assert(commands.at(-1).includes('radioDo("page", 3, "playing"'), 'it says the sound is on')
+audios[0].error = {code: 4}
+audios[0].on.error()
+assert(commands.at(-1).includes('radioDo("page", 3, "error", "error 4")'), 'a stream the page cannot play is reported at once')
+answer = {radio: {on: true, mode: 'helper', station: stations[0], seq: 3, vol: 0.5}, stream: STREAM}
+now += 500; player()
+assert(!audios[0].src, 'the helper plays it: the page stays silent')
+answer = {radio: {on: false, mode: 'page', station: stations[0], seq: 3, vol: 0.5}, stream: STREAM}
+now += 500; player()
+asking = commands.length
+now += 500; player()
+assert.equal(commands.length, asking, 'with nothing playing the player checks in every 2 s')
+now += 2000; player()
+assert.equal(commands.length, asking + 1)
+// a Work/Radio choice made on the other phone shows here
+answer = {screen: 'offline', tab: 'radio'}
+scope.setTab('orders')
+now += 2000
+for (const t of timers.filter(timer => timer.interval === 250)) t.fn()
+assert.equal(scope.tab, 'radio', 'the phone follows the page chosen on the other phone')
+answer = {screen: 'offline', tab: 'orders'}
+scope.setTab('radio')
+now += 300
+for (const t of timers.filter(timer => timer.interval === 250)) t.fn()
+assert.equal(scope.tab, 'radio', 'a choice made here a moment ago is not undone by an older answer')
+answer = {screen: 'offline'}
 assert(directive.template.includes('Stations from Radio Browser'))
 scope.setTab('orders')
 scope.setTab('invalid')
@@ -163,12 +189,13 @@ const poll = timers.find(timer => timer.interval === 250).fn
 const slow = timers.find(timer => timer.interval === 1000).fn
 scope.fold(true)
 const before = commands.length
-for (now = 250; now <= 10000; now += 250) poll()
+const t0 = now
+for (now = t0 + 250; now <= t0 + 10000; now += 250) poll()
 assert.equal(commands.length - before, 5, 'Folded phone should poll once every two seconds')
 scope.fold(false)
 // Open: twice a second; an answer equal to the last one is not handed to Angular (no digest, no redraw).
 let asked = commands.length, digested = digests
-for (now = 10250; now <= 20000; now += 250) poll()
+for (now = t0 + 10250; now <= t0 + 20000; now += 250) poll()
 assert.equal(commands.length - asked, 20, 'An open phone polls twice a second')
 assert(digests - digested <= 1, 'Unchanged answers must not start a digest')
 // Standing in the stop zone the bar fills: four times a second.

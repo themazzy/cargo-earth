@@ -47,6 +47,11 @@ runtime trigger boxes never ended up in the right place (beamng.log showed their
   (or the mouse) at a spot and pull the trigger: the cell's input action asks the page to click whatever is
   under the middle of that cell. The rows use the stock `triggers2` header (`dash.TRIGGER_HEADER`): the game keeps
   only the first part's header when it merges parts.
+* **Box turn:** the game does not lay a box trigger along its three nodes. It points the box's y along the frame's
+  normal, turns it about that to the frame's "up", then applies `baseRotation` (the game's Lua mirror of this is
+  `lua/ge/extensions/core/vehicle/triggerLabelPlacement.lua`). `dash.boxAxes` repeats that math and `dash.boxTurn`
+  searches the `baseRotation` that lays every box flat on the turned phone, so the boxes are exactly cell-sized.
+  (Before 0.8.8 the boxes were sized for the node frame and came out skewed and too big.)
 * **Buttons beside the phone:** six more triggers (`dash.BUTTONS`), each with a label and its own input action
   (`cargoEarthButton_<id>`); the controller scrolls the page itself and sends the rest to
   `cargoEarth_core.dashButton`.
@@ -59,6 +64,21 @@ Regenerate the meshes, materials and the click grid's input actions with `python
 
 The generated part (slot added at load time), the placement in other cars than the Pigeon, the mesh turn direction, the emissive screen material, `beamng.sendEngineLua`
 inside a vehicle web view, and loading the app script from `local://local/ui/...`.
+
+## One phone state for both phones
+
+The floating phone and the phone in the holder show the same page and the same radio:
+
+* **Work / Radio:** the game keeps which page the phone shows (`cargoEarth_core.phoneTab`, `phoneState().tab`); a
+  choice made on one phone shows on the other within a moment. A ringing order sets it to Work.
+* **Radio:** the game keeps the radio (`cargoEarth_core.radioDo`: play, stop, vol, via, fav), with the volume, the
+  player setting, the last station and the saved stations in `settings/cargoEarth/radio.json` (taken once from the
+  UI page's storage where an older version kept them). The sound comes from one player on the game's UI page
+  (`pagePlayer` in the phone's `app.js`, started by the floating phone or the Menu app and kept for the page's life,
+  so hiding the phone app in the cockpit does not stop it). It checks in twice a second (`radioDo('page', ...)`) and
+  plays when the game says the page should. The helper plays instead when the setting says so, for AAC or a stream
+  the page refused, and when no page has checked in for 5 s (only the holder phone in use: a car screen page plays
+  no sound).
 
 ## The Menu window
 
