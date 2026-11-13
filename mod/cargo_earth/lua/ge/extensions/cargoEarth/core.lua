@@ -3340,6 +3340,15 @@ function M.dashFit(on, opts)
     if not spot then return false, why end
   end
   if not opts.rebuild and not opts.measure and dash.treeHasPhone(tree) == (on and true or false) then return true end
+  -- a respawn mends the car: never on a damaged career car (it would be repaired for free, and its bill turned into
+  -- debt), the same rule as changing parts
+  local g = type(S.career) == 'table' and S.career.garage or nil
+  if type(g) == 'table' and g.started and G.isOwned and G.isOwned(v) then
+    local damage = (G.damage and G.damage(v.id)) or 0
+    if (g.repair or 0) > 0 or damage * garage.REPAIR_PER_DAMAGE >= 2.5 then
+      return false, 'Repair the car first: reloading it for the phone would mend it.'
+    end
+  end
   if dashBusy() then return false, 'The car is busy: the phone follows as soon as it is free.', 'busy' end
   dashTried[v.id] = dashClock
   local ok, err = pcall(G.respawnPlayer, function(config) dash.setTreePhone(config.partsTree, on) end)

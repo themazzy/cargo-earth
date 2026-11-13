@@ -2152,6 +2152,15 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   core.onVehicleSpawned(12)
   advance(core, 4)
   assert(#respawns == 9, 'off: new cars stay as they are')
+  -- a damaged career car is not reloaded for the phone (the reload would mend it)
+  local g = core.state().career.garage
+  core.G.isOwned = function(car) return car == v end
+  g.repair = 50
+  st = core.settingsDo('dash', 'on').dash
+  assert(st.on and st.error and #respawns == 9, 'damaged: not reloaded')
+  g.repair = 0
+  core.G.isOwned = function() return false end
+  dash.setOn(false)
   -- no dash to stand on
   v = { id = 11, model = 'unicycle', config = { partsTree = { children = {} } }, data = {} }
   st = core.settingsDo('dash', 'on').dash
