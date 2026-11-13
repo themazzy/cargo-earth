@@ -1337,6 +1337,7 @@ end
 -- Company contracts near the player for the freight page when you have no van or truck of your own: the company
 -- hands you its van at the yard when you take one. The board is rebuilt when stale or after 5 km of driving.
 M.CONTRACTS_SHOWN = 3
+M.CONTRACT_MSG_S = 12   -- seconds a failed contract Route/Start message stays on the freight page
 function M.nearContracts(p)
   if not (S.idx and p) or S.career.employment then return {} end
   local at = S.companyBoardPos
@@ -1377,7 +1378,9 @@ local function truckingState()
   elseif S.offerStats and S.offerStats.pairs == 0 then
     out.hint = 'No compatible routes nearby. Try a different depot area or widen the distance filters.'
   end
-  out.error = S.freightSetupError
+  local cm = S.contractMsg
+  if cm and (S.clock or 0) - cm.at > M.CONTRACT_MSG_S then S.contractMsg, cm = nil, nil end
+  out.error = S.freightSetupError or (cm and not S.career.employment and cm.text) or nil
   return out
 end
 
@@ -1618,6 +1621,7 @@ function M.placesDo(name, value)
   elseif name == 'endCompany' then ok, why = companyReturn(true)
   end
   if why then S.placesMsg = why elseif ok then S.placesMsg = 'GPS updated.' end
+  S.placesOk = ok
   return M.placesState()
 end
 
@@ -1784,10 +1788,11 @@ function M.phoneAction(a, orderId)
     selectDelivery(orderId)
   elseif a == 'restoreTrailer' then
     M.spawnTrailer()
-  elseif a == 'contractGps' then
-    M.placesDo('companyGps', orderId)
-  elseif a == 'contractStart' then
-    M.placesDo('startCompany', orderId)
+  elseif a == 'contractGps' or a == 'contractStart' then
+    -- a failure (not parked at the yard, no van config...) shows on the freight page for a while
+    S.placesOk = nil
+    M.placesDo(a == 'contractGps' and 'companyGps' or 'startCompany', orderId)
+    S.contractMsg = not S.placesOk and S.placesMsg and { text = S.placesMsg, at = S.clock or 0 } or nil
   elseif a == 'cancel' then
     M.cancel(false)
   elseif a == 'dismiss' then
