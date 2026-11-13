@@ -1,6 +1,6 @@
 # Cheaper running costs and the game's own pumps
 
-Released in 0.8.6.
+Released in 0.8.7.
 
 ## Lower fuel and service prices
 
