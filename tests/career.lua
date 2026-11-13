@@ -2453,6 +2453,72 @@ test('road distance: two points on one edge, and the nearer end of the goal edge
   assert(roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 1) == false, 'the cap counts the whole way')
 end)
 
+local truckIdx = jobs.index({depots = {
+  {id = 'yard', n = 'Warehouse', t = 'producer', s = 'M', g = {50, 14}},
+  {id = 'shop1', n = 'Shop One', t = 'receiver', s = 'M', g = {50.03, 14}},
+  {id = 'shop2', n = 'Shop Two', t = 'receiver', s = 'M', g = {50.045, 14}},
+  {id = 'far1', n = 'Far One', t = 'receiver', s = 'M', g = {50.14, 14}},
+  {id = 'far2', n = 'Far Two', t = 'receiver', s = 'M', g = {50.2, 14}},
+}, cargo = idx.cargo, trailers = {}, types = idx.types})
+
+test('company board: trucks only once unlocked, quoted for the truck, reputation shared per yard', function()
+  local vanOnly = employment.board(truckIdx, {lat = 50, lon = 14})
+  for _, o in ipairs(vanOnly) do assert(o.tier == 'van', 'no trucks before they unlock') end
+  local board = employment.board(truckIdx, {lat = 50, lon = 14}, 'rigid')
+  local van, rigid
+  for _, o in ipairs(board) do if o.tier == 'van' then van = o elseif o.tier == 'rigid' then rigid = o end end
+  assert(van and rigid and not employment.board(truckIdx, {lat = 50, lon = 14}, 'rigid')[3], 'one van and one box truck contract')
+  assert(rigid.id ~= van.id and rigid.companyId == van.companyId and van.id == van.companyId)
+  assert(rigid.vehicle == haul.loaners.rigid.name)
+  for _, j in ipairs(rigid.jobs) do assert(j.haul.tier == 'rigid' and j.km >= 12 and j.km <= 40, tostring(j.km)) end
+  assert(rigid.wages > van.wages)
+  -- the truck's real boxes hold less than the quote: it loads what fits
+  local c = {money = 0}
+  assert(employment.begin(c, rigid, {}, {}, 'trucking'))
+  assert(c.employment.tier == 'rigid' and c.employment.companyId == van.companyId)
+  local rows = {{id = 1, cargoTypes = {'parcel'}, capacity = 96, targetVolume = 0, currentVolume = 0}}
+  employment.fit(c.employment, rows)
+  assert(c.employment.jobs[1].haul.amount == 96 and haul.plan(rows, c.employment.jobs[1].haul))
+end)
+
+test('an unlocked box truck comes with its contract; company vehicles do no other work', function()
+  local core, s = fresh()
+  s.idx = truckIdx
+  s.career.hauls = {van = 5}
+  core.setMode('trucking')
+  advance(core, 2)
+  local list = core.phoneState().trucking.contracts
+  local truck
+  for _, c in ipairs(list) do if c.vehicle == haul.loaners.rigid.name then truck = c end end
+  assert(truck and #list == 2, 'the nearest van and box truck contracts')
+  core.phoneAction('contractStart', truck.id)
+  advance(core, 2)
+  assert(vehicle.model == 'md_series' and s.career.garage.car.company and s.job and s.job.haul.tier == 'rigid')
+  -- the company truck cannot take food orders or the player's own freight
+  local own = {id = 'own', kind = 'cargo', from = s.job.from, to = s.job.to, km = 1, pay = 100}
+  local before = #s.orders
+  s.offers = {own}
+  core.take(1)
+  assert(#s.orders == before, 'own job refused in the company truck')
+end)
+
+test('old freight loaners leave My cars and cannot work for the player', function()
+  local garage = require('cargoEarth/garage')
+  local core, s = fresh()
+  s.career.garage.parked = {{model = 'van', key = 'h15_vanster', name = 'H-Series cargo van (loaner)', loaner = true, fleetId = 7},
+    {model = 'pigeon', key = 'base', name = 'Old Pigeon', fleetId = 8}}
+  s.career.garage.freightLoaners = {van = true}
+  garage.retireLoaners(s.career.garage)
+  assert(#s.career.garage.parked == 1 and s.career.garage.parked[1].fleetId == 8 and not s.career.garage.freightLoaners)
+  s.career.garage.car.loaner = true
+  core.phoneAction('online')
+  assert(not s.phone.online, 'no going online in a loaner')
+  core.setMode('trucking')
+  advance(core, 2)
+  local t = core.phoneState().trucking
+  assert(not t.carrier and t.contracts, 'a loaner is not your own carrier')
+end)
+
 test('freight without a van of your own lists company contracts and no loaner; a contract starts from the phone', function()
   local core, s = fresh()
   core.setMode('trucking')

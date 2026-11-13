@@ -33,5 +33,5 @@ function toLua(value) {
 }
 const pack = JSON.parse(fs.readFileSync(`${extensions}/cargoEarth/data/depots_CZ.json`, 'utf8'))
 run('local jobs=require("cargoEarth/jobs"); local employment=require("cargoEarth/employment"); local pack=' + toLua(pack) +
-  '; local board=employment.board(jobs.index(pack),{lat=50.0755,lon=14.4378}); assert(#board>0,"No Prague company contracts"); print("Czech data: "..#board.." Prague company contracts available")', 'actual-depot-data')
+  '; local board=employment.board(jobs.index(pack),{lat=50.0755,lon=14.4378}); assert(#board>0,"No Prague company contracts"); local all=employment.board(jobs.index(pack),{lat=50.0755,lon=14.4378},"semi"); local n={van=0,rigid=0,semi=0}; for _,o in ipairs(all) do n[o.tier]=n[o.tier]+1 end; assert(n.rigid>0 and n.semi>0,"No Prague truck contracts"); print("Czech data: "..#board.." Prague van contracts; with trucks unlocked "..n.rigid.." box truck and "..n.semi.." tractor contracts")', 'actual-depot-data')
 require('./phone.cjs')

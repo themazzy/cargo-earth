@@ -463,23 +463,13 @@ local function parkCurrent(g)
   park(g, g.car)
 end
 
-function M.issueFreightLoaner(G, g, career, tier, preset)
-  g.freightLoaners = g.freightLoaners or {}
-  if g.freightLoaners[tier] then return false, 'Your loaner is already in My cars.' end
-  if g.preview or g.pendingUsed then return false, 'Finish preparing your current car first.' end
-  local config = G.freightLoanerConfig and G.freightLoanerConfig(preset.model, preset.key)
-  if not config then return false, 'The stock loaner configuration is unavailable.' end
-  local loaner = { model = preset.model, key = preset.key, name = preset.name .. ' (loaner)', config = config,
-    loaner = true, km = 0, condition = 1 }
-  park(g, loaner)
-  local ok, why = M.switchCar(G, g, loaner.fleetId)
-  if not ok then table.remove(g.parked) return false, why end
-  if not g.started then
-    g.started = true
-    career.money = math.max(career.money or 0, M.START_MONEY)
-  end
-  g.freightLoaners[tier] = true
-  return true, 'Your loaner is ready. Go online in Trucking for freight jobs.'
+-- Older saves kept free freight loaners in My cars. Company vehicles now come only with a company contract,
+-- so parked loaners go back (a loaner being driven stays until you switch to your own car).
+function M.retireLoaners(g)
+  g.freightLoaners = nil
+  local kept = {}
+  for _, car in ipairs(g.parked or {}) do if not car.loaner then kept[#kept + 1] = car end end
+  if g.parked then g.parked = kept end
 end
 
 function M.parkedCar(g, id)
@@ -499,7 +489,7 @@ function M.switchCar(G, g, id)
   local ok, err = pcall(G.spawn, car.model, car.key, M.savedConfig(car))
   if not ok then return false, 'Car not spawned: ' .. tostring(err) end
   table.remove(g.parked, index)
-  parkCurrent(g)
+  if not (g.car and g.car.loaner) then parkCurrent(g) end   -- an old loaner goes back to its company
   g.car, g.repair, g.lastDamage, g.fixUntil = car, car.parkedRepair or 0, 0, nil
   g.carriedRepair, car.parkedRepair = g.repair, nil
   return true, 'Now driving ' .. car.name .. '.'

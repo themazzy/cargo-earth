@@ -408,6 +408,8 @@ local function loadCareer(c)
   records.restore(c)
   firm.restore(c)
   if type(c.garage) ~= 'table' then c.garage = garage.new() end
+  garage.retireLoaners(c.garage)
+  if c.employment and type(c.employment.personalGarage) == 'table' then garage.retireLoaners(c.employment.personalGarage) end
   c.garage.inventory = c.garage.inventory or {}
   if (c.garage.owed or 0) > 0 then c.garage.debt = (c.garage.debt or 0) + c.garage.owed end   -- older saves
   c.garage.owed, c.garage.fixUntil = nil, nil
@@ -811,6 +813,9 @@ end
 local function takeJob(j)
   if not j or S.pendingCareer or S.parts then return end
   if S.career.employment and j.companyShift ~= S.career.employment.id then return end
+  if not j.companyShift and S.career.garage.car and S.career.garage.car.loaner then
+    say('Company vehicles are for contract work only. Use your own car for your own jobs.', 5) return
+  end
   if S.job then
     -- a batched order: only food, while there is room
     if j.kind ~= 'food' or S.job.kind ~= 'food' or #S.orders >= maxOrders() then return end
@@ -1335,7 +1340,7 @@ local function incomingInfo(inc)
 end
 
 -- Company contracts near the player for the freight page when you have no van or truck of your own: the company
--- hands you its van at the yard when you take one. The board is rebuilt when stale or after 5 km of driving.
+-- hands you its van or truck at the yard when you take one. The board is rebuilt when stale or after 5 km of driving.
 M.CONTRACTS_SHOWN = 3
 M.CONTRACT_MSG_S = 12   -- seconds a failed contract Route/Start message stays on the freight page
 function M.nearContracts(p)
@@ -1343,14 +1348,28 @@ function M.nearContracts(p)
   local at = S.companyBoardPos
   if S.companyBoard == nil or (S.companyBoardDirty and S.clock >= (S.nextBoardAt or 0))
     or (at and jobs.km(at.lat, at.lon, p.lat, p.lon) > 5) then
-    S.companyBoard = employment.board(S.idx, p)
+    S.companyBoard = employment.board(S.idx, p, haul.state(S.career).unlocked)
     S.companyBoardDirty, S.nextBoardAt, S.companyBoardPos = nil, S.clock + 2, { lat = p.lat, lon = p.lon }
   end
-  local out = {}
+  -- the nearest contract of every vehicle you may drive, then the nearest of the rest
+  local rows, picked, out = {}, {}, {}
   for _, offer in ipairs(S.companyBoard or {}) do
-    if #out >= M.CONTRACTS_SHOWN then break end
-    local km = jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2])
+    rows[#rows + 1] = { offer = offer, km = jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) }
+  end
+  table.sort(rows, function(a, b) if a.km == b.km then return a.offer.id < b.offer.id end return a.km < b.km end)
+  local seen = {}
+  for _, r in ipairs(rows) do
+    local tier = r.offer.tier or 'van'
+    if not seen[tier] and #picked < M.CONTRACTS_SHOWN then seen[tier], r.on = true, true picked[#picked + 1] = r end
+  end
+  for _, r in ipairs(rows) do
+    if not r.on and #picked < M.CONTRACTS_SHOWN then r.on = true picked[#picked + 1] = r end
+  end
+  table.sort(picked, function(a, b) if a.km == b.km then return a.offer.id < b.offer.id end return a.km < b.km end)
+  for _, r in ipairs(picked) do
+    local offer, km = r.offer, r.km
     out[#out + 1] = { id = offer.id, name = offer.name, km = math.floor(km * 10 + 0.5) / 10, wages = offer.wages, minutes = offer.minutes,
+      vehicle = offer.vehicle or haul.loaners.van.name,
       atYard = km * 1000 <= employment.RADIUS and not p.camera and (p.speed or 0) <= M.STOP_SPEED }
   end
   return out
@@ -1361,11 +1380,13 @@ local function truckingState()
   local g = S.career.garage
   local v, tier = freightCarrier()
   local rows = S.storage and S.storage.rows
+  -- a company vehicle outside contract work (an old loaner) counts as no vehicle of your own
+  if g.car and g.car.loaner and not S.career.employment then v, tier = nil, nil end
   out.carrier = tier and haul.tiers[tier].name or nil
   if not v or not tier then
     -- no van or truck of your own: company contracts, the company's van is handed over at its yard
     out.contracts = not S.job and not g.preview and M.nearContracts(earth.pose()) or {}
-    out.hint = 'Take a contract: park at its yard and the company gives you its van.'
+    out.hint = 'Take a contract: park at its yard and the company gives you its vehicle.'
   elseif not haul.allowed(S.career, tier) then
     out.hint = 'This truck unlocks after completing the earlier stage.'
   elseif tier ~= 'semi' and not rows then
@@ -1414,7 +1435,7 @@ end
 function M.placesState()
   S.placesRequestedAt = S.clock
   if S.companyBoardDirty and not S.career.employment and S.clock >= (S.nextBoardAt or 0) then
-    S.companyBoard = employment.board(S.idx, earth.pose())
+    S.companyBoard = employment.board(S.idx, earth.pose(), haul.state(S.career).unlocked)
     S.companyBoardDirty, S.nextBoardAt = nil, S.clock + 2
   end
   local c, p = S.career, earth.pose()
@@ -1428,9 +1449,10 @@ function M.placesState()
     out.homeKm = p and jobs.km(p.lat, p.lon, c.home.g[1], c.home.g[2]) or nil
   end
   for _, offer in ipairs(S.companyBoard or {}) do
-    local company = c.companies and c.companies[offer.id]
+    local company = c.companies and c.companies[offer.companyId or offer.id]
     local km = p and jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) or nil
     out.companies[#out.companies + 1] = { id = offer.id, name = offer.name, yard = offer.yard.n,
+      vehicle = offer.vehicle or haul.loaners.van.name, van = (offer.tier or 'van') == 'van',
       km = km, routeKm = offer.km, wages = offer.wages, minutes = offer.minutes,
       reputation = company and company.reputation or 0,
       independentPay = offer.gross, independentUnlocked = company ~= nil and company.reputation >= employment.INDEPENDENT_REP,
@@ -1441,7 +1463,7 @@ function M.placesState()
     out.shift = { company = shift.companyName, phase = shift.phase, completed = shift.completed, total = #shift.jobs,
       held = math.floor(shift.gross * (shift.share or employment.SHARE) + 0.5), atYard = employment.atYard(c, p),
         failed = shift.failed or 0, vehicleDamage = shift.vehicleDamage or 0, reputationScore = employment.reputation(shift, false),
-      error = S.companyError, ownerOperator = shift.ownerOperator }
+      error = S.companyError, ownerOperator = shift.ownerOperator, vehicle = haul.loaners[shift.tier or 'van'].label }
   end
   return out
 end
@@ -1496,7 +1518,10 @@ local function companyStart(id, independent)
   if not garage.remember(M.G, g) then return false, 'Could not save your car configuration.' end
   local damage = M.G.damage and M.G.damage()
   if damage then garage.trackDamage(g, damage) end
+  local want = offer.tier or 'van'
+  if not haul.allowed(c, want) then return false, 'Unlock the ' .. haul.tiers[want].name:lower() .. ' first.' end
   if independent then
+    if want ~= 'van' then return false, 'Independent contracts are for vans.' end
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
     if g.car.loaner or tier ~= 'van' or not store or not store.rows then
@@ -1513,12 +1538,12 @@ local function companyStart(id, independent)
     S.offeredAt = nil
     return true, 'Independent contract accepted. Use your own van; keep 100% of delivery revenue and cover your vehicle costs.'
   end
-  local preset = haul.loaners.van
+  local preset = haul.loaners[want]
   local config = M.G.freightLoanerConfig and M.G.freightLoanerConfig(preset.model, preset.key)
-  if not config then return false, 'The company van configuration is unavailable in this game version.' end
+  if not config then return false, 'The company ' .. preset.label .. ' configuration is unavailable in this game version.' end
   local companyGarage = garage.new()
   companyGarage.started = true
-  companyGarage.car = { model = preset.model, key = preset.key, name = 'Company H-Series van', config = config,
+  companyGarage.car = { model = preset.model, key = preset.key, name = 'Company ' .. preset.name, config = config,
     km = 0, condition = 1, loaner = true, company = true }
   local ok, why = employment.begin(c, offer, g, companyGarage, S.mode)
   if not ok then return false, why end
@@ -1539,7 +1564,7 @@ local function companyStart(id, independent)
   S.phone.online, S.phone.incoming, S.phone.lastDone = false, nil, nil
   S.offeredAt, S.odometerPose = nil, nil
   saveCareer()
-  return true, 'Company van loading. Two deliveries, then return here for wages. The company keeps 20% and covers vehicle costs.'
+  return true, 'Company ' .. preset.label .. ' loading. Two deliveries, then return here for wages. The company keeps 20% and covers vehicle costs.'
 end
 
 function M.companyTick()
@@ -1557,11 +1582,14 @@ function M.companyTick()
     S.companyPreparedAt = S.companyPreparedAt or c.activeSeconds or 0
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
+    local want = shift.tier or 'van'
+    local rows = store and store.rows
+    if tier == want and want ~= 'semi' and rows then employment.fit(shift, rows) end
     local first = shift.jobs[shift.index]
-    if tier == 'van' and store and store.rows and haul.plan(store.rows, first.haul) then
+    if tier == want and (want == 'semi' or rows and haul.plan(rows, first.haul)) then
       shift.phase, S.companyError = 'working', nil
     elseif (c.activeSeconds or 0) - S.companyPreparedAt >= employment.PREPARE_TIMEOUT then
-      S.companyError = 'The van cargo equipment is not ready. End company work to restore your car, then try again.'
+      S.companyError = 'The company ' .. haul.loaners[want].label .. ' is not ready. End company work to restore your car, then try again.'
       return
     end
   end
@@ -1602,7 +1630,7 @@ function M.placesDo(name, value)
     if S.job or c.employment then why = 'Finish your current work before changing GPS.'
     else ok, why = earth.gps(c.home.g[1], c.home.g[2], c.home.name) end
   elseif name == 'refreshCompanies' then
-    S.companyBoard = employment.board(S.idx, p)
+    S.companyBoard = employment.board(S.idx, p, haul.state(S.career).unlocked)
     S.companyBoardDirty, S.nextBoardAt = nil, S.clock + 2
     S.placesMsg = #S.companyBoard > 0 and 'Fictional employers at mapped depot locations. Check access on arrival; you can end work without a cancellation fee.'
       or 'Looking for nearby workplaces through the helper. Contracts appear as local data loads; the Czech pack also works offline.'
@@ -1767,7 +1795,9 @@ function M.phoneAction(a, orderId)
   end
   if S.parts and (a == 'online' or a == 'accept') then return M.phoneState() end
   local ph = S.phone
-  if a == 'online' then
+  if a == 'online' and S.career.garage.car and S.career.garage.car.loaner and not S.career.employment then
+    say('Company vehicles are for contract work only. Use your own car for your own jobs.', 5)
+  elseif a == 'online' then
     ph.online = true
     ph.nextPingAt = S.clock + 2
   elseif a == 'offline' then
@@ -2654,19 +2684,6 @@ function M.garageBringCar()
   local ok, why = spawnCareerCar(g)
   if not ok then return garageSay(false, why) end
   return garageSay(true, 'Here is your ' .. g.car.name .. '.')
-end
-function M.garageFreightLoaner()
-  if S.job or S.parts then return false, 'Finish your current order or parts preview first.' end
-  if earth.status() ~= 'ok' then return false, 'Wait for the world to finish loading.' end
-  local tier = haul.state(S.career).unlocked
-  local ok, why = garage.issueFreightLoaner(M.G, S.career.garage, S.career, tier, haul.loaners[tier])
-  S.freightSetupError = not ok and why or nil
-  if ok then
-    releaseStorage()
-    conditionAt, usedAt = S.clock + 3, nil
-    S.phone.incoming, S.offeredAt = nil, nil
-  end
-  return garageSay(ok, why)
 end
 local function garageSwitchCar(id)
   if S.job then return false, 'Finish your current orders before switching cars.' end
