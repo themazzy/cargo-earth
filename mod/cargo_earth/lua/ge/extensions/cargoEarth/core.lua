@@ -3353,12 +3353,13 @@ end
 -- sees it), y+ / y- (closer / further), z+ / z- (up / down). Nudges are kept per car model.
 function M.dashDo(a)
   local G = M.G
-  if a == 'on' or a == 'fit' then
-    dash.setOn(true)
-    return M.dashFit(true)
-  elseif a == 'off' or a == 'remove' then
-    dash.setOn(false)
-    return M.dashFit(false)
+  if a == 'on' or a == 'fit' or a == 'off' or a == 'remove' then
+    local on = a == 'on' or a == 'fit'
+    dash.setOn(on)
+    local ok, why = M.dashFit(on)
+    -- the car is busy (being changed, or in the parts editor): it follows the switch as soon as it is free
+    if not ok then M.dashCheckSoon() end
+    return ok, why
   end
   if not dash.isOn() then return false, 'Switch the phone on first.' end
   local v = G.vehicle and G.vehicle()
@@ -3384,15 +3385,17 @@ local function dashTick(dt)
   dashClock = dashClock + (dt or 0)
   if not dashCheckAt or dashClock < dashCheckAt then return end
   dashCheckAt = nil
-  if not dash.isOn() then return end
-  if dashBusy() then dashCheckAt = dashClock + 2 return end
   local v = M.G.vehicle and M.G.vehicle()
   if not v or not v.id or not v.model or v.model == 'unicycle' then return end
   local tree = type(v.config) == 'table' and v.config.partsTree or v.tree
-  if dash.treeHasPhone(tree) and dash.spot(v.model) then return end
+  local on = dash.isOn()
+  -- switched off: a car that still has the phone (the switch was turned while the car was busy) loses it
+  if not on and not dash.treeHasPhone(tree) then return end
+  if dashBusy() then dashCheckAt = dashClock + 2 return end
+  if on and dash.treeHasPhone(tree) and dash.spot(v.model) then return end
   local last = dashTried[v.id]
-  if last and dashClock - last < M.DASH_RETRY_S then return end
-  local ok, why = M.dashFit(true)
+  if on and last and dashClock - last < M.DASH_RETRY_S then return end
+  local ok, why = M.dashFit(on)
   if not ok then dashTried[v.id] = dashClock end
   S.dashError = not ok and why or nil
 end

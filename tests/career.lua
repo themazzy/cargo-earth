@@ -2110,17 +2110,32 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   core.onVehicleSpawned(10)
   advance(core, 4)
   assert(#respawns == 4, 'a car the phone did not stay in is not respawned again and again')
-  -- switched off: taken out of the car
+  -- switched off while the car is busy being changed: it is taken out once the car is free
   v.config = respawns[4]
+  core.G.applyingParts = true
   st = core.settingsDo('dash', 'off').dash
-  assert(not st.on and #respawns == 5 and not dash.treeHasPhone(respawns[5].partsTree))
-  core.onVehicleSpawned(10)
+  assert(not st.on and st.error and #respawns == 4, 'busy: nothing changes yet')
   advance(core, 4)
-  assert(#respawns == 5, 'off: new cars stay as they are')
+  assert(#respawns == 4)
+  core.G.applyingParts = false
+  advance(core, 8)
+  assert(#respawns == 5 and not dash.treeHasPhone(respawns[5].partsTree), 'taken out once the car is free')
+  v.config = respawns[5]
+  advance(core, 8)
+  assert(#respawns == 5)
+  -- switched off normally: taken out of the car
+  v.config = respawns[4]
+  v.id = 12
+  st = core.settingsDo('dash', 'off').dash
+  assert(not st.on and #respawns == 6 and not dash.treeHasPhone(respawns[6].partsTree))
+  v.config = respawns[6]
+  core.onVehicleSpawned(12)
+  advance(core, 4)
+  assert(#respawns == 6, 'off: new cars stay as they are')
   -- no dash to stand on
   v = { id = 11, model = 'unicycle', config = { partsTree = { children = {} } }, data = {} }
   st = core.settingsDo('dash', 'on').dash
-  assert(st.error and #respawns == 5)
+  assert(st.error and #respawns == 6)
   dash.setOn(false)
 end)
 
