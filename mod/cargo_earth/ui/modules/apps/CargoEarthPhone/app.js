@@ -809,7 +809,7 @@ angular.module('beamng.apps')
             '<div class="cep-sub" ng-if="!g.preview.ready && !g.preview.error">Checking the car…</div>' +
             '<div class="cep-sub" ng-if="g.preview.error">{{ g.preview.error }}</div>' +
             '<div class="cep-row" style="margin-top:6px"><button class="cep-sm go" ng-disabled="!g.preview.ready" ng-click="gdo(\'buyListing\', g.preview.id)">Buy it</button>' +
-              '<button class="cep-sm ghost" ng-click="gview = \'home\'">Details</button>' +
+              '<button class="cep-sm ghost" ng-click="goHome()">Details</button>' +
               '<button class="cep-sm ghost" ng-click="gdo(\'back\')">Back to my car</button></div></div>' +
           '<div class="cep-row"><button class="cep-sm ghost" ng-click="goHome()">‹ Back</button>' +
             '<input class="cep-input" placeholder="Find a car" aria-label="Find a car" ng-model="cf.text">' +
