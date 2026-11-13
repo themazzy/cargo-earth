@@ -1098,8 +1098,11 @@ test('deliveries are rated, feed the right reputation and leave a dot on the map
   core.phoneAction('accept')
   local job = s.job
   assert(job and job.kind == 'food')
+  local active = core.phoneState().active
+  assert(active.pickupLeftS and active.pickupLeftS > 0 and active.pickupLeftS < active.leftS, 'a pickup target before the delivery one')
   pose.lat, pose.lon = job.from.g[1], job.from.g[2]
   advance(core)
+  assert(core.phoneState().active.pickupLeftS == nil, 'collected: only the delivery target is left')
   pose.lat, pose.lon = job.to.g[1], job.to.g[2]
   advance(core)
   local done = core.phoneState().done
@@ -1177,6 +1180,17 @@ test('parcel route rules: real addresses in nearest-first order, sized to the ve
   local plan = {[7] = {volume = 40, density = 1}, [8] = {volume = 20, density = 1}}
   local kept = parcel.keep(plan, 10, 2.5)
   assert(kept[7].volume == 25 and kept[8].volume == 0)
+end)
+
+test('the pickup target is the ride-there share of the order time', function()
+  -- 2 km to the restaurant (2.7 km of streets), 2.7 km on to the customer: about half of 20 minutes
+  assert(food.pickupMinutes({kind = 'food', minutes = 20, pickupKm = 2, km = 2.7}) == 10)
+  -- the courier is at the restaurant already: a minute to collect
+  assert(food.pickupMinutes({kind = 'food', minutes = 12, pickupKm = 0, km = 3}) == 1)
+  -- a far restaurant still leaves a minute for the delivery
+  assert(food.pickupMinutes({kind = 'food', minutes = 10, pickupKm = 50, km = 0.1}) == 9)
+  assert(food.pickupMinutes({kind = 'cargo', minutes = 10, pickupKm = 2, km = 3}) == nil, 'food only')
+  assert(food.pickupMinutes({kind = 'food', minutes = 10}) == nil)
 end)
 
 test('pickup variety: two in a row from one place, then two from other places', function()

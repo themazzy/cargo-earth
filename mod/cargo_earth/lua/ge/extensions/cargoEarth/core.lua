@@ -1768,6 +1768,8 @@ function M.phoneState()
       distRoad = distRoad,
       etaS = S.etaS and math.floor(S.etaS + 0.5) or nil, km = r1(j.km), pay = j.pay, minutes = j.minutes,
       leftS = math.floor(left + 0.5), arriveM = radius, stop = stopInfo(),
+      pickupLeftS = S.phase == 'toPickup' and food.pickupMinutes(j)
+        and math.floor(food.pickupMinutes(j) * 60 - M.elapsed(j) + 0.5) or nil,
       cancelAsk = S.phone.cancelAskUntil ~= nil and S.clock <= S.phone.cancelAskUntil, trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or S.idx and S.idx.trailers[j.trailer] or j.trailer) or nil,
       trailerM = j.trailerSpawned and trailers.distanceToPlayer() and math.floor(trailers.distanceToPlayer()) or nil,
       cancelFee = rules(j).cancelFee, count = #S.orders, carrying = carrying, orders = {} }
@@ -1778,6 +1780,8 @@ function M.phoneState()
       local l = oj.minutes * 60 - M.elapsed(oj)
       local row = { id = oj.id, pickup = o.phase == 'toPickup', name = destination.n,
         cargo = oj.cargoName, leftS = math.floor(l + 0.5), current = oj == j,
+        pickupLeftS = o.phase == 'toPickup' and food.pickupMinutes(oj)
+          and math.floor(food.pickupMinutes(oj) * 60 - M.elapsed(oj) + 0.5) or nil,
         cargoCondition = isDropoff(o) and cargo.condition(oj) or nil,
         selectable = carrying >= 2 and oj ~= j and isDropoff(o) }
       if row.current then table.insert(out.active.orders, 1, row) else out.active.orders[#out.active.orders + 1] = row end

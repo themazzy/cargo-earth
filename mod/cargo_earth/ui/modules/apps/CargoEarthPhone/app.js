@@ -1083,7 +1083,10 @@ angular.module('beamng.apps')
                 '"Park here for " + s.active.stop.stopS + " seconds" }}</strong>' +
                 '<div class="cep-hold"><i ng-style="{width: (s.active.stop.frac * 100) + \'%\'}"></i></div></div>' +
             '</div>' +
-            '<div><div class="cep-keyval cep-sub"><span>{{ s.active.leftS >= 0 ? "Time left" : "Overdue by" }}</span>' +
+            '<div><div class="cep-keyval cep-sub" ng-if="s.active.pickupLeftS !== undefined && s.active.pickupLeftS !== null">' +
+              '<span>{{ s.active.pickupLeftS >= 0 ? "Pick up in" : "Pickup late by" }}</span>' +
+              '<strong class="cep-stop-time" ng-class="{late: s.active.pickupLeftS < 0}">{{ fmt.remaining(s.active.pickupLeftS) }}</strong></div>' +
+              '<div class="cep-keyval cep-sub"><span>{{ s.active.leftS >= 0 ? (s.active.kind === "food" ? "Deliver in" : "Time left") : "Overdue by" }}</span>' +
               '<strong class="cep-stop-time" ng-class="{late: s.active.leftS < 0}">{{ fmt.remaining(s.active.leftS) }}</strong></div>' +
               '<div class="cep-time" ng-class="{warn: s.active.leftS < 120 && s.active.leftS >= 0, late: s.active.leftS < 0}">' +
               '<i ng-style="{width: timePct() + \'%\'}"></i></div></div>' +
@@ -1101,6 +1104,8 @@ angular.module('beamng.apps')
             '<div class="cep-li cep-order-line" ng-repeat="o in s.active.orders | filter:{current:false}:true track by o.id">' +
               '<div><small>{{ o.pickup ? "Awaiting pickup" : "On board" }}</small>' +
                 '<div class="cep-name">{{ o.name }}</div><small>{{ o.cargo }} · ' +
+                  '<span ng-if="o.pickupLeftS !== undefined && o.pickupLeftS !== null">pick up ' +
+                    '<span class="cep-stop-time" ng-class="{late: o.pickupLeftS < 0}">{{ fmt.clock(o.pickupLeftS) }}</span> · deliver </span>' +
                   '<span class="cep-stop-time" ng-class="{late: o.leftS < 0}">{{ fmt.clock(o.leftS) }}</span>' +
                   '<span ng-if="!o.pickup && o.cargoCondition < 100"> · {{ o.cargoCondition }}% intact</span></small></div>' +
               '<button class="cep-sm ghost" ng-if="o.selectable" ng-click="act(\'selectDelivery\', o.id)">Deliver next</button></div>' +
