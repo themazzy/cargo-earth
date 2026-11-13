@@ -5,7 +5,7 @@
 -- Everything is clicked on the phone (the UI app): orders, the garage and the settings. The debug window opens from
 -- the phone's settings (or the console: extensions.cargoEarth_core.toggleWindow()). No key bindings.
 local M = {}
-M.VERSION = '0.8.7'      -- the mod's version (package.json has the same; the support report shows it)
+M.VERSION = '0.9.0'      -- the mod's version (package.json has the same; the support report shows it)
 M.dependencies = { 'ui_imgui' }
 
 local jobs = require('cargoEarth/jobs')
