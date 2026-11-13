@@ -293,8 +293,11 @@ function M.generate(idx, opts, lat, lon, rnd, maxSlots)
   -- every restaurant within the largest radius we might use, nearest first
   local limit = o.autoReach and math.max(o.nearKm, o.reachMaxKm) or o.nearKm
   local all = {}
+  -- a degree of latitude is 111.2 km here: farther north or south is out of reach without the full distance
+  local dLat = limit / 110
   for _, r in ipairs(idx.restaurants) do
-    if (not o.cat or r.cat == o.cat) and (r.cat ~= 'grocery' or (maxSlots or 0) >= M.GROCERY_SLOTS) then
+    if math.abs(r.g[1] - lat) <= dLat and (not o.cat or r.cat == o.cat)
+      and (r.cat ~= 'grocery' or (maxSlots or 0) >= M.GROCERY_SLOTS) then
       local k = M.km(lat, lon, r.g[1], r.g[2])
       if k <= limit then all[#all + 1] = { r = r, k = k } end
     end

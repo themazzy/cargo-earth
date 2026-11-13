@@ -102,6 +102,7 @@ function M.learn(cam, kmh)
 end
 
 -- Leaving the car, a teleport or a reset: nothing half-measured is kept.
-function M.clear(idx) idx.inside = {} end
+-- (called every frame while not driving: a new table only when something was half measured)
+function M.clear(idx) if next(idx.inside) then idx.inside = {} end end
 
 return M
