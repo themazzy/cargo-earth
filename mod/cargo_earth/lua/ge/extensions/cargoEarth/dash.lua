@@ -27,6 +27,8 @@ M.SCREEN_H = 0.100 * 560 / 290
 M.DEPTH = 0.012                        -- how thick each click box is
 M.YAW_STEP, M.YAW_MAX = 5, 70          -- the meshes come turned in 5 degree steps (tools/make-dash-phone.py)
 M.NUDGE_STEP, M.NUDGE_MAX = 0.01, 0.25 -- metres per press, and the most a nudge moves the phone
+-- the triggers2 header every stock car uses (e.g. vehicles/pigeon/pigeon_interior.jbeam)
+M.TRIGGER_HEADER = { 'id', 'idRef:', 'idX:', 'idY:', 'type', 'size', 'baseRotation', 'rotation', 'translation', 'baseTranslation' }
 M.OLD_RENDERER = 'cargoEarthDashPhone' -- the old floating picture's scene object
 
 ------------------------------------------------------------------------------------------ small vector helpers
@@ -317,13 +319,15 @@ function M.buildPart(spot, nudge)
   local centre, yaw = M.placement(spot, nudge)
   local suffix = M.meshSuffix(yaw)
   local size = M.boxSize(spot, yaw)
-  local triggers = { { 'id', 'idRef:', 'idX:', 'idY:', 'type', 'size', 'baseRotation', 'rotation', 'translation' } }
+  -- The game keeps only the first part's header when it merges a section from several parts, and reads every other
+  -- part's rows in that order (lua/common/jbeam/slotSystem.lua unifyParts), so this must be the cars' own header.
+  local triggers = { M.TRIGGER_HEADER }
   local links = { { 'triggerId:triggers2', 'triggerInput', 'inputAction' } }
   for row = 1, M.ROWS do
     for col = 1, M.COLS do
       local id = 'cep_' .. col .. '_' .. row
       triggers[#triggers + 1] = { id, spot.ref.name, spot.x.name, spot.y.name, 'box', size,
-        { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 },
+        { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 }, { x = 0, y = 0, z = 0 },
         -- the box's middle in jbeam coordinates: the game turns it into the trigger's own frame
         -- (lua/common/jbeam/sections/events.lua)
         { baseTranslationGlobal = xyz(M.cellCentre(centre, yaw, col, row)), color = { 0.91, 0.27, 0.17, 0.6 } } }

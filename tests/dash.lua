@@ -90,8 +90,12 @@ test('the part covers the screen with a 6 x 12 click grid and moves with the nud
   assert(part.flexbodies[3][1] == 'cargo_earth_phone_screen' .. dash.meshSuffix(yaw))
   assert(part.flexbodies[2][2][1] == spot.group and near(part.flexbodies[2][4].pos.z, centre.z, 1e-4))
   local first, last = part.triggers2[2], part.triggers2[#part.triggers2]
+  -- the game reads every part's rows in the first part's header order, so the header is the stock cars' one, in order
+  local stock = { 'id', 'idRef:', 'idX:', 'idY:', 'type', 'size', 'baseRotation', 'rotation', 'translation', 'baseTranslation' }
+  for i, h in ipairs(stock) do assert(part.triggers2[1][i] == h, 'header column ' .. i) end
+  assert(#part.triggers2[1] == #stock and #first == #stock + 1 and first[5] == 'box' and type(first[#first].baseTranslationGlobal) == 'table')
   assert(first[1] == 'cep_1_1' and first[2] == spot.ref.name and first[3] == spot.x.name and first[4] == spot.y.name)
-  local a, b = first[10].baseTranslationGlobal, last[10].baseTranslationGlobal
+  local a, b = first[11].baseTranslationGlobal, last[11].baseTranslationGlobal
   assert(a.z > b.z and near(a.z - b.z, dash.SCREEN_H * (dash.ROWS - 1) / dash.ROWS, 1e-3), 'top row above the bottom row')
   assert(near((a.x + b.x) / 2, centre.x, 3e-3) and near((a.z + b.z) / 2, centre.z, 1e-3), 'the grid is centred on the screen')
   local size = first[6]
@@ -100,7 +104,7 @@ test('the part covers the screen with a 6 x 12 click grid and moves with the nud
   -- nudged 3 cm up: everything moves with it
   local up = dash.buildPart(spot, { x = 0, y = 0, z = 0.03 })
   assert(near(up.flexbodies[2][4].pos.z, part.flexbodies[2][4].pos.z + 0.03, 1e-4))
-  assert(near(up.triggers2[2][10].baseTranslationGlobal.z, a.z + 0.03, 1e-4))
+  assert(near(up.triggers2[2][11].baseTranslationGlobal.z, a.z + 0.03, 1e-4))
   assert(dash.meshSuffix(30) == '_yp30' and dash.meshSuffix(-5) == '_ym5' and dash.meshSuffix(0) == '_yp0')
 end)
 
