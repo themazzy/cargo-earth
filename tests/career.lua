@@ -2095,7 +2095,7 @@ test('Settings fits and removes the dash phone holder through the parts tree', f
   assert(not st.supported and st.error, 'a car without a holder says so')
 end)
 
-test('the Menu tapped on the dash phone opens in the game UI', function()
+test('the Menu window opens in the Menu app, else the floating phone, else on the asking phone', function()
   local core = fresh()
   local sent = {}
   guihooks = {trigger = function(name, data) sent[#sent + 1] = {name, data} end}
@@ -2103,13 +2103,15 @@ test('the Menu tapped on the dash phone opens in the game UI', function()
   core.now = function() return t end
   assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.openMenu("career","firm")'))
   assert(core.openMenu('career', 'firm') == false and #sent == 0, 'no floating phone: the dash shows it itself')
-  core.menuHost()
+  core.menuHost('phone')
   assert(core.openMenu('career', 'firm') == true)
-  assert(core.openMenu('os.exit', nil) == false)
+  assert(sent[1][1] == 'CargoEarthOpenMenu' and sent[1][2].panel == 'career' and sent[1][2].view == 'firm' and sent[1][2].to == 'phone')
+  assert(core.openMenu('os.exit', nil) == false and #sent == 1)
+  core.menuHost('menu')
+  assert(core.openMenu('settings') == true and sent[2][2].to == 'menu', 'the Menu app wins over the floating phone')
   t = 110
-  assert(core.openMenu('settings') == false, 'a floating phone not heard from lately is gone')
+  assert(core.openMenu('settings') == false, 'apps not heard from lately are gone')
   guihooks = nil
-  assert(#sent == 1 and sent[1][1] == 'CargoEarthOpenMenu' and sent[1][2].panel == 'career' and sent[1][2].view == 'firm')
 end)
 
 print(string.format('%d career tests passed', total))
@@ -2126,12 +2128,16 @@ do
     current = function() return layouts[2] end, setCurrent = function(fn) current = fn end}
   local flag = {read = function() return written end, write = function(t) written = t end}
   assert(layout.ensure(api, flag) == 'added')
-  assert(#added == 1 and added[1][1]:find('beamngEarth') and added[1][2] == 'cargoEarthPhone' and added[1][3].bottom == '310px')
-  assert(current == layouts[2].filename and written.phoneAdded)
-  assert(layout.ensure(api, flag) == 'done' and #added == 1, 'only once: a player who removes it keeps that')
+  assert(#added == 2 and added[1][1]:find('beamngEarth') and added[1][2] == 'cargoEarthPhone' and added[1][3].bottom == '310px')
+  assert(added[2][2] == 'cargoEarthMenu', 'the Menu app comes along')
+  assert(current == layouts[2].filename and written.phoneAdded and written.menuAdded)
+  assert(layout.ensure(api, flag) == 'done' and #added == 2, 'only once: a player who removes it keeps that')
+  written = {phoneAdded = true}
+  assert(layout.ensure(api, flag) == 'added' and #added == 3 and added[3][2] == 'cargoEarthMenu', 'players from before get the Menu app once')
   written = nil
   layouts[2].apps[2] = {appName = 'cargoEarthPhone'}
-  assert(layout.ensure(api, flag) == 'present' and #added == 1, 'a phone the player placed is left alone')
+  layouts[2].apps[3] = {appName = 'cargoEarthMenu'}
+  assert(layout.ensure(api, flag) == 'present' and #added == 3, 'apps the player placed are left alone')
   written = nil
   assert(layout.ensure({layouts = function() return {layouts[1]} end}, flag) == 'none' and written == nil)
   assert(layout.ensure(nil, flag) == nil)
