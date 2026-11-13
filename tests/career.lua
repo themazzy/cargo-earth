@@ -2452,3 +2452,16 @@ test('road distance: two points on one edge, and the nearer end of the goal edge
   assert(k2 and math.abs(k2 - 1.05) < 0.001, tostring(k2))
   assert(roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 1) == false, 'the cap counts the whole way')
 end)
+
+test('freight without a van of your own lists company contracts and no loaner; a contract starts from the phone', function()
+  local core, s = fresh()
+  core.setMode('trucking')
+  advance(core, 2)
+  local state = core.phoneState()
+  assert(state.trucking and not state.trucking.carrier and state.trucking.canLoan == nil, 'no loaner offer')
+  assert(#state.trucking.contracts == 1 and state.trucking.contracts[1].wages > 0, 'the nearby contract is listed')
+  local id = state.trucking.contracts[1].id
+  core.phoneAction('contractStart', id)
+  advance(core, 2)
+  assert(s.career.employment and s.job, 'the company van and the first delivery come with the contract')
+end)

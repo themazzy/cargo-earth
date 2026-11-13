@@ -881,7 +881,6 @@ angular.module('beamng.apps')
       '<div class="cep-body" ng-if="tab === \'orders\' && (!s || s.screen === \'error\')"><div class="cep-center">' +
         '<div class="cep-big">Not available</div><div class="cep-sub">{{ s ? s.error : "Cargo Earth is not loaded." }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
-        '<button class="cep-btn" ng-if="s.trucking.canLoan" ng-click="act(\'loanerTruck\')">Use loaner {{ s.trucking.loanerLabel }}</button>' +
       '</div></div>' +
 
       '<div class="cep-body" ng-if="s.screen === \'resume\'"><div class="cep-center">' +
@@ -902,18 +901,27 @@ angular.module('beamng.apps')
       '<div class="cep-subtabs cep-modes" ng-if="s.canSwitch" role="group" aria-label="Job type">' +
         '<button ng-class="{on: s.mode === \'courier\'}" ng-click="act(\'mode\', \'courier\')">Food delivery</button>' +
         '<button ng-class="{on: s.mode === \'trucking\'}" ng-click="act(\'mode\', \'trucking\')">Freight</button></div>' +
-      '<div class="cep-center">' +
+      '<div class="cep-center" ng-style="s.trucking && !s.trucking.carrier ? {flex: \'0 0 auto\', padding: \'14px 0 4px\'} : {}">' +
         '<div class="cep-label" ng-if="!s.canSwitch">{{ s.mode === "courier" ? "Food delivery" : "Freight" }}</div>' +
-        '<div class="cep-big">You are offline</div>' +
+        '<div class="cep-big">{{ s.trucking && !s.trucking.carrier ? "No van of your own" : "You are offline" }}</div>' +
         '<div class="cep-sub" ng-if="!s.trucking || !s.trucking.hint">Go online to get orders from nearby {{ s.mode === "courier" ? "restaurants and shops" : "depots" }}.</div>' +
-        '<div class="cep-sub" ng-if="s.trucking">{{ s.trucking.label }}</div>' +
+        '<div class="cep-sub" ng-if="s.trucking.carrier">{{ s.trucking.label }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.hint">{{ s.trucking.hint }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
       '</div>' +
-      '<div class="cep-card cep-stats"><div>{{ s.todayCount }}<span>orders today</span></div>' +
+      // freight without a van or truck of your own: the nearest company contracts, the van comes at the yard
+      '<div class="cep-scroll" ng-if="s.trucking && !s.trucking.carrier">' +
+        '<div class="cep-label">Contracts nearby</div>' +
+        '<div class="cep-sub" ng-if="!s.trucking.contracts.length">Looking for workplaces nearby…</div>' +
+        '<div class="cep-card" ng-repeat="c in s.trucking.contracts track by c.id">' +
+          '<div class="cep-keyval"><strong style="white-space:normal">{{ c.name }}</strong><strong style="white-space:nowrap">{{ fmt.money(c.wages) }}</strong></div>' +
+          '<div class="cep-sub">Yard {{ fmt.km(c.km) }} away · 2 deliveries · about {{ c.minutes }} min</div>' +
+          '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'contractGps\', c.id)">Route</button>' +
+            '<button class="cep-sm go" ng-disabled="!c.atYard" ng-click="act(\'contractStart\', c.id)">Start</button></div></div>' +
+        '<button class="cep-sm ghost" ng-click="setTab(\'companies\')">All contracts</button></div>' +
+      '<div class="cep-card cep-stats" ng-if="!s.trucking || s.trucking.carrier"><div>{{ s.todayCount }}<span>orders today</span></div>' +
         '<div>{{ fmt.short(s.todayEarned) }}<span>earned today</span></div></div>' +
-      '<button class="cep-btn" ng-if="s.trucking.canLoan" ng-click="act(\'loanerTruck\')">Use loaner {{ s.trucking.loanerLabel }}</button>' +
-      '<button class="cep-btn go" ng-click="act(\'online\')">Go online</button></div>' +
+      '<button class="cep-btn go" ng-if="!s.trucking || s.trucking.carrier" ng-click="act(\'online\')">Go online</button></div>' +
 
       // waiting
       '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && s.screen === \'waiting\'">' +
@@ -935,7 +943,6 @@ angular.module('beamng.apps')
       '<div class="cep-card cep-stats"><div>{{ s.todayCount }}<span>orders today</span></div>' +
         '<div>{{ fmt.short(s.todayEarned) }}<span>earned today</span></div></div>' +
       '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
-      '<button class="cep-btn" ng-if="s.trucking.canLoan" ng-click="act(\'loanerTruck\')">Use loaner {{ s.trucking.loanerLabel }}</button>' +
       '</div>' +
 
       // incoming
@@ -1663,7 +1670,9 @@ angular.module('beamng.apps')
       scope.$watch('s.screen', function (v, old) {
         // the Menu app asks only while its window is open: its first answer after opening is no new offer
         if (scope.menuOnly && (old === null || old === undefined)) return
-        if (v === 'incoming' || v === 'resume') { scope.min = false; scope.panel = null; showTab('orders') }
+        // a ringing offer unfolds the phone; on Radio it stays on Radio with the offer bar on top (tap it for Work)
+        if (v === 'incoming') { scope.min = false; scope.panel = null }
+        if (v === 'resume') { scope.min = false; scope.panel = null; showTab('orders') }
         if (v === 'parts') { scope.min = false; scope.setTab('garage') }
       })
       var slowTicks = 0

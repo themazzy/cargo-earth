@@ -19,6 +19,7 @@ local BEACON_M, BEACON_R = 60, 0.8
 local COLORS = {
   pickup = { 1.0, 0.55, 0.15 },
   delivery = { 0.2, 0.85, 0.35 },
+  area = { 0.25, 0.55, 1.0 },
 }
 
 local pickup, delivery, depot = {}, {}, {}
@@ -237,6 +238,39 @@ function M.drawCameras(p, list, now)
   end
 end
 
-function M.reset() pickup, delivery, depot, poles, warned = {}, {}, {}, {}, false end
+-- Places that count as being somewhere (home, the headquarters): a blue ring on the ground with its name, drawn
+-- within RING_RANGE of the car. Fainter outside, brighter when the car is inside.
+local areas = {}
+
+local function drawArea(p, key, g, radius, label, now)
+  if not (p.lat and p.lon and g) or jobs.km(p.lat, p.lon, g[1], g[2]) * 1000 > RING_RANGE + radius then return end
+  local x, y = earth.worldXY(p, g)
+  if not (x and p.z) then return end
+  local cache = areas[key]
+  if not (cache and matches(cache, g, p) and cache.radius == radius) then
+    cache = newCache(g, p)
+    cache.radius = radius
+    areas[key] = cache
+  end
+  local inside = distance(x, y, p) <= radius
+  drawRing(cache, p, x, y, nil, radius, COLORS.area, inside, now)
+  local z = cache.outer and cache.outer[1] and cache.outer[1].z
+  if z and label then
+    local c = COLORS.area
+    debugDrawer:drawTextAdvanced(vec3(x, y, z + 3), String(label), ColorF(1, 1, 1, 1), true, false,
+      ColorI(math.floor(c[1] * 160), math.floor(c[2] * 160), math.floor(c[3] * 160), 220))
+  end
+end
+
+function M.drawArea(p, key, g, radius, label, now)
+  if not (p and debugDrawer and vec3 and ColorF) then return end
+  local ok, err = pcall(drawArea, p, key, g, radius, label, now)
+  if not ok and not warned then
+    warned = true
+    if log then log('W', 'cargoEarth', 'area marker draw failed: ' .. tostring(err)) end
+  end
+end
+
+function M.reset() pickup, delivery, depot, poles, areas, warned = {}, {}, {}, {}, {}, false end
 
 return M
