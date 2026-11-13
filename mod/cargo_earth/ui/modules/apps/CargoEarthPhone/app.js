@@ -110,6 +110,7 @@ angular.module('beamng.apps')
     '.cep-pill .cep-limit{width:24px;height:24px;border-width:3px;font-size:10px;vertical-align:middle;margin-right:4px}' +
     '.cep-report{width:100%;box-sizing:border-box;font:11px/1.35 monospace;background:rgba(0,0,0,.25);color:inherit;border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:6px;resize:none;margin:6px 0}' +
     '.cep-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:12px 14px;gap:10px;overflow:hidden}' +
+    '.cep-perks{margin:4px 0;padding-left:16px;font-size:12px;line-height:1.35}.cep-perks li{margin:1px 0}' +
     '.cep-body.cep-fit{overflow-y:auto}.cep-fit .cep-center{flex:1 0 auto}.cep-fit .cep-pulse{width:56px;height:56px}' +
     '.cep-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px}' +
     '.cep-big{font-size:22px;font-weight:800;line-height:1.15}' +
@@ -695,7 +696,7 @@ angular.module('beamng.apps')
         '<div class="cep-msg" ng-if="g.msg">{{ fmt.text(g.msg) }}</div>' +
         '<div ng-if="g && !g.started" class="cep-center">' +
           '<div class="cep-label">Your career</div><div class="cep-big">Start with an old {{ g.starter }}</div>' +
-          '<div class="cep-sub">You get the cheapest {{ g.starter }} and {{ fmt.money(g.startMoney) }}. Your money now is replaced. ' +
+          '<div class="cep-sub">You get the cheapest {{ g.starter }} and {{ fmt.money(g.startMoney) }}. Free play money, ratings and stats do not carry over. ' +
           'Orders then only come while you drive this car. Buy parts and better cars from what you earn.</div>' +
           '<div class="cep-sub" ng-if="g.busy" style="color:var(--tomato)">Your current order will be cancelled (no fee).</div>' +
           '<button class="cep-btn go" ng-click="gdo(\'start\')">Start my career</button></div>' +
@@ -949,6 +950,20 @@ angular.module('beamng.apps')
         '<div class="cep-big">Parts preview open</div><div class="cep-sub">Confirm or drop your parts changes to take orders again.</div></div>' +
         '<button class="cep-btn go" ng-click="setTab(\'garage\')">Review parts</button></div>' +
 
+      // first run: free play (nothing kept) or the career with progress
+      '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'choose\'"><div class="cep-scroll">' +
+        '<div class="cep-card"><div class="cep-label">Career</div>' +
+          '<div class="cep-name" style="white-space:normal">An old {{ s.choice.starter || "car" }} and {{ fmt.money(s.choice.startMoney) }}</div>' +
+          '<ul class="cep-perks"><li>Repair and upgrade your car</li><li>Buy used cars and a home garage</li>' +
+            '<li>Ranks unlock vans, trucks and semis</li><li>Found a firm and hire drivers</li></ul>' +
+          '<div class="cep-sub">Progress is saved. Orders come only in your own car.</div>' +
+          '<div class="cep-sub" ng-if="s.choice.busy" style="color:var(--tomato)">Your current order will be cancelled (no fee).</div>' +
+          '<button class="cep-btn go" style="margin-top:6px" ng-click="act(\'startCareer\')">Start my career</button></div>' +
+        '<div class="cep-card"><div class="cep-label">Free play</div>' +
+          '<div class="cep-sub">Orders in any car, just for fun. Nothing carries over.</div>' +
+          '<button class="cep-btn ghost" style="margin-top:6px" ng-click="act(\'freePlay\')">Just drive</button></div>' +
+      '</div></div>' +
+
       // offline: the job type can be switched here too (Settings has the same switch)
       '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && s.screen === \'offline\'">' +
       '<div class="cep-subtabs cep-modes" ng-if="s.canSwitch" role="group" aria-label="Job type">' +
@@ -974,7 +989,8 @@ angular.module('beamng.apps')
         '<button class="cep-sm ghost" ng-click="setTab(\'companies\')">All contracts</button></div>' +
       '<div class="cep-card cep-stats" ng-if="!s.trucking || s.trucking.carrier"><div>{{ s.todayCount }}<span>orders today</span></div>' +
         '<div>{{ fmt.short(s.todayEarned) }}<span>earned today</span></div></div>' +
-      '<button class="cep-btn go" ng-if="!s.trucking || s.trucking.carrier" ng-click="act(\'online\')">Go online</button></div>' +
+      '<button class="cep-btn go" ng-if="!s.trucking || s.trucking.carrier" ng-click="act(\'online\')">Go online</button>' +
+      '<button class="cep-sm ghost" ng-if="s.freePlay" style="margin-top:6px" ng-click="act(\'careerInfo\')">Free play · Start a career</button></div>' +
 
       // waiting
       '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && s.screen === \'waiting\'">' +

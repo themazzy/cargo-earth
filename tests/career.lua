@@ -2579,3 +2579,30 @@ test('freight without a van of your own lists company contracts and no loaner; a
   assert(core.phoneState().trucking == nil or core.phoneState().trucking.error == nil, 'the failure clears')
   assert(s.career.employment and s.job, 'the company van and the first delivery come with the contract')
 end)
+
+test('first run asks free play or career; free play keeps nothing when a career starts', function()
+  local core, s = fresh()
+  local garage = require('cargoEarth/garage')
+  s.career.garage = garage.new()
+  s.career.money, s.career.delivered, s.career.camerasOff = 777, 5, true
+  s.career.home = {g = {50, 14}}
+  advance(core, 2)
+  local state = core.phoneState()
+  assert(state.screen == 'choose' and state.choice.startMoney == garage.START_MONEY, 'the first run asks')
+  core.phoneAction('online')
+  assert(not s.phone.online, 'no orders before a choice')
+  assert(core.firmDo('found', 'Early') and not s.career.firm, 'no firm in free play')
+  state = core.phoneAction('freePlay')
+  assert(state.screen == 'offline' and state.freePlay and s.career.play == 'free')
+  assert(core.phoneAction('careerInfo').screen == 'choose', 'the choice can be seen again')
+  core.phoneAction('freePlay')
+  core.G.configs = function() return {{model = 'pigeon', key = 'base', value = 900, brand = 'Ibishu', name = 'Pigeon'}} end
+  s.starterName = nil
+  assert(core.phoneAction('careerInfo').choice.starter == 'Ibishu Pigeon')
+  core.phoneAction('startCareer')
+  local c = s.career
+  assert(c.garage.started and c.garage.car.model == 'pigeon', 'the starter car')
+  assert(c.money == garage.START_MONEY and (c.delivered or 0) == 0 and c.home == nil and c.play == nil, 'progress starts again')
+  assert(c.camerasOff == true, 'settings stay')
+  assert(core.phoneState().screen ~= 'choose')
+end)
