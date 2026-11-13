@@ -8,7 +8,10 @@ const timers = [], destroy = [], pending = [], watches = {}
 let now = 0, hold = false, answer = {screen: 'offline'}, digests = 0
 vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPhone/app.js', 'utf8'), {
   angular: { module: () => ({ directive: (name, factory) => { directive = factory[factory.length - 1]() } }) },
-  bngApi: { serializeToLua: JSON.stringify, engineLua: (command, callback = () => {}) => { commands.push(command); if (hold) pending.push(callback); else callback(JSON.parse(JSON.stringify(answer))) } },
+  bngApi: { serializeToLua: JSON.stringify, engineLua: (command, callback) => {
+    // BeamNG runs a command without a callback as a Lua statement: an expression like ours would not run at all
+    assert(typeof callback === 'function', 'engineLua without a callback never runs: ' + command)
+    commands.push(command); if (hold) pending.push(callback); else callback(JSON.parse(JSON.stringify(answer))) } },
   Date: {now: () => now},
   Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {}; audios.push(this) } addEventListener (n, f) { this.on[n] = f }
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
