@@ -17,7 +17,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
     getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
   localStorage: { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
-  setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: fn => { later.push(fn); return 1 }, clearTimeout: () => {}
+  setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: fn => { later.push(fn); return later.length }, clearTimeout: id => { if (later[id - 1]) later[id - 1] = () => {} }
 })
 assert(directive.template.includes('placeSearch.text'))
 assert(directive.template.includes('startCompany'))
@@ -165,6 +165,8 @@ audios[0].error = {code: 4}
 asking = commands.length
 audios[0].on.error()
 assert(!audios[0].src && commands.length === asking, 'the first drop is not reported')
+now += 500; player()
+assert(!audios[0].src, 'the check-in waits for the retry')
 later.splice(0).forEach(fn => fn())
 assert.equal(audios[0].src, STREAM + 'a', 'the same stream is asked again')
 audios[0].on.ended()
@@ -172,6 +174,7 @@ later.splice(0).forEach(fn => fn())
 assert.equal(audios[0].src, STREAM + 'a', 'a live stream that ends has dropped too')
 audios[0].on.error()
 assert(commands.at(-1).includes('radioDo("page", 3, "error", "error 4")'), 'the third drop in a row is reported')
+later.splice(0).forEach(fn => fn())
 answer = {radio: {on: true, mode: 'helper', station: stations[0], seq: 3, vol: 0.5}, stream: STREAM}
 now += 500; player()
 assert(!audios[0].src, 'the helper plays it: the page stays silent')

@@ -11,7 +11,7 @@
 var cargoEarthRadioPlayer = null
 function pagePlayer() {
   if (cargoEarthRadioPlayer || typeof Audio === 'undefined' || typeof bngApi === 'undefined') return cargoEarthRadioPlayer
-  var audio = new Audio(), me = {seq: -1, status: 'idle', why: '', busy: false, on: false, at: 0, retries: 0}
+  var audio = new Audio(), me = {seq: -1, status: 'idle', why: '', busy: false, on: false, at: 0, retries: 0, retry: null}
   cargoEarthRadioPlayer = me
   audio.preload = 'none'
   audio.addEventListener('playing', function () { me.status = 'playing'; me.retries = 0 })
@@ -26,7 +26,9 @@ function pagePlayer() {
       var seq = me.seq
       stop()
       me.status = 'loading'
-      setTimeout(function () {
+      // the check-ins leave the stream alone while this waits, and drop it when the station goes elsewhere
+      me.retry = setTimeout(function () {
+        me.retry = null
         if (me.seq !== seq || !me.on || audio.getAttribute('src')) return
         audio.src = src
         var again = audio.play()
@@ -54,13 +56,14 @@ function pagePlayer() {
       audio.volume = Math.max(0, Math.min(1, w.vol || 0))
       me.on = !!w.on
       if (!w.on || w.mode !== 'page' || !w.station || !r.stream) {
+        if (me.retry) { clearTimeout(me.retry); me.retry = null }
         if (audio.getAttribute('src')) stop()
         if (me.status !== 'error' || w.seq !== me.seq) me.status = 'idle'
         me.seq = w.seq
         return
       }
-      if (w.seq !== me.seq || !audio.getAttribute('src')) {
-        if (w.seq !== me.seq) me.retries = 0
+      if (w.seq !== me.seq || (!audio.getAttribute('src') && !me.retry)) {
+        if (w.seq !== me.seq) { me.retries = 0; if (me.retry) { clearTimeout(me.retry); me.retry = null } }
         me.seq = w.seq; me.status = 'loading'; me.why = ''
         audio.src = r.stream + encodeURIComponent(w.station.id)
         var started = audio.play()
