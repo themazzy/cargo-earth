@@ -23,6 +23,17 @@ M.FAR_PICKUP_PER_KM = 8 -- CZK per straight km beyond FAR_PICKUP_FROM
 M.DATA_MAX_KM = 8      -- customer addresses ship only within 8 km of a restaurant
 M.FAMILY_SLOTS, M.FAMILY_BONUS, M.FAMILY_ONE_IN = 2, 40, 3
 M.GROCERY_SLOTS, M.GROCERY_BONUS = 4, 80
+-- Who orders: most customers live near the restaurant and in its own town. Addresses are spread evenly over the
+-- map (one per 100 m), so a town's ring of villages has far more of them than the town; without these weights a
+-- small-town restaurant sent most orders out to the villages around it.
+M.NEAR_KM = 1.5        -- customers this close are all equally likely; further ones less and less
+M.FAR_FALLOFF = 1.5    -- likelihood (NEAR_KM / km) ^ this beyond NEAR_KM
+M.OTHER_TOWN = 0.3     -- a customer in another town (village) than the restaurant is this much less likely
+-- A customer close in a straight line can be far by road (a river, a railway, a motorway between them). When the
+-- game's road graph knows the way, the order is skipped if the road is longer than this, and is paid by the road.
+M.DETOUR = 1.8         -- road km at most this many times the straight km...
+M.DETOUR_KM = 0.6      -- ...plus this
+M.ROAD_CHECKS = 4      -- road searches per restaurant and offer list at most
 
 -- Sample orders by cuisine. The map data describes restaurants, so the dishes are generated for gameplay.
 local menus = {
@@ -287,7 +298,15 @@ end
 
 -- Orders near (lat, lon), nearest restaurant first. stats: { pickups = restaurants in reach, noDest = without an
 -- address in range, reachKm = restaurant radius used, maxKm = longest order used, widened = reach grew }.
-function M.generate(idx, opts, lat, lon, rnd, maxSlots)
+-- How likely a customer s km away in `town` orders from restaurant r (0..1).
+function M.customerWeight(r, s, town)
+  local w = s <= M.NEAR_KM and 1 or (M.NEAR_KM / s) ^ M.FAR_FALLOFF
+  if r.town and r.town ~= '' and town and town ~= '' and town ~= r.town then w = w * M.OTHER_TOWN end
+  return w
+end
+
+-- roadKm(fromPoint, toPoint, maxKm) (optional): the road distance in km, false when longer than maxKm, nil unknown.
+function M.generate(idx, opts, lat, lon, rnd, maxSlots, roadKm)
   rnd = rnd or math.random
   local o = merged(opts)
   -- every restaurant within the largest radius we might use, nearest first
@@ -334,15 +353,24 @@ function M.generate(idx, opts, lat, lon, rnd, maxSlots)
         local tiles = addressesAround(idx, p.r.g[1], p.r.g[2], maxKm)
         local n = 0
         for _, t in ipairs(tiles) do n = n + #t end
-        local found
-        for _ = 1, (n > 0 and 60 or 0) do
-          -- a random address: pick a tile weighted by its size, then a row in it
+        local found, checks, detours = nil, 0, false
+        for _ = 1, (n > 0 and 80 or 0) do
+          -- a random address: pick a tile weighted by its size, then a row in it; near and same-town ones are likelier
           local pick = rnd(n)
           for _, t in ipairs(tiles) do
             if pick <= #t then
               local a = t[pick]
               local s = M.km(p.r.g[1], p.r.g[2], a[1], a[2])
-              if s >= o.minKm and s <= maxKm then found = { a = a, s = s } end
+              if s >= o.minKm and s <= maxKm and rnd(1000) <= 1000 * M.customerWeight(p.r, s, a[6]) then
+                found = { a = a, s = s }
+                if roadKm and checks < M.ROAD_CHECKS then
+                  checks = checks + 1
+                  local road = roadKm(p.r.g, { a[3], a[4] }, s * M.DETOUR + M.DETOUR_KM)
+                  if road == false then found, detours = nil, true else found.road = road end
+                elseif detours then
+                  found = nil   -- out of road searches after a detour: unchecked addresses are not offered
+                end
+              end
               break
             end
             pick = pick - #t
@@ -353,11 +381,11 @@ function M.generate(idx, opts, lat, lon, rnd, maxSlots)
           stats.noDest = stats.noDest + 1
         else
           used[p.r.id] = true
-          local a, road = found.a, found.s * M.ROAD_FACTOR
+          local a, road = found.a, found.road or found.s * M.ROAD_FACTOR
           local to = { id = string.format('%.6f,%.6f', a[1], a[2]), d = { a[1], a[2] }, g = { a[3], a[4] }, n = a[5],
             town = a[6] or '', label = 'Customer', kind = 'address' }
           local job = { id = p.r.id .. '>' .. to.id, kind = 'food', from = p.r, to = to, cargo = p.r.cat,
-            straightKm = found.s, km = road, pickupKm = p.k, farPickup = M.farPickup(p.k),
+            straightKm = found.s, km = road, roadKnown = found.road ~= nil, pickupKm = p.k, farPickup = M.farPickup(p.k),
             minutes = M.minutes(road + p.k * M.ROAD_FACTOR) }  -- the clock starts at Accept, so the ride there counts
           if p.r.cat == 'grocery' then
             local basket = groceryBaskets[rnd(#groceryBaskets)]

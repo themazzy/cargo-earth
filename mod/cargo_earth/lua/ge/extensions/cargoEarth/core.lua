@@ -10,6 +10,7 @@ M.dependencies = { 'ui_imgui' }
 
 local jobs = require('cargoEarth/jobs')
 local food = require('cargoEarth/food')
+local roads = require('cargoEarth/roads')
 local cargo = require('cargoEarth/cargo')
 local earth = require('cargoEarth/earth')
 local trailers = require('cargoEarth/trailers')
@@ -595,13 +596,45 @@ local function towOffers(class, p)
   return out
 end
 
+-- The road distance between two points (lat, lon) on the game's road graph, for food orders: km, false when longer
+-- than maxKm, nil when the graph does not reach both points (a road further than ROAD_SNAP_M from them).
+M.ROAD_SNAP_M = 80
+local function roadKmFn(p)
+  if not (M.G.road and p and p.x) then return nil end
+  local function ends(pt)
+    local x, y = earth.worldXY(p, pt)
+    if not x then return nil end
+    local graph, a, b, d = M.G.road(x, y, p.z)
+    if not graph or not graph.nodes or d > M.ROAD_SNAP_M then return nil end
+    local out = {}
+    for _, n in ipairs({ a, b }) do
+      local node = graph.nodes[n]
+      if node and node.pos then
+        out[#out + 1] = { n, math.sqrt((node.pos.x - x) ^ 2 + (node.pos.y - y) ^ 2) }
+      end
+    end
+    return graph, out
+  end
+  return function(from, to, maxKm)
+    local ok, km = pcall(function()
+      local graph, a = ends(from)
+      if not graph then return nil end
+      local graph2, b = ends(to)
+      if graph2 ~= graph then return nil end
+      return roads.km(graph, a, b, maxKm)
+    end)
+    if ok then return km end
+    return nil
+  end
+end
+
 function M.generate()
   if not modeReady() then S.offers, S.offerStats = {}, nil return end
   local p = earth.pose()
   if not p then S.offers, S.offerStats = {}, nil return end
   if S.mode == 'courier' then
     local plan = storagePlan()
-    S.offers, S.offerStats = food.generate(S.fidx, S.opts, p.lat, p.lon, nil, plan and plan.maxFree or 1)
+    S.offers, S.offerStats = food.generate(S.fidx, S.opts, p.lat, p.lon, nil, plan and plan.maxFree or 1, roadKmFn(p))
   else
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
