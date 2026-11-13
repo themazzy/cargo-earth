@@ -59,7 +59,7 @@ angular.module('beamng.apps')
     '.cep-step{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;background:var(--tomato);color:#fff}' +
     '.cep-step.to{background:var(--ink)}' +
     '.cep-pulse{width:74px;height:74px;border-radius:50%;background:rgba(232,69,44,.12);display:flex;align-items:center;justify-content:center}' +
-    '.cep-pulse i{width:22px;height:22px;border-radius:50%;background:var(--tomato);animation:cepP 1.6s ease-in-out infinite}' +
+    '.cep-pulse i{width:22px;height:22px;border-radius:50%;background:var(--tomato);animation:cepP 1.6s ease-in-out 3}' +
     '@keyframes cepP{0%,100%{transform:scale(.8);opacity:.6}50%{transform:scale(1.15);opacity:1}}' +
     '.cep-adr{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;background:var(--warn);color:#fff;font-size:10px;font-weight:800}' +
     '.cep-foot{padding:6px 16px 4px;font-size:11px;color:var(--muted);text-align:center}' +
@@ -128,7 +128,7 @@ angular.module('beamng.apps')
     '.cep-vol{flex:1;height:6px;border-radius:3px;background:var(--line);overflow:hidden}.cep-vol i{display:block;height:100%;background:var(--tomato)}' +
     '.cep-li.on{box-shadow:inset 0 0 0 2px var(--tomato)}.cep-fav{border:0;background:transparent;font-size:17px;cursor:pointer;color:#e0a100;padding:0 2px}' +
     '.cep-eq{display:inline-flex;gap:2px;align-items:flex-end;height:12px;margin-right:6px;vertical-align:-1px}' +
-    '.cep-eq i{width:3px;background:var(--tomato);animation:cepEq .9s ease-in-out infinite}.cep-eq i:nth-child(2){animation-delay:.3s}.cep-eq i:nth-child(3){animation-delay:.6s}' +
+    '.cep-eq i{width:3px;height:7px;background:var(--tomato);animation:cepEq .9s ease-in-out 4}.cep-eq i:nth-child(2){animation-delay:.3s}.cep-eq i:nth-child(3){animation-delay:.6s}' +
     '@keyframes cepEq{0%,100%{height:3px}50%{height:12px}}' +
     '.cep-input{flex:1;min-width:0;border:1.5px solid var(--line);border-radius:10px;padding:7px 10px;font:inherit;font-size:13px;background:#fff}' +
     '.cep-stars{color:#e0a100;letter-spacing:1px;font-size:15px;white-space:nowrap}.cep-stars.big{font-size:24px}' +
@@ -1124,21 +1124,35 @@ angular.module('beamng.apps')
         if (!a) return 0
         return Math.max(2, Math.min(100, 100 * a.leftS / Math.max(1, a.minutes * 60)))
       }
-      var busy = false, destroyed = false, lastPoll = -Infinity
+      var busy = false, destroyed = false, lastPoll = -Infinity, lastState = null, shown
       function apply(r) {
         if (destroyed) return
+        // Most answers are the same as the last one (waiting, offline, driving between ticks). An unchanged answer
+        // needs no Angular digest, so the UI is not re-checked and redrawn for nothing. (Only while the phone still
+        // shows that answer: closing the Menu window clears scope.s, and the next answer must bring it back.)
+        var key = JSON.stringify(r === undefined ? null : r)
+        if (key === lastState && scope.s === shown) return
+        lastState = key
         scope.$evalAsync(function () {
           if (destroyed) return
-          scope.s = r || null
+          scope.s = shown = r || null
           if (r && r.currency) CUR = r.currency
           if (!r || r.screen !== 'active') scope.cancelAsk = false
         })
+      }
+      // How often the phone asks the game: 4 times a second only while the stop bar fills; twice a second otherwise
+      // (the game moves the order's distance and timers on its 0.5 s tick anyway); folded or hidden every 2 s.
+      function pollGap() {
+        var s = scope.s
+        if (scope.min || (s && s.hidden)) return 2000
+        var stop = s && s.screen === 'active' && s.active && s.active.stop
+        return stop && stop.inZone ? 250 : 500
       }
       function poll() {
         if (busy || destroyed) return
         if (scope.menuOnly && !scope.panel) return // the Menu app asks only while its window is open
         var now = Date.now()
-        if ((scope.min || (scope.s && scope.s.hidden)) && now - lastPoll < 2000) return
+        if (now - lastPoll < pollGap()) return
         lastPoll = now
         busy = true
         bngApi.engineLua(STATE, function (r) { busy = false; apply(r) })
@@ -1642,10 +1656,12 @@ angular.module('beamng.apps')
         if (v === 'incoming' || v === 'resume') { scope.min = false; scope.panel = null; scope.tab = 'orders' }
         if (v === 'parts') { scope.min = false; scope.setTab('garage') }
       })
+      var slowTicks = 0
       var slow = setInterval(function () {
         if (scope.hqOpen) loadHq()
         if (scope.min || (scope.s && (scope.s.hidden || scope.s.screen === 'resume'))) return
-        if (scope.panel) loadPanel(scope.panel)
+        // an open Menu section follows the game every 2 s (an action's answer updates it at once)
+        if (scope.panel && slowTicks++ % 2 === 0) loadPanel(scope.panel)
         if (scope.tab === 'radio' && Date.now() - radioLoadedAt > 4000) loadRadio()
       }, 1000)
       scope.$on('$destroy', function () { clearInterval(slow) })

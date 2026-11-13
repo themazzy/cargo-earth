@@ -3284,10 +3284,23 @@ function M.dashPhonePart(vehId)
   dash.partCar(tonumber(vehId))
 end
 
+-- The dash phone asks the same few questions over and over (its state twice a second): each is compiled once.
+local dashChunks, dashChunkCount = {}, 0
+local function dashChunk(cmd)
+  local fn = dashChunks[cmd]
+  if fn then return fn end
+  fn = (loadstring or load)('return ' .. cmd)
+  if not fn then return nil end
+  -- actions carry their arguments, so their texts vary: keep the cache small
+  if dashChunkCount >= 64 then dashChunks, dashChunkCount = {}, 0 end
+  dashChunks[cmd], dashChunkCount = fn, dashChunkCount + 1
+  return fn
+end
+
 function M.dashCall(vehId, id, cmd)
   local veh = getObjectByID and getObjectByID(tonumber(vehId) or -1)
   if not veh or not M.dashAllowed(cmd) then return end
-  local fn = (loadstring or load)('return ' .. cmd)
+  local fn = dashChunk(cmd)
   local ok, value = false, nil
   if fn then ok, value = pcall(fn) end
   local json = jsonEncode(ok and value or nil) or 'null'
@@ -3432,7 +3445,7 @@ function M.onUpdate(dtReal, dtSim)
     end
   end
   if S.job and worldReady then
-    local d, p = target(), earth.pose()
+    local d, p = target(), pose or earth.pose()   -- (pose is nil only while the career clock stands)
     updateForceWatch(p)
     local st = stopInfo()
     if d and p then

@@ -5,10 +5,10 @@ let directive
 const audios = []
 const commands = []
 const timers = [], destroy = [], pending = [], watches = {}
-let now = 0, hold = false
+let now = 0, hold = false, answer = {screen: 'offline'}, digests = 0
 vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPhone/app.js', 'utf8'), {
   angular: { module: () => ({ directive: (name, factory) => { directive = factory[factory.length - 1]() } }) },
-  bngApi: { serializeToLua: JSON.stringify, engineLua: (command, callback) => { commands.push(command); if (hold) pending.push(callback); else callback({screen: 'offline'}) } },
+  bngApi: { serializeToLua: JSON.stringify, engineLua: (command, callback) => { commands.push(command); if (hold) pending.push(callback); else callback(JSON.parse(JSON.stringify(answer))) } },
   Date: {now: () => now},
   Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {}; audios.push(this) } addEventListener (n, f) { this.on[n] = f }
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
@@ -28,7 +28,7 @@ for (const tag of directive.template.matchAll(/<(\/?)([a-z][\w-]*)(?:\s+(?:"[^"]
   else if (!tag[0].endsWith('/>')) stack.push(name)
 }
 assert.deepEqual(stack, [])
-const scope = {$evalAsync: fn => fn(), $watch: (name, fn) => { watches[name] = fn }, $on: (name, fn) => { if (name === '$destroy') destroy.push(fn) }}
+const scope = {$evalAsync: fn => { digests++; fn() }, $watch: (name, fn) => { watches[name] = fn }, $on: (name, fn) => { if (name === '$destroy') destroy.push(fn) }}
 directive.link(scope)
 scope.pdo('search', 'Dlouhá \"12\"')
 assert(commands.some(command => command.includes('pcall(cargoEarth_core.placesDo, ' + JSON.stringify('search') + ', ' + JSON.stringify('Dlouhá \"12\"'))))
@@ -166,6 +166,24 @@ const before = commands.length
 for (now = 250; now <= 10000; now += 250) poll()
 assert.equal(commands.length - before, 5, 'Folded phone should poll once every two seconds')
 scope.fold(false)
+// Open: twice a second; an answer equal to the last one is not handed to Angular (no digest, no redraw).
+let asked = commands.length, digested = digests
+for (now = 10250; now <= 20000; now += 250) poll()
+assert.equal(commands.length - asked, 20, 'An open phone polls twice a second')
+assert(digests - digested <= 1, 'Unchanged answers must not start a digest')
+// Standing in the stop zone the bar fills: four times a second.
+answer = {screen: 'active', active: {stop: {inZone: true, frac: 0}}}
+poll(); now += 250
+asked = commands.length
+for (let i = 0; i < 8; i++) { answer.active.stop.frac = i / 8; poll(); now += 250 }
+assert.equal(commands.length - asked, 8, 'The stop bar polls four times a second')
+assert.equal(scope.s.active.stop.frac, 7 / 8, 'A changed answer reaches the phone')
+// Clearing the shown state (closing the Menu window) must not make the same answer be ignored.
+scope.s = null
+now += 500; poll()
+assert.equal(scope.s && scope.s.screen, 'active', 'The same answer comes back after the state was cleared')
+answer = {screen: 'offline'}
+poll(); now += 500; poll()
 scope.s = {screen: 'offline'}
 hold = true
 scope.setTab('career')

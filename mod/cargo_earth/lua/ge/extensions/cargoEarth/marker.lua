@@ -14,6 +14,7 @@ local RING_WIDTH = 0.55
 local OUTLINE_WIDTH = 5
 local SURFACE_LIFT = 0.18  -- keep the ring above the road mesh and its markings
 local REFRESH_S = 1
+local GROUND_AGAIN_S = 5
 local BEACON_M, BEACON_R = 60, 0.8
 local COLORS = {
   pickup = { 1.0, 0.55, 0.15 },
@@ -26,6 +27,16 @@ local ringDirections = {}
 for i = 1, RING_SEGMENTS do
   local angle = 2 * math.pi * i / RING_SEGMENTS
   ringDirections[i] = { math.cos(angle), math.sin(angle) }
+end
+
+-- the ring's colours, made once (not two new colour objects every frame)
+local paints = {}
+local function paint(c, alpha)
+  local byColour = paints[c]
+  if not byColour then byColour = {} paints[c] = byColour end
+  local col = byColour[alpha]
+  if not col then col = ColorF(c[1], c[2], c[3], alpha) byColour[alpha] = col end
+  return col
 end
 
 local function distance(x, y, p)
@@ -104,7 +115,8 @@ end
 local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
   if distance(x, y, p) > RING_RANGE then return end
   if now >= cache.nextGround then
-    cache.nextGround = now + REFRESH_S
+    -- 41 ground rays: every second until the ring stands, then only now and then (late ground tiles still lift it)
+    cache.nextGround = now + (cache.outer and GROUND_AGAIN_S or REFRESH_S)
     local z = roadZ and (groundZ(x, y, roadZ, 4, 12) or roadZ) or groundZ(x, y, p.z, 30, 150)
     if not z and distance(x, y, p) <= 50 then z = groundZ(p.x, p.y, p.z, 2, 12) end
     if z then
@@ -120,8 +132,7 @@ local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
   end
   local outer, inner = cache.outer, cache.inner
   if not outer then return end
-  local outline = ColorF(c[1], c[2], c[3], 1)
-  local fill = ColorF(c[1], c[2], c[3], inZone and 0.85 or 0.55)
+  local outline, fill = paint(c, 1), paint(c, inZone and 0.85 or 0.55)
   for i = 1, RING_SEGMENTS do
     local j = i % RING_SEGMENTS + 1
     if debugDrawer.drawLineInstance then
