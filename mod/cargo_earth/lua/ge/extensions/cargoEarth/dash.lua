@@ -15,11 +15,12 @@
 -- it. Traffic cars never do. Once fitted, it is in the car's config, so BeamNG keeps it through its own respawns.
 -- The game stays in charge of everything else (flexbody, triggers, controller), exactly as for a part from a file.
 local M = {}
+local cfg_on -- set below: is the switch on
 
 M.PART = 'cargo_earth_phone_auto'
 M.SLOT = 'cargo_earth_phone'
 M.FILE = '/settings/cargoEarth/dash.json'
-M.SPOT_VERSION = 1                     -- bump when findSpot changes, so saved spots are measured again
+M.SPOT_VERSION = 2                     -- bump when findSpot changes, so saved spots are measured again
 M.COLS, M.ROWS = 6, 12
 M.SCREEN_W = 0.100                     -- must match tools/make-phone-mesh.py
 M.SCREEN_H = 0.100 * 560 / 290
@@ -88,24 +89,68 @@ function M.eyeOf(vdata)
   end
 end
 
+-- a node's groups as a sorted list of names. While the car loads, n.group is a list (or, after the game's group
+-- pass, a table keyed by group number); once it has loaded the game deletes it, and only n.firstGroup is left, which
+-- names the node's first group through vdata.groups (name -> number).
+local function groupsOf(n, byNumber)
+  local groups = {}
+  if type(n.group) == 'string' and n.group ~= '' then groups[1] = n.group
+  elseif type(n.group) == 'table' then
+    for _, g in pairs(n.group) do if type(g) == 'string' and g ~= '' then groups[#groups + 1] = g end end
+    table.sort(groups)
+  elseif byNumber and n.firstGroup ~= nil and byNumber[n.firstGroup] then
+    groups[1] = byNumber[n.firstGroup]
+  end
+  return groups
+end
+
 -- The car's named nodes as a plain list: { name, pos, groups = { name, ... } }, leaving out the camera's own node.
+-- vdata: the loaded car (core_vehicle_manager.getVehicleData(id).vdata) or the car while it loads.
 function M.nodesOf(vdata, skip)
   local out = {}
+  local byNumber = {}
+  if type(vdata) == 'table' and type(vdata.groups) == 'table' then
+    for name, num in pairs(vdata.groups) do if type(name) == 'string' then byNumber[num] = name end end
+  end
   for id, n in pairs(type(vdata) == 'table' and type(vdata.nodes) == 'table' and vdata.nodes or {}) do
-    local p = type(n) == 'table' and type(n.name) == 'string' and id ~= skip and n.cid ~= skip and pos(n.pos)
-    if p then
-      local groups = {}
-      if type(n.group) == 'string' and n.group ~= '' then groups[1] = n.group
-      elseif type(n.group) == 'table' then
-        for _, g in pairs(n.group) do if type(g) == 'string' and g ~= '' then groups[#groups + 1] = g end end
-        table.sort(groups)
-      end
-      out[#out + 1] = { name = n.name, pos = p, groups = groups }
-    end
+    local name = type(n) == 'table' and (type(n.name) == 'string' and n.name or type(id) == 'string' and id) or nil
+    local p = name and (skip == nil or (id ~= skip and n.cid ~= skip)) and pos(n.pos)
+    if p then out[#out + 1] = { name = name, pos = p, groups = groupsOf(n, byNumber) } end
   end
   table.sort(out, function(a, b) return a.name < b.name end)
   return out
 end
+
+-- The nodes of cars as they loaded, with all their groups (the loaded car keeps only each node's first group).
+-- Filled from the game's onJbeamLoadingPhase2 hook, for the last few cars, while the switch is on.
+M.KEEP_LOADED = 6
+local loaded, loadedOrder = {}, {}
+function M.captureLoading(objID, vehicle)
+  if objID == nil then return end
+  -- whatever was kept for this car no longer describes it, even when nothing new is kept
+  M.dropLoaded(objID)
+  if not cfg_on() or type(vehicle) ~= 'table' then return end
+  local nodes = M.nodesOf(vehicle)
+  if #nodes == 0 then return end
+  if not loaded[objID] then loadedOrder[#loadedOrder + 1] = objID end
+  loaded[objID] = { model = vehicle.model, nodes = nodes }
+  while #loadedOrder > M.KEEP_LOADED do loaded[table.remove(loadedOrder, 1)] = nil end
+end
+-- the nodes car id had when it loaded (nil when it loaded from the game's cache, before the switch, or is another model)
+function M.loadedNodes(objID, model, skipName)
+  local l = loaded[objID]
+  if not l or (model and l.model and l.model ~= model) then return nil end
+  if not skipName then return l.nodes end
+  local out = {}
+  for _, n in ipairs(l.nodes) do if n.name ~= skipName then out[#out + 1] = n end end
+  return out
+end
+function M.dropLoaded(objID)
+  if loaded[objID] == nil then return end
+  loaded[objID] = nil
+  for i, id in ipairs(loadedOrder) do if id == objID then table.remove(loadedOrder, i) break end end
+end
+function M.forgetLoaded() loaded, loadedOrder = {}, {} end
 
 local function quantYaw(deg)
   local q = math.floor(deg / M.YAW_STEP + 0.5) * M.YAW_STEP
@@ -337,6 +382,7 @@ end
 local function save() pcall(M.store.write, cfg) end
 
 function M.isOn() return cfg.on end
+cfg_on = M.isOn
 function M.setOn(on) cfg.on = on and true or false save() end
 function M.spot(model) return model and cfg.spots[model] or nil end
 function M.setSpot(model, spot) if model then cfg.spots[model] = spot save() end end

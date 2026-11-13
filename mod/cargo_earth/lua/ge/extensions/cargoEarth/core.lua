@@ -3315,22 +3315,27 @@ end
 -- Phone on the dashboard, in any car (cargoEarth/dash.lua). While the switch is on, the player's car gets the phone:
 -- the car is measured once per model (driver camera, dash nodes), and respawned with the phone in its parts tree.
 -- A new car (spawned or switched to) gets it a moment later, the same way. Traffic never does.
-local dashClock, dashCheckAt, dashTried = 0, nil, {}
+local dashClock, dashCheckAt, dashTried, dashReloaded = 0, nil, {}, {}
+local dashMeasureNext = {} -- car id -> true: reloaded to be measured, so measure it once it is back
 local dashPending -- a change from Settings the car was too busy for: { rebuild } (done once the car is free)
 M.DASH_CHECK_S, M.DASH_RETRY_S = 1.5, 20
 
 local function dashMeasure(v)
   local vdata = type(v.data) == 'table' and v.data.vdata or nil
   local eye, camNode = dash.eyeOf(vdata)
-  local spot, why = dash.findSpot(dash.nodesOf(vdata, camNode), eye)
+  -- the nodes with all their groups, as the car loaded; the loaded car only keeps each node's first group
+  local camName = camNode ~= nil and type(vdata) == 'table' and type(vdata.nodes) == 'table' and vdata.nodes[camNode]
+  camName = type(camName) == 'table' and camName.name or nil
+  local nodes = dash.loadedNodes(v.id, v.model, camName)
+  local spot, why = dash.findSpot(nodes or dash.nodesOf(vdata, camNode), eye)
   if spot then
     dash.setSpot(v.model, spot)
     log('I', 'cargoEarth', string.format('dash phone: %s measured, phone at %.3f %.3f %.3f on group %s', v.model,
       spot.centre.x, spot.centre.y, spot.centre.z, spot.group))
   else
-    log('W', 'cargoEarth', 'dash phone: ' .. tostring(why) .. ' (' .. tostring(v.model) .. ')')
+    log('W', 'cargoEarth', 'dash phone: ' .. tostring(why) .. ' (' .. tostring(v.model) .. (nodes and '' or ', not seen loading') .. ')')
   end
-  return spot, why
+  return spot, why, nodes ~= nil
 end
 
 local function dashBusy()
@@ -3348,11 +3353,19 @@ function M.dashFit(on, opts)
   if v.model == 'unicycle' then return false, 'On foot there is no dashboard.' end
   local tree = type(v.config) == 'table' and v.config.partsTree or v.tree
   if type(tree) ~= 'table' or type(tree.children) ~= 'table' then return false, 'This car’s parts could not be read.' end
-  if on and (opts.measure or not dash.spot(v.model)) then
-    local spot, why = dashMeasure(v)
-    if not spot then return false, why end
+  local reload -- the car is reloaded once, unchanged, so it can be measured as it loads (with all its node groups)
+  local measured
+  if on and (opts.measure or dashMeasureNext[v.id] or not dash.spot(v.model)) then
+    local spot, why, seenLoading = dashMeasure(v)
+    if not spot then
+      if seenLoading or dashReloaded[v.id] then dashMeasureNext[v.id] = nil return false, why end
+      reload = true
+    else
+      measured = true
+      dashReloaded[v.id], dashMeasureNext[v.id] = nil, nil
+    end
   end
-  if not opts.rebuild and not opts.measure and dash.treeHasPhone(tree) == (on and true or false) then return true end
+  if not reload and not measured and not opts.rebuild and dash.treeHasPhone(tree) == (on and true or false) then return true end
   -- a respawn mends the car: never on a damaged career car (it would be repaired for free, and its bill turned into
   -- debt), the same rule as changing parts
   local g = type(S.career) == 'table' and S.career.garage or nil
@@ -3364,8 +3377,8 @@ function M.dashFit(on, opts)
     end
   end
   if dashBusy() then return false, 'The car is busy: the phone follows as soon as it is free.', 'busy' end
-  dashTried[v.id] = dashClock
-  local ok, err = pcall(G.respawnPlayer, function(config) dash.setTreePhone(config.partsTree, on) end)
+  if reload then dashReloaded[v.id], dashMeasureNext[v.id] = true, true else dashTried[v.id] = dashClock end
+  local ok, err = pcall(G.respawnPlayer, function(config) if not reload then dash.setTreePhone(config.partsTree, on) end end)
   if not ok then
     log('W', 'cargoEarth', 'dash phone: ' .. tostring(err))
     return false, 'BeamNG could not respawn this car.'
@@ -3435,9 +3448,9 @@ local function dashTick(dt)
   -- switched off: a car that still has the phone loses it
   if not on and not dash.treeHasPhone(tree) then return end
   if dashBusy() then dashCheckAt = dashClock + 2 return end
-  if on and dash.treeHasPhone(tree) and dash.spot(v.model) then return end
+  if on and dash.treeHasPhone(tree) and dash.spot(v.model) and not dashMeasureNext[v.id] then return end
   local last = dashTried[v.id]
-  if on and last and dashClock - last < M.DASH_RETRY_S then return end
+  if on and last and dashClock - last < M.DASH_RETRY_S and not dashMeasureNext[v.id] then return end
   local ok, why = M.dashFit(on)
   if not ok then dashTried[v.id] = dashClock end
   S.dashError = not ok and why or nil
@@ -3606,7 +3619,9 @@ function M.onBeforeVehicleReplaced(id)
   end
 end
 
-function M.onVehicleDestroyed(id) dash.dropCar(id) dashTried[id] = nil end
+function M.onVehicleDestroyed(id) dash.dropCar(id) dash.dropLoaded(id) dashTried[id] = nil dashReloaded[id] = nil dashMeasureNext[id] = nil end
+-- the game is putting a car together: its nodes still carry all their groups (cargoEarth/dash.lua)
+function M.onJbeamLoadingPhase2(_, objID, vehicle) dash.captureLoading(objID, vehicle) end
 function M.onVehicleSwitched() M.dashCheckSoon() end
 
 function M.onVehicleSpawned(id)
@@ -3631,6 +3646,7 @@ function M.onPartsTreeConfigChanged(_, respawn)
 end
 
 function M.onClientEndMission()
+  dash.forgetLoaded()
   dash.forget()
   S.resumeTrip = nil
   releaseStorage()

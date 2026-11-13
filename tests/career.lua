@@ -2167,11 +2167,36 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   advance(core, 10)
   assert(conditions >= 1, 'condition restored after the reload')
   core.G.isOwned = function() return false end
+  -- a loaded car keeps no node groups (the game deletes them): the car is reloaded once, unchanged, and measured from
+  -- its nodes as it loads
+  local bare = {}
+  for k, n in pairs(nodes) do bare[k] = { cid = n.cid, name = n.name, pos = n.pos } end
+  v = { id = 12, model = 'ferax', config = { partsTree = { chosenPartName = 'ferax', children = {} } },
+    data = { vdata = { nodes = bare, cameras = vdata.cameras } } }
+  local before = #respawns
+  st = core.settingsDo('dash', 'on').dash
+  assert(not st.error and #respawns == before + 1 and not dash.treeHasPhone(respawns[#respawns].partsTree), 'reloaded unchanged')
+  local loading = {}
+  for _, n in pairs(nodes) do loading[n.name] = { name = n.name, cid = n.cid, pos = n.pos, group = n.group } end
+  core.onJbeamLoadingPhase2(nil, 12, { model = 'ferax', nodes = loading })
+  core.onVehicleSpawned(12)
+  advance(core, 5)
+  assert(#respawns == before + 2 and dash.treeHasPhone(respawns[#respawns].partsTree) and dash.spot('ferax'), 'measured as it loaded')
+  -- measured again: a car from the game's cache is reloaded, and the measurement is not forgotten on the way
+  v.config = copy(respawns[#respawns])
+  dash.forgetLoaded()
+  local old = dash.spot('ferax')
+  st = core.settingsDo('dash', 'measure').dash
+  assert(not st.error and #respawns == before + 3, 'reloaded to measure')
+  core.onJbeamLoadingPhase2(nil, 12, { model = 'ferax', nodes = loading })
+  core.onVehicleSpawned(12)
+  advance(core, 25)
+  assert(#respawns == before + 4 and dash.spot('ferax') ~= old, 'measured again after the reload')
   dash.setOn(false)
   -- no dash to stand on
   v = { id = 11, model = 'unicycle', config = { partsTree = { children = {} } }, data = {} }
   st = core.settingsDo('dash', 'on').dash
-  assert(st.error and #respawns == 10)
+  assert(st.error and #respawns == before + 4)
   dash.setOn(false)
 end)
 
