@@ -86,8 +86,10 @@ assert(scope.showLiveShortcut())
 scope.openLiveWork()
 assert.equal(scope.panel, 'companies')
 assert(!scope.showLiveShortcut(), 'No shortcut to the page already open')
+scope.s = {screen: 'incoming'}
 watches['s.screen']('incoming')
-assert.equal(scope.tab, 'orders', 'Incoming work must open the actual delivery view')
+assert.equal(scope.tab, 'radio', 'A ringing offer leaves Radio playing on screen')
+assert(scope.showLiveShortcut() && scope.liveTitle() === 'New delivery offer', 'the offer bar is on top of Radio')
 assert.equal(scope.panel, null, 'Incoming work closes the menu window')
 // the Menu button opens the last section again and closes the window
 scope.openPanel('settings')
@@ -99,6 +101,7 @@ scope.closePanel()
 for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directive.template.includes(text), 'Template is missing: ' + text)
 // radio: one radio for both phones, kept by the game; the page's player makes the sound
 hold = false
+scope.setTab('orders')
 scope.setTab('radio')
 assert.equal(scope.tab, 'radio')
 assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("radio")')), 'The game hears which page the phone shows')

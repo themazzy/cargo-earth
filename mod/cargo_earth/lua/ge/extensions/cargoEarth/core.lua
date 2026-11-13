@@ -1307,7 +1307,6 @@ local function phoneTick()
   end
   ph.incoming = { job = j, expiresAt = S.clock + M.PHONE.acceptS }
   S.phoneHidden = false   -- a ringing phone shows itself
-  S.phoneTab = 'orders'   -- on its Work page, on both phones
   phoneSound('offer')
   earth.notify('New order: ' .. j.cargoName .. ', ' .. j.from.n, 4)
 end
@@ -1335,17 +1334,38 @@ local function incomingInfo(inc)
     leftS = math.max(0, math.floor(inc.expiresAt - S.clock + 0.5)), totalS = M.PHONE.acceptS }
 end
 
+-- Company contracts near the player for the freight page when you have no van or truck of your own: the company
+-- hands you its van at the yard when you take one. The board is rebuilt when stale or after 5 km of driving.
+M.CONTRACTS_SHOWN = 3
+M.CONTRACT_MSG_S = 12   -- seconds a failed contract Route/Start message stays on the freight page
+function M.nearContracts(p)
+  if not (S.idx and p) or S.career.employment then return {} end
+  local at = S.companyBoardPos
+  if S.companyBoard == nil or (S.companyBoardDirty and S.clock >= (S.nextBoardAt or 0))
+    or (at and jobs.km(at.lat, at.lon, p.lat, p.lon) > 5) then
+    S.companyBoard = employment.board(S.idx, p)
+    S.companyBoardDirty, S.nextBoardAt, S.companyBoardPos = nil, S.clock + 2, { lat = p.lat, lon = p.lon }
+  end
+  local out = {}
+  for _, offer in ipairs(S.companyBoard or {}) do
+    if #out >= M.CONTRACTS_SHOWN then break end
+    local km = jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2])
+    out[#out + 1] = { id = offer.id, name = offer.name, km = math.floor(km * 10 + 0.5) / 10, wages = offer.wages, minutes = offer.minutes,
+      atYard = km * 1000 <= employment.RADIUS and not p.camera and (p.speed or 0) <= M.STOP_SPEED }
+  end
+  return out
+end
+
 local function truckingState()
   local out = haul.state(S.career)
   local g = S.career.garage
   local v, tier = freightCarrier()
   local rows = S.storage and S.storage.rows
   out.carrier = tier and haul.tiers[tier].name or nil
-  out.canLoan = earth.status() == 'ok' and not S.job and not S.parts and not g.preview and not g.pendingUsed
-    and not (g.freightLoaners and g.freightLoaners[out.unlocked])
-  out.loanerLabel = haul.loaners[out.unlocked].label
   if not v or not tier then
-    out.hint = 'Get in a ' .. haul.loaners[out.unlocked].label .. ' to take freight jobs.'
+    -- no van or truck of your own: company contracts, the company's van is handed over at its yard
+    out.contracts = not S.job and not g.preview and M.nearContracts(earth.pose()) or {}
+    out.hint = 'Take a contract: park at its yard and the company gives you its van.'
   elseif not haul.allowed(S.career, tier) then
     out.hint = 'This truck unlocks after completing the earlier stage.'
   elseif tier ~= 'semi' and not rows then
@@ -1358,7 +1378,9 @@ local function truckingState()
   elseif S.offerStats and S.offerStats.pairs == 0 then
     out.hint = 'No compatible routes nearby. Try a different depot area or widen the distance filters.'
   end
-  out.error = S.freightSetupError
+  local cm = S.contractMsg
+  if cm and (S.clock or 0) - cm.at > M.CONTRACT_MSG_S then S.contractMsg, cm = nil, nil end
+  out.error = S.freightSetupError or (cm and not S.career.employment and cm.text) or nil
   return out
 end
 
@@ -1599,6 +1621,7 @@ function M.placesDo(name, value)
   elseif name == 'endCompany' then ok, why = companyReturn(true)
   end
   if why then S.placesMsg = why elseif ok then S.placesMsg = 'GPS updated.' end
+  S.placesOk = ok
   return M.placesState()
 end
 
@@ -1765,8 +1788,11 @@ function M.phoneAction(a, orderId)
     selectDelivery(orderId)
   elseif a == 'restoreTrailer' then
     M.spawnTrailer()
-  elseif a == 'loanerTruck' and S.mode == 'trucking' then
-    M.garageFreightLoaner()
+  elseif a == 'contractGps' or a == 'contractStart' then
+    -- a failure (not parked at the yard, no van config...) shows on the freight page for a while
+    S.placesOk = nil
+    M.placesDo(a == 'contractGps' and 'companyGps' or 'startCompany', orderId)
+    S.contractMsg = not S.placesOk and S.placesMsg and { text = S.placesMsg, at = S.clock or 0 } or nil
   elseif a == 'cancel' then
     M.cancel(false)
   elseif a == 'dismiss' then
@@ -3705,6 +3731,13 @@ function M.onUpdate(dtReal, dtSim)
   end
   if worldReady then
     if pose and camerasOn() and marker.drawCameras then marker.drawCameras(pose, cams.near, S.clock) end
+    -- where home and the headquarters count (switching cars, parking): a blue ring when close
+    if pose and not pose.camera and marker.drawArea then
+      local myHome = S.career.home
+      if myHome and myHome.g then marker.drawArea(pose, 'home', myHome.g, home.RADIUS, 'Home', S.clock) end
+      local hq = S.career.firm and S.career.firm.hq
+      if hq and hq.g then marker.drawArea(pose, 'hq', hq.g, firm.HQ_RADIUS, 'Headquarters', S.clock) end
+    end
     local okC, errC = pcall(cameraTick, pose)
     if not okC and not S.cameraErr then S.cameraErr = tostring(errC) problem('W', 'cameras: ' .. S.cameraErr) end
   end
