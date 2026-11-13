@@ -258,3 +258,11 @@ assert.equal(commands.length, stopped)
 pending.shift()({rank: 'late response'})
 assert.notEqual(scope.career && scope.career.rank, 'late response')
 console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded polling, backpressure and teardown verified')
+// The holder page's own styles must not reuse a class of the phone app's (a fixed .cep-dot squeezed the stop names)
+{
+  const page = fs.readFileSync('mod/cargo_earth/vehicles/common/cargo_earth_phone/phone.html', 'utf8')
+  const app = fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPhone/app.js', 'utf8')
+  const own = [...page.matchAll(/^\s*\.(cep-[\w-]+)\s*\{/gm)].map(m => m[1])
+  assert(own.length > 0)
+  for (const c of own) assert(!new RegExp('\\.' + c + '(?![\\w-])').test(app), 'phone.html styles .' + c + ', a class of the phone app')
+}

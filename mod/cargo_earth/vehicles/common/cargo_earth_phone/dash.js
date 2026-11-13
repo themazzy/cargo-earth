@@ -56,7 +56,7 @@
     var x = u * window.innerWidth, y = v * window.innerHeight
     var el = document.elementFromPoint(x, y)
     var dot = document.createElement('div')
-    dot.className = 'cep-dot'
+    dot.className = 'cep-tapdot'
     dot.style.left = x + 'px'
     dot.style.top = y + 'px'
     document.body.appendChild(dot)
