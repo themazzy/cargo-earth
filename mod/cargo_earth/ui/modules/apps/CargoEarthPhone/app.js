@@ -1323,7 +1323,11 @@ angular.module('beamng.apps')
         resetAsks()
         loadPanel(p)
       }
-      scope.closePanel = function () { scope.panel = null; resetAsks() }
+      scope.closePanel = function () {
+        scope.panel = null
+        resetAsks()
+        if (scope.menuOnly) scope.s = null // stops asking while closed: forget the old answer, it is no news on reopening
+      }
       if (!scope.dash) {
         var hostKind = scope.menuOnly ? 'menu' : 'phone'
         scope.$on('CargoEarthOpenMenu', function (event, d) {
@@ -1631,7 +1635,9 @@ angular.module('beamng.apps')
         if (helperPlays() && scope.radio.status !== 'idle') bngApi.engineLua('if cargoEarth_core then cargoEarth_core.radioDo("helperStop") end')
       })
       // The editor can remount the phone. Open straight to checkout while a preview is active.
-      scope.$watch('s.screen', function (v) {
+      scope.$watch('s.screen', function (v, old) {
+        // the Menu app asks only while its window is open: its first answer after opening is no new offer
+        if (scope.menuOnly && (old === null || old === undefined)) return
         scope.storageHelpOpen = false
         if (v === 'incoming' || v === 'resume') { scope.min = false; scope.panel = null; scope.tab = 'orders' }
         if (v === 'parts') { scope.min = false; scope.setTab('garage') }
