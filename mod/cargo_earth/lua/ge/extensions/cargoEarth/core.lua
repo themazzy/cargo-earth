@@ -3303,6 +3303,7 @@ end
 -- the car is measured once per model (driver camera, dash nodes), and respawned with the phone in its parts tree.
 -- A new car (spawned or switched to) gets it a moment later, the same way. Traffic never does.
 local dashClock, dashCheckAt, dashTried = 0, nil, {}
+local dashPending -- a change from Settings the car was too busy for: { rebuild } (done once the car is free)
 M.DASH_CHECK_S, M.DASH_RETRY_S = 1.5, 20
 
 local function dashMeasure(v)
@@ -3339,7 +3340,7 @@ function M.dashFit(on, opts)
     if not spot then return false, why end
   end
   if not opts.rebuild and not opts.measure and dash.treeHasPhone(tree) == (on and true or false) then return true end
-  if dashBusy() then return false, 'Wait until the car has finished changing.' end
+  if dashBusy() then return false, 'The car is busy: the phone follows as soon as it is free.', 'busy' end
   dashTried[v.id] = dashClock
   local ok, err = pcall(G.respawnPlayer, function(config) dash.setTreePhone(config.partsTree, on) end)
   if not ok then
@@ -3351,15 +3352,23 @@ end
 
 -- Settings > Phone on the dashboard. a: on | off | reset | measure, or a nudge: x+ / x- (left / right as the driver
 -- sees it), y+ / y- (closer / further), z+ / z- (up / down). Nudges are kept per car model.
+local dashDoInner
 function M.dashDo(a)
+  local ok, why, busy = dashDoInner(a)
+  if busy then
+    -- kept until the car is free (being changed, or in the parts editor)
+    dashPending = { rebuild = dash.isOn() }
+    M.dashCheckSoon()
+  end
+  return ok, why
+end
+
+dashDoInner = function(a)
   local G = M.G
   if a == 'on' or a == 'fit' or a == 'off' or a == 'remove' then
     local on = a == 'on' or a == 'fit'
     dash.setOn(on)
-    local ok, why = M.dashFit(on)
-    -- the car is busy (being changed, or in the parts editor): it follows the switch as soon as it is free
-    if not ok then M.dashCheckSoon() end
-    return ok, why
+    return M.dashFit(on)
   end
   if not dash.isOn() then return false, 'Switch the phone on first.' end
   local v = G.vehicle and G.vehicle()
@@ -3389,7 +3398,16 @@ local function dashTick(dt)
   if not v or not v.id or not v.model or v.model == 'unicycle' then return end
   local tree = type(v.config) == 'table' and v.config.partsTree or v.tree
   local on = dash.isOn()
-  -- switched off: a car that still has the phone (the switch was turned while the car was busy) loses it
+  if dashPending then
+    -- a change from Settings: carried out as soon as the car is free, whatever the cooldown
+    if dashBusy() then dashCheckAt = dashClock + 2 return end
+    local pending = dashPending
+    dashPending = nil
+    local ok, why = M.dashFit(on, { rebuild = on and pending.rebuild })
+    S.dashError = not ok and why or nil
+    return
+  end
+  -- switched off: a car that still has the phone loses it
   if not on and not dash.treeHasPhone(tree) then return end
   if dashBusy() then dashCheckAt = dashClock + 2 return end
   if on and dash.treeHasPhone(tree) and dash.spot(v.model) then return end
