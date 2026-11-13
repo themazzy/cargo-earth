@@ -2159,12 +2159,19 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   st = core.settingsDo('dash', 'on').dash
   assert(st.on and st.error and #respawns == 9, 'damaged: not reloaded')
   g.repair = 0
+  -- an undamaged career car: reloaded, then its mileage and paint wear go back on
+  local conditions = 0
+  core.G.applyCondition = function() conditions = conditions + 1 end
+  st = core.settingsDo('dash', 'on').dash
+  assert(#respawns == 10 and not st.error)
+  advance(core, 10)
+  assert(conditions >= 1, 'condition restored after the reload')
   core.G.isOwned = function() return false end
   dash.setOn(false)
   -- no dash to stand on
   v = { id = 11, model = 'unicycle', config = { partsTree = { children = {} } }, data = {} }
   st = core.settingsDo('dash', 'on').dash
-  assert(st.error and #respawns == 9)
+  assert(st.error and #respawns == 10)
   dash.setOn(false)
 end)
 

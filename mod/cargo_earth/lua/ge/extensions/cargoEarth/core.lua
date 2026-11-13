@@ -3343,7 +3343,8 @@ function M.dashFit(on, opts)
   -- a respawn mends the car: never on a damaged career car (it would be repaired for free, and its bill turned into
   -- debt), the same rule as changing parts
   local g = type(S.career) == 'table' and S.career.garage or nil
-  if type(g) == 'table' and g.started and G.isOwned and G.isOwned(v) then
+  local owned = type(g) == 'table' and g.started and G.isOwned and G.isOwned(v)
+  if owned then
     local damage = (G.damage and G.damage(v.id)) or 0
     if (g.repair or 0) > 0 or damage * garage.REPAIR_PER_DAMAGE >= 2.5 then
       return false, 'Repair the car first: reloading it for the phone would mend it.'
@@ -3356,6 +3357,8 @@ function M.dashFit(on, opts)
     log('W', 'cargoEarth', 'dash phone: ' .. tostring(err))
     return false, 'BeamNG could not respawn this car.'
   end
+  -- the respawn brings the car back new: its mileage and paint wear go back on, as after buying parts
+  if owned and g.car then conditionAt = S.clock + 3 end
   return true
 end
 
