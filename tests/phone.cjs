@@ -285,3 +285,21 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   assert(own.length > 0)
   for (const c of own) assert(!new RegExp('\\.' + c + '(?![\\w-])').test(app), 'phone.html styles .' + c + ', a class of the phone app')
 }
+// The Menu window: two copies of the Menu app on the page (a layout reload can leave an old one listening) answer one
+// request once, and a window opened anywhere closes the other, so two never lie over each other
+{
+  const menus = [0, 1].map(() => {
+    const on = {}
+    const s = {$evalAsync: fn => fn(), $watch: () => {}, $on: (name, fn) => { on[name] = fn }}
+    directive.link(s, {attr: () => 'menu', 0: {querySelector: () => null}})
+    return {s, on}
+  })
+  const request = {panel: 'settings', to: 'menu'}
+  for (const m of menus) m.on.CargoEarthOpenMenu({}, request)
+  assert.equal(menus.filter(m => m.s.panel).length, 1, 'one request opens one window')
+  menus[1].s.openPanel('garage', undefined, true)
+  assert(!menus[0].s.panel && menus[1].s.panel === 'garage', 'opening a window closes the other one')
+  const toggle = {panel: 'toggle', to: 'menu'}
+  for (const m of menus) m.on.CargoEarthOpenMenu({}, toggle)
+  assert(!menus[0].s.panel && !menus[1].s.panel, 'the Menu button closes the open window, wherever it is')
+}
