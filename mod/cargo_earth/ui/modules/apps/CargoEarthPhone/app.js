@@ -55,7 +55,7 @@ function pagePlayer() {
     var old = JSON.parse(localStorage.getItem('cargoEarth.radio') || 'null')
     if (old && typeof old === 'object' && old.v === 2) {
       bngApi.engineLua('cargoEarth_core and cargoEarth_core.radioDo("import", ' + bngApi.serializeToLua(
-        {vol: old.vol, via: old.via, last: old.last, saved: old.saved}) + ') and nil')
+        {vol: old.vol, via: old.via, last: old.last, saved: old.saved}) + ') and nil', function () {})
     }
   } catch (e) { /* private storage */ }
   setInterval(tick, 500)
@@ -1380,7 +1380,8 @@ angular.module('beamng.apps')
       function showTab(t, fromGame) {
         if (!fromGame) {
           tabAt = Date.now()
-          if (!scope.menuOnly) bngApi.engineLua('cargoEarth_core and cargoEarth_core.phoneTab(' + bngApi.serializeToLua(t) + ') and nil')
+          // with a callback: the game runs a command without one as a statement, and this expression alone is not one
+          if (!scope.menuOnly) bngApi.engineLua('cargoEarth_core and cargoEarth_core.phoneTab(' + bngApi.serializeToLua(t) + ') and nil', function () {})
         }
         if (scope.tab === t) return
         scope.tab = t
