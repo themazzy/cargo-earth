@@ -175,4 +175,25 @@ test('the game\'s part lookup gets the slot and the part, only while the switch 
   dash.setOn(false)
 end)
 
+test('a loaded car keeps only first groups; the car as it loaded keeps them all', function()
+  -- after loading, the game deletes node.group and leaves node.firstGroup (a number from vdata.groups)
+  local vdata = { groups = { ferax_dash = 3, ferax_body = 0 },
+    nodes = { [0] = { name = 'dsh', cid = 0, pos = { x = 0, y = -0.55, z = 0.72 }, firstGroup = 3 },
+      [1] = { name = 'cam', cid = 1, pos = { x = 0.3, y = 0.2, z = 1.1 } } } }
+  local list = dash.nodesOf(vdata, 1)
+  assert(#list == 1 and list[1].groups[1] == 'ferax_dash', 'first group read back by number')
+  reset({ on = false })
+  dash.captureLoading(7, { model = 'ferax', nodes = { dsh = { name = 'dsh', pos = { x = 0, y = 0, z = 0 }, group = { [0] = 'b', [3] = 'a' } } } })
+  assert(dash.loadedNodes(7) == nil, 'nothing kept while the switch is off')
+  reset({ on = true })
+  dash.captureLoading(7, { model = 'ferax', nodes = { dsh = { name = 'dsh', pos = { x = 0, y = 0, z = 0 }, group = { [0] = 'b', [3] = 'a' } },
+    cam = { name = 'cam', pos = { x = 1, y = 0, z = 0 } } } })
+  local l = dash.loadedNodes(7, 'ferax', 'cam')
+  assert(#l == 1 and l[1].groups[1] == 'a' and l[1].groups[2] == 'b', 'all groups kept, camera node left out')
+  assert(dash.loadedNodes(7, 'pigeon') == nil, 'another model is not mixed up')
+  for i = 1, dash.KEEP_LOADED do dash.captureLoading(100 + i, { model = 'x', nodes = { a = { name = 'a', pos = { x = 0, y = 0, z = 0 } } } }) end
+  assert(dash.loadedNodes(7) == nil, 'only the last few cars are kept')
+  dash.forgetLoaded()
+end)
+
 print('Dash phone: ' .. total .. ' checks passed')
