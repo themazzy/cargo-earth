@@ -59,7 +59,7 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.8.7"
+VERSION = "0.9.0"
 AREA_CACHE_VERSION = "5"  # fuel depots for tanker runs; retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
@@ -1176,6 +1176,8 @@ class Radio:
 PLAYER_ALIVE_S = 20
 PLAYER_OPEN_S = 15        # a stream that has not started after this long is given up, with an error the phone shows
 STREAM_MAX = 4            # streams passed to the game at once (a station change closes the old one)
+STREAM_RECONNECTS = 3     # times a dropped station is reconnected inside one stream to the game
+STREAM_LIVE_S = 10        # ... when its connection had been running at least this long
 STREAM_TYPES = ("audio/", "application/ogg", "application/octet-stream")
 STREAMS = threading.BoundedSemaphore(STREAM_MAX)
 PS_PLAYER = r"""
@@ -1575,16 +1577,33 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     self.send_header("Connection", "close")
                     self.end_headers()
                     self.close_connection = True
+                    reconnects, since = 0, time.monotonic()
                     while True:
-                        chunk = up.read1(16384) if hasattr(up, "read1") else up.read(16384)
+                        try:
+                            chunk = up.read1(16384) if hasattr(up, "read1") else up.read(16384)
+                        except Exception:  # noqa: BLE001 - a dropped or stalled station: reconnect below
+                            chunk = b""
                         if not chunk:
-                            break
+                            # The station dropped the connection or stalled. Reconnect a few times inside the same
+                            # answer, so the game hears a short gap instead of an error (MP3 and OGG pick up again).
+                            # Only a connection that ran a while: a short file that simply ends is not repeated.
+                            if reconnects >= STREAM_RECONNECTS or time.monotonic() - since < STREAM_LIVE_S:
+                                break
+                            reconnects += 1
+                            try:
+                                up.close()
+                                up = urllib.request.urlopen(req, timeout=15)
+                                since = time.monotonic()
+                            except Exception:  # noqa: BLE001
+                                break
+                            continue
                         try:
                             self.wfile.write(chunk)
                         except OSError:       # the game closed it: another station, Stop, or the game quit
                             break
                         with NETWORK_LOCK:
                             NETWORK["bytes"] += len(chunk)
+                    up.close()
             finally:
                 STREAMS.release()
 

@@ -1845,6 +1845,13 @@ test('tow rules: who can tow, offers to a workshop, cars on board, damage costs 
   assert(#heavy.tow.cars == 2 and heavy.trailer == 'flatbed' and heavy.pay > tow.pay('light', heavy.km))
   assert(#tow.offers('light', 50, 14, addresses, function() return nil end, { 'covet' }) == 0, 'no workshop near: no job')
   assert(#tow.offers('light', 50, 14, addresses, workshop, {}) == 0, 'no cars in the game: no job')
+  local byRoad = tow.offers('light', 50, 14, addresses, workshop, { 'covet' }, function() return 1 end, nil, function() return 17.5 end)[1]
+  assert(byRoad.km == 17.5 and byRoad.pay == tow.pay('light', 17.5), 'paid by the road when the graph knows it')
+  -- far breakdowns are rarer: with rnd always at the top, an address 7 km out is never picked, one 2 km out is
+  local far = { { 50.063, 14, 50.063, 14, 'Edge 1', 'Village' } }
+  assert(#tow.offers('light', 50, 14, far, workshop, { 'covet' }, function(n) return n end) == 0)
+  local near = { { 50.018, 14, 50.018, 14, 'Close 1', 'Town' } }
+  assert(#tow.offers('light', 50, 14, near, workshop, { 'covet' }, function(n) return n end) == 1)
   assert(tow.onBoard({ 1, 5.9, 7, nil }) == 2)
   assert(tow.condition(0) == 100 and tow.condition(600) == 90 and tow.condition(1e9) == 100 - tow.MAX_LOSS)
 end)
@@ -2097,9 +2104,18 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   core.settingsDo('dash', 'on')
   assert(#respawns == 1, 'already on this car')
   -- each press moves it 1 cm and rebuilds the car
+  -- presses close together are applied with one reload, once they stop
   st = core.settingsDo('dash', 'z+').dash
-  assert(#respawns == 2, 'respawns ' .. #respawns .. ' ' .. tostring(st.error)) assert(st.nudge.z == 1, tostring(st.nudge.z)) assert(dash.treeHasPhone(respawns[2].partsTree))
+  assert(st.moving and #respawns == 1 and st.nudge.z == 1, 'not reloaded at once')
+  core.settingsDo('dash', 'z+')
+  core.settingsDo('dash', 'z-')
+  advance(core, 2)
+  assert(#respawns == 1, 'still waiting for the presses to stop')
+  advance(core, 2)
+  st = core.settingsState().dash
+  assert(#respawns == 2 and not st.moving, 'respawns ' .. #respawns .. ' ' .. tostring(st.error)) assert(st.nudge.z == 1, tostring(st.nudge.z)) assert(dash.treeHasPhone(respawns[2].partsTree))
   core.settingsDo('dash', 'reset')
+  advance(core, 4)
   assert(#respawns == 3 and not core.settingsState().dash.nudged)
   -- a new car: a moment after it appears, it gets the phone too, and only one try
   v = { id = 10, model = 'pigeon', config = { partsTree = { children = {} } }, data = { vdata = vdata } }
@@ -2142,6 +2158,7 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   advance(core, 8)
   assert(#respawns == 7)
   core.settingsDo('dash', 'reset')
+  advance(core, 4)
   assert(#respawns == 8)
   -- switched off normally: taken out of the car
   v.config = respawns[4]
@@ -2167,12 +2184,158 @@ test('Settings puts the phone on the dash of the car you drive, and each new car
   advance(core, 10)
   assert(conditions >= 1, 'condition restored after the reload')
   core.G.isOwned = function() return false end
+  -- a loaded car keeps no node groups (the game deletes them): the car is reloaded once, unchanged, and measured from
+  -- its nodes as it loads
+  local bare = {}
+  for k, n in pairs(nodes) do bare[k] = { cid = n.cid, name = n.name, pos = n.pos } end
+  v = { id = 12, model = 'ferax', config = { partsTree = { chosenPartName = 'ferax', children = {} } },
+    data = { vdata = { nodes = bare, cameras = vdata.cameras } } }
+  local before = #respawns
+  st = core.settingsDo('dash', 'on').dash
+  assert(not st.error and #respawns == before + 1 and not dash.treeHasPhone(respawns[#respawns].partsTree), 'reloaded unchanged')
+  local loading = {}
+  for _, n in pairs(nodes) do loading[n.name] = { name = n.name, cid = n.cid, pos = n.pos, group = n.group } end
+  core.onJbeamLoadingPhase2(nil, 12, { model = 'ferax', nodes = loading })
+  core.onVehicleSpawned(12)
+  advance(core, 5)
+  assert(#respawns == before + 2 and dash.treeHasPhone(respawns[#respawns].partsTree) and dash.spot('ferax'), 'measured as it loaded')
+  -- measured again: a car from the game's cache is reloaded, and the measurement is not forgotten on the way
+  v.config = copy(respawns[#respawns])
+  dash.forgetLoaded()
+  local old = dash.spot('ferax')
+  st = core.settingsDo('dash', 'measure').dash
+  assert(not st.error and #respawns == before + 3, 'reloaded to measure')
+  core.onJbeamLoadingPhase2(nil, 12, { model = 'ferax', nodes = loading })
+  core.onVehicleSpawned(12)
+  advance(core, 25)
+  assert(#respawns == before + 4 and dash.spot('ferax') ~= old, 'measured again after the reload')
   dash.setOn(false)
   -- no dash to stand on
   v = { id = 11, model = 'unicycle', config = { partsTree = { children = {} } }, data = {} }
   st = core.settingsDo('dash', 'on').dash
-  assert(st.error and #respawns == 10)
+  assert(st.error and #respawns == before + 4)
   dash.setOn(false)
+end)
+
+test('the phone\'s offline screen switches between food delivery and freight', function()
+  local core, s = fresh()
+  assert(s.mode == 'courier' and core.phoneState().canSwitch)
+  core.phoneAction('mode', 'trucking')
+  assert(s.mode == 'trucking', 'switched from the phone')
+  core.phoneAction('online')
+  core.phoneAction('mode', 'courier')
+  assert(s.mode == 'trucking', 'not while online')
+  core.phoneAction('offline')
+  core.phoneAction('mode', 'os.exit')
+  assert(s.mode == 'trucking')
+  core.phoneAction('mode', 'courier')
+  assert(s.mode == 'courier')
+end)
+
+test('the buttons beside the dash phone switch online and offline, and pass the rest to the phone', function()
+  local core, s = fresh()
+  assert(not s.phone.online)
+  core.dashButton('online')
+  assert(s.phone.online, 'online')
+  core.dashButton('online')
+  assert(not s.phone.online, 'and offline again')
+  local asked = {}
+  local real = core.phoneAction
+  core.phoneAction = function(a) asked[#asked + 1] = a end
+  core.dashButton('accept') core.dashButton('decline') core.dashButton('gps') core.dashButton('os.exit')
+  core.phoneAction = real
+  assert(#asked == 3 and asked[1] == 'accept' and asked[2] == 'decline' and asked[3] == 'gps')
+end)
+
+test('one radio for both phones: the UI page plays it while it checks in, else the helper', function()
+  local helper = require('cargoEarth/helper')
+  local ask, command, enabled, commanding = helper.ask, helper.command, helper.enabled, helper.commanding
+  local cmds, stored = {}, nil
+  local host, port = helper.HOST, helper.PORT
+  helper.enabled, helper.HOST, helper.PORT = true, '127.0.0.1', 47820
+  helper.ask = function() end
+  helper.command = function(path, cb) cmds[#cmds + 1] = { path, cb } end
+  helper.commanding = function() return false end
+  local ok, why = pcall(function()
+    local core = fresh()
+    core.radioStore = { read = function() return stored end, write = function(t) stored = t end }
+    local ID = '96202f73-0601-11e8-ae97-52543be04c81'
+    local st = { id = ID, name = 'Rádio Jih', url = 'http://a/stream', codec = 'MP3', kbps = 128, country = 'CZ', ['$$hashKey'] = 'x' }
+    local function last() return cmds[#cmds] and cmds[#cmds][1] or '' end
+    assert(core.phoneState().radio == nil and core.radioState().radio.status == 'idle')
+    -- the dash phone alone (no UI page checks in): the helper plays
+    local r = core.radioDo('play', st).radio
+    assert(r.on and r.seq == 1 and r.mode == 'helper' and r.status == 'loading' and r.station.name == 'Rádio Jih')
+    assert(last():find('/v1/player/play?id=' .. ID, 1, true), last())
+    assert(stored and stored.last.id == ID, 'the last station is kept')
+    assert(core.phoneState().radio.name == 'Rádio Jih' and core.phoneState().radio.seq == 1)
+    -- the UI page checks in: it plays, the helper stops
+    local n = #cmds
+    local p = core.radioDo('page', -1, 'idle', '')
+    assert(p.radio.mode == 'page' and p.radio.on and p.stream and p.radio.saved == nil, 'the page hears it in short')
+    assert(#cmds == n + 1 and last() == '/v1/player/stop')
+    core.radioDo('page', 1, 'playing', '')
+    assert(core.radioState().radio.status == 'playing' and core.phoneState().radio.status == 'playing')
+    -- the page cannot play a stream: the helper plays that one
+    core.radioDo('page', 1, 'error', 'error 4')
+    r = core.radioState().radio
+    assert(r.alone and r.mode == 'helper' and r.why:find('error 4', 1, true) and last():find('/v1/player/play', 1, true))
+    cmds[#cmds][2]({ playing = true, sound = true, secs = 2 })
+    assert(core.radioState().radio.status == 'playing')
+    -- the helper's player stopped by itself: stopped, Play works again
+    cmds[#cmds][2]({ playing = false })
+    assert(core.radioState().radio.status == 'idle' and not core.radioState().radio.on)
+    -- a new station from the other phone, played by the page again
+    local two = { id = '96202f73-0601-11e8-ae97-52543be04c82', name = 'Two', url = 'https://b/s', codec = 'OGG' }
+    r = core.radioDo('play', two).radio
+    assert(r.seq == 2 and not r.alone and r.mode == 'page')
+    assert(core.radioDo('play', two).radio.seq == 2, 'pressing the playing station again changes nothing')
+    -- the page went away (the UI reloaded): after a few seconds the helper plays
+    advance(core, math.ceil(core.RADIO_PAGE_S / 0.5) + 2)
+    assert(core.radioState().radio.mode == 'helper' and last():find('/v1/player/play?id=' .. two.id, 1, true))
+    core.radioDo('stop')
+    assert(last() == '/v1/player/stop' and not core.radioState().radio.on)
+    -- the helper failed (not running): Play on the same station tries again
+    core.radioDo('play', st)
+    cmds[#cmds][2](nil, 'connection refused')
+    assert(core.radioState().radio.status == 'error')
+    local n2 = #cmds
+    local again = core.radioDo('play', st).radio
+    assert(#cmds == n2 + 1 and last():find('/v1/player/play?id=' .. ID, 1, true) and again.status == 'loading', 'tried again')
+    core.radioDo('stop')
+    -- AAC goes to the helper, bad streams to an error
+    r = core.radioDo('play', { id = 'c', name = 'AAC', url = 'http://c/s', codec = 'AAC+' }).radio
+    assert(r.alone)
+    r = core.radioDo('play', { id = 'x', name = 'Bad', url = 'javascript:alert(1)' }).radio
+    assert(r.status == 'error' and not r.on)
+    -- volume, the player setting and saved stations are kept for both phones
+    core.radioDo('vol', 0.3)
+    core.radioDo('via', 'helper')
+    core.radioDo('fav', st)
+    core.radioDo('fav', two)
+    core.radioDo('fav', st)
+    r = core.radioState().radio
+    assert(r.vol == 0.3 and r.via == 'helper' and #r.saved == 1 and r.saved[1].id == two.id and r.saved[1]['$$hashKey'] == nil)
+    assert(stored.vol == 0.3 and stored.via == 'helper' and #stored.saved == 1)
+    -- an older version's settings from the UI page come in once, and only when nothing is kept yet
+    core.radioDo('import', { vol = 0.9, saved = {} })
+    assert(core.radioState().radio.vol == 0.3, 'kept settings win')
+    local again = fresh()
+    stored = nil
+    again.radioStore = { read = function() return stored end, write = function(t) stored = t end }
+    again.radioDo('import', { vol = 0.9, via = 'page', last = st, saved = { st, { id = 'bad' } } })
+    r = again.radioState().radio
+    assert(r.vol == 0.9 and #r.saved == 1 and r.station.id == ID and not r.on)
+    -- Work or Radio is the same on both phones; a ringing order shows Work
+    assert(again.phoneState().tab == 'orders')
+    again.phoneTab('radio')
+    assert(again.phoneState().tab == 'radio')
+    again.phoneTab('os.exit')
+    assert(again.phoneState().tab == 'radio')
+  end)
+  helper.ask, helper.command, helper.enabled, helper.commanding = ask, command, enabled, commanding
+  helper.HOST, helper.PORT = host, port
+  assert(ok, why)
 end)
 
 test('the Menu window opens in the Menu app, else the floating phone, else on the asking phone', function()
@@ -2228,3 +2391,148 @@ do
   assert(layout.ensure(refuse, flag) == nil and written == nil, 'a refused insert is not recorded as done')
   print('PASS the phone goes into the .Earth layout above the speedometer, once')
 end
+
+test('food customers: nearer and same-town addresses are likelier, a long road detour is skipped', function()
+  assert(food.customerWeight(1, true) == 1)
+  assert(food.customerWeight(1, false) == food.OTHER_TOWN, 'another village is less likely')
+  assert(food.customerWeight(4, true) < 0.3, 'a far address is less likely')
+  assert(food.customerWeight(1, nil) == 1, 'no town known: no town weight')
+  -- a city: the address names its quarter, the restaurants the city
+  local city = food.index({cats = {}, tile = 0.05, restaurants = {{'a', 50.08, 14.42, 50.08, 14.42, 'A', 'pizza', 'Praha'},
+    {'b', 50.03, 14.49, 50.03, 14.49, 'B', 'pizza', 'Praha'}, {'c', 50.2, 14.6, 50.2, 14.6, 'C', 'pizza', 'Libiš'}}}, function() end)
+  assert(food.inTown(city, city.restaurants[1], 50.031, 14.491, 'Chodov') == true, 'Chodov is in Praha')
+  assert(food.inTown(city, city.restaurants[1], 50.2, 14.601, 'Libiš') == false, 'Libiš is not')
+  assert(food.inTown(city, {town = ''}, 50.2, 14.601, 'Libiš') == nil)
+  local north = food.index({cats = {}, tile = 0.05, restaurants = {{'n', 60, 18.0301, 60, 18.0301, 'N', 'pizza', 'Uppsala'}}}, function() end)
+  assert(food.inTown(north, north.restaurants[1], 60, 18.0149, 'Luthagen') == true, 'narrow longitude cells far north')
+  -- a town of 9 addresses next to the restaurant and a village of 30 further out
+  local rows = {}
+  for i = 1, 9 do rows[#rows + 1] = {50 + 0.007 + 0.001 * (i % 3), 14 + 0.001 * math.floor(i / 3), 50 + 0.007, 14, 'Town ' .. i, 'Town'} end
+  for i = 1, 30 do rows[#rows + 1] = {50 + 0.03 + 0.001 * (i % 6), 14 + 0.001 * math.floor(i / 6), 50.03, 14, 'Village ' .. i, 'Village'} end
+  local pack = {cats = {pizza = 'Pizza'}, tile = 0.05, restaurants = {{'r1', 50, 14, 50, 14, 'Pizza', 'pizza', 'Town'}}}
+  local idx = food.index(pack, function(row, col) if row == 1000 and col == 280 then return rows end end)
+  local seed, town, total = 7, 0, 0
+  local function rnd(n) seed = (seed * 1103515245 + 12345) % 2147483648 return seed % n + 1 end
+  for _ = 1, 60 do
+    local list = food.generate(idx, {count = 1, autoReach = false, nearKm = 3, minKm = 0.5, maxKm = 5}, 50, 14, rnd, 1)
+    if list[1] then total = total + 1; if list[1].to.town == 'Town' then town = town + 1 end end
+  end
+  assert(total > 40 and town / total > 0.6, 'most orders stay in the restaurant\'s town: ' .. town .. '/' .. total)
+  -- the road graph says the village is 9 km away by road: never offered; an unknown road falls back to the estimate
+  local road = function(_, to) if to[1] > 50.02 then return false end return 0.9 end
+  for _ = 1, 20 do
+    local list = food.generate(idx, {count = 1, autoReach = false, nearKm = 3, minKm = 0.5, maxKm = 5}, 50, 14, rnd, 1, road)
+    assert(not list[1] or (list[1].to.town == 'Town' and list[1].km == 0.9 and list[1].roadKnown), 'paid by the road: ' .. tostring(list[1] and list[1].to.town) .. ' ' .. tostring(list[1] and list[1].km))
+  end
+end)
+
+test('road distance on the game graph: shortest way, a cap, and nil where the graph has no way', function()
+  local roads = require('cargoEarth/roads')
+  roads._reset()
+  local function n(x, y, links) return {pos = {x = x, y = y, z = 0}, links = links or {}} end
+  -- a river between A and B: the only bridge is 2 km upstream
+  local graph = {nodes = {A = n(0, 0, {U = {}}), U = n(0, 2000, {V = {}}), V = n(300, 2000, {B = {}}), B = n(300, 0), C = n(5000, 5000)}}
+  local km = roads.km(graph, {{'A', 10}}, {{'B', 10}}, 10)
+  assert(km and math.abs(km - 4.32) < 0.01, tostring(km))
+  assert(roads.km(graph, {{'A', 0}}, {{'B', 0}}, 1) == false, 'longer than the cap')
+  assert(roads.km(graph, {{'A', 0}}, {{'C', 0}}, 50) == nil, 'not connected: unknown, not too far')
+end)
+
+test('road distance: two points on one edge, and the nearer end of the goal edge', function()
+  local roads = require('cargoEarth/roads')
+  roads._reset()
+  local function n(x, y, links) return {pos = {x = x, y = y, z = 0}, links = links or {}} end
+  local graph = {nodes = {P = n(0, 0, {Q = {}}), Q = n(2000, 0)}}
+  local km = roads.km(graph, {{'P', 700}, {'Q', 1300}}, {{'P', 1300}, {'Q', 700}}, 5)
+  assert(km and math.abs(km - 0.6) < 0.001, 'along the shared edge: ' .. tostring(km))
+  -- the goal edge's far end is reached first by the heuristic, but its near end is the shorter way
+  roads._reset()
+  local g2 = {nodes = {S = n(0, 0, {A = {}, B = {}}), A = n(1000, 0), B = n(0, 1000)}}
+  local k2 = roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 5)
+  assert(k2 and math.abs(k2 - 1.05) < 0.001, tostring(k2))
+  assert(roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 1) == false, 'the cap counts the whole way')
+end)
+
+local truckIdx = jobs.index({depots = {
+  {id = 'yard', n = 'Warehouse', t = 'producer', s = 'M', g = {50, 14}},
+  {id = 'shop1', n = 'Shop One', t = 'receiver', s = 'M', g = {50.03, 14}},
+  {id = 'shop2', n = 'Shop Two', t = 'receiver', s = 'M', g = {50.045, 14}},
+  {id = 'far1', n = 'Far One', t = 'receiver', s = 'M', g = {50.14, 14}},
+  {id = 'far2', n = 'Far Two', t = 'receiver', s = 'M', g = {50.2, 14}},
+}, cargo = idx.cargo, trailers = {}, types = idx.types})
+
+test('company board: trucks only once unlocked, quoted for the truck, reputation shared per yard', function()
+  local vanOnly = employment.board(truckIdx, {lat = 50, lon = 14})
+  for _, o in ipairs(vanOnly) do assert(o.tier == 'van', 'no trucks before they unlock') end
+  local board = employment.board(truckIdx, {lat = 50, lon = 14}, 'rigid')
+  local van, rigid
+  for _, o in ipairs(board) do if o.tier == 'van' then van = o elseif o.tier == 'rigid' then rigid = o end end
+  assert(van and rigid and not employment.board(truckIdx, {lat = 50, lon = 14}, 'rigid')[3], 'one van and one box truck contract')
+  assert(rigid.id ~= van.id and rigid.companyId == van.companyId and van.id == van.companyId)
+  assert(rigid.vehicle == haul.loaners.rigid.name)
+  for _, j in ipairs(rigid.jobs) do assert(j.haul.tier == 'rigid' and j.km >= 12 and j.km <= 40, tostring(j.km)) end
+  assert(rigid.wages > van.wages)
+  -- the truck's real boxes hold less than the quote: it loads what fits
+  local c = {money = 0}
+  assert(employment.begin(c, rigid, {}, {}, 'trucking'))
+  assert(c.employment.tier == 'rigid' and c.employment.companyId == van.companyId)
+  local rows = {{id = 1, cargoTypes = {'parcel'}, capacity = 96, targetVolume = 0, currentVolume = 0}}
+  employment.fit(c.employment, rows)
+  assert(c.employment.jobs[1].haul.amount == 96 and haul.plan(rows, c.employment.jobs[1].haul))
+end)
+
+test('an unlocked box truck comes with its contract; company vehicles do no other work', function()
+  local core, s = fresh()
+  s.idx = truckIdx
+  s.career.hauls = {van = 5}
+  core.setMode('trucking')
+  advance(core, 2)
+  local list = core.phoneState().trucking.contracts
+  local truck
+  for _, c in ipairs(list) do if c.vehicle == haul.loaners.rigid.name then truck = c end end
+  assert(truck and #list == 2, 'the nearest van and box truck contracts')
+  core.phoneAction('contractStart', truck.id)
+  advance(core, 2)
+  assert(vehicle.model == 'md_series' and s.career.garage.car.company and s.job and s.job.haul.tier == 'rigid')
+  -- the company truck cannot take food orders or the player's own freight
+  local own = {id = 'own', kind = 'cargo', from = s.job.from, to = s.job.to, km = 1, pay = 100}
+  local before = #s.orders
+  s.offers = {own}
+  core.take(1)
+  assert(#s.orders == before, 'own job refused in the company truck')
+end)
+
+test('old freight loaners leave My cars and cannot work for the player', function()
+  local garage = require('cargoEarth/garage')
+  local core, s = fresh()
+  s.career.garage.parked = {{model = 'van', key = 'h15_vanster', name = 'H-Series cargo van (loaner)', loaner = true, fleetId = 7},
+    {model = 'pigeon', key = 'base', name = 'Old Pigeon', fleetId = 8}}
+  s.career.garage.freightLoaners = {van = true}
+  garage.retireLoaners(s.career.garage)
+  assert(#s.career.garage.parked == 1 and s.career.garage.parked[1].fleetId == 8 and not s.career.garage.freightLoaners)
+  s.career.garage.car.loaner = true
+  core.phoneAction('online')
+  assert(not s.phone.online, 'no going online in a loaner')
+  core.setMode('trucking')
+  advance(core, 2)
+  local t = core.phoneState().trucking
+  assert(not t.carrier and t.contracts, 'a loaner is not your own carrier')
+end)
+
+test('freight without a van of your own lists company contracts and no loaner; a contract starts from the phone', function()
+  local core, s = fresh()
+  core.setMode('trucking')
+  advance(core, 2)
+  local state = core.phoneState()
+  assert(state.trucking and not state.trucking.carrier and state.trucking.canLoan == nil, 'no loaner offer')
+  assert(#state.trucking.contracts == 1 and state.trucking.contracts[1].wages > 0, 'the nearby contract is listed')
+  local id = state.trucking.contracts[1].id
+  pose.speed = 15
+  local moving = core.phoneAction('contractStart', id)
+  assert(not s.career.employment and moving.trucking.error == 'Park at the company yard first.', tostring(moving.trucking.error))
+  pose.speed = 0
+  core.phoneAction('contractStart', id)
+  advance(core, 2)
+  assert(core.phoneState().trucking == nil or core.phoneState().trucking.error == nil, 'the failure clears')
+  assert(s.career.employment and s.job, 'the company van and the first delivery come with the contract')
+end)

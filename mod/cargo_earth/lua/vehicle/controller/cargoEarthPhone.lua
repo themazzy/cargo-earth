@@ -35,6 +35,17 @@ local function tap(col, row)
   js(string.format('window.cargoEarthDash && cargoEarthDash.tap(%.4f, %.4f)', (col - 0.5) / cols, (row - 0.5) / rows))
 end
 
+-- a press on one of the labelled buttons beside the phone (cargoEarth/dash.lua M.BUTTONS): scrolling happens in the
+-- page, everything else in the game
+local GAME_BUTTONS = { online = true, accept = true, decline = true, gps = true }
+local function button(name)
+  if name == 'up' or name == 'down' then
+    js(string.format('window.cargoEarthDash && cargoEarthDash.scroll(%d)', name == 'up' and -1 or 1))
+  elseif GAME_BUTTONS[name] then
+    obj:queueGameEngineLua(string.format('if cargoEarth_core and cargoEarth_core.dashButton then cargoEarth_core.dashButton(%q) end', name))
+  end
+end
+
 -- the game's answer to one of the page's questions (id), already JSON
 local function reply(id, json)
   js(string.format('window.cargoEarthDash && cargoEarthDash.reply(%d, %s)', tonumber(id) or 0, json or 'null'))
@@ -42,6 +53,7 @@ end
 
 M.init = init
 M.tap = tap
+M.button = button
 M.reply = reply
 
 return M

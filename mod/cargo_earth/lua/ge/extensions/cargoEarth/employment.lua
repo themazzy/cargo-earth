@@ -4,14 +4,25 @@ local jobs = require('cargoEarth/jobs')
 local haul = require('cargoEarth/haul')
 local economy = require('cargoEarth/economy')
 local M = { SHARE = 0.8, RADIUS = 60, PREPARE_TIMEOUT = 25, INDEPENDENT_REP = 20 }
-local container = { { id = 1, cargoTypes = { 'parcel' }, capacity = 96 } }
+-- Company vehicles by tier: the van always, the box truck and the tractor once freight progress unlocks them.
+-- The contracts stay short (two deliveries out of one yard) so a shift fits one sitting even in a truck.
+M.KM = { van = { 1, 20 }, rigid = { 12, 40 }, semi = { 20, 60 } }
+M.PER_TIER = { van = 5, rigid = 3, semi = 3 }
+-- What the company vehicle carries, for quoting. The loaded amounts are fitted to the real containers at the yard.
+local containers = {
+  van = { { id = 1, cargoTypes = { 'parcel' }, capacity = 96 } },
+  rigid = { { id = 1, cargoTypes = { 'parcel' }, capacity = haul.tiers.rigid.parcel } },
+  semi = {},
+}
+M.TIERS = { 'van', 'rigid', 'semi' }
 
-function M.board(idx, pose)
-  if not idx or not pose then return {} end
-  local options = { nearKm = 25, minKm = 1, maxKm = 20, count = 60, adr = false,
-    allowCargo = function(id) return haul.freight('van', id, container) ~= nil end }
+local function tierBoard(idx, pose, tier, board)
+  local rows, range = containers[tier], M.KM[tier]
+  local options = { nearKm = 25, minKm = range[1], maxKm = range[2], count = 60, adr = false,
+    requireValidatedSites = tier ~= 'van' or nil,
+    allowCargo = function(id) return haul.freight(tier, id, rows) ~= nil end }
   -- Fixed selection for this area: opening the phone repeatedly does not reroll the quote.
-  local seed = 19
+  local seed = tier == 'van' and 19 or tier == 'rigid' and 23 or 29
   local function rnd(n) seed = (seed * 16807.0) % 2147483647 return seed % n + 1 end
   -- Query one yard at a time so a dense city cannot fill the shortlist with one job per yard.
   local near = {}
@@ -26,19 +37,21 @@ function M.board(idx, pose)
     end
   end
   table.sort(near, function(a, b) if a.km == b.km then return a.depot.id < b.depot.id end return a.km < b.km end)
-  local board = {}
+  local t, added = haul.tiers[tier], 0
   for i = 1, math.min(16, #near) do
     local one = { depots = { near[i].depot }, types = idx.types, cargo = idx.cargo, acceptors = idx.acceptors }
     options.count = 2
     local generated = jobs.generate(one, options, pose.lat, pose.lon, rnd)
     if #generated == 2 then
       local first = generated[1]
-      local offer = {id = 'company:' .. first.from.id, name = 'Earth Logistics - ' .. first.from.n,
+      local company = 'company:' .. first.from.id
+      local offer = {id = tier == 'van' and company or company .. ':' .. tier, companyId = company, tier = tier,
+        vehicle = haul.loaners[tier].name, name = 'Earth Logistics - ' .. first.from.n,
         yard = first.from, jobs = {}, gross = 0, km = 0, pickupKm = first.pickupKm, fictional = true}
       for _, j in ipairs(generated) do
-        if haul.prepare(j, 'van', container, idx) then
+        if haul.prepare(j, tier, rows, idx) then
           -- Each delivery ends with an empty drive back to the yard: the company pays those km too.
-          local back = haul.tiers.van.rate * j.km * (idx.cargo[j.cargo].pay or 1)
+          local back = t.rate * j.km * (idx.cargo[j.cargo].pay or 1)
           j.pay = math.floor((j.pay + back) / 5 + 0.5) * 5
           offer.jobs[#offer.jobs + 1] = j
           offer.gross, offer.km = offer.gross + j.pay, offer.km + j.km * 2
@@ -46,11 +59,22 @@ function M.board(idx, pose)
       end
       if #offer.jobs == 2 then
         offer.wages = math.floor(offer.gross * M.SHARE + 0.5)
-        offer.minutes = math.ceil(offer.km / 35 * 60 + 8)
+        offer.minutes = math.ceil(offer.km / (tier == 'van' and 35 or t.speed) * 60 + (tier == 'van' and 8 or t.slack))
         board[#board + 1] = offer
-        if #board == 5 then break end
+        added = added + 1
+        if added == M.PER_TIER[tier] then break end
       end
     end
+  end
+end
+
+-- unlocked: the highest freight tier the player may drive ('van' when left out).
+function M.board(idx, pose, unlocked)
+  if not idx or not pose then return {} end
+  local board = {}
+  for _, tier in ipairs(M.TIERS) do
+    tierBoard(idx, pose, tier, board)
+    if tier == (unlocked or 'van') then break end
   end
   return board
 end
@@ -73,13 +97,28 @@ end
 function M.begin(c, offer, personal, companyGarage, mode, independent)
   if c.employment then return false, 'Finish or end your company contract first.' end
   if not offer or #offer.jobs ~= 2 then return false, 'Refresh the company board.' end
-  local reputation = c.companies and c.companies[offer.id] and c.companies[offer.id].reputation or 0
+  local companyId = offer.companyId or offer.id
+  local reputation = c.companies and c.companies[companyId] and c.companies[companyId].reputation or 0
   if independent and reputation < M.INDEPENDENT_REP then return false, 'Build 20 reputation with this company to unlock independent contracts.' end
-  local shift = { id = economy.nextId(c, 'shift'), companyId = offer.id, companyName = offer.name, yard = offer.yard,
+  local shift = { id = economy.nextId(c, 'shift'), companyId = companyId, tier = offer.tier or 'van', companyName = offer.name, yard = offer.yard,
     jobs = M.copyJobs(offer.jobs), index = 1, completed = 0, failed = 0, quality = 0, vehicleDamage = 0, gross = 0, phase = independent and 'working' or 'preparing',
     personalGarage = personal, previousMode = mode, ownerOperator = independent == true, share = independent and 1 or M.SHARE }
   c.employment = shift
   return true
+end
+
+-- The company vehicle's real containers can hold less than the quote assumed: load what fits, same pay.
+function M.fit(shift, rows)
+  for i = shift.index, #shift.jobs do
+    local j = shift.jobs[i]
+    if j.haul and not haul.plan(rows, j.haul) then
+      local f = haul.freight(j.haul.tier, j.cargo, rows)
+      if f then
+        for k, v in pairs(j.haul) do if f[k] == nil then f[k] = v end end
+        j.haul, j.tonnes = f, f.kg / 1000
+      end
+    end
+  end
 end
 
 function M.nextJob(c)

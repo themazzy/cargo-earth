@@ -84,24 +84,66 @@ test('the part covers the screen with a 6 x 12 click grid and moves with the nud
   local spot = assert(dash.findSpot(car(EYE), EYE))
   local part = dash.buildPart(spot)
   assert(part.slotType == dash.SLOT and part.partName == dash.PART and part.information.value == 0)
-  assert(#part.triggers2 == 1 + dash.COLS * dash.ROWS and #part.triggerEventLinks2 == 1 + dash.COLS * dash.ROWS)
+  local n = 1 + dash.COLS * dash.ROWS + #dash.BUTTONS
+  assert(#part.triggers2 == n and #part.triggerEventLinks2 == n)
   local centre, yaw = dash.placement(spot)
   assert(part.flexbodies[2][1] == 'cargo_earth_phone_body' .. dash.meshSuffix(yaw))
   assert(part.flexbodies[3][1] == 'cargo_earth_phone_screen' .. dash.meshSuffix(yaw))
   assert(part.flexbodies[2][2][1] == spot.group and near(part.flexbodies[2][4].pos.z, centre.z, 1e-4))
-  local first, last = part.triggers2[2], part.triggers2[#part.triggers2]
+  local first, last = part.triggers2[2], part.triggers2[1 + dash.COLS * dash.ROWS]
+  -- the game reads every part's rows in the first part's header order, so the header is the stock cars' one, in order
+  local stock = { 'id', 'idRef:', 'idX:', 'idY:', 'type', 'size', 'baseRotation', 'rotation', 'translation', 'baseTranslation' }
+  for i, h in ipairs(stock) do assert(part.triggers2[1][i] == h, 'header column ' .. i) end
+  assert(#part.triggers2[1] == #stock and #first == #stock + 1 and first[5] == 'box' and type(first[#first].baseTranslationGlobal) == 'table')
   assert(first[1] == 'cep_1_1' and first[2] == spot.ref.name and first[3] == spot.x.name and first[4] == spot.y.name)
-  local a, b = first[10].baseTranslationGlobal, last[10].baseTranslationGlobal
+  local a, b = first[11].baseTranslationGlobal, last[11].baseTranslationGlobal
   assert(a.z > b.z and near(a.z - b.z, dash.SCREEN_H * (dash.ROWS - 1) / dash.ROWS, 1e-3), 'top row above the bottom row')
   assert(near((a.x + b.x) / 2, centre.x, 3e-3) and near((a.z + b.z) / 2, centre.z, 1e-3), 'the grid is centred on the screen')
   local size = first[6]
   assert(size.x > 0 and size.y > 0 and size.z > 0)
   assert(part.triggerEventLinks2[2][3] == 'cargoEarthTap_1_1')
+  -- the labelled buttons stand beside the screen, left and right of it, and run their own actions
+  local accept, up
+  for i = n - #dash.BUTTONS + 1, n do
+    local row = part.triggers2[i]
+    if row[1] == 'ceb_accept' then accept = row end
+    if row[1] == 'ceb_up' then up = row end
+    assert(type(row[11].label) == 'string' and row[11].label ~= '')
+  end
+  assert(accept and up and part.triggerEventLinks2[n][3] == dash.buttonAction(dash.BUTTONS[#dash.BUTTONS].id))
+  local pa, pu = accept[11].baseTranslationGlobal, up[11].baseTranslationGlobal
+  local function side(p) return dash.vec.dot(dash.vec.sub(p, centre), { x = math.cos(math.rad(yaw)), y = math.sin(math.rad(yaw)), z = 0 }) end
+  assert(side(pa) > dash.SCREEN_W / 2 and side(pu) < -dash.SCREEN_W / 2, 'left and right of the screen')
   -- nudged 3 cm up: everything moves with it
   local up = dash.buildPart(spot, { x = 0, y = 0, z = 0.03 })
   assert(near(up.flexbodies[2][4].pos.z, part.flexbodies[2][4].pos.z + 0.03, 1e-4))
-  assert(near(up.triggers2[2][10].baseTranslationGlobal.z, a.z + 0.03, 1e-4))
+  assert(near(up.triggers2[2][11].baseTranslationGlobal.z, a.z + 0.03, 1e-4))
   assert(dash.meshSuffix(30) == '_yp30' and dash.meshSuffix(-5) == '_ym5' and dash.meshSuffix(0) == '_yp0')
+end)
+
+test('the click boxes lie flat on the turned phone, as the game turns a box trigger', function()
+  local spot = assert(dash.findSpot(car(EYE), EYE))
+  local v = dash.vec
+  for _, yaw in ipairs({ 0, 15, -35, 70 }) do
+    local rot, err = dash.boxTurn(spot, yaw)
+    assert(err < 1e-6, 'exact at yaw ' .. yaw .. ': ' .. err)
+    local bx, by, bz = dash.boxAxes(spot, { x = math.rad(rot.x), y = math.rad(rot.y), z = math.rad(rot.z) })
+    local across = dash.turn({ x = 1, y = 0, z = 0 }, yaw)
+    local out = dash.turn({ x = 0, y = 1, z = 0 }, yaw)
+    assert(near(v.dot(bx, across), 1, 1e-5) and near(bz.z, 1, 1e-5) and near(math.abs(v.dot(by, out)), 1, 1e-5))
+  end
+  -- a slanted frame (nodes not square to the car) still gives flat boxes
+  local skew = { ref = { name = 'a', pos = { x = 0, y = -0.5, z = 0.9 } }, x = { name = 'b', pos = { x = 0.5, y = -0.42, z = 0.95 } },
+    y = { name = 'c', pos = { x = 0.1, y = -0.7, z = 1.1 } } }
+  local _, err = dash.boxTurn(skew, 25)
+  assert(err < 1e-6, 'slanted frame: ' .. err)
+  -- without a turn the game lays the box with its y through the frame (the reason a turn is needed at all)
+  local _, by = dash.boxAxes(spot, { x = 0, y = 0, z = 0 })
+  assert(by and math.abs(by.z) < 1.000001)
+  local part = dash.buildPart(spot)
+  local row = part.triggers2[2]
+  assert(row[7].x == dash.boxTurn(spot, select(2, dash.placement(spot))).x, 'the grid rows carry the turn')
+  assert(near(row[6].x, dash.SCREEN_W / dash.COLS * 0.98) and near(row[6].y, dash.DEPTH), 'boxes the size of a cell')
 end)
 
 test('Settings: the switch, the measured spots and the nudges are kept, per car model', function()
@@ -173,6 +215,31 @@ test('the game\'s part lookup gets the slot and the part, only while the switch 
   dash.uninstall()
   assert(io.getPart == orig, 'the game\'s own functions are put back')
   dash.setOn(false)
+end)
+
+test('a loaded car keeps only first groups; the car as it loaded keeps them all', function()
+  -- after loading, the game deletes node.group and leaves node.firstGroup (a number from vdata.groups)
+  local vdata = { groups = { ferax_dash = 3, ferax_body = 0 },
+    nodes = { [0] = { name = 'dsh', cid = 0, pos = { x = 0, y = -0.55, z = 0.72 }, firstGroup = 3 },
+      [1] = { name = 'cam', cid = 1, pos = { x = 0.3, y = 0.2, z = 1.1 } } } }
+  local list = dash.nodesOf(vdata, 1)
+  assert(#list == 1 and list[1].groups[1] == 'ferax_dash', 'first group read back by number')
+  reset({ on = false })
+  dash.captureLoading(7, { model = 'ferax', nodes = { dsh = { name = 'dsh', pos = { x = 0, y = 0, z = 0 }, group = { [0] = 'b', [3] = 'a' } } } })
+  assert(dash.loadedNodes(7) == nil, 'nothing kept while the switch is off')
+  reset({ on = true })
+  dash.captureLoading(7, { model = 'ferax', nodes = { dsh = { name = 'dsh', pos = { x = 0, y = 0, z = 0 }, group = { [0] = 'b', [3] = 'a' } },
+    cam = { name = 'cam', pos = { x = 1, y = 0, z = 0 } } } })
+  local l = dash.loadedNodes(7, 'ferax', 'cam')
+  assert(#l == 1 and l[1].groups[1] == 'a' and l[1].groups[2] == 'b', 'all groups kept, camera node left out')
+  assert(dash.loadedNodes(7, 'pigeon') == nil, 'another model is not mixed up')
+  reset({ on = false })
+  dash.captureLoading(7, { model = 'ferax', nodes = {} })
+  reset({ on = true })
+  assert(dash.loadedNodes(7) == nil, 'a reload while the switch is off forgets the old nodes')
+  for i = 1, dash.KEEP_LOADED do dash.captureLoading(100 + i, { model = 'x', nodes = { a = { name = 'a', pos = { x = 0, y = 0, z = 0 } } } }) end
+  assert(dash.loadedNodes(7) == nil, 'only the last few cars are kept')
+  dash.forgetLoaded()
 end)
 
 print('Dash phone: ' .. total .. ' checks passed')

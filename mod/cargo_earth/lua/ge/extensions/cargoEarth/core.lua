@@ -5,11 +5,12 @@
 -- Everything is clicked on the phone (the UI app): orders, the garage and the settings. The debug window opens from
 -- the phone's settings (or the console: extensions.cargoEarth_core.toggleWindow()). No key bindings.
 local M = {}
-M.VERSION = '0.8.7'      -- the mod's version (package.json has the same; the support report shows it)
+M.VERSION = '0.9.0'      -- the mod's version (package.json has the same; the support report shows it)
 M.dependencies = { 'ui_imgui' }
 
 local jobs = require('cargoEarth/jobs')
 local food = require('cargoEarth/food')
+local roads = require('cargoEarth/roads')
 local cargo = require('cargoEarth/cargo')
 local earth = require('cargoEarth/earth')
 local trailers = require('cargoEarth/trailers')
@@ -407,6 +408,8 @@ local function loadCareer(c)
   records.restore(c)
   firm.restore(c)
   if type(c.garage) ~= 'table' then c.garage = garage.new() end
+  garage.retireLoaners(c.garage)
+  if c.employment and type(c.employment.personalGarage) == 'table' then garage.retireLoaners(c.employment.personalGarage) end
   c.garage.inventory = c.garage.inventory or {}
   if (c.garage.owed or 0) > 0 then c.garage.debt = (c.garage.debt or 0) + c.garage.owed end   -- older saves
   c.garage.owed, c.garage.fixUntil = nil, nil
@@ -562,6 +565,38 @@ local function modeReady()
 end
 
 -- Tow offers near the player. The workshop is your headquarters when it is close enough, else one at a fuel station.
+-- The road distance between two points (lat, lon) on the game's road graph, for food orders and tow jobs: km, false when longer
+-- than maxKm, nil when the graph does not reach both points (a road further than ROAD_SNAP_M from them).
+M.ROAD_SNAP_M = 80
+local function roadKmFn(p)
+  if not (M.G.road and p and p.x) then return nil end
+  local function ends(pt)
+    local x, y = earth.worldXY(p, pt)
+    if not x then return nil end
+    local graph, a, b, d = M.G.road(x, y, p.z)
+    if not graph or not graph.nodes or d > M.ROAD_SNAP_M then return nil end
+    local out = {}
+    for _, n in ipairs({ a, b }) do
+      local node = graph.nodes[n]
+      if node and node.pos then
+        out[#out + 1] = { n, math.sqrt((node.pos.x - x) ^ 2 + (node.pos.y - y) ^ 2) }
+      end
+    end
+    return graph, out
+  end
+  return function(from, to, maxKm)
+    local ok, km = pcall(function()
+      local graph, a = ends(from)
+      if not graph then return nil end
+      local graph2, b = ends(to)
+      if graph2 ~= graph then return nil end
+      return roads.km(graph, a, b, maxKm)
+    end)
+    if ok then return km end
+    return nil
+  end
+end
+
 local function towOffers(class, p)
   local c = S.career
   local kind = tow.CLASSES[class].trailer
@@ -583,7 +618,7 @@ local function towOffers(class, p)
       label = 'Workshop' } end
   end
   local addresses = food.addressesNear(S.fidx, p.lat, p.lon, tow.NEAR_KM)
-  local out = tow.offers(class, p.lat, p.lon, addresses, workshop, S.towCars, M.random)
+  local out = tow.offers(class, p.lat, p.lon, addresses, workshop, S.towCars, M.random, nil, roadKmFn(p))
   local factor = rating.freightPay(c)
   for _, offer in ipairs(out) do
     if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
@@ -601,7 +636,7 @@ function M.generate()
   if not p then S.offers, S.offerStats = {}, nil return end
   if S.mode == 'courier' then
     local plan = storagePlan()
-    S.offers, S.offerStats = food.generate(S.fidx, S.opts, p.lat, p.lon, nil, plan and plan.maxFree or 1)
+    S.offers, S.offerStats = food.generate(S.fidx, S.opts, p.lat, p.lon, nil, plan and plan.maxFree or 1, roadKmFn(p))
   else
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
@@ -778,6 +813,9 @@ end
 local function takeJob(j)
   if not j or S.pendingCareer or S.parts then return end
   if S.career.employment and j.companyShift ~= S.career.employment.id then return end
+  if not j.companyShift and S.career.garage.car and S.career.garage.car.loaner then
+    say('Company vehicles are for contract work only. Use your own car for your own jobs.', 5) return
+  end
   if S.job then
     -- a batched order: only food, while there is room
     if j.kind ~= 'food' or S.job.kind ~= 'food' or #S.orders >= maxOrders() then return end
@@ -1301,17 +1339,54 @@ local function incomingInfo(inc)
     leftS = math.max(0, math.floor(inc.expiresAt - S.clock + 0.5)), totalS = M.PHONE.acceptS }
 end
 
+-- Company contracts near the player for the freight page when you have no van or truck of your own: the company
+-- hands you its van or truck at the yard when you take one. The board is rebuilt when stale or after 5 km of driving.
+M.CONTRACTS_SHOWN = 3
+M.CONTRACT_MSG_S = 12   -- seconds a failed contract Route/Start message stays on the freight page
+function M.nearContracts(p)
+  if not (S.idx and p) or S.career.employment then return {} end
+  local at = S.companyBoardPos
+  if S.companyBoard == nil or (S.companyBoardDirty and S.clock >= (S.nextBoardAt or 0))
+    or (at and jobs.km(at.lat, at.lon, p.lat, p.lon) > 5) then
+    S.companyBoard = employment.board(S.idx, p, haul.state(S.career).unlocked)
+    S.companyBoardDirty, S.nextBoardAt, S.companyBoardPos = nil, S.clock + 2, { lat = p.lat, lon = p.lon }
+  end
+  -- the nearest contract of every vehicle you may drive, then the nearest of the rest
+  local rows, picked, out = {}, {}, {}
+  for _, offer in ipairs(S.companyBoard or {}) do
+    rows[#rows + 1] = { offer = offer, km = jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) }
+  end
+  table.sort(rows, function(a, b) if a.km == b.km then return a.offer.id < b.offer.id end return a.km < b.km end)
+  local seen = {}
+  for _, r in ipairs(rows) do
+    local tier = r.offer.tier or 'van'
+    if not seen[tier] and #picked < M.CONTRACTS_SHOWN then seen[tier], r.on = true, true picked[#picked + 1] = r end
+  end
+  for _, r in ipairs(rows) do
+    if not r.on and #picked < M.CONTRACTS_SHOWN then r.on = true picked[#picked + 1] = r end
+  end
+  table.sort(picked, function(a, b) if a.km == b.km then return a.offer.id < b.offer.id end return a.km < b.km end)
+  for _, r in ipairs(picked) do
+    local offer, km = r.offer, r.km
+    out[#out + 1] = { id = offer.id, name = offer.name, km = math.floor(km * 10 + 0.5) / 10, wages = offer.wages, minutes = offer.minutes,
+      vehicle = offer.vehicle or haul.loaners.van.name,
+      atYard = km * 1000 <= employment.RADIUS and not p.camera and (p.speed or 0) <= M.STOP_SPEED }
+  end
+  return out
+end
+
 local function truckingState()
   local out = haul.state(S.career)
   local g = S.career.garage
   local v, tier = freightCarrier()
   local rows = S.storage and S.storage.rows
+  -- a company vehicle outside contract work (an old loaner) counts as no vehicle of your own
+  if g.car and g.car.loaner and not S.career.employment then v, tier = nil, nil end
   out.carrier = tier and haul.tiers[tier].name or nil
-  out.canLoan = earth.status() == 'ok' and not S.job and not S.parts and not g.preview and not g.pendingUsed
-    and not (g.freightLoaners and g.freightLoaners[out.unlocked])
-  out.loanerLabel = haul.loaners[out.unlocked].label
   if not v or not tier then
-    out.hint = 'Get in a ' .. haul.loaners[out.unlocked].label .. ' to take freight jobs.'
+    -- no van or truck of your own: company contracts, the company's van is handed over at its yard
+    out.contracts = not S.job and not g.preview and M.nearContracts(earth.pose()) or {}
+    out.hint = 'Take a contract: park at its yard and the company gives you its vehicle.'
   elseif not haul.allowed(S.career, tier) then
     out.hint = 'This truck unlocks after completing the earlier stage.'
   elseif tier ~= 'semi' and not rows then
@@ -1324,7 +1399,9 @@ local function truckingState()
   elseif S.offerStats and S.offerStats.pairs == 0 then
     out.hint = 'No compatible routes nearby. Try a different depot area or widen the distance filters.'
   end
-  out.error = S.freightSetupError
+  local cm = S.contractMsg
+  if cm and (S.clock or 0) - cm.at > M.CONTRACT_MSG_S then S.contractMsg, cm = nil, nil end
+  out.error = S.freightSetupError or (cm and not S.career.employment and cm.text) or nil
   return out
 end
 
@@ -1358,7 +1435,7 @@ end
 function M.placesState()
   S.placesRequestedAt = S.clock
   if S.companyBoardDirty and not S.career.employment and S.clock >= (S.nextBoardAt or 0) then
-    S.companyBoard = employment.board(S.idx, earth.pose())
+    S.companyBoard = employment.board(S.idx, earth.pose(), haul.state(S.career).unlocked)
     S.companyBoardDirty, S.nextBoardAt = nil, S.clock + 2
   end
   local c, p = S.career, earth.pose()
@@ -1372,9 +1449,10 @@ function M.placesState()
     out.homeKm = p and jobs.km(p.lat, p.lon, c.home.g[1], c.home.g[2]) or nil
   end
   for _, offer in ipairs(S.companyBoard or {}) do
-    local company = c.companies and c.companies[offer.id]
+    local company = c.companies and c.companies[offer.companyId or offer.id]
     local km = p and jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) or nil
     out.companies[#out.companies + 1] = { id = offer.id, name = offer.name, yard = offer.yard.n,
+      vehicle = offer.vehicle or haul.loaners.van.name, van = (offer.tier or 'van') == 'van',
       km = km, routeKm = offer.km, wages = offer.wages, minutes = offer.minutes,
       reputation = company and company.reputation or 0,
       independentPay = offer.gross, independentUnlocked = company ~= nil and company.reputation >= employment.INDEPENDENT_REP,
@@ -1385,7 +1463,7 @@ function M.placesState()
     out.shift = { company = shift.companyName, phase = shift.phase, completed = shift.completed, total = #shift.jobs,
       held = math.floor(shift.gross * (shift.share or employment.SHARE) + 0.5), atYard = employment.atYard(c, p),
         failed = shift.failed or 0, vehicleDamage = shift.vehicleDamage or 0, reputationScore = employment.reputation(shift, false),
-      error = S.companyError, ownerOperator = shift.ownerOperator }
+      error = S.companyError, ownerOperator = shift.ownerOperator, vehicle = haul.loaners[shift.tier or 'van'].label }
   end
   return out
 end
@@ -1440,7 +1518,10 @@ local function companyStart(id, independent)
   if not garage.remember(M.G, g) then return false, 'Could not save your car configuration.' end
   local damage = M.G.damage and M.G.damage()
   if damage then garage.trackDamage(g, damage) end
+  local want = offer.tier or 'van'
+  if not haul.allowed(c, want) then return false, 'Unlock the ' .. haul.tiers[want].name:lower() .. ' first.' end
   if independent then
+    if want ~= 'van' then return false, 'Independent contracts are for vans.' end
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
     if g.car.loaner or tier ~= 'van' or not store or not store.rows then
@@ -1457,12 +1538,12 @@ local function companyStart(id, independent)
     S.offeredAt = nil
     return true, 'Independent contract accepted. Use your own van; keep 100% of delivery revenue and cover your vehicle costs.'
   end
-  local preset = haul.loaners.van
+  local preset = haul.loaners[want]
   local config = M.G.freightLoanerConfig and M.G.freightLoanerConfig(preset.model, preset.key)
-  if not config then return false, 'The company van configuration is unavailable in this game version.' end
+  if not config then return false, 'The company ' .. preset.label .. ' configuration is unavailable in this game version.' end
   local companyGarage = garage.new()
   companyGarage.started = true
-  companyGarage.car = { model = preset.model, key = preset.key, name = 'Company H-Series van', config = config,
+  companyGarage.car = { model = preset.model, key = preset.key, name = 'Company ' .. preset.name, config = config,
     km = 0, condition = 1, loaner = true, company = true }
   local ok, why = employment.begin(c, offer, g, companyGarage, S.mode)
   if not ok then return false, why end
@@ -1483,7 +1564,7 @@ local function companyStart(id, independent)
   S.phone.online, S.phone.incoming, S.phone.lastDone = false, nil, nil
   S.offeredAt, S.odometerPose = nil, nil
   saveCareer()
-  return true, 'Company van loading. Two deliveries, then return here for wages. The company keeps 20% and covers vehicle costs.'
+  return true, 'Company ' .. preset.label .. ' loading. Two deliveries, then return here for wages. The company keeps 20% and covers vehicle costs.'
 end
 
 function M.companyTick()
@@ -1501,11 +1582,14 @@ function M.companyTick()
     S.companyPreparedAt = S.companyPreparedAt or c.activeSeconds or 0
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
+    local want = shift.tier or 'van'
+    local rows = store and store.rows
+    if tier == want and want ~= 'semi' and rows then employment.fit(shift, rows) end
     local first = shift.jobs[shift.index]
-    if tier == 'van' and store and store.rows and haul.plan(store.rows, first.haul) then
+    if tier == want and (want == 'semi' or rows and haul.plan(rows, first.haul)) then
       shift.phase, S.companyError = 'working', nil
     elseif (c.activeSeconds or 0) - S.companyPreparedAt >= employment.PREPARE_TIMEOUT then
-      S.companyError = 'The van cargo equipment is not ready. End company work to restore your car, then try again.'
+      S.companyError = 'The company ' .. haul.loaners[want].label .. ' is not ready. End company work to restore your car, then try again.'
       return
     end
   end
@@ -1546,7 +1630,7 @@ function M.placesDo(name, value)
     if S.job or c.employment then why = 'Finish your current work before changing GPS.'
     else ok, why = earth.gps(c.home.g[1], c.home.g[2], c.home.name) end
   elseif name == 'refreshCompanies' then
-    S.companyBoard = employment.board(S.idx, p)
+    S.companyBoard = employment.board(S.idx, p, haul.state(S.career).unlocked)
     S.companyBoardDirty, S.nextBoardAt = nil, S.clock + 2
     S.placesMsg = #S.companyBoard > 0 and 'Fictional employers at mapped depot locations. Check access on arrival; you can end work without a cancellation fee.'
       or 'Looking for nearby workplaces through the helper. Contracts appear as local data loads; the Czech pack also works offline.'
@@ -1565,6 +1649,7 @@ function M.placesDo(name, value)
   elseif name == 'endCompany' then ok, why = companyReturn(true)
   end
   if why then S.placesMsg = why elseif ok then S.placesMsg = 'GPS updated.' end
+  S.placesOk = ok
   return M.placesState()
 end
 
@@ -1589,7 +1674,8 @@ function M.phoneState()
     todayCount = today.count, status = earth.status(), clock = os.date('%H:%M'), hidden = S.phoneHidden,
       helper = M.helperInfo(), saveError = S.saveError, company = c.employment and c.employment.companyName,
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
-      currency = moneyInfo(), update = M.updateInfo() }
+      currency = moneyInfo(), update = M.updateInfo(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
+      canSwitch = S.job == nil and not c.employment }
   if S.pendingCareer then
     out.screen, out.money = 'resume', S.pendingCareer.money or 0
     local savedGarage = S.pendingCareer.garage
@@ -1709,11 +1795,16 @@ function M.phoneAction(a, orderId)
   end
   if S.parts and (a == 'online' or a == 'accept') then return M.phoneState() end
   local ph = S.phone
-  if a == 'online' then
+  if a == 'online' and S.career.garage.car and S.career.garage.car.loaner and not S.career.employment then
+    say('Company vehicles are for contract work only. Use your own car for your own jobs.', 5)
+  elseif a == 'online' then
     ph.online = true
     ph.nextPingAt = S.clock + 2
   elseif a == 'offline' then
     ph.online, ph.incoming = false, nil
+  elseif a == 'mode' then
+    -- food delivery or freight, from the phone's offline screen (Settings has the same switch)
+    if not ph.online then M.setMode(orderId) end
   elseif a == 'accept' and ph.incoming then
     takeJob(ph.incoming.job)
   elseif a == 'decline' and ph.incoming then
@@ -1727,8 +1818,11 @@ function M.phoneAction(a, orderId)
     selectDelivery(orderId)
   elseif a == 'restoreTrailer' then
     M.spawnTrailer()
-  elseif a == 'loanerTruck' and S.mode == 'trucking' then
-    M.garageFreightLoaner()
+  elseif a == 'contractGps' or a == 'contractStart' then
+    -- a failure (not parked at the yard, no van config...) shows on the freight page for a while
+    S.placesOk = nil
+    M.placesDo(a == 'contractGps' and 'companyGps' or 'startCompany', orderId)
+    S.contractMsg = not S.placesOk and S.placesMsg and { text = S.placesMsg, at = S.clock or 0 } or nil
   elseif a == 'cancel' then
     M.cancel(false)
   elseif a == 'dismiss' then
@@ -1875,6 +1969,7 @@ local function learnCameraLimits(p)
 end
 
 local radioAlive   -- (the radio, below)
+local radioView    -- (the shared radio, below)
 local askUpdate    -- (the update notice, with the support report below)
 local function helperTick(p)
   if not p then return end
@@ -1977,33 +2072,197 @@ function M.radioState()
     state = not helper.enabled and 'disabled' or (not radio.cc and (p and 'nowhere' or 'noworld')) or radio.state or 'loading' }
   if radio.data then out.near, out.top = radio.data.near, radio.data.top end
   out.player = radio.player
+  out.radio = radioView()
   -- the phone's <audio> plays the station through the helper: the game's UI refuses web streams, not local ones
   if helper.enabled then out.stream = string.format('http://%s:%d/v1/stream?id=', helper.HOST, helper.PORT) end
   return out
 end
 
--- name: refresh | played (a = station id: Radio Browser counts what is listened to) | helperPlay (a = station id,
--- b = volume 0..1) | helperVolume (a = volume) | helperStop
-function M.radioDo(name, a, b)
+------------------------------------------------------------------------------------------ the radio, shared
+-- One radio for both phones (the floating UI phone and the phone in its holder on the dash): what should play, how loud,
+-- the saved stations, all kept here. Something must turn that into sound:
+--   * the game's UI page (the floating phone's app.js keeps one player on the page, alive while the phone app is
+--     hidden in the cockpit or folded) checks in with radioDo('page', ...) and plays the stream through the helper;
+--   * the helper plays it on the computer when the setting says so, when the game cannot play that station (no AAC,
+--     a refused stream), or when no UI page checks in (the dash phone alone: a car screen page plays no sound).
+M.RADIO_FILE = '/settings/cargoEarth/radio.json'
+M.RADIO_PAGE_S = 5         -- a page player that has not checked in for this long is gone: the helper plays
+M.RADIO_SAVED_MAX = 50
+radio.want = { on = false, station = nil, vol = 0.6, via = 'page', alone = false, why = '', err = false, seq = 0 }
+radio.saved = {}
+radio.page = { at = -math.huge, seq = -1, status = 'idle', why = '' }
+M.radioStore = {
+  read = function() return jsonReadFile and jsonReadFile(M.RADIO_FILE) or nil end,
+  write = function(t) if jsonWriteFile then jsonWriteFile(M.RADIO_FILE, t, true) end end,
+}
+
+local function isStationId(id) return type(id) == 'string' and #id <= 64 and id:match('^[%w%-]+$') ~= nil end
+local function radioClip(v, n) return type(v) == 'string' and v:sub(1, n) or '' end
+-- a station as the phones send it, cleaned: nil unless it has an id and a web stream
+local function keepStation(st)
+  if type(st) ~= 'table' or not isStationId(st.id) or type(st.url) ~= 'string' or not st.url:match('^https?://') then return nil end
+  return { id = st.id, name = radioClip(st.name, 120), url = st.url:sub(1, 600), codec = radioClip(st.codec, 20),
+    kbps = tonumber(st.kbps) or 0, region = radioClip(st.region, 80),
+    country = type(st.country) == 'string' and st.country:match('^%u%u$') and st.country or nil }
+end
+
+local function radioApplyPrefs(t)
+  local w = radio.want
+  if type(t.vol) == 'number' then w.vol = math.max(0, math.min(1, t.vol)) end
+  if t.via == 'helper' or t.via == 'page' then w.via = t.via end
+  w.station = keepStation(t.last) or w.station
+  if type(t.saved) == 'table' then
+    radio.saved = {}
+    for _, st in ipairs(t.saved) do
+      local k = keepStation(st)
+      if k and #radio.saved < M.RADIO_SAVED_MAX then radio.saved[#radio.saved + 1] = k end
+    end
+  end
+end
+local function radioLoadPrefs()
+  if radio.prefsLoaded then return end
+  radio.prefsLoaded = true
+  local ok, t = pcall(M.radioStore.read)
+  if ok and type(t) == 'table' then radio.prefsFound = true radioApplyPrefs(t) end
+end
+local function radioSavePrefs()
+  radio.prefsFound = true
+  local w = radio.want
+  pcall(M.radioStore.write, { v = 1, vol = w.vol, via = w.via, last = w.station, saved = radio.saved })
+end
+
+-- who makes the sound now: 'page' (the game's UI) or 'helper'
+local function radioMode()
+  local w = radio.want
+  if w.via == 'helper' or w.alone or S.clock - radio.page.at > M.RADIO_PAGE_S then return 'helper' end
+  return 'page'
+end
+
+-- the helper plays what should play, and only then
+local function radioSync()
+  local w = radio.want
+  if w.on and w.station and radioMode() == 'helper' then
+    if radio.helperSeq ~= w.seq then
+      radio.helperSeq = w.seq
+      radio.gen = (radio.gen or 0) + 1
+      radio.helperOn, radio.aliveAt = true, S.clock
+      radio.player = { playing = true, secs = 0 }
+      helper.command(string.format('/v1/player/play?id=%s&vol=%.2f', w.station.id, w.vol), onPlayer(radio.gen), '/v1/player/')
+    end
+  elseif radio.helperSeq then
+    radio.helperSeq = nil
+    radio.gen = (radio.gen or 0) + 1
+    if radio.helperOn then helper.command('/v1/player/stop', nil, '/v1/player/') end
+    radio.helperOn, radio.player = false, nil
+  end
+end
+M.radioSync = radioSync
+
+-- What both phones show: { on, station, status (idle | loading | playing | error), why, vol, via, alone, seq, mode,
+-- saved (unless light) }
+radioView = function(light)
+  radioLoadPrefs()
+  local w = radio.want
+  local status, why = 'idle', w.why
+  if w.err then status = 'error'
+  elseif w.on and w.station then
+    if radioMode() == 'helper' then
+      local p = radio.player
+      if not p or radio.helperSeq ~= w.seq then status = 'loading'
+      elseif p.playing then status = (p.sound or (tonumber(p.secs) or 0) > 0) and 'playing' or 'loading'
+      elseif p.error then
+        status = 'error'
+        why = p.error == 'old' and 'update the Cargo Earth helper'
+          or (p.error == 'helper' and 'the Cargo Earth helper is not running' or tostring(p.error))
+      else
+        -- the helper's player stopped by itself (restarted, or its watchdog): stopped, so Play starts it again
+        w.on = false
+        radioSync()
+      end
+    else
+      status = radio.page.seq == w.seq and radio.page.status or 'loading'
+      if status == 'error' then status = 'loading' end -- the helper takes over at once (radioDo 'page')
+    end
+  end
+  local out = { on = w.on, station = w.station, status = status, why = why, vol = w.vol, via = w.via, alone = w.alone,
+    seq = w.seq, mode = radioMode() }
+  if not light then out.saved = radio.saved end
+  return out
+end
+
+-- For the phones' quick poll: what plays, in short (nil while nothing does).
+function M.radioBrief()
+  local w = radio.want
+  if not (w.on or w.err) or not w.station then return nil end
+  local v = radioView(true)
+  return { status = v.status, name = w.station.name, seq = w.seq }
+end
+
+-- name:
+--   play (a = station) | stop | vol (a = 0..1) | via (a = 'page' | 'helper') | fav (a = station: saved or not)
+--   page (a = seq, b = status, c = why): the UI page's player checks in; answers in short
+--   import (a = { vol, via, last, saved }): the radio settings an older version kept in the UI page, taken once
+--   refresh | played (a = station id: Radio Browser counts what is listened to)
+function M.radioDo(name, a, b, c)
+  radioLoadPrefs()
+  local w = radio.want
   if name == 'refresh' then
     radio.askedAt = -math.huge
-  elseif name == 'played' and type(a) == 'string' and a:match('^[%x%-]+$') and #a == 36 then
+  elseif name == 'played' and isStationId(a) and #a == 36 then
     helper.ask('/v1/radioclick?id=' .. a, nil)
-  elseif name == 'helperPlay' and type(a) == 'string' and a:match('^[%x%-]+$') and #a == 36 then
-    -- the game's UI cannot play the stream: the helper plays this station on the computer
-    local vol = math.max(0, math.min(1, tonumber(b) or 0.6))
-    radio.gen = (radio.gen or 0) + 1
-    radio.helperOn, radio.aliveAt = true, S.clock
-    radio.player = { playing = true, secs = 0 }
-    helper.command(string.format('/v1/player/play?id=%s&vol=%.2f', a, vol), onPlayer(radio.gen), '/v1/player/')
-  elseif name == 'helperVolume' and radio.helperOn then
-    helper.command(string.format('/v1/player/volume?vol=%.2f', math.max(0, math.min(1, tonumber(a) or 0.6))), onPlayer(radio.gen),
-      '/v1/player/volume')
-  elseif name == 'helperStop' then
-    radio.gen = (radio.gen or 0) + 1
-    radio.helperOn, radio.player = false, nil
-    helper.command('/v1/player/stop', nil, '/v1/player/')
+  elseif name == 'play' then
+    local st = keepStation(a)
+    if not st then
+      w.on, w.err, w.why = false, true, 'not a web stream'
+    elseif not (w.on and w.station and w.station.id == st.id and radioView(true).status ~= 'error') then
+      -- (the same station again only after an error: then it is tried again, in a new session)
+      w.station, w.on, w.err, w.why = st, true, false, ''
+      w.seq = w.seq + 1
+      -- the game's UI has no AAC, and plays only through the helper's relay: otherwise the helper plays it
+      w.alone = w.via ~= 'helper' and (not helper.enabled or st.codec:lower():match('^aac') ~= nil)
+      if #st.id == 36 then helper.ask('/v1/radioclick?id=' .. st.id, nil) end
+      radioSavePrefs()
+    end
+  elseif name == 'stop' then
+    w.on, w.err, w.alone = false, false, false
+  elseif name == 'vol' and tonumber(a) then
+    w.vol = math.max(0, math.min(1, math.floor(tonumber(a) * 100 + 0.5) / 100))
+    if radio.helperOn then
+      helper.command(string.format('/v1/player/volume?vol=%.2f', w.vol), onPlayer(radio.gen), '/v1/player/volume')
+    end
+    radioSavePrefs()
+  elseif name == 'via' and (a == 'page' or a == 'helper') then
+    if a ~= w.via then
+      w.via, w.alone = a, false
+      if w.on then w.seq = w.seq + 1 end -- plays again in the other player
+      radioSavePrefs()
+    end
+  elseif name == 'fav' then
+    local st = keepStation(a)
+    if st then
+      local at
+      for i, x in ipairs(radio.saved) do if x.id == st.id then at = i end end
+      if at then table.remove(radio.saved, at)
+      elseif #radio.saved < M.RADIO_SAVED_MAX then radio.saved[#radio.saved + 1] = st end
+      radioSavePrefs()
+    end
+  elseif name == 'page' then
+    radio.page.at = S.clock
+    if tonumber(a) == w.seq then
+      radio.page.seq = w.seq
+      radio.page.status = (b == 'playing' or b == 'loading' or b == 'error') and b or 'idle'
+      if b == 'error' and w.on and radioMode() == 'page' then
+        -- this station only: the helper plays it on the computer (the setting stays as the player set it)
+        w.alone, w.why = true, 'the game could not play it' .. (type(c) == 'string' and c ~= '' and ' (' .. c:sub(1, 40) .. ')' or '')
+      end
+    end
+    radioSync()
+    return { radio = radioView(true),
+      stream = helper.enabled and string.format('http://%s:%d/v1/stream?id=', helper.HOST, helper.PORT) or nil }
+  elseif name == 'import' and type(a) == 'table' then
+    if not radio.prefsFound then radioApplyPrefs(a) radioSavePrefs() end
   end
+  radioSync()
   return M.radioState()
 end
 
@@ -2425,19 +2684,6 @@ function M.garageBringCar()
   local ok, why = spawnCareerCar(g)
   if not ok then return garageSay(false, why) end
   return garageSay(true, 'Here is your ' .. g.car.name .. '.')
-end
-function M.garageFreightLoaner()
-  if S.job or S.parts then return false, 'Finish your current order or parts preview first.' end
-  if earth.status() ~= 'ok' then return false, 'Wait for the world to finish loading.' end
-  local tier = haul.state(S.career).unlocked
-  local ok, why = garage.issueFreightLoaner(M.G, S.career.garage, S.career, tier, haul.loaners[tier])
-  S.freightSetupError = not ok and why or nil
-  if ok then
-    releaseStorage()
-    conditionAt, usedAt = S.clock + 3, nil
-    S.phone.incoming, S.offeredAt = nil, nil
-  end
-  return garageSay(ok, why)
 end
 local function garageSwitchCar(id)
   if S.job then return false, 'Finish your current orders before switching cars.' end
@@ -2959,6 +3205,7 @@ function M.settingsState()
   end
   out.dash = dash.state(M.G.vehicle and M.G.vehicle() or nil)
   out.dash.error = S.dashError
+  out.dash.moving = M.dashMoving()
   aboutHelper()
   out.update = M.updateInfo() or { mod = M.VERSION, unknown = true }
   out.cameras = { on = not S.career.camerasOff, known = #cams.list,
@@ -3227,6 +3474,11 @@ function M.gpsAgain() gpsToTarget() end
 
 function M.toggleWindow() S.window = not S.window end
 function M.togglePhone() S.phoneHidden = not S.phoneHidden end
+-- The phone's page (Work or Radio), the same on both phones: each one shows what the other chose last.
+function M.phoneTab(t)
+  if t == 'orders' or t == 'radio' then S.phoneTab = t end
+  return S.phoneTab or 'orders'
+end
 
 function M.state() return S end
 
@@ -3281,6 +3533,15 @@ function M.openMenu(panel, view)
   return true
 end
 
+-- a labelled button beside the dash phone (cargoEarth/dash.lua M.BUTTONS)
+function M.dashButton(name)
+  if name == 'online' then
+    return M.phoneAction(S.phone and S.phone.online and 'offline' or 'online')
+  elseif name == 'accept' or name == 'decline' or name == 'gps' then
+    return M.phoneAction(name)
+  end
+end
+
 -- a car's phone holder has started its screen
 function M.dashPhonePart(vehId)
   log('I', 'cargoEarth', 'dash phone holder running in car ' .. tostring(vehId))
@@ -3315,22 +3576,27 @@ end
 -- Phone on the dashboard, in any car (cargoEarth/dash.lua). While the switch is on, the player's car gets the phone:
 -- the car is measured once per model (driver camera, dash nodes), and respawned with the phone in its parts tree.
 -- A new car (spawned or switched to) gets it a moment later, the same way. Traffic never does.
-local dashClock, dashCheckAt, dashTried = 0, nil, {}
+local dashClock, dashCheckAt, dashTried, dashReloaded = 0, nil, {}, {}
+local dashMeasureNext = {} -- car id -> true: reloaded to be measured, so measure it once it is back
 local dashPending -- a change from Settings the car was too busy for: { rebuild } (done once the car is free)
 M.DASH_CHECK_S, M.DASH_RETRY_S = 1.5, 20
 
 local function dashMeasure(v)
   local vdata = type(v.data) == 'table' and v.data.vdata or nil
   local eye, camNode = dash.eyeOf(vdata)
-  local spot, why = dash.findSpot(dash.nodesOf(vdata, camNode), eye)
+  -- the nodes with all their groups, as the car loaded; the loaded car only keeps each node's first group
+  local camName = camNode ~= nil and type(vdata) == 'table' and type(vdata.nodes) == 'table' and vdata.nodes[camNode]
+  camName = type(camName) == 'table' and camName.name or nil
+  local nodes = dash.loadedNodes(v.id, v.model, camName)
+  local spot, why = dash.findSpot(nodes or dash.nodesOf(vdata, camNode), eye)
   if spot then
     dash.setSpot(v.model, spot)
     log('I', 'cargoEarth', string.format('dash phone: %s measured, phone at %.3f %.3f %.3f on group %s', v.model,
       spot.centre.x, spot.centre.y, spot.centre.z, spot.group))
   else
-    log('W', 'cargoEarth', 'dash phone: ' .. tostring(why) .. ' (' .. tostring(v.model) .. ')')
+    log('W', 'cargoEarth', 'dash phone: ' .. tostring(why) .. ' (' .. tostring(v.model) .. (nodes and '' or ', not seen loading') .. ')')
   end
-  return spot, why
+  return spot, why, nodes ~= nil
 end
 
 local function dashBusy()
@@ -3348,11 +3614,19 @@ function M.dashFit(on, opts)
   if v.model == 'unicycle' then return false, 'On foot there is no dashboard.' end
   local tree = type(v.config) == 'table' and v.config.partsTree or v.tree
   if type(tree) ~= 'table' or type(tree.children) ~= 'table' then return false, 'This car’s parts could not be read.' end
-  if on and (opts.measure or not dash.spot(v.model)) then
-    local spot, why = dashMeasure(v)
-    if not spot then return false, why end
+  local reload -- the car is reloaded once, unchanged, so it can be measured as it loads (with all its node groups)
+  local measured
+  if on and (opts.measure or dashMeasureNext[v.id] or not dash.spot(v.model)) then
+    local spot, why, seenLoading = dashMeasure(v)
+    if not spot then
+      if seenLoading or dashReloaded[v.id] then dashMeasureNext[v.id] = nil return false, why end
+      reload = true
+    else
+      measured = true
+      dashReloaded[v.id], dashMeasureNext[v.id] = nil, nil
+    end
   end
-  if not opts.rebuild and not opts.measure and dash.treeHasPhone(tree) == (on and true or false) then return true end
+  if not reload and not measured and not opts.rebuild and dash.treeHasPhone(tree) == (on and true or false) then return true end
   -- a respawn mends the car: never on a damaged career car (it would be repaired for free, and its bill turned into
   -- debt), the same rule as changing parts
   local g = type(S.career) == 'table' and S.career.garage or nil
@@ -3364,8 +3638,8 @@ function M.dashFit(on, opts)
     end
   end
   if dashBusy() then return false, 'The car is busy: the phone follows as soon as it is free.', 'busy' end
-  dashTried[v.id] = dashClock
-  local ok, err = pcall(G.respawnPlayer, function(config) dash.setTreePhone(config.partsTree, on) end)
+  if reload then dashReloaded[v.id], dashMeasureNext[v.id] = true, true else dashTried[v.id] = dashClock end
+  local ok, err = pcall(G.respawnPlayer, function(config) if not reload then dash.setTreePhone(config.partsTree, on) end end)
   if not ok then
     log('W', 'cargoEarth', 'dash phone: ' .. tostring(err))
     return false, 'BeamNG could not respawn this car.'
@@ -3378,6 +3652,14 @@ end
 -- Settings > Phone on the dashboard. a: on | off | reset | measure, or a nudge: x+ / x- (left / right as the driver
 -- sees it), y+ / y- (closer / further), z+ / z- (up / down). Nudges are kept per car model.
 local dashDoInner
+-- Moving the phone reloads the car, so presses that come close together are applied with one reload, once they stop.
+M.DASH_MOVE_S = 1.5
+local function dashMoveSoon()
+  dashPending = { rebuild = true }
+  dashCheckAt = dashClock + M.DASH_MOVE_S
+  return true
+end
+function M.dashMoving() return dashPending ~= nil end
 function M.dashDo(a)
   local ok, why, busy = dashDoInner(a)
   if busy then
@@ -3406,10 +3688,10 @@ dashDoInner = function(a)
   if type(a) == 'string' then axis, sign = a:match('^([xyz])([+-])$') end
   if axis then
     if not dash.nudge(v.model, axis, sign == '+' and 1 or -1) then return false, 'The phone can’t go further that way.' end
-    return M.dashFit(true, { rebuild = true })
+    return dashMoveSoon()
   elseif a == 'reset' then
     if not dash.nudge(v.model, 'reset') then return true end
-    return M.dashFit(true, { rebuild = true })
+    return dashMoveSoon()
   end
   return false, 'Unknown choice.'
 end
@@ -3435,9 +3717,9 @@ local function dashTick(dt)
   -- switched off: a car that still has the phone loses it
   if not on and not dash.treeHasPhone(tree) then return end
   if dashBusy() then dashCheckAt = dashClock + 2 return end
-  if on and dash.treeHasPhone(tree) and dash.spot(v.model) then return end
+  if on and dash.treeHasPhone(tree) and dash.spot(v.model) and not dashMeasureNext[v.id] then return end
   local last = dashTried[v.id]
-  if on and last and dashClock - last < M.DASH_RETRY_S then return end
+  if on and last and dashClock - last < M.DASH_RETRY_S and not dashMeasureNext[v.id] then return end
   local ok, why = M.dashFit(on)
   if not ok then dashTried[v.id] = dashClock end
   S.dashError = not ok and why or nil
@@ -3455,6 +3737,7 @@ function M.onUpdate(dtReal, dtSim)
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
   if helper.commanding() then helper.pump(S.clock) end     -- radio presses: answered within frames, not ticks
+  if S.clock >= (S.radioSyncAt or 0) then S.radioSyncAt = S.clock + 0.5 M.radioSync() end -- the UI page went away: the helper plays
   local worldReady = earth.status() == 'ok'
   local activeDt = careerClock.advance(S.career, dtReal, dtSim, worldReady and not S.parts)
   S.workTick = (S.workTick or 0) + activeDt
@@ -3465,6 +3748,13 @@ function M.onUpdate(dtReal, dtSim)
   end
   if worldReady then
     if pose and camerasOn() and marker.drawCameras then marker.drawCameras(pose, cams.near, S.clock) end
+    -- where home and the headquarters count (switching cars, parking): a blue ring when close
+    if pose and not pose.camera and marker.drawArea then
+      local myHome = S.career.home
+      if myHome and myHome.g then marker.drawArea(pose, 'home', myHome.g, home.RADIUS, 'Home', S.clock) end
+      local hq = S.career.firm and S.career.firm.hq
+      if hq and hq.g then marker.drawArea(pose, 'hq', hq.g, firm.HQ_RADIUS, 'Headquarters', S.clock) end
+    end
     local okC, errC = pcall(cameraTick, pose)
     if not okC and not S.cameraErr then S.cameraErr = tostring(errC) problem('W', 'cameras: ' .. S.cameraErr) end
   end
@@ -3606,7 +3896,9 @@ function M.onBeforeVehicleReplaced(id)
   end
 end
 
-function M.onVehicleDestroyed(id) dash.dropCar(id) dashTried[id] = nil end
+function M.onVehicleDestroyed(id) dash.dropCar(id) dash.dropLoaded(id) dashTried[id] = nil dashReloaded[id] = nil dashMeasureNext[id] = nil end
+-- the game is putting a car together: its nodes still carry all their groups (cargoEarth/dash.lua)
+function M.onJbeamLoadingPhase2(_, objID, vehicle) dash.captureLoading(objID, vehicle) end
 function M.onVehicleSwitched() M.dashCheckSoon() end
 
 function M.onVehicleSpawned(id)
@@ -3631,6 +3923,7 @@ function M.onPartsTreeConfigChanged(_, respawn)
 end
 
 function M.onClientEndMission()
+  dash.forgetLoaded()
   dash.forget()
   S.resumeTrip = nil
   releaseStorage()
