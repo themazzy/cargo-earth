@@ -16,8 +16,8 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
   localStorage: { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
   setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: () => 1, clearTimeout: () => {}
 })
-assert(directive.template.includes('Find nearby addresses'))
-assert(directive.template.includes('Start company contract'))
+assert(directive.template.includes('placeSearch.text'))
+assert(directive.template.includes('startCompany'))
 // Validate template nesting independently of the string concatenation used to author it.
 const voids = new Set(['input', 'br', 'img', 'hr', 'meta', 'link'])
 const stack = []
@@ -96,7 +96,7 @@ assert.equal(scope.panel, null)
 scope.togglePanel()
 assert.equal(scope.panel, 'settings')
 scope.closePanel()
-for (const text of ['class="cem"', 'Back to the phone', 'Delivery map']) assert(directive.template.includes(text), 'Template is missing: ' + text)
+for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directive.template.includes(text), 'Template is missing: ' + text)
 // radio: one radio for both phones, kept by the game; the page's player makes the sound
 hold = false
 scope.setTab('radio')
@@ -179,13 +179,13 @@ now += 300
 for (const t of timers.filter(timer => timer.interval === 250)) t.fn()
 assert.equal(scope.tab, 'radio', 'a choice made here a moment ago is not undone by an older answer')
 answer = {screen: 'offline'}
-assert(directive.template.includes('Stations from Radio Browser'))
+assert(directive.template.includes('radio-browser.info'))
 assert(directive.template.includes('aria-label="Job type"') && directive.template.includes("act('mode', 'trucking')"), 'the offline screen switches the job type')
 scope.setTab('orders')
 scope.setTab('invalid')
 assert.equal(scope.tab, 'orders')
 assert(directive.template.includes('aria-label="Phone sections"'))
-assert(directive.template.includes('Recent transactions'))
+assert(directive.template.includes('Latest transactions'))
 const poll = timers.find(timer => timer.interval === 250).fn
 const slow = timers.find(timer => timer.interval === 1000).fn
 scope.fold(true)
