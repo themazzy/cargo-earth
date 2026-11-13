@@ -1300,13 +1300,16 @@ angular.module('beamng.apps')
         resetAsks()
         if (t === 'radio') loadRadio()
       }
-      scope.openPanel = function (p, view) {
+      scope.openPanel = function (p, view, local) {
         if (PANELS.indexOf(p) === -1) return
         // The phone on the dash is too small for the Menu window: it opens in the game's own UI instead (the floating
-        // phone app listens for CargoEarthOpenMenu), where in VR it shows on BeamNG's UI panel.
-        if (scope.dash) {
+        // phone app listens for CargoEarthOpenMenu), where in VR it shows on BeamNG's UI panel. Without a floating
+        // phone in the UI the game says no, and the section opens here after all.
+        if (scope.dash && !local) {
           bngApi.engineLua('cargoEarth_core and cargoEarth_core.openMenu(' + bngApi.serializeToLua(p) + ',' +
-            bngApi.serializeToLua(view || null) + ')')
+            bngApi.serializeToLua(view || null) + ')', function (shown) {
+            if (shown !== true) scope.$evalAsync(function () { scope.openPanel(p, view, true) })
+          })
           return
         }
         if (p === 'garage' && scope.panel !== 'garage') scope.gview = 'home'
@@ -1321,6 +1324,11 @@ angular.module('beamng.apps')
         scope.$on('CargoEarthOpenMenu', function (event, d) {
           scope.$evalAsync(function () { if (d && d.panel) scope.openPanel(d.panel, d.view || undefined) })
         })
+        // tell the game this app is here to show the dash phone's Menu
+        var hostHere = function () { bngApi.engineLua('cargoEarth_core and cargoEarth_core.menuHost()', function () {}) }
+        hostHere()
+        var hostTimer = setInterval(hostHere, 3000)
+        scope.$on('$destroy', function () { clearInterval(hostTimer) })
       }
       scope.togglePanel = function () { if (scope.panel) scope.closePanel(); else scope.openPanel(lastPanel || 'garage') }
       scope.panelOn = function (p, view) { return scope.panel === p && (!view || scope.careerView === view) }

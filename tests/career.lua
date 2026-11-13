@@ -2099,9 +2099,15 @@ test('the Menu tapped on the dash phone opens in the game UI', function()
   local core = fresh()
   local sent = {}
   guihooks = {trigger = function(name, data) sent[#sent + 1] = {name, data} end}
+  local t = 100
+  core.now = function() return t end
   assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.openMenu("career","firm")'))
-  core.openMenu('career', 'firm')
-  core.openMenu('os.exit', nil)
+  assert(core.openMenu('career', 'firm') == false and #sent == 0, 'no floating phone: the dash shows it itself')
+  core.menuHost()
+  assert(core.openMenu('career', 'firm') == true)
+  assert(core.openMenu('os.exit', nil) == false)
+  t = 110
+  assert(core.openMenu('settings') == false, 'a floating phone not heard from lately is gone')
   guihooks = nil
   assert(#sent == 1 and sent[1][1] == 'CargoEarthOpenMenu' and sent[1][2].panel == 'career' and sent[1][2].view == 'firm')
 end)
