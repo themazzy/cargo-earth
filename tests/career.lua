@@ -968,6 +968,22 @@ test('a station sells part fills up to 25, 50 or 75 % of the tank', function()
   assert(core.garageDo('refuelTo', 50).msg == 'The tank is already above 50 %.' and s.career.money == money - cost)
 end)
 
+test('the Work screen offers fills at the pumps and Not now hides them at that station', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  withStation(s, 50, 14)
+  advance(core, 2)
+  fuelReport(core)   -- tank at 50 %
+  local pump = core.phoneState().pump
+  assert(pump and #pump.options == 2 and pump.options[1].pct == 75 and pump.options[2].pct == 100)
+  local money, cost = s.career.money, pump.options[1].cost
+  pump = core.phoneAction('pumpFill', 75).pump
+  assert(tank.ratio == 0.75 and s.career.money == money - cost and pump.msg:find('Filled'))
+  fuelReport(core)
+  core.phoneAction('pumpHide')
+  assert(core.phoneState().pump == nil, 'hidden at this station')
+end)
+
 test('a tank refilled by a game reset is put back and costs nothing', function()
   local core, s = fresh()
   fuelAdapter(core)
