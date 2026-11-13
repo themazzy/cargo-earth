@@ -85,6 +85,9 @@ M.PHONE = {
   declinedKeep = 40,   -- declined orders not offered again (the last n)
 }
 
+-- Settings that a new career keeps from free play. Money, ratings, stats, home and firm start again.
+M.KEEP_ON_START = { 'mode', 'options', 'camerasOff', 'updateHidden', 'country', 'currency', 'location' }
+
 local S = {
   idx = nil, fidx = nil, packInfo = '', loadError = nil, mode = 'courier',
   phase = 'idle', job = nil, orders = {}, offers = {}, offerStats = nil, offeredAt = nil,
@@ -360,6 +363,15 @@ end
 local function rememberLocation(p)
   if not validLocation(p) or p.camera then return end
   if garage.inOwnCar(M.G, S.career.garage) then S.career.location = { lat = p.lat, lon = p.lon } end
+end
+
+-- What the first-run screen offers. The career list stays general: it works in every country.
+function M.careerChoice()
+  if S.starterName == nil then   -- the config list is long: look the starter up once
+    local ok, s = pcall(garage.starter, M.G, S.config.starterModel)
+    S.starterName = ok and s and ((s.brand and (s.brand .. ' ') or '') .. (s.name or s.key)) or false
+  end
+  return { starter = S.starterName or nil, startMoney = garage.START_MONEY, busy = S.job ~= nil }
 end
 
 local function saveCareer()
@@ -1620,6 +1632,7 @@ function M.placesDo(name, value)
     else ok, why = earth.gps(S.selectedHome.g[1], S.selectedHome.g[2], S.selectedHome.n) end
   elseif name == 'claimHome' then
     if S.job or c.employment or S.parts then why = 'Finish your current work first.'
+    elseif not c.garage.started then why = 'A home garage is part of the career. Start one on the phone first.'
     elseif not garage.inOwnCar(M.G, c.garage) then why = 'Park your career car at this address.'
     else
       local old = c.home
@@ -1771,6 +1784,12 @@ function M.phoneState()
   if out.status ~= 'ok' then out.screen = 'error' out.error = out.status return out end
   local g = S.career.garage
   if g.started then out.repair, out.debt = g.repair or 0, g.debt or 0 end
+  if not g.started and c.play ~= 'free' then
+    -- first run: free play (any car, nothing kept) or the career
+    out.screen, out.choice = 'choose', M.careerChoice()
+    return out
+  end
+  out.freePlay = not g.started or nil
   if not garage.inOwnCar(M.G, g) then
     out.screen, out.error = 'error', g.preview and 'You are looking at a used car. Menu → Garage: buy it or go back to your car.'
       or g.car and ('Drive your own car (' .. g.car.name .. '). Menu → Garage → Bring my car.')
@@ -1795,6 +1814,21 @@ function M.phoneAction(a, orderId)
   end
   if S.parts and (a == 'online' or a == 'accept') then return M.phoneState() end
   local ph = S.phone
+  local unchosen = not S.career.garage.started and S.career.play ~= 'free' and not S.career.employment
+  if a == 'freePlay' then
+    if not S.career.garage.started then S.career.play = 'free' saveCareer() end
+    return M.phoneState()
+  elseif a == 'careerInfo' then
+    -- back to the choice from free play (only while offline and between orders)
+    if not S.career.garage.started and not ph.online and not S.job then S.career.play = nil end
+    return M.phoneState()
+  elseif a == 'startCareer' then
+    ph.online, ph.incoming = false, nil
+    M.garageStart()
+    return M.phoneState()
+  elseif unchosen and (a == 'online' or a == 'accept') then
+    return M.phoneState()
+  end
   if a == 'online' and S.career.garage.car and S.career.garage.car.loaner and not S.career.employment then
     say('Company vehicles are for contract work only. Use your own car for your own jobs.', 5)
   elseif a == 'online' then
@@ -2653,11 +2687,18 @@ function M.garageStart(model)
   if S.career.employment then return false, 'End company work first.' end
   if S.career.garage.started then return false, 'Your career has already started.' end
   if S.job then M.cancel(true, true) end   -- a new career: orders from before go
-  local ok, msg = garage.start(M.G, S.career.garage, S.career, model or S.config.starterModel)
-  if ok then
-    usedAt, conditionAt = S.clock + 1, nil
-    S.career.garage.car.fuel = { start = 0.5 }   -- the old starter car comes with half a tank
-  end
+  -- Free play keeps nothing: the career starts from a clean save with only the player's settings.
+  local fresh = { money = 0, delivered = 0, km = 0, history = {}, garage = garage.new() }
+  for _, k in ipairs(M.KEEP_ON_START) do fresh[k] = S.career[k] end
+  local ok, msg = garage.start(M.G, fresh.garage, fresh, model or S.config.starterModel)
+  if not ok then return garageSay(ok, msg) end
+  S.phone.online, S.phone.incoming, S.phone.lastDone, S.phone.lastFailure = false, nil, nil, nil
+  local money = fresh.money
+  fresh.money = 0
+  loadCareer(fresh)
+  economy.post(fresh, money, 'garage', economy.nextId(fresh, 'start'), 'Career start')
+  usedAt, conditionAt = S.clock + 1, nil
+  fresh.garage.car.fuel = { start = 0.5 }   -- the old starter car comes with half a tank
   return garageSay(ok, msg)
 end
 function M.garageSell(part) return garageSay(garage.sell(M.G, S.career.garage, S.career, part)) end
@@ -3124,7 +3165,8 @@ function M.firmDo(name, a)
   local c, p = S.career, earth.status() == 'ok' and earth.pose() or nil
   local debt = personalGarage().debt or 0
   local ok, msg = false, 'Unknown action'
-  if name == 'found' then ok, msg = firm.found(c, a, debt)
+  if name == 'found' and not personalGarage().started then ok, msg = false, 'A firm is part of the career. Start one on the phone first.'
+  elseif name == 'found' then ok, msg = firm.found(c, a, debt)
   elseif name == 'rename' then ok, msg = firm.rename(c, a)
   elseif name == 'setHq' then
     if S.job or c.employment then ok, msg = false, 'Finish your current work first.'
