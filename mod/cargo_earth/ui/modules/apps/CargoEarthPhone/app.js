@@ -471,7 +471,7 @@ angular.module('beamng.apps')
       '<div class="cem-panel" ng-if="panel">' +
       '<nav class="cem-side" aria-label="Menu sections">' +
         '<div class="cem-brand">Cargo<b>Earth</b></div>' +
-        '<div class="cem-money">{{ fmt.money(s.money) }}<small ng-if="s.debt > 0">debt {{ fmt.money(s.debt) }}</small></div>' +
+        '<div class="cem-money">{{ fmt.money(s.money) }}<small ng-if="s.debt > 0" style="cursor:pointer" title="Where it came from" ng-click="openPanel(\'career\', \'money\')">debt {{ fmt.money(s.debt) }}</small></div>' +
         '<button ng-class="{on: panelOn(\'garage\')}" ng-attr-aria-current="{{ panelOn(\'garage\') ? \'page\' : undefined }}" ng-click="openPanel(\'garage\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M7 21V11h10v10M7 15h10M7 18h10"/></svg>Garage</button>' +
         '<button ng-class="{on: panelOn(\'home\')}" ng-attr-aria-current="{{ panelOn(\'home\') ? \'page\' : undefined }}" ng-click="openPanel(\'home\')">' +
@@ -571,7 +571,21 @@ angular.module('beamng.apps')
             '<div class="cep-card"><strong ng-class="{\'cep-debit\': career.debt > 0}">{{ fmt.money(career.debt) }}</strong><span>Outstanding debt</span></div></div>' +
           '<div class="cep-card" ng-if="s.company"><div class="cep-label">Company wages held</div><div class="cep-name">{{ fmt.money(career.heldWages) }}</div><div class="cep-sub">Paid when the contract ends.</div>' +
             '<button class="cep-sm ghost" ng-click="openCompany()">Open active contract</button></div>' +
-          '<button class="cep-sm ghost" ng-if="career.debt > 0" ng-click="setTab(\'garage\')">Manage debt in Garage</button>' +
+          // debt: what it is made of (open charges by source) and what added to it or paid it off
+          '<div class="cep-card" style="grid-column:1/-1" ng-if="career.debtInfo && (career.debt > 0 || career.debtInfo.log.length)" ng-style="career.debt > 0 ? {\'box-shadow\': \'inset 0 0 0 1.5px var(--tomato)\'} : {}">' +
+            '<div class="cep-label">Debt</div>' +
+            '<div class="cep-name" ng-class="{\'cep-debit\': career.debt > 0}">{{ career.debt > 0 ? fmt.money(career.debt) : "Nothing owed" }}</div>' +
+            '<div class="cep-sub" ng-if="career.debt > 0">{{ career.debtInfo.share * 100 }} % of each delivery goes to it. No buying until it is paid.</div>' +
+            '<div ng-if="career.debt > 0"><div class="cep-label" style="margin-top:8px">Where it comes from</div>' +
+              '<div class="cep-keyval" ng-repeat="src in career.debtInfo.sources track by src.kind"><span>{{ src.label }}<small class="cep-sub" ng-if="src.count > 1"> · {{ src.count }} charges</small></span><strong class="cep-debit" style="white-space:nowrap;margin-left:12px">{{ fmt.money(src.amount) }}</strong></div>' +
+              '<button class="cep-sm ghost" ng-click="toggleDebtCharges()">{{ debtCharges ? "Hide the charges" : "Show each charge" }}</button>' +
+              '<div ng-if="debtCharges"><div class="cep-keyval" ng-repeat="ch in career.debtInfo.open track by $index"><span>{{ fmt.text(ch.what) }}<small class="cep-meta" ng-if="ch.at"> · {{ ch.at }}</small></span><strong class="cep-debit" style="white-space:nowrap;margin-left:12px">{{ fmt.money(ch.left) }}</strong></div></div>' +
+              '<div class="cep-row" style="margin-top:6px"><button class="cep-sm" ng-if="!s.company" ng-disabled="!(s.money > 0)" ng-click="payDebt()">Pay what I can</button>' +
+                '<button class="cep-sm ghost" ng-click="setTab(\'garage\')">Garage</button></div></div>' +
+            '<div ng-if="career.debtInfo.log.length"><div class="cep-label" style="margin-top:8px">Debt history</div>' +
+              '<div class="cep-keyval" ng-repeat="e in career.debtInfo.log track by $index"><span>{{ fmt.text(e.what) || (e.amount > 0 ? "Added" : "Paid") }}<small class="cep-meta"> · {{ e.at }} · owed after {{ fmt.money(e.left) }}</small></span>' +
+                '<strong style="white-space:nowrap;margin-left:12px" ng-class="{\'cep-debit\': e.amount > 0, \'cep-credit\': e.amount < 0}">{{ e.amount > 0 ? "+" : "−" }}{{ fmt.money(e.amount > 0 ? e.amount : -e.amount) }}</strong></div></div>' +
+          '</div>' +
           '<div class="cep-label">Latest transactions</div>' +
           '<div class="cep-empty cep-sub" ng-if="!career.ledger.length">No transactions yet.</div>' +
           '<div class="cep-card" ng-repeat="entry in career.ledger | limitTo:20 track by entry.id">' +
@@ -753,7 +767,9 @@ angular.module('beamng.apps')
             '<div><small ng-if="g.upkeep.due > 0 && !g.upkeep.where">Service at a fuel station or your headquarters. Overdue parts can break down.</small></div></div>' +
             '<button class="cep-sm go" ng-if="g.upkeep.due > 0" ng-disabled="!g.upkeep.where || g.money < g.upkeep.dueCost" ng-click="gdo(\'service\')">Service {{ fmt.money(g.upkeep.dueCost) }}</button></div>' +
           '<div class="cep-li" ng-if="g.debt > 0" style="box-shadow:inset 0 0 0 1.5px var(--tomato)"><div><div class="cep-name" style="color:var(--tomato)">Debt {{ fmt.money(g.debt) }}</div>' +
-            '<small>{{ g.debtShare * 100 }} % of each delivery goes to it. No buying until it is paid.</small></div>' +
+            '<small>{{ g.debtShare * 100 }} % of each delivery goes to it. No buying until it is paid.</small>' +
+            '<div ng-repeat="src in g.debtInfo.sources track by src.kind"><small>{{ src.label }}: {{ fmt.money(src.amount) }}</small></div>' +
+            '<button class="cep-sm ghost" ng-click="openPanel(\'career\', \'money\')">Where it came from</button></div>' +
             '<button class="cep-sm" ng-disabled="!(g.money > 0)" ng-click="gdo(\'paydebt\')">Pay</button></div>' +
           '<button class="cep-btn" ng-if="g.own && !g.loaner" ng-click="gdo(\'openParts\')">Parts shop</button>' +
           '<button class="cep-sm ghost" ng-if="g.own && !g.loaner" ng-click="confirmSell()">{{ sellAsk ? "Press again to sell · " + fmt.money(g.sellPrice) : "Sell my car · " + fmt.money(g.sellPrice) }}</button>' +
@@ -1541,6 +1557,13 @@ angular.module('beamng.apps')
           scope.g = r
           if (name === 'buyListing') { if (r && r.msg && r.msg.indexOf('Bought') === 0) scope.gview = 'home'; else scope.loadCars() }
           if (name === 'start' || name === 'sellCar') scope.gview = 'home'
+        })
+      }
+      scope.toggleDebtCharges = function () { scope.debtCharges = !scope.debtCharges }
+      scope.payDebt = function () {
+        lua('garageDo', ['paydebt'], function (r) {
+          if (r && !r._phoneError) scope.g = r
+          loadCareer()
         })
       }
       scope.loadCars = function () { lua('garageDealer', [scope.cf.text || ''], function (r) { scope.market = r || {}; scope.cars = (r && r.cars) || [] }) }

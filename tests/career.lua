@@ -1526,6 +1526,56 @@ test('upkeep: wear by km, service at a price, overdue service makes breakdowns l
   assert(upkeep.state({model = 'pigeon', condition = 0.5}).items[1].share == 0.5)
 end)
 
+test('the debt lists where it comes from and what paid it off', function()
+  local garage = require('cargoEarth/garage')
+  local g = {debt = 100}   -- an older save: a debt with no charges listed
+  garage.addDebt(g, 200, 'fine', 'Speed camera: 80 km/h, limit 50')
+  garage.addDebt(g, 50, 'fuel', 'Roadside fuel delivery')
+  garage.addDebt(g, 30, 'fuel', 'Fuel at Pump')
+  local info = garage.debtInfo(g)
+  assert(info.total == 380 and g.debt == 380)
+  assert(info.sources[1].kind == 'fine' and info.sources[1].amount == 200)
+  assert(info.sources[2].kind == 'earlier' and info.sources[2].amount == 100)
+  assert(info.sources[3].kind == 'fuel' and info.sources[3].amount == 80 and info.sources[3].count == 2)
+  -- payments clear the oldest charges first
+  assert(garage.takeForDebt(g, 300, 'Delivery to Mělník') == 150 and g.debt == 230)
+  info = garage.debtInfo(g)
+  assert(#info.sources == 2 and info.sources[1].kind == 'fine' and info.sources[1].amount == 150)
+  assert(info.log[1].amount == -150 and info.log[1].left == 230 and info.log[1].what == 'Delivery to Mělník')
+  assert(info.log[2].amount == 30 and info.log[2].kind == 'fuel')
+  local career = {money = 1000}
+  assert(garage.payDebt(g, career) and g.debt == 0 and career.money == 770)
+  info = garage.debtInfo(g)
+  assert(#info.sources == 0 and #info.open == 0 and info.log[1].kind == 'paid')
+  -- something set the number alone (the debug editor, a company shift): the list follows it
+  g.debt = 40
+  info = garage.debtInfo(g)
+  assert(#info.sources == 1 and info.sources[1].amount == 40)
+  g.debt = 0
+  assert(#garage.debtInfo(g).open == 0)
+  -- a free repair and roadside help are listed too
+  local h = {repair = 0, lastDamage = 0}
+  garage.trackDamage(h, 1000)
+  assert(garage.trackDamage(h, 0) == 'debt' and garage.debtInfo(h).sources[1].kind == 'repair')
+  local car = {model = 'pigeon', service = {}}
+  upkeep.ensure(car)
+  local failure = {id = 'oil', cost = 100}
+  upkeep.roadside({money = 0}, h, car, failure)
+  assert(garage.debtInfo(h).log[1].kind == 'roadside' and garage.debtInfo(h).log[1].amount == 100)
+  -- a failed refuel takes back its own charge, not older ones
+  local r = {debt = 0}
+  garage.addDebt(r, 100, 'fine', 'Speed camera')
+  garage.addDebt(r, 50, 'fuel', 'Roadside fuel delivery')
+  assert(garage.cancelDebt(r, 50, 'fuel', 'Refund') == 50 and r.debt == 100)
+  local ri = garage.debtInfo(r)
+  assert(#ri.sources == 1 and ri.sources[1].kind == 'fine' and ri.sources[1].amount == 100 and ri.log[1].kind == 'refund')
+  for _ = 1, 50 do garage.addDebt(h, 1, 'fuel', 'x') end
+  assert(#h.debtParts <= garage.DEBT_PARTS_MAX and #h.debtLog <= garage.DEBT_LOG_MAX)
+  local sum = 0
+  for _, p in ipairs(h.debtParts) do sum = sum + p.left end
+  assert(sum == h.debt)
+end)
+
 test('your car breaks down after skipped service; roadside help gets it going', function()
   local core, s = fresh()
   fuelAdapter(core)

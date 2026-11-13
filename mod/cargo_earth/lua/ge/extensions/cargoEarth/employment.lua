@@ -3,6 +3,7 @@
 local jobs = require('cargoEarth/jobs')
 local haul = require('cargoEarth/haul')
 local economy = require('cargoEarth/economy')
+local garage = require('cargoEarth/garage')
 local M = { SHARE = 0.8, RADIUS = 60, PREPARE_TIMEOUT = 25, INDEPENDENT_REP = 20 }
 -- Company vehicles by tier: the van always, the box truck and the tractor once freight progress unlocks them.
 -- The contracts stay short (two deliveries out of one yard) so a shift fits one sitting even in a truck.
@@ -174,7 +175,7 @@ function M.settle(c, aborted)
   local debt = s.personalGarage.debt or 0
   local toDebt = math.min(debt, math.floor(wages * 0.5 + 0.5))
   if not economy.post(c, wages - toDebt, 'company_wages', s.id, s.companyName) then return false end
-  s.personalGarage.debt = debt - toDebt
+  garage.reduceDebt(s.personalGarage, toDebt, 'earnings', 'Wages from ' .. tostring(s.companyName or 'a company'))
   c.companies = c.companies or {}
   local company = c.companies[s.companyId] or { reputation = 0, shifts = 0, deliveries = 0 }
   c.companies[s.companyId] = company
