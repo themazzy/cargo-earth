@@ -4,7 +4,7 @@ const assert = require('node:assert/strict')
 let directive
 const audios = []
 const commands = []
-const timers = [], destroy = [], pending = [], watches = {}
+const timers = [], destroy = [], pending = [], watches = {}, later = []
 let now = 0, hold = false, answer = {screen: 'offline'}, digests = 0
 vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPhone/app.js', 'utf8'), {
   angular: { module: () => ({ directive: (name, factory) => { directive = factory[factory.length - 1]() } }) },
@@ -17,7 +17,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
     getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
   localStorage: { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
-  setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: () => 1, clearTimeout: () => {}
+  setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: fn => { later.push(fn); return 1 }, clearTimeout: () => {}
 })
 assert(directive.template.includes('placeSearch.text'))
 assert(directive.template.includes('startCompany'))
@@ -161,8 +161,17 @@ audios[0].on.playing()
 now += 500; player()
 assert(commands.at(-1).includes('radioDo("page", 3, "playing"'), 'it says the sound is on')
 audios[0].error = {code: 4}
+// a dropped stream is tried again twice, then the game hears of it (and the helper plays the station)
+asking = commands.length
 audios[0].on.error()
-assert(commands.at(-1).includes('radioDo("page", 3, "error", "error 4")'), 'a stream the page cannot play is reported at once')
+assert(!audios[0].src && commands.length === asking, 'the first drop is not reported')
+later.splice(0).forEach(fn => fn())
+assert.equal(audios[0].src, STREAM + 'a', 'the same stream is asked again')
+audios[0].on.ended()
+later.splice(0).forEach(fn => fn())
+assert.equal(audios[0].src, STREAM + 'a', 'a live stream that ends has dropped too')
+audios[0].on.error()
+assert(commands.at(-1).includes('radioDo("page", 3, "error", "error 4")'), 'the third drop in a row is reported')
 answer = {radio: {on: true, mode: 'helper', station: stations[0], seq: 3, vol: 0.5}, stream: STREAM}
 now += 500; player()
 assert(!audios[0].src, 'the helper plays it: the page stays silent')

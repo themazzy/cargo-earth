@@ -453,6 +453,10 @@ class NetworkAndStorageTests(unittest.TestCase):
                 with urllib.request.urlopen(base + a, timeout=5) as r:
                     self.assertEqual(r.headers["Content-Type"], "audio/mpeg")
                     self.assertEqual(len(r.read()), 3003)
+                # a station that drops after running a while is reconnected inside the same stream to the game
+                with patch.object(helper, "STREAM_LIVE_S", 0):
+                    with urllib.request.urlopen(base + a, timeout=5) as r:
+                        self.assertEqual(len(r.read()), 3003 * (1 + helper.STREAM_RECONNECTS))
                 for sid, code in ((b, 415), ("00000000-0000-0000-0000-00000000000c", 404)):
                     with self.assertRaises(urllib.error.HTTPError) as e:
                         urllib.request.urlopen(base + sid, timeout=5)

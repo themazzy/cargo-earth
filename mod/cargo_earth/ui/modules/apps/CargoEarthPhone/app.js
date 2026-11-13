@@ -11,18 +11,35 @@
 var cargoEarthRadioPlayer = null
 function pagePlayer() {
   if (cargoEarthRadioPlayer || typeof Audio === 'undefined' || typeof bngApi === 'undefined') return cargoEarthRadioPlayer
-  var audio = new Audio(), me = {seq: -1, status: 'idle', why: '', busy: false, on: false, at: 0}
+  var audio = new Audio(), me = {seq: -1, status: 'idle', why: '', busy: false, on: false, at: 0, retries: 0}
   cargoEarthRadioPlayer = me
   audio.preload = 'none'
-  audio.addEventListener('playing', function () { me.status = 'playing' })
+  audio.addEventListener('playing', function () { me.status = 'playing'; me.retries = 0 })
   audio.addEventListener('waiting', function () { if (!audio.paused) me.status = 'loading' })
-  audio.addEventListener('error', function () {
-    if (!audio.getAttribute('src')) return
-    me.status = 'error'; me.why = 'error ' + ((audio.error && audio.error.code) || '?')
+  // A dropped connection (the station, or the game's browser) is tried again twice before the game hears of it.
+  // A live stream that "ends" has dropped too.
+  function failed(code) {
+    var src = audio.getAttribute('src')
+    if (!src) return
+    if (me.retries < 2) {
+      me.retries++
+      var seq = me.seq
+      stop()
+      me.status = 'loading'
+      setTimeout(function () {
+        if (me.seq !== seq || !me.on || audio.getAttribute('src')) return
+        audio.src = src
+        var again = audio.play()
+        if (again && again.catch) again.catch(function () { /* the error event decides */ })
+      }, 1500)
+      return
+    }
+    me.status = 'error'; me.why = 'error ' + code
     stop()
     me.at = 0; tick()
-  })
-  audio.addEventListener('ended', function () { me.status = 'idle' })
+  }
+  audio.addEventListener('error', function () { failed((audio.error && audio.error.code) || '?') })
+  audio.addEventListener('ended', function () { failed('ended') })
   // pause and unload: only removing src ends the stream (and its connection to the helper)
   function stop() { audio.pause(); audio.removeAttribute('src'); try { audio.load() } catch (e) { /* nothing loaded */ } }
   function tick() {
@@ -43,6 +60,7 @@ function pagePlayer() {
         return
       }
       if (w.seq !== me.seq || !audio.getAttribute('src')) {
+        if (w.seq !== me.seq) me.retries = 0
         me.seq = w.seq; me.status = 'loading'; me.why = ''
         audio.src = r.stream + encodeURIComponent(w.station.id)
         var started = audio.play()
