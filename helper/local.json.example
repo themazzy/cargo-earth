@@ -2,5 +2,5 @@
   "repo": "themazzy/cargo-earth", "kind": "companion",
   "summary": "Restaurants, shops, workplaces, fuel stations, speed cameras, customer addresses and local radio anywhere in the world for the Cargo Earth mod.",
   "licence": "MIT", "asset": "^cargo_earth_helper.*\\.py$",
-  "local": {"file": "C:\\Users\\YOU\\Documents\\cargo_earth_helper_0.8.6.py", "tag": "v0.8.6"},
+  "local": {"file": "C:\\Users\\YOU\\Documents\\cargo_earth_helper_0.8.7.py", "tag": "v0.8.7"},
   "run": {"args": [], "port": 47820, "page": "http://127.0.0.1:47820/"}}]}
