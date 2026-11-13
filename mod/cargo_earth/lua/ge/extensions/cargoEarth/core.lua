@@ -2490,13 +2490,10 @@ function M.onCargoEarthFuel(id, token, report)
         for name, level in pairs(pending.before) do
           if car.fuel.tanks[name] then car.fuel.tanks[name].ratio = level end
         end
-        if pending.cost > 0 then
-          if pending.debt then
-            garage.cancelDebt(g, pending.cost, 'fuel', 'Refund: refuelling failed')
-          else
-            economy.post(S.career, pending.cost, 'fuel', economy.nextId(S.career, 'fuel'), 'Refund: refuelling failed')
-          end
-        end
+        local paid, owed = pending.paid or pending.cost or 0, pending.owed or 0
+        if pending.debt then paid, owed = 0, pending.cost or 0 end   -- saved by an older build
+        if owed > 0 then garage.cancelDebt(g, owed, 'fuel', 'Refund: refuelling failed') end
+        if paid > 0 then economy.post(S.career, paid, 'fuel', economy.nextId(S.career, 'fuel'), 'Refund: refuelling failed') end
         say('Refuelling did not work for this vehicle. Your money was returned.', 8)
         problem('W', 'fuel: the vehicle did not take the new tank level')
         saveCareer()
@@ -2568,28 +2565,43 @@ local function fuelCar()
   return g.car, nil, p
 end
 
--- Takes the money (or adds a debt when there is none left: nobody is stranded) and fills the tank.
-local function fuelBuy(car, quote, extra, detail, onCredit)
+-- Pays a fuel bill: the wallet pays what it can (shown in Finances), the rest goes on the debt.
+-- Returns paid, owed.
+-- (on M: core.lua is at Lua's 200-locals limit)
+function M.fuelCharge(cost, what, debtWhat)
   local c, g = S.career, S.career.garage
+  local paid = math.max(0, math.min(cost, math.floor(c.money or 0)))
+  if paid > 0 then economy.post(c, -paid, 'fuel', economy.nextId(c, 'fuel'), what) end
+  local owed = cost - paid
+  if owed > 0 then garage.addDebt(g, owed, 'fuel', debtWhat or what) end
+  return paid, owed
+end
+
+function M.owedText(owed)
+  return owed > 0 and string.format(' (%d CZK added to your debt)', owed) or ''
+end
+
+-- Takes the money (what the wallet cannot cover goes on the debt: nobody is stranded) and fills the tank.
+local function fuelBuy(car, quote, extra, detail, onCredit)
+  local c = S.career
   local cost = quote.cost + (extra or 0)
   local before = {}
   for name in pairs(quote.levels) do before[name] = car.fuel.tanks[name].ratio end
   if not M.G.setFuel(fuelWatch.id, quote.levels) then return false, 'Could not reach the car’s tank.' end
-  local debt = false
+  local paid, owed = cost, 0
   if cost > 0 then
-    if onCredit and (c.money or 0) < cost then
-      garage.addDebt(g, cost, 'fuel', detail)
-      debt = true
+    if onCredit then
+      paid, owed = M.fuelCharge(cost, detail)
     else
       economy.post(c, -cost, 'fuel', economy.nextId(c, 'fuel'), detail)
     end
   end
   fuel.apply(car, quote)
   car.fuel.bought = (car.fuel.bought or 0) + (extra or 0)
-  fuelPending = { id = fuelWatch.id, car = car, levels = quote.levels, before = before, cost = cost, debt = debt,
+  fuelPending = { id = fuelWatch.id, car = car, levels = quote.levels, before = before, cost = cost, paid = paid, owed = owed,
     untilT = S.clock + M.FUEL_VERIFY_S }
   saveCareer()
-  return true, cost, debt
+  return true, cost, owed
 end
 
 local function unitsText(units)
@@ -2602,22 +2614,15 @@ end
 
 -- A game pump filled the tank: books it and takes the money (a debt when the wallet is short, like fuel delivery).
 function M.payPump(car, report)
-  local c, g, st = S.career, S.career.garage, gamePump.station
+  local st = gamePump.station
   local free = car.loaner == true
   local quote = fuel.pumpQuote(car, report, fuel.stationFactor(st.id), free)
   if not quote then return false end
-  local debt = false
-  if quote.cost > 0 then
-    if (c.money or 0) < quote.cost then
-      garage.addDebt(g, quote.cost, 'fuel', 'Fuel at ' .. tostring(st.n))
-      debt = true
-    else
-      economy.post(c, -quote.cost, 'fuel', economy.nextId(c, 'fuel'), st.n)
-    end
-  end
+  local owed = 0
+  if quote.cost > 0 then owed = select(2, M.fuelCharge(quote.cost, st.n, 'Fuel at ' .. tostring(st.n))) end
   fuel.apply(car, quote)
   say(free and string.format('Filled %s at %s on the company fuel card.', unitsText(quote.units), st.n)
-    or string.format('Filled %s at %s for %d CZK%s.', unitsText(quote.units), st.n, quote.cost, debt and ' (added to your debt)' or ''), 8)
+    or string.format('Filled %s at %s for %d CZK%s.', unitsText(quote.units), st.n, quote.cost, M.owedText(owed)), 8)
   saveCareer()
   return true
 end
@@ -2648,10 +2653,10 @@ local function fuelDelivery()
   local free = car.loaner == true
   local quote = fuel.quote(car, { gasoline = true, diesel = true, electric = true }, fuel.DELIVERY_FACTOR, fuel.DELIVERY_UNITS, nil, free)
   if not quote then return false, 'The tank is full.' end
-  local ok, cost, debt = fuelBuy(car, quote, free and 0 or fuel.DELIVERY_FEE, 'Roadside fuel delivery', true)
+  local ok, cost, owed = fuelBuy(car, quote, free and 0 or fuel.DELIVERY_FEE, 'Roadside fuel delivery', true)
   if not ok then return false, cost end
   return true, free and string.format('The company sent %s.', unitsText(quote.units))
-    or string.format('Delivered %s for %d CZK%s.', unitsText(quote.units), cost, debt and ' (added to your debt)' or '')
+    or string.format('Delivered %s for %d CZK%s.', unitsText(quote.units), cost, M.owedText(owed))
 end
 
 local function fuelGps()
