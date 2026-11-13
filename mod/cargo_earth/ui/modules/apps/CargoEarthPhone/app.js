@@ -74,12 +74,11 @@ angular.module('beamng.apps')
     '.cep *{box-sizing:border-box}' +
     '.cep-screen{position:relative;width:100%;height:100%;border-radius:26px;overflow:hidden;background:var(--paper);' +
     'display:flex;flex-direction:column}' +
-    '.cep-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 18px 4px;font-size:12px;font-weight:600}' +
-    '.cep-notch{position:absolute;top:6px;left:50%;width:72px;height:18px;margin-left:-36px;border-radius:10px;background:#141312}' +
-    '.cep-head{display:flex;justify-content:space-between;align-items:baseline;padding:8px 16px 10px;border-bottom:1px solid var(--line)}' +
-    '.cep-brand{font-weight:800;font-size:17px;letter-spacing:-.01em}.cep-brand b{color:var(--tomato)}' +
-    '.cep-money{font-size:12px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}' +
-    '.cep-money strong{display:block;color:var(--ink);font-size:15px}' +
+    '.cep-bar{display:flex;justify-content:space-between;align-items:center;min-height:34px;padding:2px 12px 2px 18px;font-size:12px;font-weight:600;border-bottom:1px solid var(--line)}' +
+    '.cep-bar-l,.cep-bar-r{display:flex;align-items:center;gap:5px;white-space:nowrap}' +
+    '.cep-bar .cep-limit{width:24px;height:24px;border-width:3px;font-size:10px}' +
+    '.cep-bal{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}' +
+    '.cep-on{width:8px;height:8px;border-radius:50%;background:var(--ok)}' +
     '.cep-limit{align-self:center;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;width:34px;height:34px;' +
       'border-radius:50%;border:4px solid #d62d20;background:#fff;color:#111;font-weight:800;font-size:13px;line-height:1;' +
       'font-variant-numeric:tabular-nums;box-sizing:border-box}.cep-limit small{font-size:6px;font-weight:700;margin-top:1px}' +
@@ -137,9 +136,7 @@ angular.module('beamng.apps')
     'background:#141312;color:#fff;font-family:"Segoe UI",Roboto,system-ui,sans-serif;font-weight:700;cursor:pointer;' +
     'box-shadow:0 6px 18px rgba(0,0,0,.4)}.cep-pill b{color:#e8452c}' +
     '.cep-tabs{display:flex;flex-shrink:0;border-top:1px solid var(--line);background:var(--card);padding:4px}' +
-    '.cep-section{flex-shrink:0;padding:10px 14px 0;display:flex;align-items:center;justify-content:space-between;gap:8px}' +
-    '.cep-section h1{font-size:18px;line-height:1.2;margin:0;letter-spacing:-.02em}' +
-    '.cep-settings-link{border:0;background:transparent;padding:6px;color:var(--muted);font:inherit;font-size:11px;cursor:pointer}' +
+    '.cep-settings-link{border:0;background:transparent;padding:4px 6px;color:var(--muted);font:inherit;font-size:15px;line-height:1;cursor:pointer}' +
     '.cep-subtabs{display:flex;flex-shrink:0;gap:4px;margin:10px 14px 0;padding:4px;background:var(--line);border-radius:12px}' +
     '.cep-subtabs button{flex:1;min-width:0;border:0;border-radius:9px;padding:8px 4px;font:inherit;font-size:12px;font-weight:700;background:transparent;color:var(--muted);cursor:pointer}' +
     '.cep-modes{margin:0}.cep-modes button{padding:11px 4px;font-size:13px}' +
@@ -893,15 +890,16 @@ angular.module('beamng.apps')
         '<span><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}">{{ s.limit.sign }}</span>' +
         '{{ s.online ? "● online" : "" }} {{ fmt.money(s.money) }} ▴</span></div>' +
       '<div class="cep" ng-if="!min && !menuOnly"><div class="cep-screen">' +
-      '<div class="cep-notch"></div>' +
-      '<div class="cep-bar"><span>{{ s.clock }}</span><span>{{ s.online ? "● online" : "" }} ' +
+      // one slim status row for everything around the content: clock and the job's settings on the left,
+      // the speed limit, the balance and online on the right (the tabs at the bottom say whether this is Work or Radio)
+      '<div class="cep-bar"><span class="cep-bar-l">{{ s.clock }}' +
+        '<button class="cep-settings-link" ng-if="s.screen !== \'resume\'" title="{{ s.mode === \'courier\' ? \'Food delivery\' : \'Freight\' }} settings" ' +
+          'aria-label="Job settings" ng-click="setTab(\'settings\')">⚙</button></span>' +
+        '<span class="cep-bar-r"><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}" title="Speed limit here">{{ s.limit.sign }}' +
+          '<small ng-if="s.limit.unit === \'mph\'">mph</small></span>' +
+        '<strong class="cep-bal" title="Balance">{{ fmt.money(s.money) }}</strong>' +
+        '<i class="cep-on" ng-if="s.online" title="Online"></i>' +
         '<button class="cep-min" title="Fold the phone" ng-if="!dash" ng-click="fold(true)">–</button></span></div>' +
-      '<div class="cep-head"><div class="cep-brand">Cargo<b>Earth</b></div>' +
-        '<div class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}" title="Speed limit here">{{ s.limit.sign }}' +
-          '<small ng-if="s.limit.unit === \'mph\'">mph</small></div>' +
-        '<div class="cep-money">balance<strong>{{ fmt.money(s.money) }}</strong></div></div>' +
-      '<div class="cep-section" ng-if="s.screen !== \'resume\'"><h1>{{ sectionTitle() }}</h1>' +
-        '<button class="cep-settings-link" ng-if="tab === \'orders\'" ng-click="setTab(\'settings\')">{{ s.mode === "courier" ? "Courier" : "Trucking" }} settings</button></div>' +
       '<button class="cep-live" ng-if="showLiveShortcut()" ng-click="openLiveWork()">' +
         '<i class="cep-dot-live"></i><span><strong>{{ liveTitle() }}</strong><small>{{ liveDetail() }}</small></span><b aria-hidden="true">&rsaquo;</b></button>' +
 
@@ -1477,7 +1475,6 @@ angular.module('beamng.apps')
         if (scope.panel === 'career') return {progress: 'Progress', money: 'Finances', map: 'Delivery map', firm: 'Firm'}[scope.careerView]
         return {garage: 'Garage', home: 'Home garage', companies: 'Company contracts', settings: 'Settings'}[scope.panel]
       }
-      scope.sectionTitle = function () { return scope.tab === 'radio' ? 'Radio' : 'Work' }
       scope.setCareerView = function (view) {
         if (view !== 'progress' && view !== 'money' && view !== 'map' && view !== 'firm') return
         scope.openPanel('career', view)
