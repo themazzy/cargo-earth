@@ -1590,7 +1590,8 @@ function M.phoneState()
     todayCount = today.count, status = earth.status(), clock = os.date('%H:%M'), hidden = S.phoneHidden,
       helper = M.helperInfo(), saveError = S.saveError, company = c.employment and c.employment.companyName,
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
-      currency = moneyInfo(), update = M.updateInfo(), tab = S.phoneTab or 'orders', radio = M.radioBrief() }
+      currency = moneyInfo(), update = M.updateInfo(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
+      canSwitch = S.job == nil and not c.employment }
   if S.pendingCareer then
     out.screen, out.money = 'resume', S.pendingCareer.money or 0
     local savedGarage = S.pendingCareer.garage
@@ -1715,6 +1716,9 @@ function M.phoneAction(a, orderId)
     ph.nextPingAt = S.clock + 2
   elseif a == 'offline' then
     ph.online, ph.incoming = false, nil
+  elseif a == 'mode' then
+    -- food delivery or freight, from the phone's offline screen (Settings has the same switch)
+    if not ph.online then M.setMode(orderId) end
   elseif a == 'accept' and ph.incoming then
     takeJob(ph.incoming.job)
   elseif a == 'decline' and ph.incoming then

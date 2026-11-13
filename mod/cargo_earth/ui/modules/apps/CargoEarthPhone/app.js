@@ -142,6 +142,7 @@ angular.module('beamng.apps')
     '.cep-settings-link{border:0;background:transparent;padding:6px;color:var(--muted);font:inherit;font-size:11px;cursor:pointer}' +
     '.cep-subtabs{display:flex;flex-shrink:0;gap:4px;margin:10px 14px 0;padding:4px;background:var(--line);border-radius:12px}' +
     '.cep-subtabs button{flex:1;min-width:0;border:0;border-radius:9px;padding:8px 4px;font:inherit;font-size:12px;font-weight:700;background:transparent;color:var(--muted);cursor:pointer}' +
+    '.cep-modes{margin:0}.cep-modes button{padding:11px 4px;font-size:13px}' +
     '.cep-subtabs button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(29,27,25,.1)}' +
     '.cep-live{display:flex;flex-shrink:0;align-items:center;gap:8px;margin:8px 14px 0;padding:9px 10px;border:1px solid #f2c5b7;border-radius:12px;background:#fff0ea;color:var(--ink);font:inherit;text-align:left;cursor:pointer}' +
     '.cep-live>span{flex:1;min-width:0}.cep-live strong,.cep-live small{display:block}.cep-live strong{font-size:12px}.cep-live small{font-size:11px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}' +
@@ -924,9 +925,13 @@ angular.module('beamng.apps')
         '<div class="cep-big">Parts preview open</div><div class="cep-sub">Confirm or cancel your parts changes before taking more orders.</div></div>' +
         '<button class="cep-btn go" ng-click="setTab(\'garage\')">Review parts</button></div>' +
 
-      // offline
-      '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && s.screen === \'offline\'"><div class="cep-center">' +
-        '<div class="cep-label">{{ s.mode === "courier" ? "Food delivery" : "Freight" }}</div>' +
+      // offline: the job type can be switched here too (Settings has the same switch)
+      '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && s.screen === \'offline\'">' +
+      '<div class="cep-subtabs cep-modes" ng-if="s.canSwitch" role="group" aria-label="Job type">' +
+        '<button ng-class="{on: s.mode === \'courier\'}" ng-click="act(\'mode\', \'courier\')">Food delivery</button>' +
+        '<button ng-class="{on: s.mode === \'trucking\'}" ng-click="act(\'mode\', \'trucking\')">Freight</button></div>' +
+      '<div class="cep-center">' +
+        '<div class="cep-label" ng-if="!s.canSwitch">{{ s.mode === "courier" ? "Food delivery" : "Freight" }}</div>' +
         '<div class="cep-big">You are offline</div>' +
         '<div class="cep-sub" ng-if="!s.trucking || !s.trucking.hint">Go online and orders from nearby {{ s.mode === "courier" ? "restaurants and shops" : "depots" }} will ring here.</div>' +
         '<div class="cep-sub" ng-if="s.trucking">Trucking stage · {{ s.trucking.label }}</div>' +
