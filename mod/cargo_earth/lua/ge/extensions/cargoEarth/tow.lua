@@ -13,7 +13,8 @@ M.CLASSES = {
 -- stock BeamNG cars that break down (the first ones found in the game are used)
 M.CARS = { 'covet', 'pessima', 'legran', 'midsize', 'fullsize', 'etk800', 'vivace', 'wendover' }
 M.OFFERS = 2
-M.NEAR_KM = 8              -- broken-down cars this close to the player
+M.NEAR_KM = 8              -- broken-down cars this close to the player...
+M.LIKELY_KM = 3            -- ...all equally likely this close, less and less likely further out
 M.WORKSHOP_KM = { 3, 30 }  -- straight km from the car to a workshop
 M.ON_BOARD_M = 6           -- a car this close to the trailer's centre is still on it
 M.DAMAGE_PER_PCT = 60      -- this much new damage on a towed car costs 1 % of the pay
@@ -50,25 +51,29 @@ function M.minutes(class, km, pickupKm)
 end
 
 -- Tow offers. addresses: rows { lat, lon, stopLat, stopLon, label, town } near the player; workshop(lat, lon) returns
--- the delivery place for a car there (or nil); models: the car models that exist in the game; rnd(n) picks 1..n.
-function M.offers(class, lat, lon, addresses, workshop, models, rnd, count)
+-- the delivery place for a car there (or nil); models: the car models that exist in the game; rnd(n) picks 1..n;
+-- roadKm(from, to, maxKm) (optional): the road km to the workshop when the game's road graph knows it.
+function M.offers(class, lat, lon, addresses, workshop, models, rnd, count, roadKm)
   rnd = rnd or math.random
   local out, c = {}, M.CLASSES[class]
   if not c or #(models or {}) == 0 or #(addresses or {}) == 0 then return out end
   local tries, used = 0, {}
-  while #out < (count or M.OFFERS) and tries < 12 do
+  while #out < (count or M.OFFERS) and tries < 40 do
     tries = tries + 1
     local a = addresses[math.max(1, math.min(#addresses, rnd(#addresses)))]
     local g = { a[3] or a[1], a[4] or a[2] }
     local key = string.format('%.5f,%.5f', g[1], g[2])
     local pickupKm = jobs.km(lat, lon, g[1], g[2])
-    local to = not used[key] and pickupKm <= M.NEAR_KM and workshop(g[1], g[2])
+    -- addresses are spread evenly, so most are far out: a nearer breakdown is likelier
+    local likely = pickupKm <= M.LIKELY_KM or rnd(1000) <= 1000 * (M.LIKELY_KM / pickupKm) ^ 1.5
+    local to = not used[key] and pickupKm <= M.NEAR_KM and likely and workshop(g[1], g[2])
     if to then
       used[key] = true
       local cars = {}
       for i = 1, c.cars do cars[i] = models[math.max(1, math.min(#models, rnd(#models)))] end
       local straight = jobs.km(g[1], g[2], to.g[1], to.g[2])
-      local road = straight * jobs.ROAD_FACTOR
+      local road = roadKm and roadKm(g, to.g, straight * 4 + 5)
+      if type(road) ~= 'number' then road = straight * jobs.ROAD_FACTOR end   -- paid by the road when it is known
       out[#out + 1] = { id = 'tow:' .. key .. ':' .. #out + 1, kind = 'tow', tow = { class = class, cars = cars },
         from = { id = 'tow:' .. key, n = a[5] or 'Roadside', town = a[6] or '', g = g, label = 'Broken-down car' },
         to = to, cargoName = #cars > 1 and string.format('Tow %d broken-down cars', #cars) or 'Tow a broken-down car',

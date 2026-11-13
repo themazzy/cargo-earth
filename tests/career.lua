@@ -1845,6 +1845,13 @@ test('tow rules: who can tow, offers to a workshop, cars on board, damage costs 
   assert(#heavy.tow.cars == 2 and heavy.trailer == 'flatbed' and heavy.pay > tow.pay('light', heavy.km))
   assert(#tow.offers('light', 50, 14, addresses, function() return nil end, { 'covet' }) == 0, 'no workshop near: no job')
   assert(#tow.offers('light', 50, 14, addresses, workshop, {}) == 0, 'no cars in the game: no job')
+  local byRoad = tow.offers('light', 50, 14, addresses, workshop, { 'covet' }, function() return 1 end, nil, function() return 17.5 end)[1]
+  assert(byRoad.km == 17.5 and byRoad.pay == tow.pay('light', 17.5), 'paid by the road when the graph knows it')
+  -- far breakdowns are rarer: with rnd always at the top, an address 7 km out is never picked, one 2 km out is
+  local far = { { 50.063, 14, 50.063, 14, 'Edge 1', 'Village' } }
+  assert(#tow.offers('light', 50, 14, far, workshop, { 'covet' }, function(n) return n end) == 0)
+  local near = { { 50.018, 14, 50.018, 14, 'Close 1', 'Town' } }
+  assert(#tow.offers('light', 50, 14, near, workshop, { 'covet' }, function(n) return n end) == 1)
   assert(tow.onBoard({ 1, 5.9, 7, nil }) == 2)
   assert(tow.condition(0) == 100 and tow.condition(600) == 90 and tow.condition(1e9) == 100 - tow.MAX_LOSS)
 end)

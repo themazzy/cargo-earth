@@ -563,40 +563,7 @@ local function modeReady()
 end
 
 -- Tow offers near the player. The workshop is your headquarters when it is close enough, else one at a fuel station.
-local function towOffers(class, p)
-  local c = S.career
-  local kind = tow.CLASSES[class].trailer
-  S.towCars = S.towCars or trailers.existing(tow.CARS)
-  if S.towTrailer == nil then S.towTrailer = {} end
-  if S.towTrailer[kind] == nil then S.towTrailer[kind] = trailers.towModel(kind) ~= nil end
-  if not S.towTrailer[kind] then return {} end
-  local hq = c.firm and c.firm.hq
-  local function workshop(lat, lon)
-    if hq and hq.g then
-      local k = jobs.km(lat, lon, hq.g[1], hq.g[2])
-      if k >= tow.WORKSHOP_KM[1] and k <= tow.WORKSHOP_KM[2] then
-        return { id = 'hq', n = hq.n or 'Headquarters', town = hq.town or '', g = { hq.g[1], hq.g[2] }, label = 'Your workshop' }
-      end
-    end
-    local list = S.fuelIdx and fuel.within(S.fuelIdx, lat, lon, 'fuel', tow.WORKSHOP_KM[1], tow.WORKSHOP_KM[2]) or {}
-    local s = list[1] and list[1].station
-    if s then return { id = 'workshop:' .. s.id, n = 'Workshop at ' .. s.n, town = s.town or '', g = { s.g[1], s.g[2] },
-      label = 'Workshop' } end
-  end
-  local addresses = food.addressesNear(S.fidx, p.lat, p.lon, tow.NEAR_KM)
-  local out = tow.offers(class, p.lat, p.lon, addresses, workshop, S.towCars, M.random)
-  local factor = rating.freightPay(c)
-  for _, offer in ipairs(out) do
-    if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
-    if firm.ownsTrailer(c, kind) then
-      offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
-      offer.pay = offer.pay + offer.trailerBonus
-    end
-  end
-  return out
-end
-
--- The road distance between two points (lat, lon) on the game's road graph, for food orders: km, false when longer
+-- The road distance between two points (lat, lon) on the game's road graph, for food orders and tow jobs: km, false when longer
 -- than maxKm, nil when the graph does not reach both points (a road further than ROAD_SNAP_M from them).
 M.ROAD_SNAP_M = 80
 local function roadKmFn(p)
@@ -626,6 +593,39 @@ local function roadKmFn(p)
     if ok then return km end
     return nil
   end
+end
+
+local function towOffers(class, p)
+  local c = S.career
+  local kind = tow.CLASSES[class].trailer
+  S.towCars = S.towCars or trailers.existing(tow.CARS)
+  if S.towTrailer == nil then S.towTrailer = {} end
+  if S.towTrailer[kind] == nil then S.towTrailer[kind] = trailers.towModel(kind) ~= nil end
+  if not S.towTrailer[kind] then return {} end
+  local hq = c.firm and c.firm.hq
+  local function workshop(lat, lon)
+    if hq and hq.g then
+      local k = jobs.km(lat, lon, hq.g[1], hq.g[2])
+      if k >= tow.WORKSHOP_KM[1] and k <= tow.WORKSHOP_KM[2] then
+        return { id = 'hq', n = hq.n or 'Headquarters', town = hq.town or '', g = { hq.g[1], hq.g[2] }, label = 'Your workshop' }
+      end
+    end
+    local list = S.fuelIdx and fuel.within(S.fuelIdx, lat, lon, 'fuel', tow.WORKSHOP_KM[1], tow.WORKSHOP_KM[2]) or {}
+    local s = list[1] and list[1].station
+    if s then return { id = 'workshop:' .. s.id, n = 'Workshop at ' .. s.n, town = s.town or '', g = { s.g[1], s.g[2] },
+      label = 'Workshop' } end
+  end
+  local addresses = food.addressesNear(S.fidx, p.lat, p.lon, tow.NEAR_KM)
+  local out = tow.offers(class, p.lat, p.lon, addresses, workshop, S.towCars, M.random, nil, roadKmFn(p))
+  local factor = rating.freightPay(c)
+  for _, offer in ipairs(out) do
+    if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
+    if firm.ownsTrailer(c, kind) then
+      offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
+      offer.pay = offer.pay + offer.trailerBonus
+    end
+  end
+  return out
 end
 
 function M.generate()
