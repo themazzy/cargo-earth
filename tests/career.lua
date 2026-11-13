@@ -1562,6 +1562,13 @@ test('the debt lists where it comes from and what paid it off', function()
   local failure = {id = 'oil', cost = 100}
   upkeep.roadside({money = 0}, h, car, failure)
   assert(garage.debtInfo(h).log[1].kind == 'roadside' and garage.debtInfo(h).log[1].amount == 100)
+  -- a failed refuel takes back its own charge, not older ones
+  local r = {debt = 0}
+  garage.addDebt(r, 100, 'fine', 'Speed camera')
+  garage.addDebt(r, 50, 'fuel', 'Roadside fuel delivery')
+  assert(garage.cancelDebt(r, 50, 'fuel', 'Refund') == 50 and r.debt == 100)
+  local ri = garage.debtInfo(r)
+  assert(#ri.sources == 1 and ri.sources[1].kind == 'fine' and ri.sources[1].amount == 100 and ri.log[1].kind == 'refund')
   for _ = 1, 50 do garage.addDebt(h, 1, 'fuel', 'x') end
   assert(#h.debtParts <= garage.DEBT_PARTS_MAX and #h.debtLog <= garage.DEBT_LOG_MAX)
   local sum = 0

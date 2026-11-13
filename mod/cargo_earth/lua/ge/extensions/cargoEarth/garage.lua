@@ -436,6 +436,27 @@ function M.reduceDebt(g, amount, how, what)
   return amount
 end
 
+-- Takes back a charge that should not have happened (a refuel that failed): the newest charges of that kind are
+-- removed, not the oldest debt. Returns what was taken off.
+function M.cancelDebt(g, amount, kind, what)
+  M.debtSync(g)
+  amount = math.min(tonumber(amount) or 0, g.debt or 0)
+  if amount <= 0 then return 0 end
+  local parts, left = g.debtParts or {}, amount
+  for i = #parts, 1, -1 do
+    if left <= 0 then break end
+    if parts[i].kind == kind then
+      local cut = math.min(left, parts[i].left)
+      parts[i].left, left = parts[i].left - cut, left - cut
+      if parts[i].left <= 0 then table.remove(parts, i) end
+    end
+  end
+  g.debt = (g.debt or 0) - amount
+  M.debtSync(g)
+  debtNote(g, 'refund', what, -amount)
+  return amount
+end
+
 -- For the Menu: { total, share, sources = { { kind, label, amount, count } } biggest first, open = charges, log }
 function M.debtInfo(g)
   M.debtSync(g)

@@ -2481,7 +2481,7 @@ function M.onCargoEarthFuel(id, token, report)
         end
         if pending.cost > 0 then
           if pending.debt then
-            garage.reduceDebt(g, pending.cost, 'refund', 'Refund: refuelling failed')
+            garage.cancelDebt(g, pending.cost, 'fuel', 'Refund: refuelling failed')
           else
             economy.post(S.career, pending.cost, 'fuel', economy.nextId(S.career, 'fuel'), 'Refund: refuelling failed')
           end
