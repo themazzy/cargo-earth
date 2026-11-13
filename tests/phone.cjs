@@ -180,6 +180,7 @@ for (const t of timers.filter(timer => timer.interval === 250)) t.fn()
 assert.equal(scope.tab, 'radio', 'a choice made here a moment ago is not undone by an older answer')
 answer = {screen: 'offline'}
 assert(directive.template.includes('Stations from Radio Browser'))
+assert(directive.template.includes('aria-label="Job type"') && directive.template.includes("act('mode', 'trucking')"), 'the offline screen switches the job type')
 scope.setTab('orders')
 scope.setTab('invalid')
 assert.equal(scope.tab, 'orders')
