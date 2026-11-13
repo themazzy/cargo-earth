@@ -2384,3 +2384,42 @@ do
   assert(layout.ensure(refuse, flag) == nil and written == nil, 'a refused insert is not recorded as done')
   print('PASS the phone goes into the .Earth layout above the speedometer, once')
 end
+
+test('food customers: nearer and same-town addresses are likelier, a long road detour is skipped', function()
+  local r = {town = 'Neratovice'}
+  assert(food.customerWeight(r, 1, 'Neratovice') == 1)
+  assert(food.customerWeight(r, 1, 'Libiš') == food.OTHER_TOWN, 'another village is less likely')
+  assert(food.customerWeight(r, 4, 'Neratovice') < 0.3, 'a far address is less likely')
+  assert(food.customerWeight({town = ''}, 1, 'Libiš') == 1, 'no town known: no town weight')
+  -- a town of 9 addresses next to the restaurant and a village of 30 further out
+  local rows = {}
+  for i = 1, 9 do rows[#rows + 1] = {50 + 0.007 + 0.001 * (i % 3), 14 + 0.001 * math.floor(i / 3), 50 + 0.007, 14, 'Town ' .. i, 'Town'} end
+  for i = 1, 30 do rows[#rows + 1] = {50 + 0.03 + 0.001 * (i % 6), 14 + 0.001 * math.floor(i / 6), 50.03, 14, 'Village ' .. i, 'Village'} end
+  local pack = {cats = {pizza = 'Pizza'}, tile = 0.05, restaurants = {{'r1', 50, 14, 50, 14, 'Pizza', 'pizza', 'Town'}}}
+  local idx = food.index(pack, function(row, col) if row == 1000 and col == 280 then return rows end end)
+  local seed, town, total = 7, 0, 0
+  local function rnd(n) seed = (seed * 1103515245 + 12345) % 2147483648 return seed % n + 1 end
+  for _ = 1, 60 do
+    local list = food.generate(idx, {count = 1, autoReach = false, nearKm = 3, minKm = 0.5, maxKm = 5}, 50, 14, rnd, 1)
+    if list[1] then total = total + 1; if list[1].to.town == 'Town' then town = town + 1 end end
+  end
+  assert(total > 40 and town / total > 0.6, 'most orders stay in the restaurant\'s town: ' .. town .. '/' .. total)
+  -- the road graph says the village is 9 km away by road: never offered; an unknown road falls back to the estimate
+  local road = function(_, to) if to[1] > 50.02 then return false end return 0.9 end
+  for _ = 1, 20 do
+    local list = food.generate(idx, {count = 1, autoReach = false, nearKm = 3, minKm = 0.5, maxKm = 5}, 50, 14, rnd, 1, road)
+    assert(not list[1] or (list[1].to.town == 'Town' and list[1].km == 0.9 and list[1].roadKnown), 'paid by the road: ' .. tostring(list[1] and list[1].to.town) .. ' ' .. tostring(list[1] and list[1].km))
+  end
+end)
+
+test('road distance on the game graph: shortest way, a cap, and nil where the graph has no way', function()
+  local roads = require('cargoEarth/roads')
+  roads._reset()
+  local function n(x, y, links) return {pos = {x = x, y = y, z = 0}, links = links or {}} end
+  -- a river between A and B: the only bridge is 2 km upstream
+  local graph = {nodes = {A = n(0, 0, {U = {}}), U = n(0, 2000, {V = {}}), V = n(300, 2000, {B = {}}), B = n(300, 0), C = n(5000, 5000)}}
+  local km = roads.km(graph, {{'A', 10}}, {{'B', 10}}, 10)
+  assert(km and math.abs(km - 4.32) < 0.01, tostring(km))
+  assert(roads.km(graph, {{'A', 0}}, {{'B', 0}}, 1) == false, 'longer than the cap')
+  assert(roads.km(graph, {{'A', 0}}, {{'C', 0}}, 50) == nil, 'not connected: unknown, not too far')
+end)
