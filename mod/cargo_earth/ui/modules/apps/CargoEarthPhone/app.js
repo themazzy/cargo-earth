@@ -1124,17 +1124,18 @@ angular.module('beamng.apps')
         if (!a) return 0
         return Math.max(2, Math.min(100, 100 * a.leftS / Math.max(1, a.minutes * 60)))
       }
-      var busy = false, destroyed = false, lastPoll = -Infinity, lastState = null
+      var busy = false, destroyed = false, lastPoll = -Infinity, lastState = null, shown
       function apply(r) {
         if (destroyed) return
         // Most answers are the same as the last one (waiting, offline, driving between ticks). An unchanged answer
-        // needs no Angular digest, so the UI is not re-checked and redrawn for nothing.
+        // needs no Angular digest, so the UI is not re-checked and redrawn for nothing. (Only while the phone still
+        // shows that answer: closing the Menu window clears scope.s, and the next answer must bring it back.)
         var key = JSON.stringify(r === undefined ? null : r)
-        if (key === lastState) return
+        if (key === lastState && scope.s === shown) return
         lastState = key
         scope.$evalAsync(function () {
           if (destroyed) return
-          scope.s = r || null
+          scope.s = shown = r || null
           if (r && r.currency) CUR = r.currency
           if (!r || r.screen !== 'active') scope.cancelAsk = false
         })

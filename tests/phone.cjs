@@ -178,6 +178,10 @@ asked = commands.length
 for (let i = 0; i < 8; i++) { answer.active.stop.frac = i / 8; poll(); now += 250 }
 assert.equal(commands.length - asked, 8, 'The stop bar polls four times a second')
 assert.equal(scope.s.active.stop.frac, 7 / 8, 'A changed answer reaches the phone')
+// Clearing the shown state (closing the Menu window) must not make the same answer be ignored.
+scope.s = null
+now += 500; poll()
+assert.equal(scope.s && scope.s.screen, 'active', 'The same answer comes back after the state was cleared')
 answer = {screen: 'offline'}
 poll(); now += 500; poll()
 scope.s = {screen: 'offline'}
