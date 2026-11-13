@@ -866,6 +866,7 @@ local function takeJob(j)
   j.startedAt, j.startedActive = os.time(), S.career.activeSeconds or 0
   j.paymentId = j.paymentId or economy.nextId(S.career, 'delivery')
   local first = S.job == nil
+  if not j.companyShift then S.career.pickups = require('cargoEarth/variety').note(S.career.pickups, j) end
   S.orders[#S.orders + 1] = { job = j, phase = 'toPickup' }
   nextPing()
   if first then
@@ -1292,27 +1293,37 @@ local function phoneTick()
   if S.mode == 'courier' and (not plan or plan.free < 1 or plan.overflow > 0) then return end
   M.generate()
   -- one grocery basket, one parcel route and one tow job get a place beside the first three offers
-  local fresh, groceryIncluded, routeIncluded, anyRoute = {}, false, false, false
-  local towIncluded, anyTow = false, false
+  local anyRoute, anyTow = false, false
   for _, j in ipairs(S.offers) do
     if j.route then anyRoute = true end
     if j.tow then anyTow = true end
   end
-  for _, j in ipairs(S.offers) do
-    local seen = false
-    for _, id in ipairs(ph.declined) do if id == j.id or (j.from.id and id:find(j.from.id .. '>', 1, true) == 1) then seen = true break end end
-    if not seen and j.kind == 'food' and not cargo.fit(plan, j) then seen = true end
-    if not seen and S.job and not batchFits(j) then seen = true end
-    if not seen and (#fresh < 3 or (j.orderType == 'grocery' and not groceryIncluded) or (j.route and not routeIncluded)
-      or (j.tow and not towIncluded)) then
-      fresh[#fresh + 1] = j
-      if j.orderType == 'grocery' then groceryIncluded = true end
-      if j.route then routeIncluded = true end
-      if j.tow then towIncluded = true end
+  -- spread the pickups (variety): a place that just gave two orders in a row rests for two orders from elsewhere,
+  -- unless nothing else is in reach (a village with one restaurant)
+  local variety = require('cargoEarth/variety')   -- (core's main chunk is at Lua's 200 locals)
+  local function shortlist(spread)
+    local fresh, groceryIncluded, routeIncluded, towIncluded = {}, false, false, false
+    for _, j in ipairs(S.offers) do
+      local seen = spread and variety.resting(S.career.pickups, variety.key(j))
+      if not seen then
+        for _, id in ipairs(ph.declined) do if id == j.id or (j.from.id and id:find(j.from.id .. '>', 1, true) == 1) then seen = true break end end
+      end
+      if not seen and j.kind == 'food' and not cargo.fit(plan, j) then seen = true end
+      if not seen and S.job and not batchFits(j) then seen = true end
+      if not seen and (#fresh < 3 or (j.orderType == 'grocery' and not groceryIncluded) or (j.route and not routeIncluded)
+        or (j.tow and not towIncluded)) then
+        fresh[#fresh + 1] = j
+        if j.orderType == 'grocery' then groceryIncluded = true end
+        if j.route then routeIncluded = true end
+        if j.tow then towIncluded = true end
+      end
+      if #fresh >= 3 and (groceryIncluded or not plan or plan.maxFree < food.GROCERY_SLOTS)
+        and (routeIncluded or not anyRoute) and (towIncluded or not anyTow) then break end
     end
-    if #fresh >= 3 and (groceryIncluded or not plan or plan.maxFree < food.GROCERY_SLOTS)
-      and (routeIncluded or not anyRoute) and (towIncluded or not anyTow) then break end
+    return fresh
   end
+  local fresh = shortlist(true)
+  if #fresh == 0 then fresh = shortlist(false) end
   if #fresh == 0 then ph.nextPingAt = S.clock + M.PHONE.retryS return end
   local j = fresh[math.random(#fresh)]
   if S.job then

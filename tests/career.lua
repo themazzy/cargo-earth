@@ -1179,6 +1179,73 @@ test('parcel route rules: real addresses in nearest-first order, sized to the ve
   assert(kept[7].volume == 25 and kept[8].volume == 0)
 end)
 
+test('pickup variety: two in a row from one place, then two from other places', function()
+  local variety = require('cargoEarth/variety')
+  local function job(k) return { from = { id = k } } end
+  local h = {}
+  assert(not variety.resting(h, 'A'))
+  h = variety.note(h, job('A'))
+  assert(not variety.resting(h, 'A'), 'a second order from the same place is fine')
+  h = variety.note(h, job('A'))
+  assert(variety.resting(h, 'A') and not variety.resting(h, 'B'), 'two in a row: the place rests')
+  h = variety.note(h, job('B'))
+  assert(variety.resting(h, 'A'), 'one other order is not enough')
+  assert(not variety.resting(h, 'B'))
+  h = variety.note(h, job('C'))
+  assert(not variety.resting(h, 'A'), 'two other orders: it rings again')
+  -- forced back by a one-restaurant village: still resting until two others came
+  assert(variety.resting({'A', 'A', 'B', 'A'}, 'A'))
+  assert(variety.resting({'B', 'B'}, 'B') and not variety.resting({'B', 'C', 'B'}, 'B'))
+  for _ = 1, 10 do h = variety.note(h, job('D')) end
+  assert(#h == variety.KEEP, 'a short memory')
+  assert(variety.key({ from = { n = 'Yard' } }) == 'Yard' and variety.key({}) == nil)
+  assert(not variety.resting('broken', 'A') and #variety.note('broken', job('A')) == 1, 'a damaged save starts over')
+end)
+
+test('the phone skips a resting pickup unless nothing else is in reach', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  core.setMode('trucking')
+  advance(core, 2)
+  local generate, random = core.generate, math.random
+  local places = { 'B', 'A', 'A' }
+  core.generate = function()
+    s.offers = {}
+    for n, k in ipairs(places) do
+      s.offers[#s.offers + 1] = { id = k .. n .. '>x', kind = 'cargo', cargoName = 'Pallets', from = { id = k, n = 'Yard ' .. k } }
+    end
+  end
+  math.random = function(a, b) if b then return random(a, b) end return a or random() end   -- always the last candidate
+  local ok, why = pcall(function()
+    c.pickups = { 'A', 'A' }
+    s.phone.online, s.phone.incoming, s.phone.nextPingAt, s.phone.declined = true, nil, 0, {}
+    advance(core)
+    assert(s.phone.incoming and s.phone.incoming.job.from.id == 'B', 'A just gave two orders: B rings')
+    c.pickups = { 'A', 'A', 'B', 'C' }
+    s.phone.incoming, s.phone.nextPingAt = nil, 0
+    advance(core)
+    assert(s.phone.incoming and s.phone.incoming.job.from.id == 'A', 'two others since: A rings again')
+    places = { 'A', 'A' }
+    c.pickups = { 'A', 'A' }
+    s.phone.incoming, s.phone.nextPingAt = nil, 0
+    advance(core)
+    assert(s.phone.incoming and s.phone.incoming.job.from.id == 'A', 'only A in reach: it still rings')
+  end)
+  core.generate, math.random = generate, random
+  assert(ok, why)
+  c.pickups = nil
+  core.generate()
+  local own
+  for k, offer in ipairs(s.offers) do if not offer.companyShift then own = k break end end
+  if own then
+    core.take(own)
+    assert(c.pickups and c.pickups[1] == (s.offers[own].from.id or s.offers[own].from.n), 'a taken job is remembered')
+  end
+end)
+
 test('a parcel route loads the van, empties the containers stop by stop and pays once at the last address', function()
   local core, s = fresh()
   local c = s.career
