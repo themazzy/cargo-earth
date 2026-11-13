@@ -11,7 +11,7 @@ cars do, so at the real pump price (38 CZK/l) fuel took about 40 % of courier pa
 | | Before | Now |
 |---|---|---|
 | Petrol / diesel / electricity | 38 / 36 CZK/l, 9 CZK/kWh | 13 / 12 CZK/l, 3 CZK/kWh |
-| Roadside fuel call-out fee | 150 CZK | 75 CZK |
+| Roadside fuel call-out fee | 150 CZK | 30 CZK (75 until 2026-11-13) |
 | Oil change / tyres / brakes (car) | 120 / 600 / 350 CZK | 60 / 300 / 175 CZK |
 | Breakdown roadside fee | 150 CZK | 75 CZK |
 
