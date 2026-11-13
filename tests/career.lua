@@ -2423,3 +2423,18 @@ test('road distance on the game graph: shortest way, a cap, and nil where the gr
   assert(roads.km(graph, {{'A', 0}}, {{'B', 0}}, 1) == false, 'longer than the cap')
   assert(roads.km(graph, {{'A', 0}}, {{'C', 0}}, 50) == nil, 'not connected: unknown, not too far')
 end)
+
+test('road distance: two points on one edge, and the nearer end of the goal edge', function()
+  local roads = require('cargoEarth/roads')
+  roads._reset()
+  local function n(x, y, links) return {pos = {x = x, y = y, z = 0}, links = links or {}} end
+  local graph = {nodes = {P = n(0, 0, {Q = {}}), Q = n(2000, 0)}}
+  local km = roads.km(graph, {{'P', 700}, {'Q', 1300}}, {{'P', 1300}, {'Q', 700}}, 5)
+  assert(km and math.abs(km - 0.6) < 0.001, 'along the shared edge: ' .. tostring(km))
+  -- the goal edge's far end is reached first by the heuristic, but its near end is the shorter way
+  roads._reset()
+  local g2 = {nodes = {S = n(0, 0, {A = {}, B = {}}), A = n(1000, 0), B = n(0, 1000)}}
+  local k2 = roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 5)
+  assert(k2 and math.abs(k2 - 1.05) < 0.001, tostring(k2))
+  assert(roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 1) == false, 'the cap counts the whole way')
+end)
