@@ -1,12 +1,17 @@
-# Dash phone part (VR, work in progress)
+# Phone on the dashboard (VR, work in progress)
 
 A real phone on the dash that shows the full Cargo Earth phone app, for cockpit and VR play.
 The floating flat phone stays for normal play.
 
-## Fitting it
+## Turning it on
 
-Phone app → Settings → VR → **Fit phone holder** (or BeamNG's Vehicle Config → *Additional Modification*). In a
-career the parts checkout asks to pay for it like any other part. Pigeon only for now.
+Phone app → Menu → Settings → VR → **Phone on the dashboard: On**. It works in every car, mod cars included: the car
+you drive gets the phone, and so does each car you spawn or switch to afterwards (a moment after it appears, the car is
+reloaded once with the phone). Traffic never gets one. It costs nothing and is not a career part.
+
+Below the switch, **Up / down**, **Closer / further** and **Left / right** move it 1 cm per press (the car reloads to
+show it), kept per car model. **Back to where it started** drops the nudges; **Measure this car again** measures the
+car again.
 
 The older floating VR screen (a Skia billboard in front of the driver) is removed: a billboard always turns toward the
 camera and was placed from the seat node, so it turned with your head, shook with g-forces and flickered, and its
@@ -14,9 +19,19 @@ runtime trigger boxes never ended up in the right place (beamng.log showed their
 
 ## How it works
 
-* **Part:** `cargo_earth_phone_pigeon` ("Cargo Earth phone holder") fits the Pigeon's *Additional Modification*
-  slot (`pigeon_mod`). It is a small mesh (`cargo_earth_phone.dae`, made per car) fixed to the dash nodes and turned
-  once (about 31° in the Pigeon) to face the driver's eyes; it never moves with your head. Other cars come later (likely through the common Navigation Unit slot).
+* **No file, no slot:** while the switch is on, `cargoEarth/dash.lua` wraps the game's jbeam part lookup
+  (`lua/common/jbeam/io.lua`: `getPart`, `getCompatiblePartNamesForSlot`, `getAvailableParts`,
+  `getAvailableSlotNameMap`). Every car's main part gets one more slot, `cargo_earth_phone`, empty by default, and the
+  part `cargo_earth_phone_auto` is built for the car's model on request. From there the game loads it like a part from
+  a file. The player's car is respawned with the part chosen in its parts tree (`gamecar.respawnPlayer`, which also
+  clears the game's jbeam cache), so it stays in the car's config through BeamNG's own respawns.
+* **Placement (findSpot):** the driver's head is the driver seat's camera (`vdata.cameras.occupant`, or the older
+  `driver` camera). The phone stands on the dash between the driver and the middle of the car (15 % of the way from the
+  middle), on top of the highest dash node and 2.7 cm behind its back edge, at most 12 cm below the eyes, turned in 5°
+  steps to face the head (`cargo_earth_phone.dae` holds the phone turned every 5° from −70° to 70°). Dash nodes are the
+  ones in a group named `*dash*` when the car has one; otherwise glass, hood, gear lever, steering, seats and doors are
+  left out. On the Pigeon's real nodes this gives (−0.047, −0.43, 1.07), the spot tuned by hand in the VR test.
+  The measured spot is saved per model in `settings/cargoEarth/dash.json` with the switch and the nudges.
 * **Screen:** the vehicle controller `cargoEarthPhone` opens a vehicle web view (`@cargo_earth_phone`) with
   `vehicles/common/cargo_earth_phone/phone.html`. That page loads the same `CargoEarthPhone` app as the flat
   phone, so every screen and button is the same. The screen material shows the web view as its texture.
@@ -28,12 +43,13 @@ runtime trigger boxes never ended up in the right place (beamng.log showed their
   (or the mouse) at a spot and pull the trigger: the cell's input action asks the page to click whatever is
   under the middle of that cell.
 
-Regenerate the part with `python3 tools/make-dash-phone.py` (it uses `tools/make-phone-mesh.py` for the mesh).
-beamng.log shows `phone holder screen started` and `dash phone holder running in car N` when the part's screen starts.
+Regenerate the meshes, materials and the click grid's input actions with `python3 tools/make-dash-phone.py` (it uses
+`tools/make-phone-mesh.py`). beamng.log shows `dash phone: <model> measured, phone at ...` when a car is measured, and
+`phone holder screen started` and `dash phone holder running in car N` when the screen starts.
 
 ## Not tested in game yet
 
-Flexbody placement on the dash, the trigger frame axes, the emissive screen material, `beamng.sendEngineLua`
+The generated part (slot added at load time), the placement in other cars than the Pigeon, the mesh turn direction, the emissive screen material, `beamng.sendEngineLua`
 inside a vehicle web view, and loading the app script from `local://local/ui/...`.
 
 ## The Menu window

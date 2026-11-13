@@ -2971,11 +2971,11 @@ function M.settingsState()
 end
 
 -- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
--- dash (a = fit | remove: the phone holder on the dashboard)
+-- dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
 function M.settingsDo(name, a, b)
-  -- the dash phone holder is a car part: BeamNG's parts menu works on the resume screen too, so this does as well
+  -- the dash phone is the player's own choice, outside the career: it works on the resume screen too
   if name == 'dash' then
-    local ok, why = M.dashHolder(a == 'fit')
+    local ok, why = M.dashDo(a)
     S.dashError = not ok and why or nil
     return M.settingsState()
   end
@@ -3236,6 +3236,9 @@ M.arrivalRadius = arrivalRadius
 ------------------------------------------------------------------------------------------ hooks
 
 function M.onExtensionLoaded()
+  dash.load()
+  local okIo, jbeamIO = pcall(require, 'jbeam/io')
+  if okIo and not dash.install(jbeamIO) then log('W', 'cargoEarth', 'dash phone: the game\'s jbeam part lookup was not found') end
   loadPacks()
   loadConfig()
   local saved, recovery = persistence.load(jsonReadFile, SAVE)
@@ -3296,39 +3299,108 @@ function M.dashCall(vehId, id, cmd)
     tonumber(id) or 0, json))
 end
 
--- Settings > Phone on the dashboard: fit (on) or take off the car's phone holder. It changes the car's parts the way
--- BeamNG's Vehicle Config does, so in a career the parts checkout on the phone asks to pay for it like any other part.
-local function copyTree(t)
-  if type(t) ~= 'table' then return t end
-  local out = {}
-  for k, x in pairs(t) do out[k] = copyTree(x) end
-  return out
+-- Phone on the dashboard, in any car (cargoEarth/dash.lua). While the switch is on, the player's car gets the phone:
+-- the car is measured once per model (driver camera, dash nodes), and respawned with the phone in its parts tree.
+-- A new car (spawned or switched to) gets it a moment later, the same way. Traffic never does.
+local dashClock, dashCheckAt, dashTried = 0, nil, {}
+M.DASH_CHECK_S, M.DASH_RETRY_S = 1.5, 20
+
+local function dashMeasure(v)
+  local vdata = type(v.data) == 'table' and v.data.vdata or nil
+  local eye, camNode = dash.eyeOf(vdata)
+  local spot, why = dash.findSpot(dash.nodesOf(vdata, camNode), eye)
+  if spot then
+    dash.setSpot(v.model, spot)
+    log('I', 'cargoEarth', string.format('dash phone: %s measured, phone at %.3f %.3f %.3f on group %s', v.model,
+      spot.centre.x, spot.centre.y, spot.centre.z, spot.group))
+  else
+    log('W', 'cargoEarth', 'dash phone: ' .. tostring(why) .. ' (' .. tostring(v.model) .. ')')
+  end
+  return spot, why
 end
 
-function M.dashHolder(on)
+local function dashBusy()
+  local G = M.G
+  return G.spawning or G.applyingParts or S.parts ~= nil or (G.partsEditorOpen and G.partsEditorOpen()) or false
+end
+
+-- Puts the phone into the player's car (on) or takes it out, by respawning the car. opts.measure measures the car
+-- again; opts.rebuild respawns even when the phone is already in (it moved). Returns ok, why.
+function M.dashFit(on, opts)
+  opts = opts or {}
   local G = M.G
   local v = G.vehicle and G.vehicle()
-  local part = v and dash.partName(v.model)
-  if not part then return false, 'This car has no phone holder yet.' end
-  local path = garage.slotFor(G, v, part)
-  if not path then
-    local top = {}
-    for id in pairs(type(v.tree) == 'table' and type(v.tree.children) == 'table' and v.tree.children or {}) do top[#top + 1] = id end
-    log('W', 'cargoEarth', 'dash phone holder: no slot for ' .. part .. ' on ' .. tostring(v.model) .. '; top slots: ' .. table.concat(top, ', '))
-    return false, 'This car has no free slot for the phone holder.'
+  if not v or not v.model or not v.id then return false, 'Sit in a car first.' end
+  if v.model == 'unicycle' then return false, 'On foot there is no dashboard.' end
+  local tree = type(v.config) == 'table' and v.config.partsTree or v.tree
+  if type(tree) ~= 'table' or type(tree.children) ~= 'table' then return false, 'This car’s parts could not be read.' end
+  if on and (opts.measure or not dash.spot(v.model)) then
+    local spot, why = dashMeasure(v)
+    if not spot then return false, why end
   end
-  if (v.slotPartMap[path] == part) == (on and true or false) then return true end
-  local tree = copyTree(v.tree)
-  if not tree or not garage.setInTree(tree, path, on and part or '') then return false, 'This car’s parts could not be changed.' end
-  local ok, err = pcall(G.fitTree, tree)
+  if not opts.rebuild and not opts.measure and dash.treeHasPhone(tree) == (on and true or false) then return true end
+  if dashBusy() then return false, 'Wait until the car has finished changing.' end
+  dashTried[v.id] = dashClock
+  local ok, err = pcall(G.respawnPlayer, function(config) dash.setTreePhone(config.partsTree, on) end)
   if not ok then
-    log('W', 'cargoEarth', 'dash phone holder: ' .. tostring(err))
-    return false, 'BeamNG could not change this car’s parts.'
+    log('W', 'cargoEarth', 'dash phone: ' .. tostring(err))
+    return false, 'BeamNG could not respawn this car.'
   end
   return true
 end
 
+-- Settings > Phone on the dashboard. a: on | off | reset | measure, or a nudge: x+ / x- (left / right as the driver
+-- sees it), y+ / y- (closer / further), z+ / z- (up / down). Nudges are kept per car model.
+function M.dashDo(a)
+  local G = M.G
+  if a == 'on' or a == 'fit' then
+    dash.setOn(true)
+    return M.dashFit(true)
+  elseif a == 'off' or a == 'remove' then
+    dash.setOn(false)
+    return M.dashFit(false)
+  end
+  if not dash.isOn() then return false, 'Switch the phone on first.' end
+  local v = G.vehicle and G.vehicle()
+  if not v or not v.model then return false, 'Sit in a car first.' end
+  if a == 'measure' then
+    dash.nudge(v.model, 'reset')
+    return M.dashFit(true, { measure = true })
+  end
+  local axis, sign
+  if type(a) == 'string' then axis, sign = a:match('^([xyz])([+-])$') end
+  if axis then
+    if not dash.nudge(v.model, axis, sign == '+' and 1 or -1) then return false, 'The phone can’t go further that way.' end
+    return M.dashFit(true, { rebuild = true })
+  elseif a == 'reset' then
+    if not dash.nudge(v.model, 'reset') then return true end
+    return M.dashFit(true, { rebuild = true })
+  end
+  return false, 'Unknown choice.'
+end
+
+-- every frame, even before a career is loaded: a new car gets the phone a moment after it appears
+local function dashTick(dt)
+  dashClock = dashClock + (dt or 0)
+  if not dashCheckAt or dashClock < dashCheckAt then return end
+  dashCheckAt = nil
+  if not dash.isOn() then return end
+  if dashBusy() then dashCheckAt = dashClock + 2 return end
+  local v = M.G.vehicle and M.G.vehicle()
+  if not v or not v.id or not v.model or v.model == 'unicycle' then return end
+  local tree = type(v.config) == 'table' and v.config.partsTree or v.tree
+  if dash.treeHasPhone(tree) and dash.spot(v.model) then return end
+  local last = dashTried[v.id]
+  if last and dashClock - last < M.DASH_RETRY_S then return end
+  local ok, why = M.dashFit(true)
+  if not ok then dashTried[v.id] = dashClock end
+  S.dashError = not ok and why or nil
+end
+M.dashTick = dashTick
+function M.dashCheckSoon() dashCheckAt = dashClock + M.DASH_CHECK_S end
+
 function M.onUpdate(dtReal, dtSim)
+  dashTick(dtReal)
   if S.pendingCareer then
     stopForceWatch()
     updateResume(dtReal)
@@ -3488,9 +3560,11 @@ function M.onBeforeVehicleReplaced(id)
   end
 end
 
-function M.onVehicleDestroyed(id) dash.dropCar(id) end
+function M.onVehicleDestroyed(id) dash.dropCar(id) dashTried[id] = nil end
+function M.onVehicleSwitched() M.dashCheckSoon() end
 
 function M.onVehicleSpawned(id)
+  M.dashCheckSoon()
   if fuelWatch and fuelWatch.id == id then stopFuelWatch() end
   -- A respawn recreates the vehicle-side storage, even when BeamNG reuses its object ID.
   if S.storage and S.storage.id == id then S.storage = nil end
@@ -3521,6 +3595,7 @@ end
 
 function M.onExtensionUnloaded()
   dash.remove()
+  dash.uninstall()
   releaseStorage()
   clearFreight()
   stopForceWatch()

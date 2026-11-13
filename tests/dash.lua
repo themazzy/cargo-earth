@@ -6,23 +6,173 @@ local function test(name, fn)
   total = total + 1
   print('PASS ' .. name)
 end
+local function near(a, b, eps) return math.abs(a - b) <= (eps or 1e-6) end
 
-test('a car\'s phone holder is forgotten when it is respawned', function()
+-- a store that keeps the settings in memory
+local saved
+dash.store = { read = function() return saved end, write = function(t) saved = t end }
+local function reset(t) saved = t dash.load() end
+
+-- A small car like the Pigeon (right-hand drive: the driver sits at -x): a dashboard of nodes across the car, a
+-- windscreen above it, the steering column in front of the driver, and the driver camera.
+local EYE = { x = -0.316, y = 0.1, z = 1.25 }
+local function car(eye)
+  local nodes = {}
+  local function n(name, x, y, z, group) nodes[#nodes + 1] = { name = name, pos = { x = x, y = y, z = z }, groups = { group } } end
+  for i = -3, 3 do
+    n('dsh2_' .. i, i * 0.2, -0.457, 0.87, 'pigeon_dash')
+    n('dsh1_' .. i, i * 0.2, -0.457, 0.99, 'pigeon_dash')
+    n('ws_' .. i, i * 0.2, -0.75, 1.32, 'pigeon_body')
+  end
+  n('steer1', eye.x, -0.25, 1.0, 'pigeon_steer')
+  n('steer2', eye.x, -0.3, 0.9, 'pigeon_steer')
+  n('floor', 0, -0.4, 0.3, 'pigeon_body')
+  return nodes
+end
+
+test('a car\'s phone is forgotten when it is respawned', function()
   dash.partCar(7)
   assert(dash.isPartCar(7) and not dash.isPartCar(8))
   dash.dropCar(7)
   assert(not dash.isPartCar(7), 'a respawn without the part forgets it')
-end)
-
-test('only cars with a holder offer one, and its state follows the car\'s parts', function()
-  assert(dash.partName('pigeon') == 'cargo_earth_phone_pigeon' and dash.partName('covet') == nil and dash.partName(nil) == nil)
-  assert(dash.state(nil).car == false)
-  local st = dash.state({ id = 3, model = 'pigeon', slotPartMap = { ['/pigeon_mod/'] = 'cargo_earth_phone_pigeon' } })
-  assert(st.supported and st.fitted and not st.running)
   dash.partCar(3)
-  assert(dash.state({ id = 3, model = 'pigeon', slotPartMap = {} }).running)
   dash.forget()
   assert(not dash.isPartCar(3))
+end)
+
+test('the driver\'s head comes from the car\'s driver camera', function()
+  local vdata = { nodes = { [0] = { name = 'a', pos = { x = 0, y = 0, z = 0 } }, [5] = { pos = { x = -0.3, y = 0.1, z = 1.2 } } },
+    cameras = { onboard = { { name = 'driver', camNodeID = 5, x = 9, y = 9, z = 9 } } } }
+  local eye, node = dash.eyeOf(vdata)
+  assert(eye and near(eye.x, -0.3) and near(eye.z, 1.2) and node == 5, 'the camera\'s own node, where the game put it')
+  vdata.cameras = { occupant = { FL = { x = 0.3, y = 0.1, z = 1.2, defaultPermissionMode = 'passenger' },
+    FR = { x = -0.31, y = 0.12, z = 1.21, defaultPermissionMode = 'driver' } },
+    onboard = { { name = 'hood', x = 0, y = -0.55, z = 1.18 } } }
+  eye = dash.eyeOf(vdata)
+  assert(near(eye.x, -0.31), 'the driver\'s seat, not a passenger\'s')
+  vdata.cameras = { onboard = { { name = 'hood', x = 0, y = -0.55, z = 1.18 } } }
+  assert(dash.eyeOf(vdata) == nil, 'never the hood camera')
+  assert(dash.eyeOf({ nodes = {} }) == nil and dash.eyeOf(nil) == nil)
+  local list = dash.nodesOf({ nodes = { [0] = { name = 'a', pos = { x = 1, y = 2, z = 3 }, group = { [0] = 'g' } },
+    [1] = { name = 'cam', pos = { x = 0, y = 0, z = 0 } }, [2] = { pos = { x = 0, y = 0, z = 0 } } } }, 1)
+  assert(#list == 1 and list[1].name == 'a' and list[1].groups[1] == 'g', 'named nodes only, not the camera\'s')
+end)
+
+test('the phone stands on the dash, toward the middle, below the eyes, facing the driver', function()
+  local spot = assert(dash.findSpot(car(EYE), EYE))
+  assert(spot.group == 'pigeon_dash', 'it hangs on the dash, not the steering column or the windscreen: ' .. spot.group)
+  assert(near(spot.centre.y, -0.43, 1e-6) and near(spot.centre.z, 1.07, 1e-6), 'on top of the dash, at its back edge')
+  assert(spot.centre.x > EYE.x and spot.centre.x < 0, 'between the driver and the middle of the car')
+  assert(spot.ref.name ~= spot.x.name and spot.ref.name ~= spot.y.name and spot.x.name ~= spot.y.name)
+  local _, yaw = dash.placement(spot)
+  assert(yaw > 0 and yaw % dash.YAW_STEP == 0, 'turned toward a driver on the right, in mesh steps: ' .. yaw)
+  -- left-hand drive: the same car mirrored
+  local lhd = { x = 0.316, y = 0.1, z = 1.25 }
+  local spot2 = assert(dash.findSpot(car(lhd), lhd))
+  local _, yaw2 = dash.placement(spot2)
+  assert(yaw2 == -yaw and spot2.centre.x > 0, 'mirrored for a driver on the left')
+  -- a tall truck: the phone never sits above the driver's line of sight
+  local truck = { x = -0.5, y = 0.3, z = 1.12 }
+  local spot3 = assert(dash.findSpot(car(truck), truck))
+  assert(spot3.centre.z <= truck.z - 0.12 + 1e-9)
+  local none, why = dash.findSpot({}, EYE)
+  assert(none == nil and why, 'no dash, no phone')
+  assert(dash.findSpot(car(EYE), nil) == nil, 'no driver camera, no phone')
+end)
+
+test('the part covers the screen with a 6 x 12 click grid and moves with the nudges', function()
+  local spot = assert(dash.findSpot(car(EYE), EYE))
+  local part = dash.buildPart(spot)
+  assert(part.slotType == dash.SLOT and part.partName == dash.PART and part.information.value == 0)
+  assert(#part.triggers2 == 1 + dash.COLS * dash.ROWS and #part.triggerEventLinks2 == 1 + dash.COLS * dash.ROWS)
+  local centre, yaw = dash.placement(spot)
+  assert(part.flexbodies[2][1] == 'cargo_earth_phone_body' .. dash.meshSuffix(yaw))
+  assert(part.flexbodies[3][1] == 'cargo_earth_phone_screen' .. dash.meshSuffix(yaw))
+  assert(part.flexbodies[2][2][1] == spot.group and near(part.flexbodies[2][4].pos.z, centre.z, 1e-4))
+  local first, last = part.triggers2[2], part.triggers2[#part.triggers2]
+  assert(first[1] == 'cep_1_1' and first[2] == spot.ref.name and first[3] == spot.x.name and first[4] == spot.y.name)
+  local a, b = first[10].baseTranslationGlobal, last[10].baseTranslationGlobal
+  assert(a.z > b.z and near(a.z - b.z, dash.SCREEN_H * (dash.ROWS - 1) / dash.ROWS, 1e-3), 'top row above the bottom row')
+  assert(near((a.x + b.x) / 2, centre.x, 3e-3) and near((a.z + b.z) / 2, centre.z, 1e-3), 'the grid is centred on the screen')
+  local size = first[6]
+  assert(size.x > 0 and size.y > 0 and size.z > 0)
+  assert(part.triggerEventLinks2[2][3] == 'cargoEarthTap_1_1')
+  -- nudged 3 cm up: everything moves with it
+  local up = dash.buildPart(spot, { x = 0, y = 0, z = 0.03 })
+  assert(near(up.flexbodies[2][4].pos.z, part.flexbodies[2][4].pos.z + 0.03, 1e-4))
+  assert(near(up.triggers2[2][10].baseTranslationGlobal.z, a.z + 0.03, 1e-4))
+  assert(dash.meshSuffix(30) == '_yp30' and dash.meshSuffix(-5) == '_ym5' and dash.meshSuffix(0) == '_yp0')
+end)
+
+test('Settings: the switch, the measured spots and the nudges are kept, per car model', function()
+  reset(nil)
+  assert(not dash.isOn() and dash.partFor('pigeon') == nil)
+  local spot = assert(dash.findSpot(car(EYE), EYE))
+  dash.setOn(true)
+  assert(dash.partFor('pigeon') == nil, 'not measured yet')
+  dash.setSpot('pigeon', spot)
+  assert(dash.partFor('pigeon') and dash.partFor('covet') == nil)
+  assert(dash.nudge('pigeon', 'z', 1) and dash.nudge('pigeon', 'z', 1) and dash.nudge('pigeon', 'y', -1))
+  assert(near(dash.nudgeOf('pigeon').z, 0.02) and near(dash.nudgeOf('pigeon').y, -0.01) and dash.nudgeOf('covet').z == 0)
+  assert(not dash.nudge('pigeon', 'w', 1), 'only x, y and z')
+  for _ = 1, 40 do dash.nudge('pigeon', 'x', 1) end
+  assert(near(dash.nudgeOf('pigeon').x, dash.NUDGE_MAX) and not dash.nudge('pigeon', 'x', 1), 'it stops at the limit')
+  -- read back from the file
+  dash.load()
+  assert(dash.isOn() and dash.spot('pigeon') and near(dash.spot('pigeon').centre.z, spot.centre.z))
+  assert(near(dash.nudgeOf('pigeon').z, 0.02))
+  local st = dash.state({ id = 4, model = 'pigeon', config = { partsTree = { children = {} } } })
+  assert(st.on and st.car and st.placed and not st.fitted and st.nudged and st.nudge.z == 2)
+  assert(dash.nudge('pigeon', 'reset') and not dash.state({ id = 4, model = 'pigeon' }).nudged)
+  -- a spot measured by an older way of measuring is measured again
+  saved.spots.pigeon.v = dash.SPOT_VERSION - 1
+  dash.load()
+  assert(dash.spot('pigeon') == nil)
+  assert(dash.state(nil).car == false)
+end)
+
+test('the parts tree chooses the phone, or not', function()
+  local tree = { chosenPartName = 'pigeon', children = { pigeon_mod = { chosenPartName = '' } } }
+  assert(not dash.treeHasPhone(tree))
+  assert(dash.setTreePhone(tree, true) and dash.treeHasPhone(tree) and tree.children.pigeon_mod)
+  assert(tree.children[dash.SLOT].partPath == '/' .. dash.SLOT .. '/' .. dash.PART)
+  dash.setTreePhone(tree, false)
+  assert(not dash.treeHasPhone(tree) and tree.children[dash.SLOT] == nil)
+  assert(not dash.setTreePhone(nil, true))
+end)
+
+test('the game\'s part lookup gets the slot and the part, only while the switch is on and the car is measured', function()
+  reset(nil)
+  local main = { partName = 'pigeon', slotType = 'main', slots2 = { { name = 'pigeon_mod', allowTypes = { 'pigeon_mod' } } } }
+  local function copy(t) local o = {} for k, v in pairs(t) do o[k] = type(v) == 'table' and copy(v) or v end return o end
+  local io = {
+    getPart = function(_, name) if name == 'pigeon' then return copy(main), 'pigeon.jbeam' end end,
+    getAvailableParts = function() return { pigeon = { description = 'Pigeon' } } end,
+    getAvailableSlotNameMap = function() return { main = { 'pigeon' } } end,
+    getCompatiblePartNamesForSlot = function() return { 'other' }, {} end,
+  }
+  local orig = io.getPart
+  local ctx = { preloadedDirs = { '/vehicles/pigeon/', '/vehicles/common/' } }
+  assert(dash.modelOf(ctx) == 'pigeon')
+  assert(dash.install(io) and dash.install(io), 'installs once')
+  local function slots() return #io.getPart(ctx, 'pigeon').slots2 end
+  assert(slots() == 1 and io.getPart(ctx, dash.PART) == nil, 'off: the car is untouched')
+  dash.setOn(true)
+  assert(slots() == 1, 'on, but this model is not measured yet')
+  dash.setSpot('pigeon', assert(dash.findSpot(car(EYE), EYE)))
+  local p = io.getPart(ctx, 'pigeon')
+  assert(#p.slots2 == 2 and p.slots2[2].name == dash.SLOT and p.slots2[2].default == '', 'an empty slot: traffic stays without')
+  assert(#main.slots2 == 1, 'the game\'s cached part is not changed')
+  local part = io.getPart(ctx, dash.PART)
+  assert(part and part.slotType == dash.SLOT)
+  local names = io.getCompatiblePartNamesForSlot(ctx, p.slots2[2])
+  assert(#names == 1 and names[1] == dash.PART)
+  assert(io.getCompatiblePartNamesForSlot(ctx, p.slots2[1])[1] == 'other')
+  assert(io.getAvailableParts(ctx)[dash.PART] and io.getAvailableSlotNameMap(ctx)[dash.SLOT][1] == dash.PART)
+  assert(io.getPart({ preloadedDirs = { '/vehicles/covet/' } }, dash.PART) == nil, 'another model has its own spot')
+  dash.uninstall()
+  assert(io.getPart == orig, 'the game\'s own functions are put back')
+  dash.setOn(false)
 end)
 
 print('Dash phone: ' .. total .. ' checks passed')

@@ -241,6 +241,8 @@ end
 
 ------------------------------------------------------------------------------------------ actions
 
+M.FREE_PART = 'cargo_earth_phone_auto' -- the phone on the dashboard (cargoEarth/dash.lua)
+
 -- Quote the complete difference after BeamNG has resolved the slots and any dependent parts.
 -- Matching parts can move between slots without being bought again.
 function M.partsQuote(G, inventory, before, vehicle)
@@ -250,11 +252,13 @@ function M.partsQuote(G, inventory, before, vehicle)
   local delta, spares, items, total = {}, {}, {}, 0
   for part, count in pairs(inventory or {}) do spares[part] = count end
   for _, part in pairs(before) do
-    if type(part) == 'string' and part ~= '' then delta[part] = (delta[part] or 0) - 1
+    if part == M.FREE_PART then -- the dash phone comes and goes with Settings: never bought
+    elseif type(part) == 'string' and part ~= '' then delta[part] = (delta[part] or 0) - 1
     elseif part ~= '' and part ~= false then return nil, 'The saved parts list is unavailable. Discard the preview and try again.' end
   end
   for _, part in pairs(vehicle.slotPartMap) do
-    if type(part) == 'string' and part ~= '' then delta[part] = (delta[part] or 0) + 1
+    if part == M.FREE_PART then
+    elseif type(part) == 'string' and part ~= '' then delta[part] = (delta[part] or 0) + 1
     elseif part ~= '' and part ~= false then return nil, 'Waiting for BeamNG to resolve the selected parts.' end
   end
   for part, count in pairs(delta) do
