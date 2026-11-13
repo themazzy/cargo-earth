@@ -1004,7 +1004,7 @@ local function finishDelivery(force)
     if not employment.delivered(c, j, pay + tip) then return end
   else
     if economy.isSettled(c, j.paymentId) then return end
-    toDebt = garage.takeForDebt(c.garage, pay + tip)
+    toDebt = garage.takeForDebt(c.garage, pay + tip, 'Delivery to ' .. tostring(j.to.n))
     if not economy.post(c, pay + tip - toDebt, 'delivery', j.paymentId, j.cargoName) then return end
   end
   local rankUp = progress.complete(c, j)
@@ -1414,6 +1414,7 @@ function M.careerState()
   local shift = S.career.employment
   local personal = shift and shift.personalGarage or S.career.garage
   state.debt = personal and personal.debt or 0
+  if personal and personal.started then state.debtInfo = garage.debtInfo(personal) end
   state.heldWages = shift and shift.phase ~= 'settled' and math.floor(shift.gross * (shift.share or employment.SHARE) + 0.5) or 0
   state.ledger = {}
   for i, row in ipairs(economy.restore(S.career).history) do
@@ -1930,7 +1931,7 @@ local function cameraTick(p)
   local paid = math.max(0, math.min(flash.fine, math.floor(c.money or 0)))
   local detail = string.format('Speed camera: %d km/h, limit %d', flash.speed, flash.limit)
   if paid > 0 then economy.post(c, -paid, 'fine', economy.nextId(c, 'fine'), detail) end
-  if paid < flash.fine then g.debt = (g.debt or 0) + flash.fine - paid end
+  if paid < flash.fine then garage.addDebt(g, flash.fine - paid, 'fine', detail) end
   local rated = 0
   local function mark(job)
     if type(job) == 'table' and not job.starPenalty then job.starPenalty, rated = cameras.STAR_PENALTY, rated + 1 end
@@ -2446,7 +2447,7 @@ function M.onCargoEarthFuel(id, token, report)
         end
         if pending.cost > 0 then
           if pending.debt then
-            g.debt = math.max(0, (g.debt or 0) - pending.cost)
+            garage.reduceDebt(g, pending.cost, 'refund', 'Refund: refuelling failed')
           else
             economy.post(S.career, pending.cost, 'fuel', economy.nextId(S.career, 'fuel'), 'Refund: refuelling failed')
           end
@@ -2532,7 +2533,8 @@ local function fuelBuy(car, quote, extra, detail, onCredit)
   local debt = false
   if cost > 0 then
     if onCredit and (c.money or 0) < cost then
-      g.debt, debt = (g.debt or 0) + cost, true
+      garage.addDebt(g, cost, 'fuel', detail)
+      debt = true
     else
       economy.post(c, -cost, 'fuel', economy.nextId(c, 'fuel'), detail)
     end
@@ -2562,7 +2564,8 @@ function M.payPump(car, report)
   local debt = false
   if quote.cost > 0 then
     if (c.money or 0) < quote.cost then
-      g.debt, debt = (g.debt or 0) + quote.cost, true
+      garage.addDebt(g, quote.cost, 'fuel', 'Fuel at ' .. tostring(st.n))
+      debt = true
     else
       economy.post(c, -quote.cost, 'fuel', economy.nextId(c, 'fuel'), st.n)
     end
@@ -2915,6 +2918,7 @@ function M.garageState()
   out.repair = g.repair or 0
   out.debt = g.debt or 0
   out.debtShare = garage.DEBT_SHARE
+  out.debtInfo = (g.debt or 0) > 0 and garage.debtInfo(g) or nil
   out.income = math.floor(garage.INCOME_PER_HOUR / 10 + 0.5) * 10   -- what an hour of deliveries pays
   out.repairHours = garage.hours(out.repair)
   local cap = garage.repairCap(g)
@@ -3810,7 +3814,7 @@ function M.onUpdate(dtReal, dtSim)
         saveCareer()
       elseif income > 0 then
         local c = S.career
-        local debtPaid = garage.takeForDebt(fg, income)
+        local debtPaid = garage.takeForDebt(fg, income, 'Hired drivers\' earnings')
         economy.post(c, income - debtPaid, 'drivers', economy.nextId(c, 'drivers'), 'Fleet shift')
         say(string.format('Drivers earned %d CZK%s.', income,
           debtPaid > 0 and string.format(' (%d CZK toward debt)', debtPaid) or ''))
