@@ -2109,6 +2109,7 @@ test('the Menu window opens in the Menu app, else the floating phone, else on th
   assert(core.openMenu('os.exit', nil) == false and #sent == 1)
   core.menuHost('menu')
   assert(core.openMenu('settings') == true and sent[2][2].to == 'menu', 'the Menu app wins over the floating phone')
+  assert(core.openMenu('toggle') == true and sent[3][2].panel == 'toggle' and sent[3][2].to == 'menu', 'the Menu button toggles the window where it is')
   t = 110
   assert(core.openMenu('settings') == false, 'apps not heard from lately are gone')
   guihooks = nil

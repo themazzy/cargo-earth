@@ -3260,7 +3260,8 @@ end
 -- The Menu window. Either phone (floating or on the dash) asks openMenu; the window opens in the "Cargo Earth: Menu" UI
 -- app when it is in the UI, else in the floating phone. Both say they are there every few seconds (menuHost). With
 -- neither, openMenu answers false and the asking phone opens the section on its own screen.
-local MENU_PANELS = { garage = true, home = true, companies = true, career = true, settings = true }
+-- 'toggle': the Menu button, closing an open window or opening its last section
+local MENU_PANELS = { garage = true, home = true, companies = true, career = true, settings = true, toggle = true }
 local menuHosts = {}
 M.now = function() return os.time() end
 function M.menuHost(kind)

@@ -1328,7 +1328,11 @@ angular.module('beamng.apps')
         var hostKind = scope.menuOnly ? 'menu' : 'phone'
         scope.$on('CargoEarthOpenMenu', function (event, d) {
           if (!d || !d.panel || (d.to || 'phone') !== hostKind) return
-          scope.$evalAsync(function () { scope.openPanel(d.panel, d.view || undefined, true) })
+          scope.$evalAsync(function () {
+            if (d.panel !== 'toggle') scope.openPanel(d.panel, d.view || undefined, true)
+            else if (scope.panel) scope.closePanel()
+            else scope.openPanel(lastPanel || 'garage', undefined, true)
+          })
         })
         // tell the game this app is here to show the Menu window
         var hostHere = function () { bngApi.engineLua('cargoEarth_core and cargoEarth_core.menuHost("' + hostKind + '")', function () {}) }
@@ -1336,7 +1340,15 @@ angular.module('beamng.apps')
         var hostTimer = setInterval(hostHere, 3000)
         scope.$on('$destroy', function () { clearInterval(hostTimer) })
       }
-      scope.togglePanel = function () { if (scope.panel) scope.closePanel(); else scope.openPanel(lastPanel || 'garage') }
+      // Menu button: closes an open window, else opens the last section. A window in another app (the Menu app or the
+      // floating phone) is toggled there, where its open/closed state and last section live.
+      scope.togglePanel = function () {
+        if (scope.panel) { scope.closePanel(); return }
+        if (scope.menuOnly) { scope.openPanel(lastPanel || 'garage', undefined, true); return }
+        bngApi.engineLua('cargoEarth_core and cargoEarth_core.openMenu("toggle")', function (shown) {
+          if (shown !== true) scope.$evalAsync(function () { scope.openPanel(lastPanel || 'garage', undefined, true) })
+        })
+      }
       scope.panelOn = function (p, view) { return scope.panel === p && (!view || scope.careerView === view) }
       scope.panelTitle = function () {
         if (scope.panel === 'career') return {progress: 'Progress', money: 'Finances', map: 'Delivery map', firm: 'Firm'}[scope.careerView]
