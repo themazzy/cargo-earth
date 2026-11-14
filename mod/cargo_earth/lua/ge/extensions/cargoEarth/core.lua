@@ -618,7 +618,7 @@ end
 
 -- Parts runs (cargoEarth/parts): suppliers are the helper's parts shops and the depots that make car parts; the
 -- workshops are the helper's repair garages, your firm's headquarters, or the workshop at a fuel station.
-function M.partsOffers(p, room)
+function M.partsOffers(p, room, range)
   local parts = require('cargoEarth/parts')
   local suppliers = {}
   for _, d in ipairs(S.idx and S.idx.depots or {}) do
@@ -654,7 +654,7 @@ function M.partsOffers(p, room)
     end
     return out
   end
-  return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p))
+  return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p), range)
 end
 
 local function towOffers(class, p)
@@ -718,7 +718,7 @@ function M.generate()
       end
       -- parts runs in an SUV or a pickup: from a parts supplier to a repair workshop
       if tier == 'suv' and rows then
-        for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'))) do offers[#offers + 1] = offer end
+        for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'), freightOptions(tier))) do offers[#offers + 1] = offer end
       end
       -- parcel routes from the nearest depots to real addresses: vans, and short rounds in cars (box trucks do business
       -- shipping)

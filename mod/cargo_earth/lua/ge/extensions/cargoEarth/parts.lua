@@ -28,11 +28,15 @@ end
 
 -- suppliers: places { id, n, town, g } (any distance; the ones within NEAR_KM are used); workshops(lat, lon, minKm,
 -- maxKm): places around a supplier, nearest first; capacity: free parcel slots in the vehicle; roadKm(a, b, maxKm)
--- (points { lat, lon }): the real road km when known, or nil/false. Returns up to OFFERS jobs, nearest supplier first.
-function M.offers(suppliers, workshops, lat, lon, capacity, rnd, roadKm)
+-- (points { lat, lon }): the real road km when known, or nil/false; range: { minKm, maxKm } road km from the player's
+-- settings (optional). Returns up to OFFERS jobs, nearest supplier first.
+function M.offers(suppliers, workshops, lat, lon, capacity, rnd, roadKm, range)
   rnd = rnd or math.random
   local room = math.floor(tonumber(capacity) or 0)
   if room < M.MIN_SLOTS then return {} end
+  local minRoad = math.max(M.KM[1] * M.ROAD_FACTOR, tonumber(range and range.minKm) or 0)
+  local maxRoad = math.min(M.KM[2] * M.ROAD_FACTOR, tonumber(range and range.maxKm) or math.huge)
+  if maxRoad < minRoad then return {} end
   local near = {}
   for _, s in ipairs(suppliers or {}) do
     if place(s) and math.abs(s.g[1] - lat) < M.NEAR_KM / 100 then
@@ -45,15 +49,21 @@ function M.offers(suppliers, workshops, lat, lon, capacity, rnd, roadKm)
   for _, n in ipairs(near) do
     if #out >= M.OFFERS then break end
     local list = {}
-    for _, w in ipairs(workshops and workshops(n.s.g[1], n.s.g[2], M.KM[1], M.KM[2]) or {}) do
+    for _, w in ipairs(workshops and workshops(n.s.g[1], n.s.g[2], minRoad / M.ROAD_FACTOR / 1.5, maxRoad / M.ROAD_FACTOR) or {}) do
       if place(w) and not used[w.id] and w.id ~= n.s.id then list[#list + 1] = w end
     end
-    if #list > 0 then
-      local w = list[rnd(math.min(#list, 4))]
+    -- the road km decides: a workshop whose road is outside the range is left out
+    local w, straight, road
+    while #list > 0 and not w do
+      local i = rnd(math.min(#list, 4))
+      local cand = table.remove(list, i)
+      local s = km(n.s.g[1], n.s.g[2], cand.g[1], cand.g[2])
+      local r = roadKm and roadKm(n.s.g, cand.g, s * 4 + 5) or nil
+      if type(r) ~= 'number' or r ~= r or r < s then r = s * M.ROAD_FACTOR end
+      if r >= minRoad and r <= maxRoad then w, straight, road = cand, s, r end
+    end
+    if w then
       used[w.id] = true
-      local straight = km(n.s.g[1], n.s.g[2], w.g[1], w.g[2])
-      local road = roadKm and roadKm(n.s.g, w.g, straight * 4 + 5) or nil
-      if type(road) ~= 'number' or road ~= road or road < straight then road = straight * M.ROAD_FACTOR end
       local slots = math.min(room, M.SLOTS[1] + rnd(M.SLOTS[2] - M.SLOTS[1] + 1) - 1)
       local from = { id = n.s.id, n = n.s.n, town = n.s.town or '', g = { n.s.g[1], n.s.g[2] }, t = n.s.t }
       local to = { id = w.id, n = w.n, town = w.town or '', g = { w.g[1], w.g[2] }, label = w.label }

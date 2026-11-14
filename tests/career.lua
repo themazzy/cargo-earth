@@ -1387,6 +1387,8 @@ test('a car gets short parcel rounds; an SUV parts runs from a supplier to a wor
   assert(o.partsRun and o.from.id == 'p1' and o.to.id == 'g1' and o.haul.tier == 'suv' and o.haul.kind == 'parcel')
   assert(o.haul.amount <= 10 and o.pay > 0 and o.minutes > 0 and o.cargo == 'car_parts')
   assert(#parts.offers(suppliers, workshops, 50, 14, 3, rnd) == 0, 'too little room for parts')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {maxKm = 8}) == 0, 'the longest-job setting holds')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {minKm = 5, maxKm = 15}) == 1)
 end)
 
 test('a pickup in freight mode is offered parts runs only, loads the parts into its boxes and is paid', function()
