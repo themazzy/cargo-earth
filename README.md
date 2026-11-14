@@ -99,9 +99,12 @@ Source lives under `mod/cargo_earth/`; the helper lives under `helper/`. Runtime
 npm install
 npm test
 python -m unittest discover -s tests -p helper_test.py
+python -m unittest discover -s tests -p cz_terrain_test.py
 powershell -ExecutionPolicy Bypass -File tools/build.ps1
 node tools/payout-stats.cjs
 ```
+
+`earth-addons/cz-terrain/` is a separate BeamNG.Earth add-on: Czech DMR 5G lidar terrain in place of Mapterhorn's 5 m grid (see its README).
 
 The Windows installer is a small Go program in `installer/` (`cd installer && GOOS=windows go build -o CargoEarthSetup.exe .`).
 
