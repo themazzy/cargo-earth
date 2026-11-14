@@ -27,7 +27,7 @@ local function place(p)
 end
 
 -- suppliers: places { id, n, town, g } (any distance; the ones within NEAR_KM are used); workshops(lat, lon, minKm,
--- maxKm): places around a supplier, nearest first; capacity: free parcel slots in the vehicle; roadKm(a, b, maxKm)
+-- maxKm): places around a supplier, nearest first (searched from 0: the road km decides the minimum); capacity: free parcel slots in the vehicle; roadKm(a, b, maxKm)
 -- (points { lat, lon }): the real road km when known, or nil/false; range: { minKm, maxKm } road km from the player's
 -- settings (optional). Returns up to OFFERS jobs, nearest supplier first.
 function M.offers(suppliers, workshops, lat, lon, capacity, rnd, roadKm, range)
@@ -37,11 +37,12 @@ function M.offers(suppliers, workshops, lat, lon, capacity, rnd, roadKm, range)
   local minRoad = math.max(M.KM[1] * M.ROAD_FACTOR, tonumber(range and range.minKm) or 0)
   local maxRoad = math.min(M.KM[2] * M.ROAD_FACTOR, tonumber(range and range.maxKm) or math.huge)
   if maxRoad < minRoad then return {} end
+  local nearKm = math.min(M.NEAR_KM, tonumber(range and range.nearKm) or M.NEAR_KM)
   local near = {}
   for _, s in ipairs(suppliers or {}) do
-    if place(s) and math.abs(s.g[1] - lat) < M.NEAR_KM / 100 then
+    if place(s) and math.abs(s.g[1] - lat) < nearKm / 100 then
       local k = km(lat, lon, s.g[1], s.g[2])
-      if k <= M.NEAR_KM then near[#near + 1] = { s = s, k = k } end
+      if k <= nearKm then near[#near + 1] = { s = s, k = k } end
     end
   end
   table.sort(near, function(a, b) if a.k == b.k then return tostring(a.s.id) < tostring(b.s.id) end return a.k < b.k end)
@@ -49,7 +50,7 @@ function M.offers(suppliers, workshops, lat, lon, capacity, rnd, roadKm, range)
   for _, n in ipairs(near) do
     if #out >= M.OFFERS then break end
     local list = {}
-    for _, w in ipairs(workshops and workshops(n.s.g[1], n.s.g[2], minRoad / M.ROAD_FACTOR / 1.5, maxRoad) or {}) do
+    for _, w in ipairs(workshops and workshops(n.s.g[1], n.s.g[2], 0, maxRoad) or {}) do
       if place(w) and not used[w.id] and w.id ~= n.s.id then list[#list + 1] = w end
     end
     -- the road km decides: a workshop whose road is outside the range is left out
