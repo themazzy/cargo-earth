@@ -15,7 +15,7 @@ M.ITEMS = {
   { id = 'brakes', name = 'Brakes', every = 1600, cost = 175,
     breakdown = 'The worn brakes overheated: the car is not safe to drive.' },
 }
-M.TIER_COST = { car = 1, van = 1.3, rigid = 2.4, semi = 3.2 }  -- bigger vehicles cost more to service
+M.TIER_COST = { car = 1, suv = 1.15, van = 1.3, rigid = 2.4, semi = 3.2 }  -- bigger vehicles cost more to service
 M.SOON = 0.85            -- a service shows as soon due from this share of its interval
 M.PER_KM = 0.004         -- breakdown chance per km for each whole interval overdue (half overdue: 0.2 % per km)
 M.MAX_CHANCE = 0.5
@@ -31,10 +31,13 @@ local function round5(x) return math.floor(x / 5 + 0.5) * 5 end
 
 -- The vehicle class by model: car, van, rigid (box truck) or semi (tractor).
 function M.tier(car)
+  -- the kind seen while the player drove it (cargoEarth/haul carrier: a tractor by its fifth wheel, an SUV by its body)
+  if type(car) == 'table' and M.TIER_COST[car.vclass] then return car.vclass end
   local model = type(car) == 'table' and car.model or car
   if model == 'van' then return 'van' end
   if model == 'md_series' or model == 'midtruck' then return 'rigid' end
   if model == 'us_semi' then return 'semi' end
+  if model == 'pickup' or model == 'roamer' or model == 'hopper' then return 'suv' end
   return 'car'
 end
 

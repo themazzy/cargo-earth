@@ -1347,6 +1347,109 @@ test('a parcel route loads the van, empties the containers stop by stop and pays
   assert(core.careerState().reputation.freight.rated == 1)
 end)
 
+test('the kind of vehicle comes from its body: car, SUV or pickup, van, box truck, tractor', function()
+  local haul = require('cargoEarth/haul')
+  assert(haul.carrier({model = 'etk800', bodyStyle = 'Sedan'}) == 'car')
+  assert(haul.carrier({model = 'roamer', bodyStyle = 'SUV'}) == 'suv')
+  assert(haul.carrier({model = 'pickup', bodyStyle = 'Pickup'}) == 'suv')
+  assert(haul.carrier({model = 'pickup'}) == 'suv', 'a known pickup without a style')
+  assert(haul.carrier({model = 'covet'}) == 'car')
+  assert(haul.carrier({model = 'van', bodyStyle = 'Van'}) == 'van')
+  assert(haul.carrier({model = 'md_series'}) == 'rigid')
+  assert(haul.carrier({model = 'us_semi', slotPartMap = {a = 'us_semi_fifthwheel_top'}}) == 'semi')
+  assert(haul.carrier({model = 'unicycle'}) == nil and haul.carrier(nil) == nil)
+  assert(haul.allowed({}, 'car') and haul.allowed({}, 'suv') and not haul.allowed({}, 'rigid'))
+  -- small vehicles carry boxed goods only
+  local rows = {{id = 1, cargoTypes = {'parcel', 'fluid'}, capacity = 100}}
+  assert(haul.freight('suv', 'milk', rows) == nil and haul.freight('suv', 'car_parts', rows))
+end)
+
+test('a car gets short parcel rounds; an SUV parts runs from a supplier to a workshop', function()
+  local seq = 0
+  local function rnd(n) seq = seq % n + 1 return seq end
+  local depot = {id = 'yard', n = 'Warehouse', g = {50, 14}}
+  local job = parcel.route(depot, streets(50, 14), 'car', 24, rnd, 1)
+  assert(job and #job.route.stops >= 2 and #job.route.stops <= 4 and job.haul.tier == 'car' and job.haul.amount <= 24)
+  assert(not parcel.route(depot, streets(50, 14), 'car', 2, rnd, 2), 'no room in the boot: no round')
+  local parts = require('cargoEarth/parts')
+  local suppliers = {{id = 'p1', n = 'Parts Plus', g = {50.01, 14}, town = 'Town'}, {id = 'far', n = 'Far', g = {51, 14}}}
+  local function workshops(lat, lon, a, b)
+    local out = {}
+    for _, w in ipairs({{id = 'g1', n = 'Auto Fix', g = {50.08, 14}}, {id = 'g0', n = 'Too close', g = {50.011, 14}}}) do
+      local k = parts.km(lat, lon, w.g[1], w.g[2])
+      if k >= a and k <= b then out[#out + 1] = w end
+    end
+    return out
+  end
+  local offers = parts.offers(suppliers, workshops, 50, 14, 10, rnd)
+  assert(#offers == 1, 'only the near supplier, to a workshop far enough')
+  local o = offers[1]
+  assert(o.partsRun and o.from.id == 'p1' and o.to.id == 'g1' and o.haul.tier == 'suv' and o.haul.kind == 'parcel')
+  assert(o.haul.amount <= 10 and o.pay > 0 and o.minutes > 0 and o.cargo == 'car_parts')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 3, rnd) == 0, 'too little room for parts')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {maxKm = 8}) == 0, 'the longest-job setting holds')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {minKm = 5, maxKm = 15}) == 1)
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, function() return false end) == 0, 'a long detour is out')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {nearKm = 0.5}) == 0, 'the pickup-distance setting holds')
+  local detour = parts.offers(suppliers, workshops, 50, 14, 10, rnd, function(a, b) return parts.km(a[1], a[2], b[1], b[2]) < 1 and 12 or nil end, {minKm = 10})
+  assert(#detour == 1 and detour[1].to.id == 'g0' and detour[1].km == 12, 'a near workshop with a long road counts by its road')
+  local near = parts.offers(suppliers, workshops, 50, 14, 10, rnd, function() return 8 end, {maxKm = 8.5})
+  assert(#near == 1 and near[1].km == 8, 'a workshop just inside the road range is found by its road km')
+end)
+
+test('a pickup in freight mode is offered parts runs only, loads the parts into its boxes and is paid', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('pickup')
+  vehicle.bodyStyle = 'Pickup'
+  c.garage.car.model = 'pickup'
+  s.autoIdx = fuel.index()
+  fuel.addPack(s.autoIdx, {stations = {{'p1', 50.005, 14, 'Parts Plus', 'p', 'Town'}, {'g1', 50.08, 14, 'Auto Fix', 'g', 'Town'}}})
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do
+    assert(offer.partsRun or offer.tow, 'no company freight board in a pickup')
+    if offer.partsRun then i, job = k, offer end
+  end
+  assert(job and job.from.n == 'Parts Plus' and job.to.n == 'Auto Fix', 'a parts run from the helper places')
+  assert(c.garage.car.vclass == 'suv' and core.phoneState().trucking.carrier == 'SUV or pickup')
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and math.abs(boxes[1].currentVolume - job.haul.amount * job.haul.density) < 0.01, 'loaded')
+  local money = c.money
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(not s.job and c.money > money and boxes[1].currentVolume == 0, 'unloaded and paid')
+end)
+
+test('a small car in freight mode gets short parcel rounds and still sees company contracts', function()
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  vehicle.bodyStyle = 'Hatchback'
+  boxes[1].capacity = 24
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local route
+  for _, offer in ipairs(s.offers) do
+    assert(offer.route or offer.tow, 'no company freight board in a car')
+    if offer.route then route = offer end
+  end
+  assert(route and route.haul.tier == 'car' and #route.route.stops <= 4, 'a short round')
+  core.setOption('maxKm', 0.5)
+  core.generate()
+  for _, offer in ipairs(s.offers) do assert(not offer.route, 'the longest-job setting holds for rounds') end
+  s.opts.freightRanges = nil
+  local t = core.phoneState().trucking
+  assert(t.carrier == 'Car' and #t.contracts == 1, 'company contracts are still listed')
+end)
+
 local cameras = require('cargoEarth/cameras')
 
 test('camera rules: tolerance, fine bands, assumed limits and one fine per pass', function()
@@ -1769,8 +1872,12 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   hq = core.hqDo('buyVehicle', 'semi')
   assert(c.money == money - firm.VEHICLES[3].fallback and #hq.bays == 2 and hq.bays[2].tier == 'semi', tostring(hq.msg))
   assert(c.accounts.history[1].category == 'firm')
-  -- a driver for the tractor: nothing happens without a trailer
+  -- a driver for the tractor needs an articulated licence; then nothing happens without a trailer
   local pick = hq.drivers.applicants[1]
+  assert(not pick.can.semi and pick.can.van and #pick.licenceNames == 1, 'this applicant holds only a car licence')
+  hq = core.hqDo('hireDriver', hq.bays[2].id, pick.id)
+  assert(not c.garage.parked[1].driver and hq.msg:find('articulated licence'), tostring(hq.msg))
+  c.firm.applicants[1].licences = { car = true, truck = true, artic = true }
   hq = core.hqDo('hireDriver', hq.bays[2].id, pick.id)
   local truck = c.garage.parked[1]
   assert(truck.driver and truck.driver.name == pick.name, tostring(hq.msg))
@@ -2572,6 +2679,38 @@ test('before a saved career is loaded the Menu opens on Settings, where only the
   guihooks = nil
 end)
 
+test('drivers hold licences, know one kind of vehicle best and need a vehicle fit for its work', function()
+  local fleet = require('cargoEarth/fleet')
+  local seq = {0.5, 0.5, 0.1, 0.1, 0.1, 0.1, 0.01}
+  local n = 0
+  local function rnd() n = n + 1 return seq[n] or 0.5 end
+  local a = fleet.applicant(rnd, 1)
+  assert(a.licences.car and a.licences.truck and a.licences.artic and a.knows == 'car')
+  local plain = fleet.applicant(function() return 0.99 end, 2)
+  assert(plain.licences.car and not plain.licences.truck)
+  assert(a.wage == fleet.wage(a.speed, a.care) + 25, 'truck licences cost more')
+  assert(fleet.licensed(plain, 'van') and fleet.licensed(plain, 'suv') and not fleet.licensed(plain, 'rigid'))
+  assert(fleet.licensed(a, 'semi') and fleet.licensed(a, 'rigid'))
+  -- the kind they know best brings in more
+  local d = {speed = 1, care = 1, wage = 20, licences = {car = true}, knows = 'van'}
+  assert(fleet.netFor(d, 'van', 1) > fleet.netFor(d, 'car', 1) + (fleet.GROSS.van - fleet.GROSS.car) - 1)
+  -- a driver from before licences keeps driving what they drive
+  local old = fleet.restore({name = 'Old', speed = 1, care = 1, wage = 25}, 'semi')
+  assert(fleet.licensed(old, 'semi'))
+  -- a car with no cargo boxes leaves its driver waiting
+  local g = {parked = {{fleetId = 1, name = 'Hatch', model = 'covet', vclass = 'car', boxCount = 0, km = 0,
+    driver = {name = 'D', speed = 1, care = 1, wage = 20, licences = {car = true}}}}}
+  fleet.advance(g, fleet.SHIFT_S, 1, {firm = {}}, function() return 0.99 end)
+  assert(g.parked[1].driver.waiting == 'boxes')
+  g.parked[1].boxCount = 2
+  local income = fleet.advance(g, fleet.SHIFT_S, 1, {firm = {}}, function() return 0.99 end)
+  assert(not g.parked[1].driver.waiting and income > 0)
+  -- no truck licence: the box truck stands
+  g.parked[1].vclass, g.parked[1].model = 'rigid', 'md_series'
+  fleet.advance(g, fleet.SHIFT_S, 1, {firm = {}}, function() return 0.99 end)
+  assert(g.parked[1].driver.waiting == 'licence')
+end)
+
 print(string.format('%d career tests passed', total))
 
 do
@@ -2738,7 +2877,7 @@ test('freight without a van of your own lists company contracts and no loaner; a
   core.setMode('trucking')
   advance(core, 2)
   local state = core.phoneState()
-  assert(state.trucking and not state.trucking.carrier and state.trucking.canLoan == nil, 'no loaner offer')
+  assert(state.trucking and state.trucking.carrier == 'Car' and state.trucking.canLoan == nil, 'a car: no loaner offer')
   assert(#state.trucking.contracts == 1 and state.trucking.contracts[1].wages > 0, 'the nearby contract is listed')
   local id = state.trucking.contracts[1].id
   pose.speed = 15

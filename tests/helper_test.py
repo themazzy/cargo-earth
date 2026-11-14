@@ -49,6 +49,10 @@ class HelperTests(unittest.TestCase):
         self.assertIsNone(helper.depot_kind("gas_station", None, None))
         self.assertIsNone(helper.depot_kind("restaurant", "food", None))
         self.assertIsNone(helper.depot_kind(None, None, None))
+        self.assertEqual(helper.auto_kind("auto_parts_and_supply_store", None, None), "p")
+        self.assertEqual(helper.auto_kind("automotive_repair", None, None), "g")
+        self.assertEqual(helper.auto_kind(None, "automotive car_dealer", None), "g")
+        self.assertIsNone(helper.auto_kind("gas_station", "automotive", None))
 
     def test_place_query_keeps_workplaces_out_of_food_orders(self):
         rows = [
@@ -57,13 +61,16 @@ class HelperTests(unittest.TestCase):
             ("full-food-id", "Cafe", "cafe", "cafe", "food cafe", 42.67, 23.35, "Sofia", False),
             ("full-station-id-0123456789", "Petrol", "gas_station", "gas_station", "automotive gas_station", 42.68, 23.35, None, False),
             ("full-charger-id-0123456789", None, "ev_charging_station", "ev_charging_station", "automotive", 42.69, 23.35, "Sofia", False),
+            ("full-parts-id-0123456789ab", "Parts", "automotive", "auto_parts_and_supply_store", "retail automotive", 42.70, 23.35, "Sofia", False),
+            ("full-garage-id-0123456789a", "Garage", "automotive", "automotive_repair", "automotive automotive_repair", 42.71, 23.35, "Sofia", False),
         ]
         con = Connection(rows)
         builder = object.__new__(helper.Builder)
         builder._con = lambda *args: (con, ["local.parquet"])
-        food, depots, stations = builder.places((23.3, 42.6, 23.4, 42.7))
+        food, depots, stations, autos = builder.places((23.3, 42.6, 23.4, 42.7))
         self.assertEqual(len(food), 2)
-        self.assertEqual(len(depots), 2)
+        self.assertEqual(len(depots), 3)   # the warehouse, the grocer, the parts shop
+        self.assertEqual([a[3:5] for a in autos], [["Parts", "p"], ["Garage", "g"]])
         self.assertEqual([s[3:5] for s in stations], [["Petrol", "f"], ["Charging station", "e"]])
         self.assertEqual(stations[0][0], "ofull-station-id-")
         self.assertEqual(depots[0]["id"], "overture:full-warehouse-id-123456789")
@@ -78,11 +85,14 @@ class HelperTests(unittest.TestCase):
         builder.places = lambda box: ([], [
             {"id": "yard", "n": "Yard", "g": [42.65, 23.35], "t": "yard"},
             {"id": "out", "n": "Outside", "g": [0, 0], "t": "yard"},
-        ], [["oa", 42.66, 23.36, "Petrol", "f", ""], ["ob", 1, 1, "Far", "f", ""]])
+        ], [["oa", 42.66, 23.36, "Petrol", "f", ""], ["ob", 1, 1, "Far", "f", ""]],
+            [["op", 42.67, 23.36, "Parts", "p", ""], ["og", 1, 1, "Far garage", "g", ""]])
         builder.addresses = lambda box: [[42.65, 23.35, "Street 12", "Sofia"]] * 31
         data = builder.build(426, 233)
         self.assertEqual([d["id"] for d in data["depots"]], ["yard"])
         self.assertEqual(data["fuel"], [["oa", 42.66, 23.36, "Petrol", "f", "Sofia"]])
+        self.assertEqual(data["autos"], [["op", 42.67, 23.36, "Parts", "p", "Sofia"]])
+        self.assertFalse(helper.valid_area(dict(data, autos=[["op", 42.67, 23.36, "Parts", "x"]]), "426_233", "fixture"))
         self.assertTrue(helper.valid_area(data, "426_233", "fixture"))
         self.assertFalse(helper.valid_area(dict(data, fuel=[["oa", 420, 23, "Petrol", "f"]]), "426_233", "fixture"))
         with patch.object(helper, "WORKERS", 0), patch.object(helper.os, "makedirs"), patch.object(helper.os.path, "isfile", return_value=False):

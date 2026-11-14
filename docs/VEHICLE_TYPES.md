@@ -1,0 +1,33 @@
+# Vehicle types and their work
+
+Cargo Earth sorts the vehicle you drive into one of five kinds (`cargoEarth/haul` `carrier`). Ordinary cars are
+sorted by the "Body Style" BeamNG lists for every config; models known to be SUVs or pickups (D-Series, Roamer,
+Hopper) count as such even without a style.
+
+| Kind | Detected by | Food delivery mode | Freight mode |
+| --- | --- | --- | --- |
+| Car | any other road vehicle (Sedan, Hatchback, Wagon, Coupe...) | meals, groceries | short parcel rounds (2-4 stops, a few parcels), company contracts |
+| SUV or pickup | Body Style SUV / Pickup / Crossover / Off-Road | meals, groceries | parts runs, company contracts |
+| Van | the H-Series van | meals, groceries | parcel routes (4-7 stops), van freight, company contracts |
+| Box truck | MD-Series, the mid truck, a T-Series without a fifth wheel | meals, groceries | business shipping between companies |
+| Tractor | any truck with a fifth wheel | meals, groceries | trailer freight, fuel tanker runs, heavy tow jobs |
+
+Any vehicle with a tow hitch also gets light tow jobs. Every load travels in BeamNG's own cargo containers.
+
+## Parts runs
+
+An SUV or a pickup loads car parts at a supplier within 15 km and brings them to a repair workshop 4-30 km away.
+Suppliers are parts shops streamed by the helper (Overture places, worldwide) and the bundled depots that make car
+parts (car plants, factories). Workshops are the helper's repair garages and dealers, your firm's headquarters, or,
+when neither is near, the workshop at a fuel station (as for tow jobs). The parts go into the vehicle's parcel boxes:
+4-20 slots, 5 kg each.
+
+The helper's area cache is format 6: areas carry `autos` rows `[id, lat, lon, name, "p" | "g", town]`.
+
+## Hired drivers
+
+Every driver holds a car licence (cars, SUVs, vans); some also hold a truck licence (box trucks), and some of those an
+articulated one (tractors). Each truck licence adds to the wage. A driver also knows one kind of vehicle best and
+brings in 15 % more in it. A driver can only be hired for a vehicle their licence covers, and waits when the vehicle
+is not fit for its work: a car, an SUV or a van without cargo boxes, a tractor without one of the firm's trailers.
+Drivers hired before licences keep the licence for the vehicle they already drive.

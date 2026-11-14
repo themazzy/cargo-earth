@@ -193,6 +193,10 @@ local function syncStorage()
   local g = S.career.garage
   if g.car and not S.parts and not g.pendingUsed and garage.inOwnCar(M.G, g) then
     g.car.storageSlots, g.car.boxCount = plan.capacity, #storage.boxes
+    -- the kind of vehicle is kept with the car: hired drivers and the headquarters need it while it is parked
+    local v = M.G.vehicle and M.G.vehicle()
+    local kind = v and haul.carrier(v)
+    if kind then g.car.vclass, g.car.bodyStyle = kind, v.bodyStyle end
   end
   local delta = {}
   for id, kg in pairs(plan.weights) do
@@ -208,7 +212,9 @@ local function freightCarrier()
   local g = S.career.garage
   if not g.started or g.pendingUsed or not garage.inOwnCar(M.G, g) then return end
   local v = M.G.vehicle()
-  return v, haul.carrier(v)
+  local tier = haul.carrier(v)
+  if tier and g.car then g.car.vclass, g.car.bodyStyle = tier, v.bodyStyle end
+  return v, tier
 end
 
 local function freightSettingsTier()
@@ -339,6 +345,7 @@ local function loadPacks()
   if type(b) == 'table' then S.borders = borders.index(b) end
   -- fuel stations and chargers: every fuel_<CC>.json (more arrive from the helper)
   S.fuelIdx = fuel.index()
+  S.autoIdx = fuel.index()   -- parts shops and repair workshops from the helper (parts runs)
   local ff = FS:findFiles(DATA_DIR, 'fuel_*.json', 0, false, false) or {}
   table.sort(ff)
   for _, f in ipairs(ff) do
@@ -609,6 +616,47 @@ local function roadKmFn(p)
   end
 end
 
+-- Parts runs (cargoEarth/parts): suppliers are the helper's parts shops and the depots that make car parts; the
+-- workshops are the helper's repair garages, your firm's headquarters, or the workshop at a fuel station.
+function M.partsOffers(p, room, range)
+  local parts = require('cargoEarth/parts')
+  local suppliers = {}
+  for _, d in ipairs(S.idx and S.idx.depots or {}) do
+    if d.g and math.abs(d.g[1] - p.lat) < parts.NEAR_KM / 100 then
+      for _, id in ipairs((S.idx.types[d.t] or {}).produces or {}) do
+        if id == 'car_parts' then suppliers[#suppliers + 1] = d break end
+      end
+    end
+  end
+  for _, row in ipairs(S.autoIdx and fuel.within(S.autoIdx, p.lat, p.lon, 'parts', 0, parts.NEAR_KM) or {}) do
+    local s = row.station
+    suppliers[#suppliers + 1] = { id = 'parts:' .. s.id, n = s.n, town = s.town, g = s.g }
+  end
+  local hq = S.career.firm and S.career.firm.hq
+  local function workshops(lat, lon, minKm, maxKm)
+    local out = {}
+    for _, row in ipairs(S.autoIdx and fuel.within(S.autoIdx, lat, lon, 'garage', minKm, maxKm) or {}) do
+      local s = row.station
+      out[#out + 1] = { id = 'garage:' .. s.id, n = s.n, town = s.town, g = s.g, label = 'Workshop' }
+    end
+    if hq and hq.g then
+      local k = jobs.km(lat, lon, hq.g[1], hq.g[2])
+      if k >= minKm and k <= maxKm then
+        table.insert(out, 1, { id = 'hq', n = hq.n or 'Headquarters', town = hq.town or '', g = { hq.g[1], hq.g[2] }, label = 'Your workshop' })
+      end
+    end
+    if #out == 0 then
+      for _, row in ipairs(S.fuelIdx and fuel.within(S.fuelIdx, lat, lon, 'fuel', minKm, maxKm) or {}) do
+        local s = row.station
+        out[#out + 1] = { id = 'workshop:' .. s.id, n = 'Workshop at ' .. s.n, town = s.town or '', g = { s.g[1], s.g[2] }, label = 'Workshop' }
+        if #out >= 8 then break end
+      end
+    end
+    return out
+  end
+  return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p), range)
+end
+
 local function towOffers(class, p)
   local c = S.career
   local kind = tow.CLASSES[class].trailer
@@ -655,7 +703,9 @@ function M.generate()
     local rows = store and store.rows
     S.offers, S.offerStats = {}, nil
     if tier and haul.allowed(S.career, tier) and (tier == 'semi' or rows) then
-      local offers, stats = jobs.generate(S.idx, haul.options(tier, freightOptions(tier), rows), p.lat, p.lon)
+      -- an ordinary car or an SUV takes no company freight board: its own small work comes below
+      local offers, stats = {}, nil
+      if not haul.SMALL[tier] then offers, stats = jobs.generate(S.idx, haul.options(tier, freightOptions(tier), rows), p.lat, p.lon) end
       -- Freight customers pay a carrier by its reputation.
       local factor = rating.freightPay(S.career)
       local ownTruck = S.career.garage.car and not S.career.garage.car.loaner
@@ -666,7 +716,12 @@ function M.generate()
           table.insert(offers, 1, offer)
         end
       end
-      -- parcel routes from the nearest depots to real addresses, in vans only (box trucks do business shipping)
+      -- parts runs in an SUV or a pickup: from a parts supplier to a repair workshop
+      if tier == 'suv' and rows then
+        for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'), freightOptions(tier))) do offers[#offers + 1] = offer end
+      end
+      -- parcel routes from the nearest depots to real addresses: vans, and short rounds in cars (box trucks do business
+      -- shipping)
       if parcel.TIERS[tier] and rows and S.fidx then
         local room = haul.capacity(rows, 'parcel')
         local near = {}
@@ -680,6 +735,9 @@ function M.generate()
         for i = 1, math.min(2, #near) do
           local d = near[i].d
           local route = parcel.route(d, food.addressesNear(S.fidx, d.g[1], d.g[2], parcel.TIERS[tier].radiusKm), tier, room, nil, i)
+          -- the shortest / longest job settings of this vehicle hold for the whole round
+          local range = freightOptions(tier)
+          if route and ((range.minKm and route.km < range.minKm) or (range.maxKm and route.km > range.maxKm)) then route = nil end
           if route then
             route.pickupKm = near[i].k
             offers[#offers + 1] = route
@@ -687,7 +745,7 @@ function M.generate()
         end
       end
       for _, offer in ipairs(offers) do
-        if offer.route or haul.prepare(offer, tier, rows, S.idx) then
+        if offer.route or offer.partsRun or haul.prepare(offer, tier, rows, S.idx) then
           if offer.resupply then resupply.bonus(offer)
           elseif not offer.route then special.roll(offer, tier, M.random) end
           if ownTruck then
@@ -1406,10 +1464,15 @@ local function truckingState()
   -- a company vehicle outside contract work (an old loaner) counts as no vehicle of your own
   if g.car and g.car.loaner and not S.career.employment then v, tier = nil, nil end
   out.carrier = tier and haul.tiers[tier].name or nil
-  if not v or not tier then
+  if not v or not tier or haul.SMALL[tier] then
     -- no van or truck of your own: company contracts, the company's van is handed over at its yard
     out.contracts = not S.job and not g.preview and M.nearContracts(earth.pose()) or {}
+  end
+  if not v or not tier then
     out.hint = 'Take a contract: park at its yard and the company gives you its vehicle.'
+  elseif haul.SMALL[tier] and rows and haul.capacity(rows, 'parcel') < (tier == 'suv' and 4 or 3) then
+    out.hint = tier == 'suv' and 'Fit cargo boxes in the bed or boot for parts runs, or take a contract.'
+      or 'Fit cargo boxes for short parcel rounds, or take a contract.'
   elseif not haul.allowed(S.career, tier) then
     out.hint = 'This truck unlocks after completing the earlier stage.'
   elseif tier ~= 'semi' and not rows then
@@ -1940,10 +2003,15 @@ local function onHelperArea(data)
   local n, stores = food.addArea(S.fidx, data, function(key)
     helper.forget(key)
     fuel.dropArea(S.fuelIdx, key)
+    if S.autoIdx then fuel.dropArea(S.autoIdx, key) end
   end)
   if type(data.fuel) == 'table' and S.fuelIdx then
     fuel.addArea(S.fuelIdx, data.key, data.fuel)
     fuelNearAt = 0
+  end
+  if type(data.autos) == 'table' then
+    S.autoIdx = S.autoIdx or fuel.index()
+    fuel.addArea(S.autoIdx, data.key, data.autos)
   end
   local lat, lon = areaCentre(data.key)
   local workplaces = 0
@@ -3194,8 +3262,10 @@ function M.hqState()
     can = fleet.unlocked(c), applicants = fleet.applicants(c.firm, (c.activeSeconds or 0) / 60, M.random),
     nextMin = math.max(1, math.ceil((c.firm.applicantsAt or 0) + fleet.APPLICANT_MIN - (c.activeSeconds or 0) / 60)) }
   for _, a in ipairs(out.drivers.applicants) do
-    a.nets = {}
-    for tier, gross in pairs(fleet.GROSS) do a.nets[tier] = math.floor(gross * a.speed * factor + 0.5) - a.wage end
+    fleet.restore(a, 'car')
+    a.nets, a.can = {}, {}
+    for tier in pairs(fleet.GROSS) do a.nets[tier], a.can[tier] = fleet.netFor(a, tier, factor), fleet.licensed(a, tier) end
+    a.licenceNames, a.knowsName = fleet.licenceNames(a), a.knows and fleet.KINDS[a.knows] or nil
   end
   -- the factory and the trailer yard
   out.shop = {}
