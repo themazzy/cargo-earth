@@ -991,8 +991,9 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="s.trucking.hint">{{ s.trucking.hint }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
       '</div>' +
-      // freight without a van or truck of your own: the nearest company contracts, the vehicle comes at the yard
-      '<div class="cep-scroll" ng-if="s.trucking && !s.trucking.carrier">' +
+      // freight without a van or truck of your own (or in a car or an SUV, beside its own small work): the nearest
+      // company contracts, the vehicle comes at the yard
+      '<div class="cep-scroll" ng-if="s.trucking && (!s.trucking.carrier || (s.trucking.contracts && s.trucking.contracts.length))">' +
         '<div class="cep-label">Contracts nearby</div>' +
         '<div class="cep-sub" ng-if="!s.trucking.contracts.length">Looking for workplaces nearby…</div>' +
         '<div class="cep-card" ng-repeat="c in s.trucking.contracts track by c.id">' +
