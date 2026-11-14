@@ -174,7 +174,8 @@ end
 package.loaded['cargoEarth/ui'] = {drawStop = function() end, drawPartsExit = function() end}
 package.loaded['cargoEarth/marker'] = {reset = function() end, draw = function() end}
 package.loaded['cargoEarth/helper'] = {configure = function() end, tick = function() end, forget = function() end,
-  status = function() return {state = 'off'} end, commanding = function() return false end, pump = function() end}
+  status = function() return {state = 'off'} end, commanding = function() return false end, pump = function() end,
+  asking = function() return false end}
 package.loaded['cargoEarth/earth'] = {
   pose = function() return pose end, status = function() return ready and 'ok' or 'World loading' end,
   notify = function() end, route = function() return nil end,
@@ -2541,6 +2542,21 @@ test('before a saved career is loaded the Menu opens on Settings, where only the
   local mode = s.mode
   core.settingsDo('mode', mode == 'courier' and 'trucking' or 'courier')
   assert(s.mode == mode, 'job settings belong to the save')
+  -- the Radio tab works too: the helper's asks (the station list) and presses go on while the save waits
+  local helper = require('cargoEarth/helper')
+  local tick, asking, commanding, pump = helper.tick, helper.asking, helper.commanding, helper.pump
+  local ticked, pumped = 0, 0
+  helper.asking = function() return true end
+  helper.commanding = function() return true end
+  helper.tick = function(_, _, _, _, _, onlyAsks) assert(onlyAsks) ticked = ticked + 1 end
+  helper.pump = function() pumped = pumped + 1 end
+  local ok, why = pcall(function()
+    pose.lat, pose.lon = 50.08, 14.42
+    for _ = 1, 5 do core.onUpdate(0.3, 0.3) end
+    assert(pumped == 5 and ticked >= 2, 'radio requests are worked while paused')
+  end)
+  helper.tick, helper.asking, helper.commanding, helper.pump = tick, asking, commanding, pump
+  assert(ok, why)
   s.pendingCareer = nil
   assert(not core.settingsState().paused)
   guihooks = nil
