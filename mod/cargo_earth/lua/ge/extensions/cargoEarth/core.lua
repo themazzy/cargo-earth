@@ -672,6 +672,12 @@ local function towOffers(class, p)
         return { id = 'hq', n = hq.n or 'Headquarters', town = hq.town or '', g = { hq.g[1], hq.g[2] }, label = 'Your workshop' }
       end
     end
+    -- a real auto repair shop (from the helper), one of the nearest few; else the workshop at a fuel station
+    local shops = S.autoIdx and fuel.within(S.autoIdx, lat, lon, 'garage', tow.WORKSHOP_KM[1], tow.WORKSHOP_KM[2]) or {}
+    if #shops > 0 then
+      local g = shops[M.random(math.min(#shops, 3))].station
+      return { id = 'garage:' .. g.id, n = g.n, town = g.town or '', g = { g.g[1], g.g[2] }, label = 'Repair shop' }
+    end
     local list = S.fuelIdx and fuel.within(S.fuelIdx, lat, lon, 'fuel', tow.WORKSHOP_KM[1], tow.WORKSHOP_KM[2]) or {}
     local s = list[1] and list[1].station
     if s then return { id = 'workshop:' .. s.id, n = 'Workshop at ' .. s.n, town = s.town or '', g = { s.g[1], s.g[2] },
