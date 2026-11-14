@@ -2171,6 +2171,17 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     local i, job
     for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
     assert(job and job.to.n == 'Workshop at Test pump', 'a tow job to the workshop at a fuel station')
+    -- with a real repair shop known nearby, the car goes there instead
+    s.autoIdx = fuel.index()
+    fuel.addPack(s.autoIdx, {stations = {{'g1', 50.08, 14, 'Auto Fix', 'g', 'Town'}}})
+    s.offers = {}
+    core.generate()
+    local shop
+    for _, offer in ipairs(s.offers) do if offer.tow then shop = offer break end end
+    assert(shop and shop.to.n == 'Auto Fix' and shop.to.id == 'garage:g1' and shop.to.label == 'Repair shop', 'a tow job to a real repair shop')
+    s.autoIdx = nil
+    s.offers = {}
+    core.generate()
     -- the phone rings with it although three ordinary offers come first
     local generate, random = core.generate, math.random
     core.generate = function()
