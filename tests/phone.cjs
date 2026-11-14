@@ -318,3 +318,19 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   menus[0].s.openPanel('garage', undefined, true)
   assert.equal(menus[0].s.gview, 'home', 'Garage chosen from another section starts on its first page')
 }
+
+// a saved career waiting to be loaded: the tabs, Radio and Settings work; the Menu shows only Settings
+{
+  assert(!/cep-tabs" aria-label="Phone sections" ng-if/.test(directive.template), 'tabs show on the resume screen too')
+  assert(directive.template.includes('class="cep-settings-link" title'), 'the settings link shows on the resume screen too')
+  assert(directive.template.includes("ng-if=\"tab === 'orders' && s.screen === 'resume'\""), 'the resume card is on Work only')
+  const sc = {$evalAsync: fn => fn(), $watch: () => {}, $on: () => {}, menuOnly: true}
+  directive.link(sc)
+  sc.s = {screen: 'resume'}
+  assert(sc.paused())
+  sc.openPanel('garage', undefined, true)
+  assert.equal(sc.panel, 'settings', 'career sections wait for the save')
+  sc.s = {screen: 'offline'}
+  sc.openPanel('garage', undefined, true)
+  assert.equal(sc.panel, 'garage')
+}

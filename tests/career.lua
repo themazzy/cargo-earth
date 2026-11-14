@@ -174,7 +174,8 @@ end
 package.loaded['cargoEarth/ui'] = {drawStop = function() end, drawPartsExit = function() end}
 package.loaded['cargoEarth/marker'] = {reset = function() end, draw = function() end}
 package.loaded['cargoEarth/helper'] = {configure = function() end, tick = function() end, forget = function() end,
-  status = function() return {state = 'off'} end, commanding = function() return false end, pump = function() end}
+  status = function() return {state = 'off'} end, commanding = function() return false end, pump = function() end,
+  asking = function() return false end}
 package.loaded['cargoEarth/earth'] = {
   pose = function() return pose end, status = function() return ready and 'ok' or 'World loading' end,
   notify = function() end, route = function() return nil end,
@@ -2522,6 +2523,42 @@ test('the Menu window opens in the Menu app, else the floating phone, else on th
   assert(core.openMenu('toggle') == true and sent[3][2].panel == 'toggle' and sent[3][2].to == 'menu', 'the Menu button toggles the window where it is')
   t = 110
   assert(core.openMenu('settings') == false, 'apps not heard from lately are gone')
+  guihooks = nil
+end)
+
+test('before a saved career is loaded the Menu opens on Settings, where only the dash phone can change', function()
+  local core = fresh()
+  local s = core.state()
+  local sent = {}
+  guihooks = {trigger = function(name, data) sent[#sent + 1] = {name, data} end}
+  core.now = function() return 100 end
+  core.menuHost('phone')
+  s.pendingCareer = { money = 500 }
+  assert(core.phoneState().screen == 'resume')
+  assert(core.openMenu('garage') == true and sent[1][2].panel == 'settings', 'career sections wait for the save')
+  assert(core.openMenu('toggle') == true and sent[2][2].panel == 'toggle')
+  local st = core.settingsState()
+  assert(st.paused and st.dash, 'Settings shows the dash phone while paused')
+  local mode = s.mode
+  core.settingsDo('mode', mode == 'courier' and 'trucking' or 'courier')
+  assert(s.mode == mode, 'job settings belong to the save')
+  -- the Radio tab works too: the helper's asks (the station list) and presses go on while the save waits
+  local helper = require('cargoEarth/helper')
+  local tick, asking, commanding, pump = helper.tick, helper.asking, helper.commanding, helper.pump
+  local ticked, pumped = 0, 0
+  helper.asking = function() return true end
+  helper.commanding = function() return true end
+  helper.tick = function(_, _, _, _, _, onlyAsks) assert(onlyAsks) ticked = ticked + 1 end
+  helper.pump = function() pumped = pumped + 1 end
+  local ok, why = pcall(function()
+    pose.lat, pose.lon = 50.08, 14.42
+    for _ = 1, 5 do core.onUpdate(0.3, 0.3) end
+    assert(pumped == 5 and ticked >= 2, 'radio requests are worked while paused')
+  end)
+  helper.tick, helper.asking, helper.commanding, helper.pump = tick, asking, commanding, pump
+  assert(ok, why)
+  s.pendingCareer = nil
+  assert(not core.settingsState().paused)
   guihooks = nil
 end)
 
