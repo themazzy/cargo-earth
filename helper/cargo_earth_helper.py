@@ -32,7 +32,9 @@ API (GET, JSON):
                               nearest first
   /v1/area?key=r_c            one ready area: {"key", "restaurants": [[id, lat, lon, curbLat, curbLon, name, cat, town],
                               ...], "grocers": [rows in the same format],
-                              "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...], "tiles": {"row_col":
+                              "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...],
+                              "autos": [[id, lat, lon, name, "p" (parts shop) | "g" (repair workshop), town], ...],
+                              "tiles": {"row_col":
                               [[lat, lon, curbLat, curbLon, label, town], ...]}, "houses": bool,
                               "depots": [{id, n, g: [lat, lon], t: "yard" | "shop", town, source, access}, ...]}
 Areas are AREA x AREA degrees (r = floor(lat / AREA), c = floor(lon / AREA)); address tiles inside are TILE degrees,
@@ -60,7 +62,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "0.9.1"
-AREA_CACHE_VERSION = "5"  # fuel depots for tanker runs; retain existing downloaded Parquet blocks
+AREA_CACHE_VERSION = "6"  # parts shops and repair workshops (parts runs); retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
 STAC_ROOT = "https://stac.overturemaps.org"
@@ -97,6 +99,22 @@ DEPOT_RULES = [
     ("shop", r"hardware|home_improvement|building_material|furniture|electronics|appliance|auto_parts|grocery|supermarket|hypermarket|department_store"),
 ]
 DEPOT_RX = [(kind, re.compile(pattern)) for kind, pattern in DEPOT_RULES]
+# Car places for parts runs: "p" sells car parts, "g" repairs cars (a parts run goes from a "p" to a "g").
+AUTO_RULES = [
+    ("p", r"auto_parts|automotive_parts|car_parts|tire_dealer|tire_shop|tire_store"),
+    ("g", r"auto_repair|automotive_repair|automotive_service|auto_service|car_repair|car_service|auto_body|body_shop"
+          r"|collision|mechanic|oil_change|transmission_repair|car_dealer|used_car_dealer|tire_repair"),
+]
+AUTO_RX = [(kind, re.compile(pattern)) for kind, pattern in AUTO_RULES]
+AUTO_SQL_RX = "|".join(pattern for _, pattern in AUTO_RULES)
+
+
+def auto_kind(primary, hierarchy, basic):
+    taxonomy = " ".join(str(value or "") for value in (primary, hierarchy, basic)).lower()
+    for kind, pattern in AUTO_RX:
+        if pattern.search(taxonomy):
+            return kind
+    return None
 DEPOT_SQL_RX = "|".join(pattern for _, pattern in DEPOT_RULES)
 
 
@@ -486,13 +504,13 @@ class Builder:
         con, paths = self._con("places/place", box)
         if not paths:
             con.close()
-            return [], [], []
+            return [], [], [], []
         food = ", ".join(f"'{c}'" for c in sorted(FOOD))
         # Overture groups grocery subtypes under food_and_beverage_store at the basic level.
         grocer = """(list_contains(taxonomy.hierarchy, 'grocery_store')
                      OR taxonomy.primary IN ('grocery_store', 'supermarket', 'hypermarket'))"""
         depot = ("regexp_matches(lower(concat_ws(' ', basic_category, taxonomy.primary, "
-                 f"array_to_string(taxonomy.hierarchy, ' '))), '{DEPOT_SQL_RX}')")
+                 f"array_to_string(taxonomy.hierarchy, ' '))), '{DEPOT_SQL_RX}|{AUTO_SQL_RX}')")
         kinds = ", ".join(f"'{c}'" for c in sorted(FUEL))
         fuel = f"(coalesce(basic_category IN ({kinds}), false) OR coalesce(taxonomy.primary IN ({kinds}), false))"
         q = f"""SELECT id, names.primary, basic_category, taxonomy.primary, array_to_string(taxonomy.hierarchy, ' '),
@@ -508,7 +526,7 @@ class Builder:
         finally:
             con.close()
         out, depots = [], []
-        stations = []
+        stations, autos = [], []
         for pid, name, basic, prim, hier, lat, lon, town, is_grocer in rows:
             name = (name or "").strip()
             sells = FUEL.get(prim) or FUEL.get(basic)
@@ -527,7 +545,10 @@ class Builder:
                 if kind:
                     depots.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)],
                                    "t": kind, "town": town, "source": "Overture", "access": "candidate"})
-        return out, depots, stations
+                car = auto_kind(prim, hier, basic)
+                if car:
+                    autos.append([f"o{pid[:16]}", round(lat, 6), round(lon, 6), name, car, town])
+        return out, depots, stations, autos
     def addresses(self, box):
         con, paths = self._con("addresses/address", box)
         if not paths:
@@ -575,6 +596,7 @@ class Builder:
         addr = self.addresses(box)
         found = fut.result()
         places, depots, stations = found[0], found[1], (found[2] if len(found) > 2 else [])
+        autos = found[3] if len(found) > 3 else []
         houses = False
         if len(addr) < HOUSES_BELOW:
             try:
@@ -616,10 +638,18 @@ class Builder:
                     row[5] = min(kept[:: max(1, len(kept) // 2000)],
                                  key=lambda a: (a[0] - row[1]) ** 2 + (a[1] - row[2]) ** 2)[3]
         stations = [s for s in stations if box[1] <= s[1] < box[3] and box[0] <= s[2] < box[2]]
+        if kept:
+            for row in autos:
+                if not row[5]:
+                    row[5] = min(kept[:: max(1, len(kept) // 2000)],
+                                 key=lambda a: (a[0] - row[1]) ** 2 + (a[1] - row[2]) ** 2)[3]
+        autos = [a for a in autos if box[1] <= a[1] < box[3] and box[0] <= a[2] < box[2]]
         log(f"area {r}_{c}: {len(restaurants)} restaurants, {len(grocers)} grocery stores, "
-            f"{len(depots)} workplaces, {len(stations)} fuel stations, {sum(len(v) for v in tiles.values())} customers"
+            f"{len(depots)} workplaces, {len(stations)} fuel stations, {len(autos)} car places, "
+            f"{sum(len(v) for v in tiles.values())} customers"
             f"{' (with houses)' if houses else ''} in {time.time() - t0:.1f} s")
         return {"key": f"{r}_{c}", "restaurants": restaurants, "grocers": grocers, "depots": depots, "fuel": stations,
+                "autos": autos,
                 "tiles": tiles, "houses": houses,
                 "release": self.index.release}
 
@@ -649,6 +679,13 @@ def valid_area(data, key, release):
     for row in data["fuel"]:
         if not isinstance(row, list) or len(row) < 5 or not isinstance(row[0], str) or not coordinates(row[1:3] * 2, 0) \
                 or not isinstance(row[3], str) or row[4] not in ("f", "e"):
+            return False
+    autos = data.get("autos", [])
+    if not isinstance(autos, list):
+        return False
+    for row in autos:
+        if not isinstance(row, list) or len(row) < 5 or not isinstance(row[0], str) or not coordinates(row[1:3] * 2, 0) \
+                or not isinstance(row[3], str) or row[4] not in ("p", "g"):
             return False
     for depot in data["depots"]:
         if not isinstance(depot, dict) or not isinstance(depot.get("id"), str) or not isinstance(depot.get("n"), str) or depot.get("t") not in ("yard", "shop", "fuel"):
@@ -707,7 +744,7 @@ class Areas:
         r0, c0 = int(math.floor(lat / AREA)), int(math.floor(lon / AREA))
         keys = [f"{r0 + dr}_{(c0 + dc + 1800) % 3600 - 1800}" for dr in (0, -1, 1) for dc in (0, -1, 1)
                 if -900 <= r0 + dr < 900]
-        out = {"ready": [], "loading": 0, "failed": 0, "errors": [], "grocers": True, "depots": True, "fuel": True,
+        out = {"ready": [], "loading": 0, "failed": 0, "errors": [], "grocers": True, "depots": True, "fuel": True, "autos": True,
                "release": self.builder.index.release, "areaFormat": AREA_CACHE_VERSION, "cellSize": AREA}
         with self.cv:
             self.last = (lat, lon)
@@ -1720,6 +1757,7 @@ def main():
             cats[x[6]] = cats.get(x[6], 0) + 1
         print(json.dumps({"area": d["key"], "restaurants": len(d["restaurants"]), "grocers": len(d["grocers"]), "depots": len(d["depots"]), "cats": cats,
                           "fuel": len(d["fuel"]), "fuelExamples": d["fuel"][:3],
+                          "autos": len(d["autos"]), "autoExamples": d["autos"][:5],
                           "customers": sum(len(v) for v in d["tiles"].values()), "houses": d["houses"],
                           "grocerExamples": d["grocers"][:3], "depotExamples": d["depots"][:3],
                           "examples": d["restaurants"][:3] + [next(iter(d["tiles"].values()), [None])[0]]},

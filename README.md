@@ -11,7 +11,8 @@ A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight,
 - Deliver standard meals, larger family orders and grocery baskets. Fit real cargo boxes and combine compatible orders.
 - Start company contracts at nearby yards, use a supplied cargo van and return for your wages. Independent contracts unlock at 20 reputation per employer.
 - Progress from vans to rigid trucks and articulated freight with native cargo containers and loads.
-- Drive parcel routes: load a van at a depot and drop parcels at several real addresses, emptying its cargo containers stop by stop.
+- Drive parcel routes: load a van at a depot and drop parcels at several real addresses, emptying its cargo containers stop by stop (a car does short rounds).
+- Each kind of vehicle has its own work (see docs/VEHICLE_TYPES.md): an SUV or a pickup does parts runs from parts shops to repair workshops, a box truck business shipping, a tractor trailer freight.
 - Choose a nearby address as your home garage, then drive there and park to claim it. Store and switch owned cars, buy used vehicles, repair and confirm real parts purchases.
 - In VR, a phone screen sits on the centre of the dashboard with your order, distance, time left and speed limit; move or resize it per car in Menu → Settings.
 - Track money, debt, deliveries, cargo condition, employer reputation and active driving distance through the phone.

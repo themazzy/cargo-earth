@@ -1,12 +1,14 @@
--- Parcel routes: load a van at a depot, then drop parcels at several real addresses in turn. The load
+-- Parcel routes: load a van (or a car, a short round) at a depot, then drop parcels at several real addresses in turn. The load
 -- sits in BeamNG's own parcel containers and each stop takes its share out. Pure rules: no game calls here.
 local M = {}
 
--- Vans only: a box truck does business shipping between companies, not doorstep drops.
-M.TIERS = { van = { stops = { 4, 7 }, each = { 2, 6 }, radiusKm = 5 } }
+-- Vans, and short rounds for ordinary cars. A box truck does business shipping between companies, not doorstep drops;
+-- an SUV or a pickup does parts runs (cargoEarth/parts).
+M.TIERS = { van = { stops = { 4, 7 }, each = { 2, 6 }, radiusKm = 5 },
+  car = { stops = { 2, 4 }, each = { 1, 3 }, radiusKm = 3, minSlots = 3 } }
 M.DENSITY = 2.5        -- kg per parcel slot (mixed consumer goods)
 M.ROAD_FACTOR = 1.35
-M.BASE, M.PER_STOP, M.PER_KM = { van = 80 }, { van = 45 }, { van = 10 }
+M.BASE, M.PER_STOP, M.PER_KM = { van = 80, car = 40 }, { van = 45, car = 30 }, { van = 10, car = 8 }
 M.SPEED_KMH, M.STOP_MIN, M.SLACK_MIN = 30, 3, 10
 M.MIN_GAP_M = 150      -- two stops of one route are at least this far apart
 M.MIN_SLOTS = 8
@@ -70,7 +72,7 @@ function M.route(depot, addresses, tier, capacity, rnd, n)
     if stops[big].slots <= 1 then return nil end
     stops[big].slots, total = stops[big].slots - 1, total - 1
   end
-  if total < M.MIN_SLOTS then return nil end
+  if total < (t.minSlots or M.MIN_SLOTS) then return nil end
   local road = legs * M.ROAD_FACTOR
   local pay = M.BASE[tier] + M.PER_STOP[tier] * #stops + M.PER_KM[tier] * road
   local job = {

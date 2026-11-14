@@ -302,7 +302,7 @@ angular.module('beamng.apps')
     '.cehq-foot{flex-shrink:0;display:flex;justify-content:flex-end}' +
     '.cehq-app{padding:7px 9px;border-radius:9px;background:#1d2a35;cursor:pointer;box-shadow:inset 0 0 0 1.5px transparent}' +
     '.cehq-app:hover{background:#22313d}.cehq-app.picked{box-shadow:inset 0 0 0 2px #e8452c;background:#2a2421}' +
-    '.cehq-app b{display:block;font-size:13px;color:#fff}.cehq-app span{font-size:11px;color:#9fb2bf}' +
+    '.cehq-app b{display:block;font-size:13px;color:#fff}.cehq-app span{font-size:11px;color:#9fb2bf}.cehq-app>span{display:block}' +
     '.cehq-wear{display:flex;flex-direction:column;gap:3px;width:100%;margin:2px 0}' +
     '.cehq-wear div{display:flex;align-items:center;gap:5px;font-size:10px;color:#9fb2bf}' +
     '.cehq-wear span{flex:0 0 38px;text-align:left}.cehq-wear em{flex:1;height:5px;border-radius:3px;background:#2b3c4a;overflow:hidden}' +
@@ -381,7 +381,8 @@ angular.module('beamng.apps')
             '<div class="cehq-label small" ng-if="hq.drivers.can">Looking for work · new faces in {{ hq.drivers.nextMin }} min</div>' +
             '<div class="cehq-app" ng-repeat="a in hq.drivers.applicants track by a.id" ng-if="hq.drivers.can" ng-class="{picked: pick.id === a.id}" ' +
               'ng-click="pick.id = (pick.id === a.id ? null : a.id)">' +
-              '<b>{{ a.name }}</b><span>speed {{ pct(a.speed) }} · care {{ pct(a.care) }} · wage {{ fmt.money(a.wage) }} a shift</span></div>' +
+              '<b>{{ a.name }}</b><span>speed {{ pct(a.speed) }} · care {{ pct(a.care) }} · wage {{ fmt.money(a.wage) }} a shift</span>' +
+              '<span>Licences: {{ a.licenceNames.join(", ") }}<span ng-if="a.knowsName"> · best with {{ a.knowsName }}</span></span></div>' +
             '<div class="cehq-note" ng-if="hq.drivers.can && !hq.drivers.applicants.length">Nobody is looking for work right now.</div>' +
             '<div class="cehq-note warn" ng-if="pickedApplicant()">Now pick a vehicle in the yard for {{ pickedApplicant().name }} (hiring costs {{ fmt.money(hq.drivers.hireFee) }}).</div>' +
             '<div class="cehq-sep"></div><div class="cehq-label small">Dispatch</div>' +
@@ -417,6 +418,8 @@ angular.module('beamng.apps')
                 '<div class="cehq-note" ng-if="b.driver && !b.driver.waiting">{{ fmt.money(b.driver.net) }} a shift · earned {{ fmt.money(b.driver.earned) }}</div>' +
                 '<div class="cehq-note warn" ng-if="b.driver.waiting === \'repair\'">Waiting for a repair</div>' +
                 '<div class="cehq-note warn" ng-if="b.driver.waiting === \'trailer\'">Needs a free trailer</div>' +
+                '<div class="cehq-note warn" ng-if="b.driver.waiting === \'licence\'">No licence for this vehicle</div>' +
+                '<div class="cehq-note warn" ng-if="b.driver.waiting === \'boxes\'">Needs cargo boxes fitted</div>' +
                 '<div class="cehq-wear" ng-if="b.upkeep"><div ng-repeat="it in b.upkeep.items track by it.id" ng-class="{soon: it.soon, due: it.due}" ' +
                   'title="{{ it.name }}: {{ it.due ? \'overdue\' : it.kmLeft + \' km left\' }}"><span>{{ it.id }}</span><em><i ng-style="{width: Math.min(100, it.share * 100) + \'%\'}"></i></em></div></div>' +
                 '<button class="cehq-btn small" ng-if="b.upkeep.due > 0" ng-disabled="hq.company || (b.current && !hq.hq.here) || hq.money < b.upkeep.dueCost" ' +
@@ -424,9 +427,9 @@ angular.module('beamng.apps')
                 '<button class="cehq-btn small build" ng-if="b.repairCost > 0" ng-disabled="hq.company || hq.money < b.repairCost" ng-click="hdo(\'repairParked\', b.id)">Repair · {{ fmt.money(b.repairCost) }}</button>' +
                 '<div class="cehq-bay-actions" ng-if="!b.current">' +
                   '<button class="cehq-btn small" ng-if="!b.driver" ng-disabled="hq.busy || hq.company" ng-click="hdo(\'switchCar\', b.id)">Drive</button>' +
-                  '<button class="cehq-btn small ghost" ng-if="!b.driver && hq.drivers.can && !b.loaner" ng-disabled="!pickedApplicant() || b.repair > 0 || hq.debt > 0 || hq.money < hq.drivers.hireFee || hq.company" ' +
+                  '<button class="cehq-btn small ghost" ng-if="!b.driver && hq.drivers.can && !b.loaner" ng-disabled="!pickedApplicant() || !pickedApplicant().can[b.tier] || b.repair > 0 || hq.debt > 0 || hq.money < hq.drivers.hireFee || hq.company" ' +
                     'ng-click="hdo(\'hireDriver\', b.id, pick.id); pick.id = null">' +
-                    '{{ pickedApplicant() ? "Hire " + pickedApplicant().name + " · " + fmt.money(pickedApplicant().nets[b.tier]) + " a shift" : "Hire: choose in the office" }}</button>' +
+                    '{{ pickedApplicant() ? (pickedApplicant().can[b.tier] ? "Hire " + pickedApplicant().name + " · " + fmt.money(pickedApplicant().nets[b.tier]) + " a shift" : "No licence for this") : "Hire: choose in the office" }}</button>' +
                   '<button class="cehq-btn small ghost" ng-if="b.driver" ng-disabled="hq.company" ng-click="hdo(\'releaseDriver\', b.id)">Release driver</button></div></div>' +
               '<div class="cehq-bay free" ng-repeat="n in range(hq.free) track by $index"><div class="cehq-bay-free">Free bay</div>' +
                 '<div class="cehq-note">Buy a vehicle below.</div></div>' +
@@ -820,7 +823,7 @@ angular.module('beamng.apps')
             '<div class="cep-sub">{{ fmt.int(v.km) }} km · {{ v.driver ? "With a driver" : "Parked" }}</div>' +
             '<div class="cep-sub" ng-if="v.storageSlots">{{ v.boxCount ? v.boxCount + " fitted boxes" : "Starter bag" }} · {{ v.storageSlots }} slots</div>' +
                         '<div class="cep-sub" ng-if="v.repair > 0">Needs {{ fmt.money(v.repair) }} of repairs.</div>' +
-            '<div class="cep-sub" ng-if="v.driver">{{ v.driver.name }} · earned {{ fmt.money(v.driver.earned) }}{{ v.driver.waiting === "repair" ? " · waiting for a repair" : (v.driver.waiting === "trailer" ? " · needs a trailer" : " · next shift in " + v.driver.nextMin + " min") }}</div>' +
+            '<div class="cep-sub" ng-if="v.driver">{{ v.driver.name }} · earned {{ fmt.money(v.driver.earned) }}{{ v.driver.waiting === "repair" ? " · waiting for a repair" : (v.driver.waiting === "trailer" ? " · needs a trailer" : (v.driver.waiting === "licence" ? " · no licence for it" : (v.driver.waiting === "boxes" ? " · needs cargo boxes" : " · next shift in " + v.driver.nextMin + " min"))) }}</div>' +
             '<div class="cep-sub" ng-if="v.upkeep && v.upkeep.due > 0" style="color:var(--tomato)">Service due · {{ fmt.money(v.upkeep.dueCost) }} at the headquarters</div>' +
             '<div class="cep-row" style="margin-top:6px">' +
               '<button class="cep-sm go" ng-if="!v.driver" ng-disabled="g.busy" ng-click="gdo(\'switchCar\', v.id)">Drive</button>' +

@@ -233,6 +233,10 @@ end
 
 ------------------------------------------------------------------------------------------ stations
 
+-- Row kinds: 'f' fuel, 'e' charger; the same index also keeps the helper's car places ('p' parts shop, 'g' repair
+-- workshop, for parts runs).
+M.PLACE_KINDS = { f = 'fuel', e = 'electric', p = 'parts', g = 'garage' }
+
 local function cell(lat, lon) return math.floor(lat / M.GRID) .. '_' .. math.floor(lon / M.GRID) end
 
 function M.index()
@@ -243,7 +247,7 @@ local function add(idx, row, area)
   local id, lat, lon, name, kind, town = row[1], row[2], row[3], row[4], row[5], row[6]
   if type(id) ~= 'string' or not finite(lat) or not finite(lon) or math.abs(lat) > 90 or math.abs(lon) > 180
     or type(name) ~= 'string' or idx.ids[id] then return false end
-  local s = { id = id, g = { lat, lon }, n = name, kind = kind == 'e' and 'electric' or 'fuel', town = town or '', area = area }
+  local s = { id = id, g = { lat, lon }, n = name, kind = M.PLACE_KINDS[kind] or 'fuel', town = town or '', area = area }
   local key = cell(lat, lon)
   idx.cells[key] = idx.cells[key] or {}
   table.insert(idx.cells[key], s)

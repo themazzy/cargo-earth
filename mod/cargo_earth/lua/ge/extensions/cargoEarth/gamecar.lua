@@ -97,13 +97,44 @@ end
 
 local ownedId, replacedData
 
+-- The config's "Body Style" from the game's vehicle list (Sedan, Hatchback, SUV, Pickup...), or the model's; nil
+-- when the game gives none. Looked up once per model and config.
+local styles = {}
+local function styleOf(t)
+  if type(t) ~= 'table' then return nil end
+  if type(t['Body Style']) == 'string' then return t['Body Style'] end
+  local agg = type(t.aggregates) == 'table' and t.aggregates['Body Style']
+  if type(agg) == 'table' then
+    local first = next(agg)
+    if type(first) == 'string' then return first end
+  end
+end
+local function bodyStyle(model, config)
+  if type(model) ~= 'string' then return nil end
+  local file = type(config) == 'table' and config.partConfigFilename
+  local key = type(file) == 'string' and file:match('([^/\\]+)%.pc$') or ''
+  local cacheKey = model .. '/' .. key
+  if styles[cacheKey] == nil then
+    local found = false
+    local cv = ext('core_vehicles')
+    if cv and cv.getModel then
+      local ok, md = pcall(cv.getModel, model)
+      if ok and type(md) == 'table' then
+        found = styleOf(type(md.configs) == 'table' and md.configs[key] or nil) or styleOf(md.model) or false
+      end
+    end
+    styles[cacheKey] = found
+  end
+  return styles[cacheKey] or nil
+end
+
 local function describe(v, d)
   if not d then return nil end
   local vdata, config = d.vdata or {}, d.config or {}
   local model = vdata.model or config.model or (d.model)
   if not model then model = v and v.getJBeamFilename and v:getJBeamFilename() or nil end
   return { model = model, slotPartMap = vdata.slotPartMap, tree = config.partsTree, ioCtx = d.ioCtx,
-    id = v and v:getID(), data = d, config = config }
+    id = v and v:getID(), data = d, config = config, bodyStyle = bodyStyle(model, config) }
 end
 
 function M.vehicle() return describe(playerVeh(), vehData()) end
