@@ -951,6 +951,39 @@ test('refuelling at a station charges the ledger once and fills the real tank', 
   assert(core.garageDo('refuel').msg == 'The tank is full.' and s.career.money == money - cost)
 end)
 
+test('a station sells part fills up to 25, 50 or 75 % of the tank', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  withStation(s, 50, 14)
+  advance(core, 2)
+  fuelReport(core)   -- tank at 50 % of 40 l
+  local partial = core.garageState().fuel.partial
+  assert(#partial == 1 and partial[1].pct == 75 and partial[1].afford, 'only levels above the tank are offered')
+  local money, cost = s.career.money, partial[1].cost
+  local page = core.garageDo('refuelTo', 75)
+  assert(page.msg:find('Filled 10.0') and tank.ratio == 0.75 and s.career.money == money - cost)
+  assert(s.career.accounts.history[1].category == 'fuel' and s.career.accounts.history[1].amount == -cost)
+  fuelReport(core)
+  assert(#core.garageState().fuel.partial == 0)
+  assert(core.garageDo('refuelTo', 50).msg == 'The tank is already above 50 %.' and s.career.money == money - cost)
+end)
+
+test('the Work screen offers fills at the pumps and Not now hides them at that station', function()
+  local core, s = fresh()
+  fuelAdapter(core)
+  withStation(s, 50, 14)
+  advance(core, 2)
+  fuelReport(core)   -- tank at 50 %
+  local pump = core.phoneState().pump
+  assert(pump and #pump.options == 2 and pump.options[1].pct == 75 and pump.options[2].pct == 100)
+  local money, cost = s.career.money, pump.options[1].cost
+  pump = core.phoneAction('pumpFill', 75).pump
+  assert(tank.ratio == 0.75 and s.career.money == money - cost and pump.msg:find('Filled'))
+  fuelReport(core)
+  core.phoneAction('pumpHide')
+  assert(core.phoneState().pump == nil, 'hidden at this station')
+end)
+
 test('a tank refilled by a game reset is put back and costs nothing', function()
   local core, s = fresh()
   fuelAdapter(core)
@@ -995,7 +1028,10 @@ test('a game pump fill without the money goes on the debt; an old pump press exp
   core.onGameRefuel(vehicle.id, {facility = {id = 'p', name = 'Pump'}}, {any = true})
   tank.ratio = 0.75
   fuelReport(core)
-  assert(tank.ratio == 0.75 and s.career.money == 10 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.stationFactor('p')) - 1e-6))
+  -- the wallet pays what it has (shown in Finances), the rest is owed
+  assert(tank.ratio == 0.75 and s.career.money == 0 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.stationFactor('p')) - 1e-6) - 10)
+  assert(s.career.accounts.history[1].category == 'fuel' and s.career.accounts.history[1].amount == -10)
+  assert(require('cargoEarth/garage').debtInfo(s.career.garage).sources[1].kind == 'fuel')
   core.onGameRefuel(vehicle.id, {facility = {id = 'p'}}, {any = true})
   advance(core, (core.PUMP_WAIT_S + 5) * 2)
   fuelReport(core)
@@ -1032,7 +1068,7 @@ test('refuelling away from a station is refused; delivery works anywhere and can
   s.career.money, s.career.garage.debt = 20, 0
   local page = core.garageDo('fuelDelivery')
   assert(page.msg:find('added to your debt') and tank.ratio == 0.75)
-  assert(s.career.money == 20 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.DELIVERY_FACTOR)) + fuel.DELIVERY_FEE)
+  assert(s.career.money == 0 and s.career.garage.debt == math.ceil(10 * fuel.price('gasoline', fuel.DELIVERY_FACTOR)) + fuel.DELIVERY_FEE - 20)
   assert(core.garageDo('fuelGps').msg:find('Test pump') and gps and math.abs(gps.lat - 50.2) < 1e-9)
 end)
 
@@ -1098,8 +1134,11 @@ test('deliveries are rated, feed the right reputation and leave a dot on the map
   core.phoneAction('accept')
   local job = s.job
   assert(job and job.kind == 'food')
+  local active = core.phoneState().active
+  assert(active.pickupLeftS and active.pickupLeftS > 0 and active.pickupLeftS < active.leftS, 'a pickup target before the delivery one')
   pose.lat, pose.lon = job.from.g[1], job.from.g[2]
   advance(core)
+  assert(core.phoneState().active.pickupLeftS == nil, 'collected: only the delivery target is left')
   pose.lat, pose.lon = job.to.g[1], job.to.g[2]
   advance(core)
   local done = core.phoneState().done
@@ -1177,6 +1216,84 @@ test('parcel route rules: real addresses in nearest-first order, sized to the ve
   local plan = {[7] = {volume = 40, density = 1}, [8] = {volume = 20, density = 1}}
   local kept = parcel.keep(plan, 10, 2.5)
   assert(kept[7].volume == 25 and kept[8].volume == 0)
+end)
+
+test('the pickup target is the ride-there share of the order time', function()
+  -- 2 km to the restaurant (2.7 km of streets), 2.7 km on to the customer: about half of 20 minutes
+  assert(food.pickupMinutes({kind = 'food', minutes = 20, pickupKm = 2, km = 2.7}) == 10)
+  -- the courier is at the restaurant already: a minute to collect
+  assert(food.pickupMinutes({kind = 'food', minutes = 12, pickupKm = 0, km = 3}) == 1)
+  -- a far restaurant still leaves a minute for the delivery
+  assert(food.pickupMinutes({kind = 'food', minutes = 10, pickupKm = 50, km = 0.1}) == 9)
+  assert(food.pickupMinutes({kind = 'cargo', minutes = 10, pickupKm = 2, km = 3}) == nil, 'food only')
+  assert(food.pickupMinutes({kind = 'food', minutes = 10}) == nil)
+end)
+
+test('pickup variety: two in a row from one place, then two from other places', function()
+  local variety = require('cargoEarth/variety')
+  local function job(k) return { from = { id = k } } end
+  local h = {}
+  assert(not variety.resting(h, 'A'))
+  h = variety.note(h, job('A'))
+  assert(not variety.resting(h, 'A'), 'a second order from the same place is fine')
+  h = variety.note(h, job('A'))
+  assert(variety.resting(h, 'A') and not variety.resting(h, 'B'), 'two in a row: the place rests')
+  h = variety.note(h, job('B'))
+  assert(variety.resting(h, 'A'), 'one other order is not enough')
+  assert(not variety.resting(h, 'B'))
+  h = variety.note(h, job('C'))
+  assert(not variety.resting(h, 'A'), 'two other orders: it rings again')
+  -- forced back by a one-restaurant village: still resting until two others came
+  assert(variety.resting({'A', 'A', 'B', 'A'}, 'A'))
+  assert(variety.resting({'B', 'B'}, 'B') and not variety.resting({'B', 'C', 'B'}, 'B'))
+  for _ = 1, 10 do h = variety.note(h, job('D')) end
+  assert(#h == variety.KEEP, 'a short memory')
+  assert(variety.key({ from = { n = 'Yard' } }) == 'Yard' and variety.key({}) == nil)
+  assert(not variety.resting('broken', 'A') and #variety.note('broken', job('A')) == 1, 'a damaged save starts over')
+end)
+
+test('the phone skips a resting pickup unless nothing else is in reach', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  core.setMode('trucking')
+  advance(core, 2)
+  local generate, random = core.generate, math.random
+  local places = { 'B', 'A', 'A' }
+  core.generate = function()
+    s.offers = {}
+    for n, k in ipairs(places) do
+      s.offers[#s.offers + 1] = { id = k .. n .. '>x', kind = 'cargo', cargoName = 'Pallets', from = { id = k, n = 'Yard ' .. k } }
+    end
+  end
+  math.random = function(a, b) if b then return random(a, b) end return a or random() end   -- always the last candidate
+  local ok, why = pcall(function()
+    c.pickups = { 'A', 'A' }
+    s.phone.online, s.phone.incoming, s.phone.nextPingAt, s.phone.declined = true, nil, 0, {}
+    advance(core)
+    assert(s.phone.incoming and s.phone.incoming.job.from.id == 'B', 'A just gave two orders: B rings')
+    c.pickups = { 'A', 'A', 'B', 'C' }
+    s.phone.incoming, s.phone.nextPingAt = nil, 0
+    advance(core)
+    assert(s.phone.incoming and s.phone.incoming.job.from.id == 'A', 'two others since: A rings again')
+    places = { 'A', 'A' }
+    c.pickups = { 'A', 'A' }
+    s.phone.incoming, s.phone.nextPingAt = nil, 0
+    advance(core)
+    assert(s.phone.incoming and s.phone.incoming.job.from.id == 'A', 'only A in reach: it still rings')
+  end)
+  core.generate, math.random = generate, random
+  assert(ok, why)
+  c.pickups = nil
+  core.generate()
+  local own
+  for k, offer in ipairs(s.offers) do if not offer.companyShift then own = k break end end
+  if own then
+    core.take(own)
+    assert(c.pickups and c.pickups[1] == (s.offers[own].from.id or s.offers[own].from.n), 'a taken job is remembered')
+  end
 end)
 
 test('a parcel route loads the van, empties the containers stop by stop and pays once at the last address', function()
@@ -1524,6 +1641,56 @@ test('upkeep: wear by km, service at a price, overdue service makes breakdowns l
   assert(paid == 10 and owed == failure.cost - 10 and g.debt == owed and car.service.oil == 0)
   -- a used car is as worn as its condition
   assert(upkeep.state({model = 'pigeon', condition = 0.5}).items[1].share == 0.5)
+end)
+
+test('the debt lists where it comes from and what paid it off', function()
+  local garage = require('cargoEarth/garage')
+  local g = {debt = 100}   -- an older save: a debt with no charges listed
+  garage.addDebt(g, 200, 'fine', 'Speed camera: 80 km/h, limit 50')
+  garage.addDebt(g, 50, 'fuel', 'Roadside fuel delivery')
+  garage.addDebt(g, 30, 'fuel', 'Fuel at Pump')
+  local info = garage.debtInfo(g)
+  assert(info.total == 380 and g.debt == 380)
+  assert(info.sources[1].kind == 'fine' and info.sources[1].amount == 200)
+  assert(info.sources[2].kind == 'earlier' and info.sources[2].amount == 100)
+  assert(info.sources[3].kind == 'fuel' and info.sources[3].amount == 80 and info.sources[3].count == 2)
+  -- payments clear the oldest charges first
+  assert(garage.takeForDebt(g, 300, 'Delivery to Mělník') == 150 and g.debt == 230)
+  info = garage.debtInfo(g)
+  assert(#info.sources == 2 and info.sources[1].kind == 'fine' and info.sources[1].amount == 150)
+  assert(info.log[1].amount == -150 and info.log[1].left == 230 and info.log[1].what == 'Delivery to Mělník')
+  assert(info.log[2].amount == 30 and info.log[2].kind == 'fuel')
+  local career = {money = 1000}
+  assert(garage.payDebt(g, career) and g.debt == 0 and career.money == 770)
+  info = garage.debtInfo(g)
+  assert(#info.sources == 0 and #info.open == 0 and info.log[1].kind == 'paid')
+  -- something set the number alone (the debug editor, a company shift): the list follows it
+  g.debt = 40
+  info = garage.debtInfo(g)
+  assert(#info.sources == 1 and info.sources[1].amount == 40)
+  g.debt = 0
+  assert(#garage.debtInfo(g).open == 0)
+  -- a free repair and roadside help are listed too
+  local h = {repair = 0, lastDamage = 0}
+  garage.trackDamage(h, 1000)
+  assert(garage.trackDamage(h, 0) == 'debt' and garage.debtInfo(h).sources[1].kind == 'repair')
+  local car = {model = 'pigeon', service = {}}
+  upkeep.ensure(car)
+  local failure = {id = 'oil', cost = 100}
+  upkeep.roadside({money = 0}, h, car, failure)
+  assert(garage.debtInfo(h).log[1].kind == 'roadside' and garage.debtInfo(h).log[1].amount == 100)
+  -- a failed refuel takes back its own charge, not older ones
+  local r = {debt = 0}
+  garage.addDebt(r, 100, 'fine', 'Speed camera')
+  garage.addDebt(r, 50, 'fuel', 'Roadside fuel delivery')
+  assert(garage.cancelDebt(r, 50, 'fuel', 'Refund') == 50 and r.debt == 100)
+  local ri = garage.debtInfo(r)
+  assert(#ri.sources == 1 and ri.sources[1].kind == 'fine' and ri.sources[1].amount == 100 and ri.log[1].kind == 'refund')
+  for _ = 1, 50 do garage.addDebt(h, 1, 'fuel', 'x') end
+  assert(#h.debtParts <= garage.DEBT_PARTS_MAX and #h.debtLog <= garage.DEBT_LOG_MAX)
+  local sum = 0
+  for _, p in ipairs(h.debtParts) do sum = sum + p.left end
+  assert(sum == h.debt)
 end)
 
 test('your car breaks down after skipped service; roadside help gets it going', function()
@@ -2535,4 +2702,31 @@ test('freight without a van of your own lists company contracts and no loaner; a
   advance(core, 2)
   assert(core.phoneState().trucking == nil or core.phoneState().trucking.error == nil, 'the failure clears')
   assert(s.career.employment and s.job, 'the company van and the first delivery come with the contract')
+end)
+
+test('first run asks free play or career; free play keeps nothing when a career starts', function()
+  local core, s = fresh()
+  local garage = require('cargoEarth/garage')
+  s.career.garage = garage.new()
+  s.career.money, s.career.delivered, s.career.camerasOff = 777, 5, true
+  s.career.home = {g = {50, 14}}
+  advance(core, 2)
+  local state = core.phoneState()
+  assert(state.screen == 'choose' and state.choice.startMoney == garage.START_MONEY, 'the first run asks')
+  core.phoneAction('online')
+  assert(not s.phone.online, 'no orders before a choice')
+  assert(core.firmDo('found', 'Early') and not s.career.firm, 'no firm in free play')
+  state = core.phoneAction('freePlay')
+  assert(state.screen == 'offline' and state.freePlay and s.career.play == 'free')
+  assert(core.phoneAction('careerInfo').screen == 'choose', 'the choice can be seen again')
+  core.phoneAction('freePlay')
+  core.G.configs = function() return {{model = 'pigeon', key = 'base', value = 900, brand = 'Ibishu', name = 'Pigeon'}} end
+  s.starterName = nil
+  assert(core.phoneAction('careerInfo').choice.starter == 'Ibishu Pigeon')
+  core.phoneAction('startCareer')
+  local c = s.career
+  assert(c.garage.started and c.garage.car.model == 'pigeon', 'the starter car')
+  assert(c.money == garage.START_MONEY and (c.delivered or 0) == 0 and c.home == nil and c.play == nil, 'progress starts again')
+  assert(c.camerasOff == true, 'settings stay')
+  assert(core.phoneState().screen ~= 'choose')
 end)

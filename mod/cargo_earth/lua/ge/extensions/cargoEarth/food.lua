@@ -281,6 +281,16 @@ function M.minutes(roadKm)
   return math.ceil(roadKm / M.SPEED_KMH * 60 + M.SLACK_MIN)
 end
 
+-- The pickup target in minutes after Accept: the ride-there share of the order's whole time (which may be stretched for
+-- premium or special orders). Only a guide on the phone: pay, tips and stars go by the delivery time alone.
+-- nil for jobs whose clock does not include the ride to the pickup.
+function M.pickupMinutes(job)
+  if type(job) ~= 'table' or job.kind ~= 'food' or not job.minutes or not job.pickupKm or not job.km then return nil end
+  local there, total = job.pickupKm * M.ROAD_FACTOR, job.pickupKm * M.ROAD_FACTOR + job.km
+  if total <= 0 then return nil end
+  return math.max(1, math.min(job.minutes - 1, math.ceil(job.minutes * there / total)))
+end
+
 -- The tip for a delivery that took `minutes` of a `limit`: up to TIP_MAX of pay when quick, nothing past TIP_FROM.
 function M.tip(pay, minutes, limit)
   local share = minutes / math.max(1, limit)

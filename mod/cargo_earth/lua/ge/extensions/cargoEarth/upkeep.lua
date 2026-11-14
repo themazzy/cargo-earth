@@ -2,6 +2,7 @@
 -- serviced at the firm's headquarters (its workshop takes a share off) or at any fuel station. Skipped service makes a
 -- breakdown more likely: the more overdue, the likelier per kilometre. Pure rules: no game calls here.
 local economy = require('cargoEarth/economy')
+local garage = require('cargoEarth/garage')
 local M = {}
 
 -- every: km between services (game distances: a long evening of driving is a few hundred km); cost in CZK for a car
@@ -136,7 +137,7 @@ function M.roadside(c, g, car, failure)
   local cost = failure.cost
   local paid = math.max(0, math.min(cost, math.floor(c.money or 0)))
   if paid > 0 then economy.post(c, -paid, 'upkeep', economy.nextId(c, 'upkeep'), 'Roadside help: ' .. byId[failure.id].name:lower()) end
-  if paid < cost then g.debt = (g.debt or 0) + cost - paid end
+  if paid < cost then garage.addDebt(g, cost - paid, 'roadside', 'Roadside help: ' .. byId[failure.id].name:lower()) end
   M.ensure(car)[failure.id] = 0
   return paid, cost - paid
 end

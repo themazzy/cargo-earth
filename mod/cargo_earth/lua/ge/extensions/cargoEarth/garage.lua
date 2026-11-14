@@ -322,7 +322,7 @@ function M.trackDamage(g, damage)
     g.fixUntil = nil
     local freed = before - g.repair
     if not ours and freed > 0 then
-      g.debt = (g.debt or 0) + freed
+      M.addDebt(g, freed, 'repair', 'Car fixed without paying (game menu repair, reset or respawn)')
       return 'debt', freed
     end
   end
@@ -350,17 +350,134 @@ function M.payDebt(g, career)
   local pay = math.min(d, math.max(0, math.floor(career.money or 0)))
   if pay <= 0 then return false, 'No money to pay with' end
   career.money = career.money - pay
-  g.debt = d - pay
+  M.reduceDebt(g, pay, 'paid', 'You paid')
   return true, g.debt > 0 and string.format('Paid %d CZK, %d CZK debt left', pay, g.debt) or string.format('Debt paid off (%d CZK)', pay), pay
 end
 
--- The part of a delivery's earnings that goes to the debt.
-function M.takeForDebt(g, earned)
+-- The part of a delivery's earnings that goes to the debt. what: where the money came from (history line).
+function M.takeForDebt(g, earned, what, share)
   local d = g.debt or 0
   if d <= 0 or earned <= 0 then return 0 end
-  local take = math.min(d, math.floor(earned * M.DEBT_SHARE + 0.5))
-  g.debt = d - take
+  local take = math.min(d, math.floor(earned * (share or M.DEBT_SHARE) + 0.5))
+  M.reduceDebt(g, take, 'earnings', what or 'From a delivery')
   return take
+end
+
+-- Debt ledger. g.debt stays the one number everything checks; next to it:
+--   g.debtParts: the charges still open, oldest first { kind, what, left, at } (payments clear the oldest first)
+--   g.debtLog:   what happened, newest first { kind, what, amount (+ added / - paid), left (debt after), at }
+-- Older saves, the debug editor and save fixes can change g.debt alone: debtSync makes the parts match it again.
+M.DEBT_KINDS = {
+  repair = 'Free repairs', fine = 'Speed camera fines', fuel = 'Fuel', roadside = 'Roadside help',
+  earlier = 'Before charges were listed',
+}
+M.DEBT_LOG_MAX, M.DEBT_PARTS_MAX = 30, 40
+
+local function debtWhen() return os.date('%Y-%m-%d %H:%M') end
+
+function M.debtSync(g)
+  local d = math.max(0, tonumber(g.debt) or 0)
+  local parts = type(g.debtParts) == 'table' and g.debtParts or {}
+  local kept, sum = {}, 0
+  for _, p in ipairs(parts) do
+    if type(p) == 'table' and (tonumber(p.left) or 0) > 0 then
+      p.left = tonumber(p.left)
+      kept[#kept + 1] = p
+      sum = sum + p.left
+    end
+  end
+  if sum < d then
+    table.insert(kept, 1, { kind = 'earlier', what = 'Debt from before charges were listed', left = d - sum })
+  else
+    local over = sum - d
+    while over > 0 and #kept > 0 do
+      local p = kept[1]
+      local cut = math.min(over, p.left)
+      p.left, over = p.left - cut, over - cut
+      if p.left <= 0 then table.remove(kept, 1) end
+    end
+  end
+  g.debtParts = #kept > 0 and kept or nil
+  if g.debtLog ~= nil and type(g.debtLog) ~= 'table' then g.debtLog = nil end
+end
+
+local function debtNote(g, kind, what, amount)
+  g.debtLog = type(g.debtLog) == 'table' and g.debtLog or {}
+  table.insert(g.debtLog, 1, { kind = kind, what = what, amount = amount, left = g.debt or 0, at = debtWhen() })
+  while #g.debtLog > M.DEBT_LOG_MAX do table.remove(g.debtLog) end
+end
+
+-- kind: a key of DEBT_KINDS; what: one line on what happened.
+function M.addDebt(g, amount, kind, what)
+  amount = tonumber(amount) or 0
+  if amount <= 0 then return 0 end
+  M.debtSync(g)
+  g.debt = (g.debt or 0) + amount
+  g.debtParts = g.debtParts or {}
+  local parts = g.debtParts
+  parts[#parts + 1] = { kind = M.DEBT_KINDS[kind] and kind or 'earlier', what = what, left = amount, at = debtWhen() }
+  while #parts > M.DEBT_PARTS_MAX do   -- many small charges: the two oldest become one line
+    local a = table.remove(parts, 1)
+    parts[1].left = parts[1].left + a.left
+    if a.kind ~= parts[1].kind then parts[1].kind, parts[1].what = 'earlier', 'Older charges' end
+  end
+  debtNote(g, kind, what, amount)
+  return amount
+end
+
+-- how: 'paid' | 'earnings' | 'refund'. Returns what was taken off.
+function M.reduceDebt(g, amount, how, what)
+  M.debtSync(g)
+  amount = math.min(tonumber(amount) or 0, g.debt or 0)
+  if amount <= 0 then return 0 end
+  g.debt = (g.debt or 0) - amount
+  M.debtSync(g)
+  debtNote(g, how, what, -amount)
+  return amount
+end
+
+-- Takes back a charge that should not have happened (a refuel that failed): the newest charges of that kind are
+-- removed, not the oldest debt. Returns what was taken off.
+function M.cancelDebt(g, amount, kind, what)
+  M.debtSync(g)
+  amount = math.min(tonumber(amount) or 0, g.debt or 0)
+  if amount <= 0 then return 0 end
+  local parts, left = g.debtParts or {}, amount
+  for i = #parts, 1, -1 do
+    if left <= 0 then break end
+    if parts[i].kind == kind then
+      local cut = math.min(left, parts[i].left)
+      parts[i].left, left = parts[i].left - cut, left - cut
+      if parts[i].left <= 0 then table.remove(parts, i) end
+    end
+  end
+  g.debt = (g.debt or 0) - amount
+  M.debtSync(g)
+  debtNote(g, 'refund', what, -amount)
+  return amount
+end
+
+-- For the Menu: { total, share, sources = { { kind, label, amount, count } } biggest first, open = charges, log }
+function M.debtInfo(g)
+  M.debtSync(g)
+  local by, sources, open = {}, {}, {}
+  for _, p in ipairs(g.debtParts or {}) do
+    local s = by[p.kind]
+    if not s then
+      s = { kind = p.kind, label = M.DEBT_KINDS[p.kind] or M.DEBT_KINDS.earlier, amount = 0, count = 0 }
+      by[p.kind] = s
+      sources[#sources + 1] = s
+    end
+    s.amount, s.count = s.amount + p.left, s.count + 1
+    open[#open + 1] = { kind = p.kind, what = p.what, left = p.left, at = p.at }
+  end
+  table.sort(sources, function(a, b) return a.amount > b.amount end)
+  local log = {}
+  for i, e in ipairs(type(g.debtLog) == 'table' and g.debtLog or {}) do
+    if i > 15 then break end
+    log[i] = { kind = e.kind, what = e.what, amount = e.amount, left = e.left, at = e.at }
+  end
+  return { total = g.debt or 0, share = M.DEBT_SHARE, sources = sources, open = open, log = log }
 end
 
 ------------------------------------------------------------------------------------------ cars
@@ -945,6 +1062,7 @@ function M.start(G, g, career, model)
     km = STARTER_KM, condition = STARTER_CONDITION, starter = true }
   g.pendingUsed = { starter = true }
   g.repair, g.debt, g.lastDamage, g.inventory, g.spent, g.carriedRepair = 0, 0, 0, {}, 0, nil
+  g.debtParts, g.debtLog = nil, nil
   g.priceV = M.PRICE_V
   return true, 'Your car: ' .. g.car.name .. '. ' .. M.START_MONEY .. ' CZK to start.'
 end

@@ -5,7 +5,7 @@
 -- Everything is clicked on the phone (the UI app): orders, the garage and the settings. The debug window opens from
 -- the phone's settings (or the console: extensions.cargoEarth_core.toggleWindow()). No key bindings.
 local M = {}
-M.VERSION = '0.9.0'      -- the mod's version (package.json has the same; the support report shows it)
+M.VERSION = '0.9.1'      -- the mod's version (package.json has the same; the support report shows it)
 M.dependencies = { 'ui_imgui' }
 
 local jobs = require('cargoEarth/jobs')
@@ -84,6 +84,9 @@ M.PHONE = {
   doneShowS = 8,       -- the delivery summary stays on the phone this long
   declinedKeep = 40,   -- declined orders not offered again (the last n)
 }
+
+-- Settings that a new career keeps from free play. Money, ratings, stats, home and firm start again.
+M.KEEP_ON_START = { 'mode', 'options', 'camerasOff', 'updateHidden', 'country', 'currency', 'location' }
 
 local S = {
   idx = nil, fidx = nil, packInfo = '', loadError = nil, mode = 'courier',
@@ -360,6 +363,15 @@ end
 local function rememberLocation(p)
   if not validLocation(p) or p.camera then return end
   if garage.inOwnCar(M.G, S.career.garage) then S.career.location = { lat = p.lat, lon = p.lon } end
+end
+
+-- What the first-run screen offers. The career list stays general: it works in every country.
+function M.careerChoice()
+  if S.starterName == nil then   -- the config list is long: look the starter up once
+    local ok, s = pcall(garage.starter, M.G, S.config.starterModel)
+    S.starterName = ok and s and ((s.brand and (s.brand .. ' ') or '') .. (s.name or s.key)) or false
+  end
+  return { starter = S.starterName or nil, startMoney = garage.START_MONEY, busy = S.job ~= nil }
 end
 
 local function saveCareer()
@@ -854,6 +866,7 @@ local function takeJob(j)
   j.startedAt, j.startedActive = os.time(), S.career.activeSeconds or 0
   j.paymentId = j.paymentId or economy.nextId(S.career, 'delivery')
   local first = S.job == nil
+  if not j.companyShift then S.career.pickups = require('cargoEarth/variety').note(S.career.pickups, j) end
   S.orders[#S.orders + 1] = { job = j, phase = 'toPickup' }
   nextPing()
   if first then
@@ -1004,7 +1017,7 @@ local function finishDelivery(force)
     if not employment.delivered(c, j, pay + tip) then return end
   else
     if economy.isSettled(c, j.paymentId) then return end
-    toDebt = garage.takeForDebt(c.garage, pay + tip)
+    toDebt = garage.takeForDebt(c.garage, pay + tip, 'Delivery to ' .. tostring(j.to.n))
     if not economy.post(c, pay + tip - toDebt, 'delivery', j.paymentId, j.cargoName) then return end
   end
   local rankUp = progress.complete(c, j)
@@ -1280,27 +1293,37 @@ local function phoneTick()
   if S.mode == 'courier' and (not plan or plan.free < 1 or plan.overflow > 0) then return end
   M.generate()
   -- one grocery basket, one parcel route and one tow job get a place beside the first three offers
-  local fresh, groceryIncluded, routeIncluded, anyRoute = {}, false, false, false
-  local towIncluded, anyTow = false, false
+  local anyRoute, anyTow = false, false
   for _, j in ipairs(S.offers) do
     if j.route then anyRoute = true end
     if j.tow then anyTow = true end
   end
-  for _, j in ipairs(S.offers) do
-    local seen = false
-    for _, id in ipairs(ph.declined) do if id == j.id or (j.from.id and id:find(j.from.id .. '>', 1, true) == 1) then seen = true break end end
-    if not seen and j.kind == 'food' and not cargo.fit(plan, j) then seen = true end
-    if not seen and S.job and not batchFits(j) then seen = true end
-    if not seen and (#fresh < 3 or (j.orderType == 'grocery' and not groceryIncluded) or (j.route and not routeIncluded)
-      or (j.tow and not towIncluded)) then
-      fresh[#fresh + 1] = j
-      if j.orderType == 'grocery' then groceryIncluded = true end
-      if j.route then routeIncluded = true end
-      if j.tow then towIncluded = true end
+  -- spread the pickups (variety): a place that just gave two orders in a row rests for two orders from elsewhere,
+  -- unless nothing else is in reach (a village with one restaurant)
+  local variety = require('cargoEarth/variety')   -- (core's main chunk is at Lua's 200 locals)
+  local function shortlist(spread)
+    local fresh, groceryIncluded, routeIncluded, towIncluded = {}, false, false, false
+    for _, j in ipairs(S.offers) do
+      local seen = spread and variety.resting(S.career.pickups, variety.key(j))
+      if not seen then
+        for _, id in ipairs(ph.declined) do if id == j.id or (j.from.id and id:find(j.from.id .. '>', 1, true) == 1) then seen = true break end end
+      end
+      if not seen and j.kind == 'food' and not cargo.fit(plan, j) then seen = true end
+      if not seen and S.job and not batchFits(j) then seen = true end
+      if not seen and (#fresh < 3 or (j.orderType == 'grocery' and not groceryIncluded) or (j.route and not routeIncluded)
+        or (j.tow and not towIncluded)) then
+        fresh[#fresh + 1] = j
+        if j.orderType == 'grocery' then groceryIncluded = true end
+        if j.route then routeIncluded = true end
+        if j.tow then towIncluded = true end
+      end
+      if #fresh >= 3 and (groceryIncluded or not plan or plan.maxFree < food.GROCERY_SLOTS)
+        and (routeIncluded or not anyRoute) and (towIncluded or not anyTow) then break end
     end
-    if #fresh >= 3 and (groceryIncluded or not plan or plan.maxFree < food.GROCERY_SLOTS)
-      and (routeIncluded or not anyRoute) and (towIncluded or not anyTow) then break end
+    return fresh
   end
+  local fresh = shortlist(true)
+  if #fresh == 0 then fresh = shortlist(false) end
   if #fresh == 0 then ph.nextPingAt = S.clock + M.PHONE.retryS return end
   local j = fresh[math.random(#fresh)]
   if S.job then
@@ -1414,6 +1437,7 @@ function M.careerState()
   local shift = S.career.employment
   local personal = shift and shift.personalGarage or S.career.garage
   state.debt = personal and personal.debt or 0
+  if personal and personal.started then state.debtInfo = garage.debtInfo(personal) end
   state.heldWages = shift and shift.phase ~= 'settled' and math.floor(shift.gross * (shift.share or employment.SHARE) + 0.5) or 0
   state.ledger = {}
   for i, row in ipairs(economy.restore(S.career).history) do
@@ -1620,6 +1644,7 @@ function M.placesDo(name, value)
     else ok, why = earth.gps(S.selectedHome.g[1], S.selectedHome.g[2], S.selectedHome.n) end
   elseif name == 'claimHome' then
     if S.job or c.employment or S.parts then why = 'Finish your current work first.'
+    elseif not c.garage.started then why = 'A home garage is part of the career. Start one on the phone first.'
     elseif not garage.inOwnCar(M.G, c.garage) then why = 'Park your career car at this address.'
     else
       local old = c.home
@@ -1689,6 +1714,7 @@ function M.phoneState()
   local gauge = c.garage.started and c.garage.car and fuel.state(c.garage.car)
   if gauge then
     out.fuel = { pct = math.floor(gauge.share * 100 + 0.5), low = gauge.low, empty = gauge.empty, rangeKm = gauge.rangeKm }
+    out.pump = M.pumpOffer(gauge)
   end
   local here = earth.pose()
   local limit = limitHere(here)
@@ -1743,6 +1769,8 @@ function M.phoneState()
       distRoad = distRoad,
       etaS = S.etaS and math.floor(S.etaS + 0.5) or nil, km = r1(j.km), pay = j.pay, minutes = j.minutes,
       leftS = math.floor(left + 0.5), arriveM = radius, stop = stopInfo(),
+      pickupLeftS = S.phase == 'toPickup' and food.pickupMinutes(j)
+        and math.floor(food.pickupMinutes(j) * 60 - M.elapsed(j) + 0.5) or nil,
       cancelAsk = S.phone.cancelAskUntil ~= nil and S.clock <= S.phone.cancelAskUntil, trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or S.idx and S.idx.trailers[j.trailer] or j.trailer) or nil,
       trailerM = j.trailerSpawned and trailers.distanceToPlayer() and math.floor(trailers.distanceToPlayer()) or nil,
       cancelFee = rules(j).cancelFee, count = #S.orders, carrying = carrying, orders = {} }
@@ -1753,6 +1781,8 @@ function M.phoneState()
       local l = oj.minutes * 60 - M.elapsed(oj)
       local row = { id = oj.id, pickup = o.phase == 'toPickup', name = destination.n,
         cargo = oj.cargoName, leftS = math.floor(l + 0.5), current = oj == j,
+        pickupLeftS = o.phase == 'toPickup' and food.pickupMinutes(oj)
+          and math.floor(food.pickupMinutes(oj) * 60 - M.elapsed(oj) + 0.5) or nil,
         cargoCondition = isDropoff(o) and cargo.condition(oj) or nil,
         selectable = carrying >= 2 and oj ~= j and isDropoff(o) }
       if row.current then table.insert(out.active.orders, 1, row) else out.active.orders[#out.active.orders + 1] = row end
@@ -1771,6 +1801,12 @@ function M.phoneState()
   if out.status ~= 'ok' then out.screen = 'error' out.error = out.status return out end
   local g = S.career.garage
   if g.started then out.repair, out.debt = g.repair or 0, g.debt or 0 end
+  if not g.started and c.play ~= 'free' then
+    -- first run: free play (any car, nothing kept) or the career
+    out.screen, out.choice = 'choose', M.careerChoice()
+    return out
+  end
+  out.freePlay = not g.started or nil
   if not garage.inOwnCar(M.G, g) then
     out.screen, out.error = 'error', g.preview and 'You are looking at a used car. Menu → Garage: buy it or go back to your car.'
       or g.car and ('Drive your own car (' .. g.car.name .. '). Menu → Garage → Bring my car.')
@@ -1795,6 +1831,32 @@ function M.phoneAction(a, orderId)
   end
   if S.parts and (a == 'online' or a == 'accept') then return M.phoneState() end
   local ph = S.phone
+  local unchosen = not S.career.garage.started and S.career.play ~= 'free' and not S.career.employment
+  if a == 'freePlay' then
+    if not S.career.garage.started then S.career.play = 'free' saveCareer() end
+    return M.phoneState()
+  elseif a == 'careerInfo' then
+    -- back to the choice from free play (only while offline and between orders)
+    if not S.career.garage.started and not ph.online and not S.job then S.career.play = nil end
+    return M.phoneState()
+  elseif a == 'startCareer' then
+    ph.online, ph.incoming = false, nil
+    M.garageStart()
+    return M.phoneState()
+  elseif unchosen and (a == 'online' or a == 'accept') then
+    return M.phoneState()
+  end
+  if a == 'pumpFill' then
+    -- the fuel offer on the Work screen: up to 25 / 50 / 75 %, or 100 for a full tank
+    local pct = tonumber(orderId)
+    local page = (pct and pct < 100) and M.garageDo('refuelTo', pct) or M.garageDo('refuel')
+    S.pumpMsg = { text = page.msg, untilT = S.clock + 6 }
+    return M.phoneState()
+  elseif a == 'pumpHide' then
+    local near = S.fuelNear
+    S.pumpHidden = near and near.station and near.station.id or S.pumpHidden
+    return M.phoneState()
+  end
   if a == 'online' and S.career.garage.car and S.career.garage.car.loaner and not S.career.employment then
     say('Company vehicles are for contract work only. Use your own car for your own jobs.', 5)
   elseif a == 'online' then
@@ -1930,7 +1992,7 @@ local function cameraTick(p)
   local paid = math.max(0, math.min(flash.fine, math.floor(c.money or 0)))
   local detail = string.format('Speed camera: %d km/h, limit %d', flash.speed, flash.limit)
   if paid > 0 then economy.post(c, -paid, 'fine', economy.nextId(c, 'fine'), detail) end
-  if paid < flash.fine then g.debt = (g.debt or 0) + flash.fine - paid end
+  if paid < flash.fine then garage.addDebt(g, flash.fine - paid, 'fine', detail) end
   local rated = 0
   local function mark(job)
     if type(job) == 'table' and not job.starPenalty then job.starPenalty, rated = cameras.STAR_PENALTY, rated + 1 end
@@ -2444,13 +2506,10 @@ function M.onCargoEarthFuel(id, token, report)
         for name, level in pairs(pending.before) do
           if car.fuel.tanks[name] then car.fuel.tanks[name].ratio = level end
         end
-        if pending.cost > 0 then
-          if pending.debt then
-            g.debt = math.max(0, (g.debt or 0) - pending.cost)
-          else
-            economy.post(S.career, pending.cost, 'fuel', economy.nextId(S.career, 'fuel'), 'Refund: refuelling failed')
-          end
-        end
+        local paid, owed = pending.paid or pending.cost or 0, pending.owed or 0
+        if pending.debt then paid, owed = 0, pending.cost or 0 end   -- saved by an older build
+        if owed > 0 then garage.cancelDebt(g, owed, 'fuel', 'Refund: refuelling failed') end
+        if paid > 0 then economy.post(S.career, paid, 'fuel', economy.nextId(S.career, 'fuel'), 'Refund: refuelling failed') end
         say('Refuelling did not work for this vehicle. Your money was returned.', 8)
         problem('W', 'fuel: the vehicle did not take the new tank level')
         saveCareer()
@@ -2522,27 +2581,43 @@ local function fuelCar()
   return g.car, nil, p
 end
 
--- Takes the money (or adds a debt when there is none left: nobody is stranded) and fills the tank.
-local function fuelBuy(car, quote, extra, detail, onCredit)
+-- Pays a fuel bill: the wallet pays what it can (shown in Finances), the rest goes on the debt.
+-- Returns paid, owed.
+-- (on M: core.lua is at Lua's 200-locals limit)
+function M.fuelCharge(cost, what, debtWhat)
   local c, g = S.career, S.career.garage
+  local paid = math.max(0, math.min(cost, math.floor(c.money or 0)))
+  if paid > 0 then economy.post(c, -paid, 'fuel', economy.nextId(c, 'fuel'), what) end
+  local owed = cost - paid
+  if owed > 0 then garage.addDebt(g, owed, 'fuel', debtWhat or what) end
+  return paid, owed
+end
+
+function M.owedText(owed)
+  return owed > 0 and string.format(' (%d CZK added to your debt)', owed) or ''
+end
+
+-- Takes the money (what the wallet cannot cover goes on the debt: nobody is stranded) and fills the tank.
+local function fuelBuy(car, quote, extra, detail, onCredit)
+  local c = S.career
   local cost = quote.cost + (extra or 0)
   local before = {}
   for name in pairs(quote.levels) do before[name] = car.fuel.tanks[name].ratio end
   if not M.G.setFuel(fuelWatch.id, quote.levels) then return false, 'Could not reach the car’s tank.' end
-  local debt = false
+  local paid, owed = cost, 0
   if cost > 0 then
-    if onCredit and (c.money or 0) < cost then
-      g.debt, debt = (g.debt or 0) + cost, true
+    if onCredit then
+      paid, owed = M.fuelCharge(cost, detail)
     else
       economy.post(c, -cost, 'fuel', economy.nextId(c, 'fuel'), detail)
     end
   end
   fuel.apply(car, quote)
   car.fuel.bought = (car.fuel.bought or 0) + (extra or 0)
-  fuelPending = { id = fuelWatch.id, car = car, levels = quote.levels, before = before, cost = cost, debt = debt,
+  fuelPending = { id = fuelWatch.id, car = car, levels = quote.levels, before = before, cost = cost, paid = paid, owed = owed,
     untilT = S.clock + M.FUEL_VERIFY_S }
   saveCareer()
-  return true, cost, debt
+  return true, cost, owed
 end
 
 local function unitsText(units)
@@ -2555,37 +2630,33 @@ end
 
 -- A game pump filled the tank: books it and takes the money (a debt when the wallet is short, like fuel delivery).
 function M.payPump(car, report)
-  local c, g, st = S.career, S.career.garage, gamePump.station
+  local st = gamePump.station
   local free = car.loaner == true
   local quote = fuel.pumpQuote(car, report, fuel.stationFactor(st.id), free)
   if not quote then return false end
-  local debt = false
-  if quote.cost > 0 then
-    if (c.money or 0) < quote.cost then
-      g.debt, debt = (g.debt or 0) + quote.cost, true
-    else
-      economy.post(c, -quote.cost, 'fuel', economy.nextId(c, 'fuel'), st.n)
-    end
-  end
+  local owed = 0
+  if quote.cost > 0 then owed = select(2, M.fuelCharge(quote.cost, st.n, 'Fuel at ' .. tostring(st.n))) end
   fuel.apply(car, quote)
   say(free and string.format('Filled %s at %s on the company fuel card.', unitsText(quote.units), st.n)
-    or string.format('Filled %s at %s for %d CZK%s.', unitsText(quote.units), st.n, quote.cost, debt and ' (added to your debt)' or ''), 8)
+    or string.format('Filled %s at %s for %d CZK%s.', unitsText(quote.units), st.n, quote.cost, M.owedText(owed)), 8)
   saveCareer()
   return true
 end
 
--- amount: units to buy, or nil for a full tank
-local function fuelRefuel(amount)
+-- amount: units to buy, or nil for a full tank; pct: fill the tank up to this percentage instead (25, 50, 75)
+local function fuelRefuel(amount, pct)
   local car, why = fuelCar()
   if not car then return false, why end
   local near = fuelNear()
   if not near or not near.station or not near.at then return false, 'Park at a station first. Garage shows the nearest one.' end
   local free = car.loaner == true
   local money = math.max(0, S.career.money or 0)
-  local quote = fuel.quote(car, fuel.sells(near.station.kind), fuelFactor(near.station), tonumber(amount), not free and money or nil, free)
+  local upTo = tonumber(pct) and math.max(0.05, math.min(1, tonumber(pct) / 100)) or nil
+  local quote = fuel.quote(car, fuel.sells(near.station.kind), fuelFactor(near.station), tonumber(amount), not free and money or nil, free, upTo)
   if not quote then
-    local full = fuel.quote(car, fuel.sells(near.station.kind), fuelFactor(near.station), nil, nil, true)
-    return false, full and 'Not enough money for fuel. Fuel delivery can go on your debt.' or 'The tank is full.'
+    local full = fuel.quote(car, fuel.sells(near.station.kind), fuelFactor(near.station), nil, nil, true, upTo)
+    return false, full and 'Not enough money for fuel. Fuel delivery can go on your debt.'
+      or (upTo and upTo < 1 and string.format('The tank is already above %d %%.', math.floor(upTo * 100 + 0.5)) or 'The tank is full.')
   end
   local ok, cost = fuelBuy(car, quote, 0, near.station.n)
   if not ok then return false, cost end
@@ -2600,10 +2671,10 @@ local function fuelDelivery()
   local free = car.loaner == true
   local quote = fuel.quote(car, { gasoline = true, diesel = true, electric = true }, fuel.DELIVERY_FACTOR, fuel.DELIVERY_UNITS, nil, free)
   if not quote then return false, 'The tank is full.' end
-  local ok, cost, debt = fuelBuy(car, quote, free and 0 or fuel.DELIVERY_FEE, 'Roadside fuel delivery', true)
+  local ok, cost, owed = fuelBuy(car, quote, free and 0 or fuel.DELIVERY_FEE, 'Roadside fuel delivery', true)
   if not ok then return false, cost end
   return true, free and string.format('The company sent %s.', unitsText(quote.units))
-    or string.format('Delivered %s for %d CZK%s.', unitsText(quote.units), cost, debt and ' (added to your debt)' or '')
+    or string.format('Delivered %s for %d CZK%s.', unitsText(quote.units), cost, M.owedText(owed))
 end
 
 local function fuelGps()
@@ -2634,11 +2705,44 @@ local function fuelState()
       local can = fuel.quote(g.car, fuel.sells(s.kind), fuelFactor(s), nil, not st.free and money or nil, st.free)
       st.fill = full and { cost = full.cost, afford = can and can.full or false, canCost = can and can.cost or 0,
         units = can and unitsText(can.units) or nil }
+      -- part fills: up to 25 / 50 / 75 % of the tank (only the ones above the current level)
+      st.partial = {}
+      for _, pct in ipairs({ 25, 50, 75 }) do
+        local q = fuel.quote(g.car, fuel.sells(s.kind), fuelFactor(s), nil, nil, st.free, pct / 100)
+        if q then
+          st.partial[#st.partial + 1] = { pct = pct, cost = q.cost, units = unitsText(q.units),
+            afford = st.free or q.cost <= money }
+        end
+      end
     end
   end
   local delivery = fuel.quote(g.car, { gasoline = true, diesel = true, electric = true }, fuel.DELIVERY_FACTOR, fuel.DELIVERY_UNITS, nil, st.free)
   st.delivery = delivery and { cost = delivery.cost + (st.free and 0 or fuel.DELIVERY_FEE), units = unitsText(delivery.units) } or nil
   return st
+end
+
+-- The Work screen's fuel offer while the car stands at a station's pumps: { name, free, options = { pct, cost,
+-- afford } } or nil. Hidden for that station after "Not now" until the car leaves it; not shown on a near-full tank.
+function M.pumpOffer(gauge)
+  local g = S.career.garage
+  if S.pumpMsg and S.clock > S.pumpMsg.untilT then S.pumpMsg = nil end
+  if not g.started or not g.car or S.parts or g.preview or g.pendingUsed or not garage.inOwnCar(M.G, g) then return nil end
+  local near = fuelNear()
+  local s = near and near.at and near.station
+  if not s then S.pumpHidden = nil return nil end
+  if S.pumpHidden == s.id then return nil end
+  local msg = S.pumpMsg and S.pumpMsg.text
+  if fuelPending then return { name = s.n, busy = true, msg = msg, options = {} } end
+  if (fuelWatch and fuelWatch.off) or (gauge and gauge.share >= 0.9 and not msg) then return nil end
+  local free = g.car.loaner == true
+  local money = math.max(0, S.career.money or 0)
+  local out = { name = s.n, free = free, msg = msg, options = {} }
+  for _, pct in ipairs({ 25, 50, 75, 100 }) do
+    local q = fuel.quote(g.car, fuel.sells(s.kind), fuelFactor(s), nil, nil, free, pct < 100 and pct / 100 or nil)
+    if q then out.options[#out.options + 1] = { pct = pct, cost = q.cost, afford = free or q.cost <= money } end
+  end
+  if #out.options == 0 and not msg then return nil end
+  return out
 end
 
 local function garageSay(ok, msg)
@@ -2653,11 +2757,18 @@ function M.garageStart(model)
   if S.career.employment then return false, 'End company work first.' end
   if S.career.garage.started then return false, 'Your career has already started.' end
   if S.job then M.cancel(true, true) end   -- a new career: orders from before go
-  local ok, msg = garage.start(M.G, S.career.garage, S.career, model or S.config.starterModel)
-  if ok then
-    usedAt, conditionAt = S.clock + 1, nil
-    S.career.garage.car.fuel = { start = 0.5 }   -- the old starter car comes with half a tank
-  end
+  -- Free play keeps nothing: the career starts from a clean save with only the player's settings.
+  local fresh = { money = 0, delivered = 0, km = 0, history = {}, garage = garage.new() }
+  for _, k in ipairs(M.KEEP_ON_START) do fresh[k] = S.career[k] end
+  local ok, msg = garage.start(M.G, fresh.garage, fresh, model or S.config.starterModel)
+  if not ok then return garageSay(ok, msg) end
+  S.phone.online, S.phone.incoming, S.phone.lastDone, S.phone.lastFailure = false, nil, nil, nil
+  local money = fresh.money
+  fresh.money = 0
+  loadCareer(fresh)
+  economy.post(fresh, money, 'garage', economy.nextId(fresh, 'start'), 'Career start')
+  usedAt, conditionAt = S.clock + 1, nil
+  fresh.garage.car.fuel = { start = 0.5 }   -- the old starter car comes with half a tank
   return garageSay(ok, msg)
 end
 function M.garageSell(part) return garageSay(garage.sell(M.G, S.career.garage, S.career, part)) end
@@ -2703,7 +2814,7 @@ local function garageSwitchCar(id)
   end
   return garageSay(ok, why)
 end
-local function garageRefuel(amount) local ok, msg = fuelRefuel(amount) say(msg) return ok, msg end
+local function garageRefuel(amount, pct) local ok, msg = fuelRefuel(amount, pct) say(msg) return ok, msg end
 local function garageFuelDelivery() local ok, msg = fuelDelivery() say(msg) return ok, msg end
 local function garageFuelGps() return fuelGps() end
 local function garageHireDriver(id, applicant)
@@ -2915,6 +3026,7 @@ function M.garageState()
   out.repair = g.repair or 0
   out.debt = g.debt or 0
   out.debtShare = garage.DEBT_SHARE
+  out.debtInfo = (g.debt or 0) > 0 and garage.debtInfo(g) or nil
   out.income = math.floor(garage.INCOME_PER_HOUR / 10 + 0.5) * 10   -- what an hour of deliveries pays
   out.repairHours = garage.hours(out.repair)
   local cap = garage.repairCap(g)
@@ -2989,7 +3101,7 @@ end
 -- Runs a garage action for the phone and returns the new garage page with its message.
 function M.garageDo(name, a, b)
   if S.pendingCareer then return M.garageState() end
-  local fuelAction = name == 'refuel' or name == 'fuelDelivery' or name == 'fuelGps'
+  local fuelAction = name == 'refuel' or name == 'refuelTo' or name == 'fuelDelivery' or name == 'fuelGps'
   if S.career.employment and name ~= 'bring' and not fuelAction then
     S.garageMsg = 'Company equipment is fixed. End company work in Places to use your garage.'
     return M.garageState()
@@ -3000,7 +3112,8 @@ function M.garageDo(name, a, b)
     buyListing = M.garageBuyListing, preview = M.garagePreview, back = M.garagePreviewEnd, bring = M.garageBringCar,
     switchCar = garageSwitchCar, hireDriver = garageHireDriver, releaseDriver = garageReleaseDriver,
     roadside = garageRoadside, service = garageService, repairParked = garageRepairParked,
-    refuel = garageRefuel, fuelDelivery = garageFuelDelivery, fuelGps = garageFuelGps,
+    refuel = garageRefuel, refuelTo = function(pct) return garageRefuel(nil, pct) end,
+    fuelDelivery = garageFuelDelivery, fuelGps = garageFuelGps,
     sell = M.garageSell, openParts = openParts, buyParts = buyParts, cancelParts = cancelParts }
   local f = fns[name]
   local ok, msg = false, 'Unknown action'
@@ -3124,7 +3237,8 @@ function M.firmDo(name, a)
   local c, p = S.career, earth.status() == 'ok' and earth.pose() or nil
   local debt = personalGarage().debt or 0
   local ok, msg = false, 'Unknown action'
-  if name == 'found' then ok, msg = firm.found(c, a, debt)
+  if name == 'found' and not personalGarage().started then ok, msg = false, 'A firm is part of the career. Start one on the phone first.'
+  elseif name == 'found' then ok, msg = firm.found(c, a, debt)
   elseif name == 'rename' then ok, msg = firm.rename(c, a)
   elseif name == 'setHq' then
     if S.job or c.employment then ok, msg = false, 'Finish your current work first.'
@@ -3810,7 +3924,7 @@ function M.onUpdate(dtReal, dtSim)
         saveCareer()
       elseif income > 0 then
         local c = S.career
-        local debtPaid = garage.takeForDebt(fg, income)
+        local debtPaid = garage.takeForDebt(fg, income, 'Hired drivers\' earnings')
         economy.post(c, income - debtPaid, 'drivers', economy.nextId(c, 'drivers'), 'Fleet shift')
         say(string.format('Drivers earned %d CZK%s.', income,
           debtPaid > 0 and string.format(' (%d CZK toward debt)', debtPaid) or ''))

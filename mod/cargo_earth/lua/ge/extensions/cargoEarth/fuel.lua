@@ -13,7 +13,7 @@ M.STATION_SPREAD = 0.06      -- a station's price differs by up to this share (f
 M.STATION_RADIUS = 60        -- metres from a station's point that count as "at the pumps"
 M.HQ_DISCOUNT = 0.85         -- the firm's own tank
 M.DELIVERY_FACTOR = 1.6      -- roadside fuel costs this much more per unit
-M.DELIVERY_FEE = 75          -- and a call-out fee
+M.DELIVERY_FEE = 30          -- and a call-out fee
 M.DELIVERY_UNITS = 10        -- litres (or kWh) a roadside delivery brings at most
 M.REFILL_JUMP = 0.02         -- a tank this much fuller than remembered was refilled by a reset, not by us
 M.LOW, M.EMPTY = 0.15, 0.01  -- shares of a tank: the phone warns, the car is stranded
@@ -162,9 +162,10 @@ function M.price(kind, factor)
 end
 
 -- What a refill would take. sells: { gasoline = true, ... } the kinds on offer; factor: price factor;
--- limit: units at most (nil: full); budget: money at hand (nil: no limit); free: a company car.
+-- limit: units at most (nil: full); budget: money at hand (nil: no limit); free: a company car;
+-- upTo: fill each tank to this share (0..1, nil: full).
 -- Returns { units = { kind = n }, cost, levels = { name = ratio }, full } or nil when nothing fits.
-function M.quote(car, sells, factor, limit, budget, free)
+function M.quote(car, sells, factor, limit, budget, free, upTo)
   local f = car and car.fuel
   if type(f) ~= 'table' or type(f.tanks) ~= 'table' then return nil end
   local names = {}
@@ -175,7 +176,7 @@ function M.quote(car, sells, factor, limit, budget, free)
   for _, name in ipairs(names) do
     local t = f.tanks[name]
     if sells[t.kind] then
-      local want = (1 - t.ratio) * t.cap
+      local want = math.max(0, (upTo or 1) - t.ratio) * t.cap
       local price = free and 0 or M.price(t.kind, factor)
       local take = want
       if left then take = math.min(take, left) end

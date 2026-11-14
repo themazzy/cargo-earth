@@ -9,6 +9,9 @@
 // the radio (cargoEarth_core.radioDo); this player checks in twice a second, plays the station when the game says the
 // page should, and says how it goes. A station the page cannot play goes to the helper (the game decides).
 var cargoEarthRadioPlayer = null
+// The Menu window, one per page: the app whose window is open. Opening one closes any other, so two never lie over
+// each other, however many copies of an app the page holds (a layout reload can leave an old one listening).
+var cargoEarthMenu = {open: null, last: null} // last: the section shown last, where the Menu button reopens
 function pagePlayer() {
   if (cargoEarthRadioPlayer || typeof Audio === 'undefined' || typeof bngApi === 'undefined') return cargoEarthRadioPlayer
   var audio = new Audio(), me = {seq: -1, status: 'idle', why: '', busy: false, on: false, at: 0, retries: 0, retry: null}
@@ -107,6 +110,7 @@ angular.module('beamng.apps')
     '.cep-pill .cep-limit{width:24px;height:24px;border-width:3px;font-size:10px;vertical-align:middle;margin-right:4px}' +
     '.cep-report{width:100%;box-sizing:border-box;font:11px/1.35 monospace;background:rgba(0,0,0,.25);color:inherit;border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:6px;resize:none;margin:6px 0}' +
     '.cep-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:12px 14px;gap:10px;overflow:hidden}' +
+    '.cep-perks{margin:4px 0;padding-left:16px;font-size:12px;line-height:1.35}.cep-perks li{margin:1px 0}' +
     '.cep-body.cep-fit{overflow-y:auto}.cep-fit .cep-center{flex:1 0 auto}.cep-fit .cep-pulse{width:56px;height:56px}' +
     '.cep-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px}' +
     '.cep-big{font-size:22px;font-weight:800;line-height:1.15}' +
@@ -189,6 +193,11 @@ angular.module('beamng.apps')
     '.cep-msg{font-size:12px;padding:8px 10px;border-radius:10px;background:#fff4e5;color:#6b4a00}' +
     '.cep-update{display:flex;align-items:center;gap:6px;font-size:12px;padding:6px 8px 6px 10px;border-radius:10px;background:#e8f1ff;color:#123a73}' +
     '.cep-update span{flex:1}.cep-update .cep-sm{margin:0;padding:4px 8px}' +
+    '.cep-pump{font-size:12px;padding:6px 8px 8px 10px;border-radius:10px;background:#fff4dc;color:#5a3d00}' +
+    '.cep-pump-head{display:flex;align-items:center;gap:6px}.cep-pump-head span{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+    '.cep-pump-head .cep-sm{margin:0;padding:3px 8px}.cep-pump-msg{margin-top:3px}' +
+    '.cep-pump-row{display:flex;gap:4px;margin-top:5px}.cep-pump-row .cep-sm{flex:1;margin:0;padding:4px 2px;display:flex;flex-direction:column;align-items:center;line-height:1.2}' +
+    '.cep-pump-row small{font-size:10px;font-weight:500;color:inherit;opacity:.85}' +
     '.cep-step2{display:flex;align-items:center;gap:8px}.cep-step2 b{min-width:62px;text-align:center;font-variant-numeric:tabular-nums}' +
     '.cep-li>div{min-width:0}' +
     '.cep-radio-now{display:flex;flex-direction:column;gap:8px}.cep-radio-now .cep-name{font-size:16px;white-space:normal}' +
@@ -467,7 +476,7 @@ angular.module('beamng.apps')
       '<div class="cem-panel" ng-if="panel">' +
       '<nav class="cem-side" aria-label="Menu sections">' +
         '<div class="cem-brand">Cargo<b>Earth</b></div>' +
-        '<div class="cem-money">{{ fmt.money(s.money) }}<small ng-if="s.debt > 0">debt {{ fmt.money(s.debt) }}</small></div>' +
+        '<div class="cem-money">{{ fmt.money(s.money) }}<small ng-if="s.debt > 0" style="cursor:pointer" title="Where it came from" ng-click="openPanel(\'career\', \'money\')">debt {{ fmt.money(s.debt) }}</small></div>' +
         '<button ng-class="{on: panelOn(\'garage\')}" ng-attr-aria-current="{{ panelOn(\'garage\') ? \'page\' : undefined }}" ng-click="openPanel(\'garage\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M7 21V11h10v10M7 15h10M7 18h10"/></svg>Garage</button>' +
         '<button ng-class="{on: panelOn(\'home\')}" ng-attr-aria-current="{{ panelOn(\'home\') ? \'page\' : undefined }}" ng-click="openPanel(\'home\')">' +
@@ -567,7 +576,21 @@ angular.module('beamng.apps')
             '<div class="cep-card"><strong ng-class="{\'cep-debit\': career.debt > 0}">{{ fmt.money(career.debt) }}</strong><span>Outstanding debt</span></div></div>' +
           '<div class="cep-card" ng-if="s.company"><div class="cep-label">Company wages held</div><div class="cep-name">{{ fmt.money(career.heldWages) }}</div><div class="cep-sub">Paid when the contract ends.</div>' +
             '<button class="cep-sm ghost" ng-click="openCompany()">Open active contract</button></div>' +
-          '<button class="cep-sm ghost" ng-if="career.debt > 0" ng-click="setTab(\'garage\')">Manage debt in Garage</button>' +
+          // debt: what it is made of (open charges by source) and what added to it or paid it off
+          '<div class="cep-card" style="grid-column:1/-1" ng-if="career.debtInfo && (career.debt > 0 || career.debtInfo.log.length)" ng-style="career.debt > 0 ? {\'box-shadow\': \'inset 0 0 0 1.5px var(--tomato)\'} : {}">' +
+            '<div class="cep-label">Debt</div>' +
+            '<div class="cep-name" ng-class="{\'cep-debit\': career.debt > 0}">{{ career.debt > 0 ? fmt.money(career.debt) : "Nothing owed" }}</div>' +
+            '<div class="cep-sub" ng-if="career.debt > 0">{{ career.debtInfo.share * 100 }} % of each delivery goes to it. No buying until it is paid.</div>' +
+            '<div ng-if="career.debt > 0"><div class="cep-label" style="margin-top:8px">Where it comes from</div>' +
+              '<div class="cep-keyval" ng-repeat="src in career.debtInfo.sources track by src.kind"><span>{{ src.label }}<small class="cep-sub" ng-if="src.count > 1"> · {{ src.count }} charges</small></span><strong class="cep-debit" style="white-space:nowrap;margin-left:12px">{{ fmt.money(src.amount) }}</strong></div>' +
+              '<button class="cep-sm ghost" ng-click="toggleDebtCharges()">{{ debtCharges ? "Hide the charges" : "Show each charge" }}</button>' +
+              '<div ng-if="debtCharges"><div class="cep-keyval" ng-repeat="ch in career.debtInfo.open track by $index"><span>{{ fmt.text(ch.what) }}<small class="cep-meta" ng-if="ch.at"> · {{ ch.at }}</small></span><strong class="cep-debit" style="white-space:nowrap;margin-left:12px">{{ fmt.money(ch.left) }}</strong></div></div>' +
+              '<div class="cep-row" style="margin-top:6px"><button class="cep-sm" ng-if="!s.company" ng-disabled="!(s.money > 0)" ng-click="payDebt()">Pay what I can</button>' +
+                '<button class="cep-sm ghost" ng-click="setTab(\'garage\')">Garage</button></div></div>' +
+            '<div ng-if="career.debtInfo.log.length"><div class="cep-label" style="margin-top:8px">Debt history</div>' +
+              '<div class="cep-keyval" ng-repeat="e in career.debtInfo.log track by $index"><span>{{ fmt.text(e.what) || (e.amount > 0 ? "Added" : "Paid") }}<small class="cep-meta"> · {{ e.at }} · owed after {{ fmt.money(e.left) }}</small></span>' +
+                '<strong style="white-space:nowrap;margin-left:12px" ng-class="{\'cep-debit\': e.amount > 0, \'cep-credit\': e.amount < 0}">{{ e.amount > 0 ? "+" : "−" }}{{ fmt.money(e.amount > 0 ? e.amount : -e.amount) }}</strong></div></div>' +
+          '</div>' +
           '<div class="cep-label">Latest transactions</div>' +
           '<div class="cep-empty cep-sub" ng-if="!career.ledger.length">No transactions yet.</div>' +
           '<div class="cep-card" ng-repeat="entry in career.ledger | limitTo:20 track by entry.id">' +
@@ -678,7 +701,7 @@ angular.module('beamng.apps')
         '<div class="cep-msg" ng-if="g.msg">{{ fmt.text(g.msg) }}</div>' +
         '<div ng-if="g && !g.started" class="cep-center">' +
           '<div class="cep-label">Your career</div><div class="cep-big">Start with an old {{ g.starter }}</div>' +
-          '<div class="cep-sub">You get the cheapest {{ g.starter }} and {{ fmt.money(g.startMoney) }}. Your money now is replaced. ' +
+          '<div class="cep-sub">You get the cheapest {{ g.starter }} and {{ fmt.money(g.startMoney) }}. Free play money, ratings and stats do not carry over. ' +
           'Orders then only come while you drive this car. Buy parts and better cars from what you earn.</div>' +
           '<div class="cep-sub" ng-if="g.busy" style="color:var(--tomato)">Your current order will be cancelled (no fee).</div>' +
           '<button class="cep-btn go" ng-click="gdo(\'start\')">Start my career</button></div>' +
@@ -698,6 +721,7 @@ angular.module('beamng.apps')
             '{{ fmt.money(g.preview.tradeIn) }}: you pay {{ fmt.money(g.preview.price - g.preview.tradeIn) }}</span>.</div>' +
           '<div class="cep-sub" ng-if="g.preview.keepCar">Your current car will be parked in My cars.</div>' +
           '<button class="cep-btn go" ng-disabled="!g.preview.ready" ng-click="gdo(\'buyListing\', g.preview.id)">Buy it</button>' +
+          '<button class="cep-btn ghost" ng-click="openCars()">‹ Other cars</button>' +
           '<button class="cep-btn ghost" ng-click="gdo(\'back\')">Back to my car</button>' +
         '</div>' +
         '<div ng-if="g && g.started && gview === \'home\' && !g.preview && !g.parts" class="cep-scroll">' +
@@ -728,6 +752,9 @@ angular.module('beamng.apps')
               '<button class="cep-btn go" ng-if="g.fuel.fill" ng-disabled="g.fuel.busy || g.fuel.locked || !(g.fuel.fill.canCost > 0 || g.fuel.free)" ng-click="gdo(\'refuel\')">' +
                 '{{ g.fuel.busy ? "Refuelling…" : (g.fuel.free ? "Fill up" : (g.fuel.fill.afford ? "Fill up · " + fmt.money(g.fuel.fill.cost) : ' +
                   '(g.fuel.fill.canCost > 0 ? "Buy " + g.fuel.fill.units + " · " + fmt.money(g.fuel.fill.canCost) : "Not enough money"))) }}</button>' +
+              '<div class="cep-row" ng-if="g.fuel.fill && g.fuel.partial.length" style="margin-top:6px;flex-wrap:wrap;gap:6px">' +
+                '<button class="cep-sm" ng-repeat="p in g.fuel.partial track by p.pct" ng-disabled="g.fuel.busy || g.fuel.locked || !p.afford" ' +
+                  'title="{{ p.units }}" ng-click="gdo(\'refuelTo\', p.pct)">To {{ p.pct }} %{{ g.fuel.free ? "" : " · " + fmt.money(p.cost) }}</button></div>' +
               '<button class="cep-sm ghost" ng-if="g.fuel.station && !g.fuel.station.at" ng-disabled="g.busy" ng-click="gdo(\'fuelGps\')">Route there</button>' +
               '<button class="cep-sm ghost" ng-if="g.fuel.delivery && (!g.fuel.station.at || !g.fuel.fill || g.fuel.fill.canCost <= 0)" ng-disabled="g.fuel.busy || g.fuel.locked" ng-click="confirmDelivery()">' +
                 '{{ deliveryAsk ? "Press again · " + fmt.money(g.fuel.delivery.cost) : "Bring fuel here · " + g.fuel.delivery.units + " for " + fmt.money(g.fuel.delivery.cost) }}</button>' +
@@ -748,7 +775,9 @@ angular.module('beamng.apps')
             '<div><small ng-if="g.upkeep.due > 0 && !g.upkeep.where">Service at a fuel station or your headquarters. Overdue parts can break down.</small></div></div>' +
             '<button class="cep-sm go" ng-if="g.upkeep.due > 0" ng-disabled="!g.upkeep.where || g.money < g.upkeep.dueCost" ng-click="gdo(\'service\')">Service {{ fmt.money(g.upkeep.dueCost) }}</button></div>' +
           '<div class="cep-li" ng-if="g.debt > 0" style="box-shadow:inset 0 0 0 1.5px var(--tomato)"><div><div class="cep-name" style="color:var(--tomato)">Debt {{ fmt.money(g.debt) }}</div>' +
-            '<small>{{ g.debtShare * 100 }} % of each delivery goes to it. No buying until it is paid.</small></div>' +
+            '<small>{{ g.debtShare * 100 }} % of each delivery goes to it. No buying until it is paid.</small>' +
+            '<div ng-repeat="src in g.debtInfo.sources track by src.kind"><small>{{ src.label }}: {{ fmt.money(src.amount) }}</small></div>' +
+            '<button class="cep-sm ghost" ng-click="openPanel(\'career\', \'money\')">Where it came from</button></div>' +
             '<button class="cep-sm" ng-disabled="!(g.money > 0)" ng-click="gdo(\'paydebt\')">Pay</button></div>' +
           '<button class="cep-btn" ng-if="g.own && !g.loaner" ng-click="gdo(\'openParts\')">Parts shop</button>' +
           '<button class="cep-sm ghost" ng-if="g.own && !g.loaner" ng-click="confirmSell()">{{ sellAsk ? "Press again to sell · " + fmt.money(g.sellPrice) : "Sell my car · " + fmt.money(g.sellPrice) }}</button>' +
@@ -799,19 +828,31 @@ angular.module('beamng.apps')
               '<button class="cep-sm ghost" ng-if="v.driver" ng-click="gdo(\'releaseDriver\', v.id)">Release driver</button></div>' +
           '</div></div>' +
         '<div ng-if="g && g.started && gview === \'cars\' && !g.parts" class="cep-scroll">' +
+          // the car being looked at stays on top of the list, so the next one is a tap away
+          '<div class="cep-card" ng-if="g.preview"><div class="cep-label">Looking at</div>' +
+            '<div class="cep-keyval"><strong style="white-space:normal">{{ g.preview.name }}</strong><strong style="white-space:nowrap">{{ fmt.money(g.preview.price - (g.preview.tradeIn || 0)) }}</strong></div>' +
+            '<div class="cep-sub" ng-if="g.preview.keepCar">Your current car will be parked in My cars.</div>' +
+            '<div class="cep-sub" ng-if="!g.preview.keepCar && g.preview.tradeIn > 0">Trade-in credit · {{ fmt.money(g.preview.tradeIn) }}</div>' +
+            '<div class="cep-sub" ng-if="!g.preview.ready && !g.preview.error">Checking the car…</div>' +
+            '<div class="cep-sub" ng-if="g.preview.error">{{ g.preview.error }}</div>' +
+            '<div class="cep-row" style="margin-top:6px"><button class="cep-sm go" ng-disabled="!g.preview.ready" ng-click="gdo(\'buyListing\', g.preview.id)">Buy it</button>' +
+              '<button class="cep-sm ghost" ng-click="goHome()">Details</button>' +
+              '<button class="cep-sm ghost" ng-click="gdo(\'back\')">Back to my car</button></div></div>' +
           '<div class="cep-row"><button class="cep-sm ghost" ng-click="goHome()">‹ Back</button>' +
             '<input class="cep-input" placeholder="Find a car" aria-label="Find a car" ng-model="cf.text">' +
             '<button class="cep-sm" ng-click="loadCars()">Search</button></div>' +
-          '<label class="cep-sub" ng-if="market.tradeIn > 0"><input type="checkbox" ng-model="purchase.keep"> Keep my current car</label>' +
-          '<div class="cep-sub" ng-if="market.tradeIn > 0 && !purchase.keep">Trade-in credit · {{ fmt.money(market.tradeIn) }}</div>' +
+          '<label class="cep-sub" ng-if="market.tradeIn > 0 && !g.preview"><input type="checkbox" ng-model="purchase.keep"> Keep my current car</label>' +
+          '<div class="cep-sub" ng-if="market.tradeIn > 0 && !purchase.keep && !g.preview">Trade-in credit · {{ fmt.money(market.tradeIn) }}</div>' +
           '<div class="cep-sub" ng-if="market.debt > 0" style="color:var(--tomato)">Pay your debt first ({{ fmt.money(market.debt) }}).</div>' +
+          '<div class="cep-sub" ng-if="g.preview">Go back to your car to look at another one.</div>' +
           '<div class="cep-sub" ng-if="!cars.length">No cars for sale. New ones come every few minutes.</div>' +
           '<div class="cep-li" ng-repeat="c in cars" style="align-items:flex-start;cursor:default"><div style="flex:1">' +
             '<div class="cep-name" style="white-space:normal">{{ c.name }} <span class="cep-adr" ng-if="c.isNew" style="background:var(--ok)">NEW</span></div>' +
             '<small>{{ fmt.int(c.km) }} km · condition {{ fmt.cond(c.condition) }} · gone in {{ fmt.left(c.leftMin) }}' +
               '<span ng-if="c.missing !== undefined && c.missing !== null"> · {{ c.missing }} parts missing</span><br>about {{ fmt.hrs(c.hours) }} of deliveries</small>' +
             '<div class="cep-time" style="height:4px;margin-top:5px" ng-class="{warn: c.condition < 0.6, late: c.condition < 0.35}"><i ng-style="{width: (c.condition * 100) + \'%\'}"></i></div></div>' +
-            '<div style="display:flex;flex-direction:column;gap:5px;align-items:stretch">' +
+            // while looking at a car, only that car can be bought (from the card above) and the deal is fixed
+            '<div style="display:flex;flex-direction:column;gap:5px;align-items:stretch" ng-if="!g.preview">' +
             '<button class="cep-sm" ng-class="{ghost: carPrice(c) > market.money}" ng-click="buyCar(c.id)">' +
               'Buy {{ fmt.money(carPrice(c)) }}</button>' +
             '<button class="cep-sm ghost" ng-click="look(c.id)">Look at it</button></div></div>' +
@@ -917,6 +958,20 @@ angular.module('beamng.apps')
         '<div class="cep-big">Parts preview open</div><div class="cep-sub">Confirm or drop your parts changes to take orders again.</div></div>' +
         '<button class="cep-btn go" ng-click="setTab(\'garage\')">Review parts</button></div>' +
 
+      // first run: free play (nothing kept) or the career with progress
+      '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'choose\'"><div class="cep-scroll">' +
+        '<div class="cep-card"><div class="cep-label">Career</div>' +
+          '<div class="cep-name" style="white-space:normal">An old {{ s.choice.starter || "car" }} and {{ fmt.money(s.choice.startMoney) }}</div>' +
+          '<ul class="cep-perks"><li>Repair and upgrade your car</li><li>Buy used cars and a home garage</li>' +
+            '<li>Ranks unlock vans, trucks and semis</li><li>Found a firm and hire drivers</li></ul>' +
+          '<div class="cep-sub">Progress is saved. Orders come only in your own car.</div>' +
+          '<div class="cep-sub" ng-if="s.choice.busy" style="color:var(--tomato)">Your current order will be cancelled (no fee).</div>' +
+          '<button class="cep-btn go" style="margin-top:6px" ng-click="act(\'startCareer\')">Start my career</button></div>' +
+        '<div class="cep-card"><div class="cep-label">Free play</div>' +
+          '<div class="cep-sub">Orders in any car, just for fun. Nothing carries over.</div>' +
+          '<button class="cep-btn ghost" style="margin-top:6px" ng-click="act(\'freePlay\')">Just drive</button></div>' +
+      '</div></div>' +
+
       // offline: the job type can be switched here too (Settings has the same switch)
       '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && s.screen === \'offline\'">' +
       '<div class="cep-subtabs cep-modes" ng-if="s.canSwitch" role="group" aria-label="Job type">' +
@@ -942,7 +997,8 @@ angular.module('beamng.apps')
         '<button class="cep-sm ghost" ng-click="setTab(\'companies\')">All contracts</button></div>' +
       '<div class="cep-card cep-stats" ng-if="!s.trucking || s.trucking.carrier"><div>{{ s.todayCount }}<span>orders today</span></div>' +
         '<div>{{ fmt.short(s.todayEarned) }}<span>earned today</span></div></div>' +
-      '<button class="cep-btn go" ng-if="!s.trucking || s.trucking.carrier" ng-click="act(\'online\')">Go online</button></div>' +
+      '<button class="cep-btn go" ng-if="!s.trucking || s.trucking.carrier" ng-click="act(\'online\')">Go online</button>' +
+      '<button class="cep-sm ghost" ng-if="s.freePlay" style="margin-top:6px" ng-click="act(\'careerInfo\')">Free play · Start a career</button></div>' +
 
       // waiting
       '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && s.screen === \'waiting\'">' +
@@ -1035,7 +1091,10 @@ angular.module('beamng.apps')
                 '"Park here for " + s.active.stop.stopS + " seconds" }}</strong>' +
                 '<div class="cep-hold"><i ng-style="{width: (s.active.stop.frac * 100) + \'%\'}"></i></div></div>' +
             '</div>' +
-            '<div><div class="cep-keyval cep-sub"><span>{{ s.active.leftS >= 0 ? "Time left" : "Overdue by" }}</span>' +
+            '<div><div class="cep-keyval cep-sub" ng-if="s.active.pickupLeftS !== undefined && s.active.pickupLeftS !== null">' +
+              '<span>{{ s.active.pickupLeftS >= 0 ? "Pick up in" : "Pickup late by" }}</span>' +
+              '<strong class="cep-stop-time" ng-class="{late: s.active.pickupLeftS < 0}">{{ fmt.remaining(s.active.pickupLeftS) }}</strong></div>' +
+              '<div class="cep-keyval cep-sub"><span>{{ s.active.leftS >= 0 ? (s.active.kind === "food" ? "Deliver in" : "Time left") : "Overdue by" }}</span>' +
               '<strong class="cep-stop-time" ng-class="{late: s.active.leftS < 0}">{{ fmt.remaining(s.active.leftS) }}</strong></div>' +
               '<div class="cep-time" ng-class="{warn: s.active.leftS < 120 && s.active.leftS >= 0, late: s.active.leftS < 0}">' +
               '<i ng-style="{width: timePct() + \'%\'}"></i></div></div>' +
@@ -1053,6 +1112,8 @@ angular.module('beamng.apps')
             '<div class="cep-li cep-order-line" ng-repeat="o in s.active.orders | filter:{current:false}:true track by o.id">' +
               '<div><small>{{ o.pickup ? "Awaiting pickup" : "On board" }}</small>' +
                 '<div class="cep-name">{{ o.name }}</div><small>{{ o.cargo }} · ' +
+                  '<span ng-if="o.pickupLeftS !== undefined && o.pickupLeftS !== null">pick up ' +
+                    '<span class="cep-stop-time" ng-class="{late: o.pickupLeftS < 0}">{{ fmt.clock(o.pickupLeftS) }}</span> · deliver </span>' +
                   '<span class="cep-stop-time" ng-class="{late: o.leftS < 0}">{{ fmt.clock(o.leftS) }}</span>' +
                   '<span ng-if="!o.pickup && o.cargoCondition < 100"> · {{ o.cargoCondition }}% intact</span></small></div>' +
               '<button class="cep-sm ghost" ng-if="o.selectable" ng-click="act(\'selectDelivery\', o.id)">Deliver next</button></div>' +
@@ -1165,6 +1226,15 @@ angular.module('beamng.apps')
         '<span>Cargo Earth {{ s.update.latest }} is out{{ s.update.modOld && s.update.helperOld ? "" : (s.update.modOld ? " (new mod)" : " (new helper)") }}</span>' +
         '<button class="cep-sm" ng-click="updateDo(\'open\')">Get it</button>' +
         '<button class="cep-sm ghost" aria-label="Hide until the next update" ng-click="updateDo(\'hide\')">Later</button></div>' +
+      // at a station's pumps: fill from the Work screen (Not now hides it until the car leaves the station)
+      '<div class="cep-pump" ng-if="tab === \'orders\' && s.pump && s.screen !== \'incoming\'">' +
+        '<div class="cep-pump-head"><span>⛽ {{ s.pump.name }}</span>' +
+          '<button class="cep-sm ghost" aria-label="Hide until you leave this station" ng-click="act(\'pumpHide\')">Not now</button></div>' +
+        '<div class="cep-pump-msg" ng-if="s.pump.msg">{{ s.pump.msg }}</div>' +
+        '<div class="cep-pump-msg" ng-if="s.pump.busy">Refuelling…</div>' +
+        '<div class="cep-pump-row" ng-if="s.pump.options.length">' +
+          '<button class="cep-sm" ng-repeat="o in s.pump.options track by o.pct" ng-disabled="!o.afford" ng-click="act(\'pumpFill\', o.pct)">' +
+            '{{ o.pct === 100 ? "Full" : o.pct + " %" }}<small ng-if="!s.pump.free">{{ fmt.money(o.cost) }}</small></button></div></div>' +
       '<div class="cep-msg" role="alert" ng-if="s.saveError">{{ s.saveError }}</div>' +
       '<div class="cep-msg" role="alert" ng-if="s.flash">Speed camera: {{ s.flash.speed }} km/h, limit {{ s.flash.limit }}. Fine {{ fmt.money(s.flash.fine) }}' +
         '<span ng-if="s.flash.owed > 0"> ({{ fmt.money(s.flash.owed) }} added to your debt)</span>' +
@@ -1377,7 +1447,7 @@ angular.module('beamng.apps')
       scope.fold = function (v) { scope.min = v }
       scope.goHome = function () { scope.gview = 'home'; loadGarage() }
       // The phone keeps what you need while driving (Work, Radio). Everything else opens in the menu window.
-      var PANELS = ['garage', 'home', 'companies', 'career', 'settings'], lastPanel = null
+      var PANELS = ['garage', 'home', 'companies', 'career', 'settings']
       function loadPanel(p) {
         if (p === 'garage') loadGarage()
         if (p === 'career') loadCareer()
@@ -1420,9 +1490,15 @@ angular.module('beamng.apps')
           })
           return
         }
-        if (p === 'garage' && scope.panel !== 'garage') scope.gview = 'home'
+        // another section → Garage starts on its first page; reopening the Menu keeps the page it was on (the car list…)
+        if (p === 'garage' && scope.panel && scope.panel !== 'garage') scope.gview = 'home'
         if (p === 'career' && view) scope.careerView = view
-        scope.panel = lastPanel = p
+        if (!scope.dash) {
+          var other = cargoEarthMenu.open
+          if (other && other !== scope && other.panel) other.$evalAsync(function () { other.closePanel() })
+          cargoEarthMenu.open = scope
+        }
+        scope.panel = cargoEarthMenu.last = p
         scope.min = false
         resetAsks()
         loadPanel(p)
@@ -1436,25 +1512,31 @@ angular.module('beamng.apps')
         var hostKind = scope.menuOnly ? 'menu' : 'phone'
         scope.$on('CargoEarthOpenMenu', function (event, d) {
           if (!d || !d.panel || (d.to || 'phone') !== hostKind) return
+          if (d.taken) return // one request, one app: every listener gets the same message
+          d.taken = true
           scope.$evalAsync(function () {
             if (d.panel !== 'toggle') scope.openPanel(d.panel, d.view || undefined, true)
+            else if (cargoEarthMenu.open && cargoEarthMenu.open.panel) cargoEarthMenu.open.closePanel()
             else if (scope.panel) scope.closePanel()
-            else scope.openPanel(lastPanel || 'garage', undefined, true)
+            else scope.openPanel(cargoEarthMenu.last || 'garage', undefined, true)
           })
         })
         // tell the game this app is here to show the Menu window
         var hostHere = function () { bngApi.engineLua('cargoEarth_core and cargoEarth_core.menuHost("' + hostKind + '")', function () {}) }
         hostHere()
         var hostTimer = setInterval(hostHere, 3000)
-        scope.$on('$destroy', function () { clearInterval(hostTimer) })
+        scope.$on('$destroy', function () {
+          clearInterval(hostTimer)
+          if (cargoEarthMenu.open === scope) cargoEarthMenu.open = null
+        })
       }
       // Menu button: closes an open window, else opens the last section. A window in another app (the Menu app or the
       // floating phone) is toggled there, where its open/closed state and last section live.
       scope.togglePanel = function () {
         if (scope.panel) { scope.closePanel(); return }
-        if (scope.menuOnly) { scope.openPanel(lastPanel || 'garage', undefined, true); return }
+        if (scope.menuOnly) { scope.openPanel(cargoEarthMenu.last || 'garage', undefined, true); return }
         bngApi.engineLua('cargoEarth_core and cargoEarth_core.openMenu("toggle")', function (shown) {
-          if (shown !== true) scope.$evalAsync(function () { scope.openPanel(lastPanel || 'garage', undefined, true) })
+          if (shown !== true) scope.$evalAsync(function () { scope.openPanel(cargoEarthMenu.last || 'garage', undefined, true) })
         })
       }
       scope.panelOn = function (p, view) { return scope.panel === p && (!view || scope.careerView === view) }
@@ -1499,10 +1581,17 @@ angular.module('beamng.apps')
           if (name === 'start' || name === 'sellCar') scope.gview = 'home'
         })
       }
+      scope.toggleDebtCharges = function () { scope.debtCharges = !scope.debtCharges }
+      scope.payDebt = function () {
+        lua('garageDo', ['paydebt'], function (r) {
+          if (r && !r._phoneError) scope.g = r
+          loadCareer()
+        })
+      }
       scope.loadCars = function () { lua('garageDealer', [scope.cf.text || ''], function (r) { scope.market = r || {}; scope.cars = (r && r.cars) || [] }) }
       scope.carPrice = function (car) { return car.price - (scope.purchase.keep ? 0 : (scope.market.tradeIn || 0)) }
       scope.buyCar = function (id) { scope.gdo('buyListing', id, scope.purchase.keep || !scope.market.tradeIn) }
-      scope.look = function (id) { scope.gdo('preview', id, scope.purchase.keep || !scope.market.tradeIn); scope.gview = 'home' }
+      scope.look = function (id) { scope.gdo('preview', id, scope.purchase.keep || !scope.market.tradeIn) } // stays on the car list
       scope.openCars = function () { scope.gview = 'cars'; scope.loadCars() }
       scope.openFleet = function () { scope.gview = 'fleet'; loadGarage() }
       scope.pdo = function (name, value) {
