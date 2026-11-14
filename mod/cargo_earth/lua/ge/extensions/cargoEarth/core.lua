@@ -1700,6 +1700,7 @@ function M.phoneState()
       helper = M.helperInfo(), saveError = S.saveError, company = c.employment and c.employment.companyName,
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
       currency = moneyInfo(), update = M.updateInfo(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
+      fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
       canSwitch = S.job == nil and not c.employment }
   if S.pendingCareer then
     out.screen, out.money = 'resume', S.pendingCareer.money or 0
@@ -3309,7 +3310,7 @@ function M.settingsState()
   -- paused: a saved career waits on the resume screen. Only what lives outside the career can change then
   -- (the dash phone, help); the job's settings belong to the save and open once it is loaded.
   local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil, window = S.window,
-    reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, items = {} }
+    reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {} }
   for _, d in ipairs(M.SETTINGS[S.mode]) do
     local key, step, min, max, default = d[1], d[3], d[4], d[5], defs[d[1]]
     if freightTier and (key == 'minKm' or key == 'maxKm') then
@@ -3334,12 +3335,17 @@ function M.settingsState()
 end
 
 -- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
--- dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
+-- dark (a = true | false), dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
 function M.settingsDo(name, a, b)
   -- the dash phone is the player's own choice, outside the career: it works on the resume screen too
   if name == 'dash' then
     local ok, why = M.dashDo(a)
     S.dashError = not ok and why or nil
+    return M.settingsState()
+  end
+  -- dark mode belongs to the player too, not the save
+  if name == 'dark' then
+    M.setDark(a)
     return M.settingsState()
   end
   if S.pendingCareer then return M.settingsState() end
@@ -3594,6 +3600,31 @@ function M.togglePhone() S.phoneHidden = not S.phoneHidden end
 function M.phoneTab(t)
   if t == 'orders' or t == 'radio' then S.phoneTab = t end
   return S.phoneTab or 'orders'
+end
+-- The floating phone folded or open. The game rebuilds UI apps when the camera changes or the pause menu opens, so
+-- the phone asks here on its first answer. Folded keeps the screen it was folded on: a new ring still opens it.
+function M.phoneFold(on, screen)
+  S.phoneFold = on and (type(screen) == 'string' and screen or '') or nil
+  return S.phoneFold or false
+end
+
+-- The player's look settings, outside any career (they work before a save loads): { dark = true | nil }
+M.UI_FILE = '/settings/cargoEarth/ui.json'
+M.uiStore = {
+  read = function() return jsonReadFile and jsonReadFile(M.UI_FILE) or nil end,
+  write = function(t) if jsonWriteFile then jsonWriteFile(M.UI_FILE, t, true) end end,
+}
+function M.uiPrefs()
+  if not S.ui then
+    local ok, t = pcall(M.uiStore.read)
+    S.ui = { dark = ok and type(t) == 'table' and t.dark == true or nil }
+  end
+  return S.ui
+end
+function M.setDark(on)
+  local u = M.uiPrefs()
+  u.dark = on and true or nil
+  pcall(M.uiStore.write, { v = 1, dark = u.dark or false })
 end
 
 function M.state() return S end

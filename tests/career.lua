@@ -1394,6 +1394,15 @@ test('a speed camera fines the driver and costs a star on the order on board', f
   assert(rating.stars(10, 30, 100, s.job.starPenalty) == 4)
   -- switched off in the settings: nothing is measured
   assert(core.settingsDo('cameras', false).cameras.on == false)
+  -- dark mode and the folded phone live outside the career, in the player's own file and the game's state
+  local written
+  core.uiStore.write = function(t) written = t end
+  assert(core.settingsDo('dark', true).dark == true and written.dark == true and core.phoneState().dark == true)
+  assert(core.settingsDo('dark', false).dark == false and written.dark == false)
+  core.phoneFold(true, 'waiting')
+  assert(core.phoneState().fold == 'waiting')
+  core.phoneFold(false)
+  assert(core.phoneState().fold == false)
   s.career.money = 5000
   pose.lat = 49.999
   for step = 0, 30 do
