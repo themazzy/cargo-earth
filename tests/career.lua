@@ -1389,6 +1389,9 @@ test('a car gets short parcel rounds; an SUV parts runs from a supplier to a wor
   assert(#parts.offers(suppliers, workshops, 50, 14, 3, rnd) == 0, 'too little room for parts')
   assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {maxKm = 8}) == 0, 'the longest-job setting holds')
   assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {minKm = 5, maxKm = 15}) == 1)
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, function() return false end) == 0, 'a long detour is out')
+  local near = parts.offers(suppliers, workshops, 50, 14, 10, rnd, function() return 8 end, {maxKm = 8.5})
+  assert(#near == 1 and near[1].km == 8, 'a workshop just inside the road range is found by its road km')
 end)
 
 test('a pickup in freight mode is offered parts runs only, loads the parts into its boxes and is paid', function()

@@ -49,7 +49,7 @@ function M.offers(suppliers, workshops, lat, lon, capacity, rnd, roadKm, range)
   for _, n in ipairs(near) do
     if #out >= M.OFFERS then break end
     local list = {}
-    for _, w in ipairs(workshops and workshops(n.s.g[1], n.s.g[2], minRoad / M.ROAD_FACTOR / 1.5, maxRoad / M.ROAD_FACTOR) or {}) do
+    for _, w in ipairs(workshops and workshops(n.s.g[1], n.s.g[2], minRoad / M.ROAD_FACTOR / 1.5, maxRoad) or {}) do
       if place(w) and not used[w.id] and w.id ~= n.s.id then list[#list + 1] = w end
     end
     -- the road km decides: a workshop whose road is outside the range is left out
@@ -58,9 +58,12 @@ function M.offers(suppliers, workshops, lat, lon, capacity, rnd, roadKm, range)
       local i = rnd(math.min(#list, 4))
       local cand = table.remove(list, i)
       local s = km(n.s.g[1], n.s.g[2], cand.g[1], cand.g[2])
-      local r = roadKm and roadKm(n.s.g, cand.g, s * 4 + 5) or nil
-      if type(r) ~= 'number' or r ~= r or r < s then r = s * M.ROAD_FACTOR end
-      if r >= minRoad and r <= maxRoad then w, straight, road = cand, s, r end
+      -- false: the road is longer than the cap (a detour), so it is out; nil: unknown, estimated from the straight km
+      local r = roadKm and roadKm(n.s.g, cand.g, math.min(s * 4 + 5, maxRoad + 1))
+      if r ~= false then
+        if type(r) ~= 'number' or r ~= r or r < s then r = s * M.ROAD_FACTOR end
+        if r >= minRoad and r <= maxRoad then w, straight, road = cand, s, r end
+      end
     end
     if w then
       used[w.id] = true
