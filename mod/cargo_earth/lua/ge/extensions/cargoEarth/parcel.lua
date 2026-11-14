@@ -1,11 +1,12 @@
--- Parcel routes: load a van or box truck at a depot, then drop parcels at several real addresses in turn. The load
+-- Parcel routes: load a van at a depot, then drop parcels at several real addresses in turn. The load
 -- sits in BeamNG's own parcel containers and each stop takes its share out. Pure rules: no game calls here.
 local M = {}
 
-M.TIERS = { van = { stops = { 4, 7 }, each = { 2, 6 }, radiusKm = 5 }, rigid = { stops = { 5, 8 }, each = { 8, 24 }, radiusKm = 8 } }
+-- Vans only: a box truck does business shipping between companies, not doorstep drops.
+M.TIERS = { van = { stops = { 4, 7 }, each = { 2, 6 }, radiusKm = 5 } }
 M.DENSITY = 2.5        -- kg per parcel slot (mixed consumer goods)
 M.ROAD_FACTOR = 1.35
-M.BASE, M.PER_STOP, M.PER_KM = { van = 80, rigid = 120 }, { van = 45, rigid = 70 }, { van = 10, rigid = 14 }
+M.BASE, M.PER_STOP, M.PER_KM = { van = 80 }, { van = 45 }, { van = 10 }
 M.SPEED_KMH, M.STOP_MIN, M.SLACK_MIN = 30, 3, 10
 M.MIN_GAP_M = 150      -- two stops of one route are at least this far apart
 M.MIN_SLOTS = 8

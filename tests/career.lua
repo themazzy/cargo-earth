@@ -1214,6 +1214,7 @@ test('parcel route rules: real addresses in nearest-first order, sized to the ve
   assert(small and small.haul.amount <= 9, 'the load is cut to the free container space')
   assert(not parcel.route(depot, streets(50, 14), 'van', 3, rnd, 3), 'too little room: no route')
   assert(not parcel.route(depot, streets(51, 15), 'van', 96, rnd, 4), 'no addresses near the depot: no route')
+  assert(not parcel.route(depot, streets(50, 14), 'rigid', 640, rnd, 5), 'box trucks do business shipping, not parcel routes')
   local plan = {[7] = {volume = 40, density = 1}, [8] = {volume = 20, density = 1}}
   local kept = parcel.keep(plan, 10, 2.5)
   assert(kept[7].volume == 25 and kept[8].volume == 0)

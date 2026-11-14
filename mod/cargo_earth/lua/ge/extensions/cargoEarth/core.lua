@@ -666,8 +666,8 @@ function M.generate()
           table.insert(offers, 1, offer)
         end
       end
-      -- parcel routes from the nearest depots to real addresses, in vans and box trucks
-      if (tier == 'van' or tier == 'rigid') and rows and S.fidx then
+      -- parcel routes from the nearest depots to real addresses, in vans only (box trucks do business shipping)
+      if parcel.TIERS[tier] and rows and S.fidx then
         local room = haul.capacity(rows, 'parcel')
         local near = {}
         for _, d in ipairs(S.idx.depots or {}) do
