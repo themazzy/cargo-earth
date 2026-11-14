@@ -2525,6 +2525,27 @@ test('the Menu window opens in the Menu app, else the floating phone, else on th
   guihooks = nil
 end)
 
+test('before a saved career is loaded the Menu opens on Settings, where only the dash phone can change', function()
+  local core = fresh()
+  local s = core.state()
+  local sent = {}
+  guihooks = {trigger = function(name, data) sent[#sent + 1] = {name, data} end}
+  core.now = function() return 100 end
+  core.menuHost('phone')
+  s.pendingCareer = { money = 500 }
+  assert(core.phoneState().screen == 'resume')
+  assert(core.openMenu('garage') == true and sent[1][2].panel == 'settings', 'career sections wait for the save')
+  assert(core.openMenu('toggle') == true and sent[2][2].panel == 'toggle')
+  local st = core.settingsState()
+  assert(st.paused and st.dash, 'Settings shows the dash phone while paused')
+  local mode = s.mode
+  core.settingsDo('mode', mode == 'courier' and 'trucking' or 'courier')
+  assert(s.mode == mode, 'job settings belong to the save')
+  s.pendingCareer = nil
+  assert(not core.settingsState().paused)
+  guihooks = nil
+end)
+
 print(string.format('%d career tests passed', total))
 
 do

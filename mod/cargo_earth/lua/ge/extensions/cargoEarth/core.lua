@@ -3306,8 +3306,10 @@ function M.settingsState()
     local tier = freightSettingsTier()
     freightTier, opts = haul.tiers[tier], freightOptions(tier)
   end
+  -- paused: a saved career waits on the resume screen. Only what lives outside the career can change then
+  -- (the dash phone, help); the job's settings belong to the save and open once it is loaded.
   local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil, window = S.window,
-    reviewingParts = S.parts ~= nil, items = {} }
+    reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, items = {} }
   for _, d in ipairs(M.SETTINGS[S.mode]) do
     local key, step, min, max, default = d[1], d[3], d[4], d[5], defs[d[1]]
     if freightTier and (key == 'minKm' or key == 'maxKm') then
@@ -3639,6 +3641,8 @@ function M.menuHost(kind)
 end
 function M.openMenu(panel, view)
   if not MENU_PANELS[panel] or not (guihooks and guihooks.trigger) then return false end
+  -- before a saved career is loaded only Settings has anything to show
+  if S.pendingCareer and panel ~= 'toggle' then panel, view = 'settings', nil end
   local now = M.now()
   local function alive(kind) return menuHosts[kind] ~= nil and now - menuHosts[kind] <= 6 end
   local to = alive('menu') and 'menu' or (alive('phone') and 'phone' or nil)

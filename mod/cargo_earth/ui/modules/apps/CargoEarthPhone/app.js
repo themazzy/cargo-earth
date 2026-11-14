@@ -476,20 +476,20 @@ angular.module('beamng.apps')
       '<div class="cem-panel" ng-if="panel">' +
       '<nav class="cem-side" aria-label="Menu sections">' +
         '<div class="cem-brand">Cargo<b>Earth</b></div>' +
-        '<div class="cem-money">{{ fmt.money(s.money) }}<small ng-if="s.debt > 0" style="cursor:pointer" title="Where it came from" ng-click="openPanel(\'career\', \'money\')">debt {{ fmt.money(s.debt) }}</small></div>' +
-        '<button ng-class="{on: panelOn(\'garage\')}" ng-attr-aria-current="{{ panelOn(\'garage\') ? \'page\' : undefined }}" ng-click="openPanel(\'garage\')">' +
+        '<div class="cem-money" ng-if="!paused()">{{ fmt.money(s.money) }}<small ng-if="s.debt > 0" style="cursor:pointer" title="Where it came from" ng-click="openPanel(\'career\', \'money\')">debt {{ fmt.money(s.debt) }}</small></div>' +
+        '<button ng-if="!paused()" ng-class="{on: panelOn(\'garage\')}" ng-attr-aria-current="{{ panelOn(\'garage\') ? \'page\' : undefined }}" ng-click="openPanel(\'garage\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M7 21V11h10v10M7 15h10M7 18h10"/></svg>Garage</button>' +
-        '<button ng-class="{on: panelOn(\'home\')}" ng-attr-aria-current="{{ panelOn(\'home\') ? \'page\' : undefined }}" ng-click="openPanel(\'home\')">' +
+        '<button ng-if="!paused()" ng-class="{on: panelOn(\'home\')}" ng-attr-aria-current="{{ panelOn(\'home\') ? \'page\' : undefined }}" ng-click="openPanel(\'home\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8M5 10v11h5v-7h4v7h5V10"/></svg>Home</button>' +
-        '<button ng-class="{on: panelOn(\'companies\')}" ng-attr-aria-current="{{ panelOn(\'companies\') ? \'page\' : undefined }}" ng-click="openPanel(\'companies\')">' +
+        '<button ng-if="!paused()" ng-class="{on: panelOn(\'companies\')}" ng-attr-aria-current="{{ panelOn(\'companies\') ? \'page\' : undefined }}" ng-click="openPanel(\'companies\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18M5 21V9l7-4v16M12 9h7v12M8 12h1M8 16h1M15 13h1M15 17h1"/></svg>Companies</button>' +
-        '<button ng-class="{on: panelOn(\'career\', \'progress\')}" ng-attr-aria-current="{{ panelOn(\'career\', \'progress\') ? \'page\' : undefined }}" ng-click="openPanel(\'career\', \'progress\')">' +
+        '<button ng-if="!paused()" ng-class="{on: panelOn(\'career\', \'progress\')}" ng-attr-aria-current="{{ panelOn(\'career\', \'progress\') ? \'page\' : undefined }}" ng-click="openPanel(\'career\', \'progress\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V13h4v8M10 21V8h4v13M15 21V3h4v18"/></svg>Progress</button>' +
-        '<button ng-class="{on: panelOn(\'career\', \'money\')}" ng-attr-aria-current="{{ panelOn(\'career\', \'money\') ? \'page\' : undefined }}" ng-click="openPanel(\'career\', \'money\')">' +
+        '<button ng-if="!paused()" ng-class="{on: panelOn(\'career\', \'money\')}" ng-attr-aria-current="{{ panelOn(\'career\', \'money\') ? \'page\' : undefined }}" ng-click="openPanel(\'career\', \'money\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>Finances</button>' +
-        '<button ng-class="{on: panelOn(\'career\', \'map\')}" ng-attr-aria-current="{{ panelOn(\'career\', \'map\') ? \'page\' : undefined }}" ng-click="openPanel(\'career\', \'map\')">' +
+        '<button ng-if="!paused()" ng-class="{on: panelOn(\'career\', \'map\')}" ng-attr-aria-current="{{ panelOn(\'career\', \'map\') ? \'page\' : undefined }}" ng-click="openPanel(\'career\', \'map\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2zM9 4v14M15 6v14"/></svg>Delivery map</button>' +
-        '<button ng-class="{on: panelOn(\'career\', \'firm\')}" ng-attr-aria-current="{{ panelOn(\'career\', \'firm\') ? \'page\' : undefined }}" ng-click="openPanel(\'career\', \'firm\')">' +
+        '<button ng-if="!paused()" ng-class="{on: panelOn(\'career\', \'firm\')}" ng-attr-aria-current="{{ panelOn(\'career\', \'firm\') ? \'page\' : undefined }}" ng-click="openPanel(\'career\', \'firm\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V7l8-4 8 4v14M9 21v-6h6v6M8 10h2M14 10h2"/></svg>Firm</button>' +
         '<button ng-class="{on: panelOn(\'settings\')}" ng-attr-aria-current="{{ panelOn(\'settings\') ? \'page\' : undefined }}" ng-click="openPanel(\'settings\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="var(--card)"/><circle cx="15" cy="12" r="2" fill="var(--card)"/><circle cx="9" cy="18" r="2" fill="var(--card)"/></svg>Settings</button></nav>' +
@@ -865,6 +865,9 @@ angular.module('beamng.apps')
           '<div class="cep-sub">Confirm or cancel your parts preview in Garage to change these settings.</div>' +
           '<button class="cep-btn go" ng-click="setTab(\'garage\')">Review parts</button></div>' +
         '<div class="cep-scroll" ng-if="!st.reviewingParts">' +
+        '<div class="cep-card" ng-if="st.paused"><div class="cep-sub">Job settings, speed cameras and pausing come with your save. ' +
+          'Load it on the phone to change them. The phone on the dashboard and the help below work now.</div></div>' +
+        '<div ng-if="!st.paused">' +
         '<div class="cep-label">Job type</div>' +
         '<div class="cep-row"><button class="cep-btn" ng-class="{go: st.mode === \'courier\', ghost: st.mode !== \'courier\'}" ' +
           'ng-disabled="!st.canSwitch" ng-click="sdo(\'mode\', \'courier\')">Food delivery</button>' +
@@ -883,7 +886,7 @@ angular.module('beamng.apps')
             '(st.cameras.helper === "off" ? "Needs the Cargo Earth helper running" : ' +
             '(st.cameras.helper === "loading" ? "Loading cameras around you…" : ' +
             '(st.cameras.helper === "failed" ? "Could not load cameras; trying again" : st.cameras.known + " real cameras around you (OpenStreetMap)"))) }}</small></div>' +
-          '<b>{{ st.cameras.on ? "On" : "Off" }}</b></div>' +
+          '<b>{{ st.cameras.on ? "On" : "Off" }}</b></div></div>' +
         '<div class="cep-label" ng-if="st.dash">VR</div>' +
         '<div class="cep-li" ng-if="st.dash" ng-click="sdo(\'dash\', st.dash.on ? \'off\' : \'on\')">' +
           '<div><div class="cep-name">Phone on the dashboard</div><small>{{ !st.dash.on ? "Puts this phone on the dash of any car. In VR, point a controller at it and pull the trigger." : ' +
@@ -905,7 +908,7 @@ angular.module('beamng.apps')
             '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x-\')">Right</button></div></div>' +
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-if="st.dash.nudged" ng-click="sdo(\'dash\', \'reset\')">Back to where it started</button>' +
           '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'measure\')">Measure this car again</button></div></div>' +
-        '<button class="cep-sm ghost" ng-click="sdo(\'reset\')">Reset settings</button>' +
+        '<button class="cep-sm ghost" ng-if="!st.paused" ng-click="sdo(\'reset\')">Reset settings</button>' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
         '<div class="cep-label">Help</div>' +
         '<div class="cep-li" style="padding:6px 10px"><div><div class="cep-name" style="font-size:12px">Updates</div>' +
@@ -914,7 +917,7 @@ angular.module('beamng.apps')
             '{{ st.update.available ? "Newest: " + st.update.latest : "Up to date" }}</small></div>' +
           '<button class="cep-sm" ng-if="st.update.available" ng-click="updateDo(\'open\')">Get {{ st.update.latest }}</button></div>' +
         '<div class="cep-row"><button class="cep-sm ghost" ng-disabled="report.busy" ng-click="copyReport()">{{ report.busy ? "Making the report…" : "Copy support report" }}</button>' +
-        '<button class="cep-sm ghost" ng-click="sdo(\'window\')">{{ st.window ? "Close" : "Open" }} debug window</button></div>' +
+        '<button class="cep-sm ghost" ng-if="!st.paused" ng-click="sdo(\'window\')">{{ st.window ? "Close" : "Open" }} debug window</button></div>' +
         '<div class="cep-card" ng-if="report && !report.busy">' +
           '<div class="cep-sub">{{ report.copied ? "Copied. Paste it into Discord or a GitHub issue." : "Could not copy it. Select the text below and copy it." }} ' +
             'It has versions, the helper\'s state and recent errors; your position only to about 10 km.</div>' +
@@ -929,7 +932,7 @@ angular.module('beamng.apps')
       // one slim status row for everything around the content: clock and the job's settings on the left,
       // the speed limit, the balance and online on the right (the tabs at the bottom say whether this is Work or Radio)
       '<div class="cep-bar"><span class="cep-bar-l">{{ s.clock }}' +
-        '<button class="cep-settings-link" ng-if="s.screen !== \'resume\'" title="{{ s.mode === \'courier\' ? \'Food delivery\' : \'Freight\' }} settings" ' +
+        '<button class="cep-settings-link" title="{{ s.mode === \'courier\' ? \'Food delivery\' : \'Freight\' }} settings" ' +
           'aria-label="Job settings" ng-click="setTab(\'settings\')">⚙</button></span>' +
         '<span class="cep-bar-r"><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}" title="Speed limit here">{{ s.limit.sign }}' +
           '<small ng-if="s.limit.unit === \'mph\'">mph</small></span>' +
@@ -945,7 +948,7 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
       '</div></div>' +
 
-      '<div class="cep-body" ng-if="s.screen === \'resume\'"><div class="cep-center">' +
+      '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'resume\'"><div class="cep-center">' +
         '<div class="cep-big">Resume Cargo Earth</div>' +
         '<div class="cep-sub">{{ s.savedCar ? "Back to your " + s.savedCar + ", where you left off." : "Continue where you left off." }}</div>' +
         '<div class="cep-sub" ng-if="!s.resumeHasLocation">This save has no location, so you continue from here.</div>' +
@@ -1178,7 +1181,7 @@ angular.module('beamng.apps')
         '<button class="cep-btn go" ng-click="openCompany()">Open the contract</button></div></div>' +
 
       // radio: stations of the country you drive in (Radio Browser through the helper); the phone plays the stream
-      '<div class="cep-body" ng-if="tab === \'radio\' && s.screen !== \'resume\'"><div class="cep-scroll">' +
+      '<div class="cep-body" ng-if="tab === \'radio\'"><div class="cep-scroll">' +
         '<div class="cep-card cep-radio-now">' +
           '<div class="cep-label">{{ radio.station ? (radio.status === "playing" ? "Now playing" : (radio.status === "loading" ? "Tuning in…" : (radio.status === "error" ? "Cannot play" : "Paused"))) : "Radio" }}</div>' +
           '<div class="cep-name"><span class="cep-eq" ng-if="radio.status === \'playing\'"><i></i><i></i><i></i></span>{{ radio.station ? radio.station.name : "Pick a station below" }}</div>' +
@@ -1248,7 +1251,7 @@ angular.module('beamng.apps')
           '{{ s.storage.boxes ? "Boxes" : "Bag" }} {{ s.storage.free }}/{{ s.storage.capacity }} free · </span>' +
         '<span ng-if="s.fuel" ng-style="{color: s.fuel.empty ? \'var(--tomato)\' : (s.fuel.low ? \'var(--warn)\' : \'\')}">{{ s.fuel.empty ? "Out of fuel" : "Fuel " + s.fuel.pct + " %" }}<span ng-if="s.fuel.rangeKm && !s.fuel.empty"> · {{ s.fuel.rangeKm }} km</span></span>' +
         '<span ng-if="s.repair > 0" style="color:var(--warn)"> · damage {{ fmt.money(s.repair) }}</span></div>' +
-      '<nav class="cep-tabs" aria-label="Phone sections" ng-if="s.screen !== \'resume\'">' +
+      '<nav class="cep-tabs" aria-label="Phone sections">' +
         '<button ng-class="{on: tab === \'orders\' && !panel}" ng-attr-aria-current="{{ tab === \'orders\' && !panel ? \'page\' : undefined }}" ng-click="setTab(\'orders\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="15" rx="2"/><path d="M8 6V3h8v3M3 11h18M10 11v3h4v-3"/></svg>Work</button>' +
         '<button ng-class="{on: tab === \'radio\' && !panel}" ng-attr-aria-current="{{ tab === \'radio\' && !panel ? \'page\' : undefined }}" ng-click="setTab(\'radio\')">' +
@@ -1478,8 +1481,11 @@ angular.module('beamng.apps')
         scope.tab = t
         if (t === 'radio') loadRadio()
       }
+      // a saved career waiting on the resume screen: only Settings (the dash phone, help) has anything to show yet
+      scope.paused = function () { return !!(scope.s && scope.s.screen === 'resume') }
       scope.openPanel = function (p, view, local) {
         if (PANELS.indexOf(p) === -1) return
+        if (scope.paused()) { p = 'settings'; view = undefined }
         // A phone asks the game to open the Menu window: the game sends it to the Menu app when that is in the UI,
         // else to the floating phone (CargoEarthOpenMenu). In VR it shows on BeamNG's UI panel. When neither is there
         // the game says no, and the section opens on this phone after all.
@@ -1777,19 +1783,23 @@ angular.module('beamng.apps')
         r.status = b.status
         if (b.seq !== radioSeq) { radioSeq = b.seq; loadRadio() }
       })
+      // a section opened before the phone knew the save is still waiting (the Menu app's first answer): Settings instead
+      scope.$watch('paused()', function (v) {
+        if (v && scope.panel && scope.panel !== 'settings') scope.openPanel('settings', undefined, true)
+      })
       // The editor can remount the phone. Open straight to checkout while a preview is active.
       scope.$watch('s.screen', function (v, old) {
         // the Menu app asks only while its window is open: its first answer after opening is no new offer
         if (scope.menuOnly && (old === null || old === undefined)) return
         // a ringing offer unfolds the phone; on Radio it stays on Radio with the offer bar on top (tap it for Work)
         if (v === 'incoming') { scope.min = false; scope.panel = null }
-        if (v === 'resume') { scope.min = false; scope.panel = null; showTab('orders') }
+        if (v === 'resume') { scope.min = false; if (scope.panel !== 'settings') scope.panel = null; showTab('orders') }
         if (v === 'parts') { scope.min = false; scope.setTab('garage') }
       })
       var slowTicks = 0
       var slow = setInterval(function () {
         if (scope.hqOpen) loadHq()
-        if (scope.min || (scope.s && (scope.s.hidden || scope.s.screen === 'resume'))) return
+        if (scope.min || (scope.s && scope.s.hidden)) return
         // an open Menu section follows the game every 2 s (an action's answer updates it at once)
         if (scope.panel && slowTicks++ % 2 === 0) loadPanel(scope.panel)
         if (scope.tab === 'radio' && Date.now() - radioLoadedAt > 4000) loadRadio()
