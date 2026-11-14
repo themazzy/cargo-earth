@@ -280,6 +280,26 @@ assert.equal(commands.length, stopped)
 pending.shift()({rank: 'late response'})
 assert.notEqual(scope.career && scope.career.rank, 'late response')
 console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded polling, backpressure and teardown verified')
+// A phone the game rebuilds (cockpit camera and back, the pause menu) comes back folded if it was folded.
+{
+  hold = false
+  const rebuilt = {$evalAsync: fn => fn(), $watch: (name, fn) => { watches[name] = fn }, $on: () => {}}
+  answer = {screen: 'waiting', fold: 'waiting', dark: true}
+  const n = timers.length
+  directive.link(rebuilt)
+  for (const t of timers.slice(n).filter(timer => timer.interval === 250)) t.fn()
+  watches['s.screen']('waiting', undefined)
+  assert.equal(rebuilt.min, true, 'a rebuilt phone stays folded')
+  assert.equal(rebuilt.dark, true, 'dark mode comes from the game')
+  rebuilt.s = {screen: 'incoming', fold: 'waiting'}
+  watches['s.screen']('incoming', undefined)
+  assert.equal(rebuilt.min, false, 'a ring that came while it was hidden opens it')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneFold(false'), 'opening tells the game')
+  rebuilt.fold(true)
+  assert(commands.at(-1).includes('cargoEarth_core.phoneFold(true, "incoming")'), 'folding tells the game with the screen')
+  assert(directive.template.includes("sdo(\\'dark\\', !st.dark)") || directive.template.includes("sdo('dark', !st.dark)"), 'Settings has Dark mode')
+  console.log('Phone: fold kept across rebuilds, dark mode')
+}
 // The holder page's own styles must not reuse a class of the phone app's (a fixed .cep-dot squeezed the stop names)
 {
   const page = fs.readFileSync('mod/cargo_earth/vehicles/common/cargo_earth_phone/phone.html', 'utf8')
