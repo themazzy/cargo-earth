@@ -735,6 +735,9 @@ function M.generate()
         for i = 1, math.min(2, #near) do
           local d = near[i].d
           local route = parcel.route(d, food.addressesNear(S.fidx, d.g[1], d.g[2], parcel.TIERS[tier].radiusKm), tier, room, nil, i)
+          -- the shortest / longest job settings of this vehicle hold for the whole round
+          local range = freightOptions(tier)
+          if route and ((range.minKm and route.km < range.minKm) or (range.maxKm and route.km > range.maxKm)) then route = nil end
           if route then
             route.pickupKm = near[i].k
             offers[#offers + 1] = route

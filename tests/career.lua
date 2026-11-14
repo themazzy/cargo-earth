@@ -1436,6 +1436,10 @@ test('a small car in freight mode gets short parcel rounds and still sees compan
     if offer.route then route = offer end
   end
   assert(route and route.haul.tier == 'car' and #route.route.stops <= 4, 'a short round')
+  core.setOption('maxKm', 0.5)
+  core.generate()
+  for _, offer in ipairs(s.offers) do assert(not offer.route, 'the longest-job setting holds for rounds') end
+  s.opts.freightRanges = nil
   local t = core.phoneState().trucking
   assert(t.carrier == 'Car' and #t.contracts == 1, 'company contracts are still listed')
 end)
