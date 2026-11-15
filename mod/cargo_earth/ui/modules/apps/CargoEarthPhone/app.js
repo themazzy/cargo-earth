@@ -1124,7 +1124,7 @@ angular.module('beamng.apps')
         '<div class="cep-card" ng-repeat="l in s.bus.lines track by l.id">' +
           '<div class="cep-keyval"><strong style="white-space:normal"><span class="cep-busref" ng-style="l.colour ? {background: l.colour} : {}">{{ l.ref || "Bus" }}</span> to {{ l.to }}</strong>' +
             '<strong style="white-space:nowrap">{{ fmt.money(l.pay) }}</strong></div>' +
-          '<div class="cep-sub">From {{ l.from }} · {{ l.stops }} stops · {{ fmt.km(l.km) }} · about {{ l.minutes }} min</div>' +
+          '<div class="cep-sub">From {{ l.from }} · {{ l.stops }} stops · {{ fmt.km(l.km) }} · about {{ l.minutes }} min<span ng-if="l.fares"> · plus about {{ fmt.money(l.fares) }} in fares</span></div>' +
           '<div class="cep-sub">Bus at {{ l.depot }}<span ng-if="l.depotM !== undefined"> · {{ fmt.dist(l.depotM).v }}{{ fmt.dist(l.depotM).u }} away</span></div>' +
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'busGps\', l.id)">Route</button>' +
             '<button class="cep-sm go" ng-click="act(\'busStart\', l.id)">Choose line</button></div></div>' +
@@ -1256,7 +1256,7 @@ angular.module('beamng.apps')
             '<div><div class="cep-keyval cep-sub" ng-if="s.active.pickupLeftS !== undefined && s.active.pickupLeftS !== null">' +
               '<span>{{ s.active.pickupLeftS >= 0 ? "Pick up in" : "Pickup late by" }}</span>' +
               '<strong class="cep-stop-time" ng-class="{late: s.active.pickupLeftS < 0}">{{ fmt.remaining(s.active.pickupLeftS) }}</strong></div>' +
-              '<div class="cep-keyval cep-sub"><span>{{ s.active.leftS >= 0 ? (s.active.kind === "food" ? "Deliver in" : "Time left") : "Overdue by" }}</span>' +
+              '<div class="cep-keyval cep-sub"><span>{{ s.active.kind === "bus" ? (s.active.leftS >= 0 ? "Stop due in" : "Behind by") : s.active.leftS >= 0 ? (s.active.kind === "food" ? "Deliver in" : "Time left") : "Overdue by" }}</span>' +
               '<strong class="cep-stop-time" ng-class="{late: s.active.leftS < 0}">{{ fmt.remaining(s.active.leftS) }}</strong></div>' +
               '<div class="cep-time" ng-class="{warn: s.active.leftS < 120 && s.active.leftS >= 0, late: s.active.leftS < 0}">' +
               '<i ng-style="{width: timePct() + \'%\'}"></i></div></div>' +
@@ -1303,6 +1303,7 @@ angular.module('beamng.apps')
             '<div class="cep-sub" ng-if="s.bus.line.doors">Doors open: {{ s.bus.line.doors.off }} off, {{ s.bus.line.doors.on }} on · {{ s.bus.line.doors.left }} s</div>' +
             '<div class="cep-sub" ng-if="!s.bus.line.doors && s.bus.stop">{{ s.bus.stop.inZone ? s.bus.stop.title : ("Drive to the stop: " + s.bus.stop.distM + " m away") }}</div>' +
             '<div class="cep-sub" ng-if="s.bus.line.skipped">{{ s.bus.line.skipped }} skipped (not paid)</div>' +
+            '<div class="cep-sub" ng-if="s.bus.line.late">{{ s.bus.line.late }} min behind the timetable so far (lowers the pay)</div>' +
             '<div class="cep-sub">Skip a stop you cannot reach. Ending early costs {{ fmt.money(s.bus.collectFee) }}.</div></div>' +
           '<div class="cep-keyval cep-sub" ng-if="s.active.tow && s.active.phase === \'toDelivery\'"><span>{{ s.active.tow.trailer }}</span>' +
             '<strong ng-style="{color: s.active.tow.onBoard < s.active.tow.cars ? \'var(--tomato)\' : \'var(--ok)\'}">' +
@@ -1410,7 +1411,8 @@ angular.module('beamng.apps')
       '</div></div>' +
 
 
-      '<div class="cep-update" ng-if="s.update.available && !s.update.hidden">' +
+      '<div class="cep-update" ng-if="s.helperBehind"><span>BeamNG.Earth still runs helper {{ s.helperBehind }}: press Update on Cargo Earth helper in its Add-ons page</span></div>' +
+      '<div class="cep-update" ng-if="s.update.available && !s.update.hidden && !s.helperBehind">' +
         '<span>Cargo Earth {{ s.update.latest }} is out{{ s.update.modOld && s.update.helperOld ? "" : (s.update.modOld ? " (new mod)" : " (new helper)") }}</span>' +
         '<button class="cep-sm" ng-click="updateDo(\'open\')">Get it</button>' +
         '<button class="cep-sm ghost" aria-label="Hide until the next update" ng-click="updateDo(\'hide\')">Later</button></div>' +

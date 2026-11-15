@@ -66,7 +66,8 @@ M.ROAD_M = 20          -- the car is on the road edge this close (else: a car pa
 M.LIMIT_S = 0.5        -- the limit under the car is read this often
 M.OVER_KMH = 3         -- the phone's sign turns red this far over the limit
 M.CAMERA_ROAD_M = 600  -- a camera without a mapped limit takes its road's limit from this close
-M.LATE_PER_MIN = { courier = 0.05, trucking = 0.02 }   -- share of pay lost per minute late (food goes cold faster)
+M.LATE_PER_MIN = { courier = 0.05, trucking = 0.02, bus = 0.01 }   -- share of pay lost per minute late (food goes cold
+-- faster; a bus line adds up the minutes it was late at each stop)
 M.LATE_FLOOR = 0.5     -- never less than this share of the pay
 M.TICK_S = 0.5
 M.SAVE_RETRY_S = 5      -- try again if the last career checkpoint could not be written
@@ -1331,7 +1332,12 @@ local function finishDelivery(force)
   end
   local minutes = M.elapsed(j) / 60
   local late = math.max(0, minutes - j.minutes)
-  local perMin = M.LATE_PER_MIN[j.kind == 'food' and 'courier' or 'trucking']
+  if j.bus then
+    -- a bus keeps to its timetable stop by stop: the minutes late at each stop count, not the whole run's
+    late = require('cargoEarth/bus').lateMinutes(j)
+    minutes = j.minutes + late
+  end
+  local perMin = M.LATE_PER_MIN[j.kind == 'food' and 'courier' or j.bus and 'bus' or 'trucking']
   local pay = math.floor(j.pay * math.max(M.LATE_FLOOR, 1 - late * perMin) + 0.5)
   if j.special == 'chilled' then special.warm(j, late) end
   local condition = cargo.supports(j) and cargo.condition(j) or (j.tow and cargo.condition(j)) or 100
@@ -1501,7 +1507,7 @@ function M.busState()
       atDepot = employment.atYard(c, p), handover = shift.handover }
   end
   if S.job and S.job.bus then
-    out.line = bus.state(S.job, S.busDwell, S.clock)
+    out.line = bus.state(S.job, S.busDwell, S.clock, M.elapsed(S.job))
     local stop = M.busStopInfo()
     out.canDoors, out.stop = stop and stop.canDoors, stop
     return out
@@ -1511,7 +1517,7 @@ function M.busState()
     local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
     out.lines[#out.lines + 1] = { id = o.id, ref = o.bus.ref, name = o.bus.name, from = o.bus.from, to = o.bus.to,
       stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.SHARE / 5 + 0.5) * 5,
-      minutes = o.minutes, depot = o.yard.n,
+      fares = math.floor((o.fares or 0) * employment.SHARE / 5 + 0.5) * 5, minutes = o.minutes, depot = o.yard.n,
       depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= bus.DEPOT_RADIUS and not p.camera
         and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour }
   end
@@ -1526,11 +1532,13 @@ function M.busDoors(fromVehicle)
   local stop = M.busStopInfo()
   if not stop or not stop.canDoors then say('Park your bus at the current stop first.') return end
   local bus = require('cargoEarth/bus')
+  local late = bus.arrived(j, M.elapsed(j))
   local off, on, dwell = bus.passengers(j, M.random)
   S.busDwell = { off = off, on = on, untilT = S.clock + dwell, duration = dwell, at = j.bus.at, job = j }
   if not fromVehicle and M.G.busDoors then M.G.busDoors(true) end
   M.busSeats(j, j.bus.onBoard - off)   -- those getting off leave their seats first
-  say(string.format('Doors open at %s: %d off, %d on.', j.bus.stops[j.bus.at].n, off, on), math.ceil(dwell))
+  say(string.format('Doors open at %s: %d off, %d on.%s', j.bus.stops[j.bus.at].n, off, on,
+    late >= 1 and string.format(' %d min behind the timetable.', math.floor(late + 0.5)) or ''), math.ceil(dwell))
 end
 
 -- Free passenger seats in the car the player drives, or nil when the game can't tell (a car without its seat system).
@@ -1613,7 +1621,7 @@ function M.busTick(p)
   if M.G.busDoors then M.G.busDoors(false) end
   local bus = require('cargoEarth/bus')
   local last = bus.last(j)
-  bus.served(j, d.off, d.on)
+  bus.served(j, d.off, d.on, M.elapsed(j))
   M.busSeats(j, j.bus.onBoard)
   j.bus.ready, j.bus.finished = true, last or nil
   if S.phase == 'toPickup' then finishPickup() else finishDelivery(false) end
@@ -1628,7 +1636,7 @@ function M.busSkip()
   if not (j and j.bus) or S.busDwell then return end
   local bus = require('cargoEarth/bus')
   local name, last = j.bus.stops[j.bus.at].n, bus.last(j)
-  bus.skip(j)
+  bus.skip(j, M.elapsed(j))
   M.busSeats(j, j.bus.onBoard)
   j.bus.ready, j.bus.finished = true, last or nil
   if S.phase == 'toPickup' then finishPickup() else finishDelivery(false) end
@@ -1833,6 +1841,11 @@ local function tick(dt)
   local rt = earth.route()
   if rt and not rt.planning and type(rt.remaining) == 'number' and rt.remaining >= 0 then
     S.roadM, S.etaS = rt.remaining, type(rt.eta) == 'number' and rt.eta or nil
+    -- a bus stop's time follows the real road once the GPS knows it (never shorter than the straight line: a road
+    -- still left from the stop before is not taken)
+    if S.job.bus and S.dist and rt.remaining >= S.dist * 0.9 then
+      require('cargoEarth/bus').roadKnown(S.job, rt.remaining / 1000, M.elapsed(S.job))
+    end
   else
     S.roadM, S.etaS = nil, nil
   end
@@ -2430,7 +2443,7 @@ function M.phoneState()
       helper = M.helperInfo(), saveError = S.saveError, company = c.employment and c.employment.companyName,
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
       companyVehicle = c.employment and employment.vehicleLabel(c.employment),
-      currency = moneyInfo(), update = M.updateInfo(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
+      currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
       fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
       canSwitch = S.job == nil and not c.employment }
   if S.pendingCareer then
@@ -2493,6 +2506,8 @@ function M.phoneState()
     local straightM = j.kind == 'food' and S.phase == 'toPickup' and marker.PICKUP_RANGE or radius
     local distRoad = S.roadM ~= nil and not (S.dist and S.dist <= straightM)
     local left = j.minutes * 60 - M.elapsed(j)
+    local busDue, busMin
+    if j.bus then busDue, busMin = require('cargoEarth/bus').due(j, M.elapsed(j)) left = busDue end
     out.screen = 'active'
     out.active = { phase = S.phase, kind = j.kind or 'cargo', cargo = j.cargoName, items = j.items, from = place(j.from), to = place(j.to),
         orderType = j.orderType, handling = cargo.supports(j) and cargo.handling(j) or nil,
@@ -2508,7 +2523,7 @@ function M.phoneState()
       distM = distRoad and math.floor(S.roadM + 0.5)
         or (S.dist and math.floor(S.dist + 0.5)) or nil,
       distRoad = distRoad,
-      etaS = S.etaS and math.floor(S.etaS + 0.5) or nil, km = r1(j.km), pay = j.pay, minutes = j.minutes,
+      etaS = S.etaS and math.floor(S.etaS + 0.5) or nil, km = r1(j.km), pay = j.pay, minutes = busMin or j.minutes,
       leftS = math.floor(left + 0.5), arriveM = radius, stop = stopInfo(),
       pickupLeftS = S.phase == 'toPickup' and food.pickupMinutes(j)
         and math.floor(food.pickupMinutes(j) * 60 - M.elapsed(j) + 0.5) or nil,
@@ -2520,7 +2535,7 @@ function M.phoneState()
     for _, o in ipairs(S.orders) do
       local oj = o.job
       local destination = o.phase == 'toPickup' and oj.from or oj.to
-      local l = oj.minutes * 60 - M.elapsed(oj)
+      local l = oj.bus and require('cargoEarth/bus').due(oj, M.elapsed(oj)) or oj.minutes * 60 - M.elapsed(oj)
       local row = { id = oj.id, pickup = o.phase == 'toPickup', name = destination.n,
         cargo = oj.cargoName, leftS = math.floor(l + 0.5), current = oj == j,
         pickupLeftS = o.phase == 'toPickup' and food.pickupMinutes(oj)
@@ -4231,6 +4246,20 @@ local function onAbout(data, err)
     updateSaid = u.latest
     say('Cargo Earth ' .. u.latest .. ' is out. Open the phone to get it.', 10)
   end
+  local behind = M.helperBehind()
+  if behind and updateSaid ~= 'helper ' .. behind then
+    updateSaid = 'helper ' .. behind
+    say(string.format('BeamNG.Earth still runs the Cargo Earth helper %s. Open its Add-ons page and press Update on '
+      .. 'Cargo Earth helper.', behind), 12)
+  end
+end
+
+-- The helper's version when it is older than this mod (BeamNG.Earth keeps running the copy it installed until Update
+-- is pressed on its Add-ons page, even after the installer put a newer file in place), else nil.
+function M.helperBehind()
+  local v = helperAbout and helperAbout.version
+  if type(v) ~= 'string' or not v:match('^%d+%.%d+%.%d+$') then return nil end
+  return M.versionNewer(M.VERSION, v) and v or nil
 end
 
 aboutHelper = function()
