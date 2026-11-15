@@ -930,6 +930,17 @@ angular.module('beamng.apps')
           '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'measure\')">Measure this car again</button></div></div>' +
         '<button class="cep-sm ghost" ng-if="!st.paused" ng-click="sdo(\'reset\')">Reset settings</button>' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
+        '<button class="cep-sm ghost" ng-if="st.canRestart && !restart.open" ng-click="restartOpen()">Restart career</button>' +
+        '<div class="cep-card" ng-if="st.canRestart && restart.open">' +
+          '<div class="cep-name">Restart career</div>' +
+          '<div class="cep-sub">This deletes your whole career: money, cars, home, firm, reputation and progress. ' +
+            'It cannot be undone. Your settings stay.</div>' +
+          '<div class="cep-sub" style="margin-top:6px">Type {{ st.restartWord }} to confirm.</div>' +
+          '<div class="cep-row" style="margin-top:6px"><input class="cep-input" type="text" maxlength="12" autocomplete="off" spellcheck="false" ' +
+            'aria-label="Type {{ st.restartWord }} to confirm" placeholder="{{ st.restartWord }}" ng-model="restart.word"></div>' +
+          '<div class="cep-sub" ng-if="restart.error">{{ restart.error }}</div>' +
+          '<div class="cep-row"><button class="cep-sm go" ng-disabled="restart.word !== st.restartWord" ng-click="restartGo()">Delete and restart</button>' +
+          '<button class="cep-sm ghost" ng-click="restartClose()">Cancel</button></div></div>' +
         '<div class="cep-label">Help</div>' +
         '<div class="cep-li" style="padding:6px 10px"><div><div class="cep-name" style="font-size:12px">Updates</div>' +
           '<small ng-if="st.update.unknown">Mod {{ st.update.mod }}. Start the Cargo Earth helper to check for updates.</small>' +
@@ -1437,6 +1448,22 @@ angular.module('beamng.apps')
         })
       }
       scope.closeReport = function () { scope.report = null }
+      // Settings > Restart career: the player types the word (DELETE) before the button works; the game checks it again
+      scope.restart = {open: false, word: '', error: null}
+      scope.restartOpen = function () { scope.restart = {open: true, word: '', error: null} }
+      scope.restartClose = function () { scope.restart = {open: false, word: '', error: null} }
+      scope.restartGo = function () {
+        if (!scope.st || scope.restart.word !== scope.st.restartWord) return
+        lua('settingsDo', ['restart', scope.restart.word], function (r) {
+          if (r && r.restarted) {
+            scope.restartClose()
+            scope.st = r
+            scope.closePanel() // the phone shows the first-run choice: Career or Free play
+          } else {
+            scope.restart.error = (r && (r.restartError || r._phoneError)) || 'Nothing was deleted.'
+          }
+        })
+      }
       scope.updateDo = function (name) {
         lua('updateDo', [name], function (u) {
           if (!u || u._phoneError) return

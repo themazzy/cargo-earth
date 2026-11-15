@@ -60,6 +60,8 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | `-delete-save` | Delete the career save and its backups (asks you to type DELETE; add `-yes` to skip). Close the game first |
 | `-dry-run` | Only show what would happen |
 
+In the game you can do the same from the phone: Menu → Settings → Restart career (type DELETE to confirm). It also works on the screen that offers to load a saved career.
+
 ### Manual install
 
 1. Download `cargo_earth_career_<version>.zip` and `cargo_earth_helper_<version>.py` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest).
