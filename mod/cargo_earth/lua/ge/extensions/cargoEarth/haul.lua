@@ -2,7 +2,7 @@
 local M = {}
 
 M.tiers = {
-  van = { name = 'Van', minKm = 3, maxKm = 45, base = 80, rate = 11, speed = 40, slack = 12, kg = 500, parcel = 96 },
+  van = { name = 'Van', minKm = 3, maxKm = 45, base = 80, rate = 11, speed = 40, slack = 12, kg = 1000, parcel = 96 },
   rigid = { name = 'Rigid truck', minKm = 12, maxKm = 125, base = 120, rate = 15, speed = 50, slack = 20,
     kg = 8000, parcel = 640, bulk = 4200 },
   semi = { name = 'Articulated truck', minKm = 20, maxKm = 250, base = 300, rate = 22, speed = 55, slack = 30,
@@ -12,6 +12,7 @@ M.tiers = {
   car = { name = 'Car', minKm = 2, maxKm = 15, base = 40, rate = 8, speed = 35, slack = 10, kg = 150, parcel = 24 },
   suv = { name = 'SUV or pickup', minKm = 5, maxKm = 40, base = 70, rate = 10, speed = 40, slack = 12, kg = 400, parcel = 48 },
 }
+M.SEMI_BULK_L = 12800   -- the dry-bulk trailer's 16 aggregate boxes of 800 L
 M.SMALL = { car = true, suv = true }   -- these tiers take no board of company freight
 -- Pay per hour (0.3.5, Jan): courier ~450 CZK, van ~590, rigid ~850, semi ~1,250-1,700. Car prices follow courier pay,
 -- so trucks are the reward for progressing without making cars nearly free.
@@ -25,9 +26,11 @@ M.loaners = {
   semi = { model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', label = 'tractor' },
 }
 
+-- kg per parcel slot of freight. Real loads (Jan, 2026-11-15): a van leaves with about 0.6-1 t, a box truck with 4-8 t and a
+-- semi's box trailer with 10-20 t; the slots the containers hold are fixed, so the weight per slot carries it.
 local parcel = {
-  pallets_general = 4, consumer_goods = 2.5, electronics = 2, furniture = 3, car_parts = 5,
-  glassware = 3, food_dry = 2, beer = 4, bricks = 5,
+  pallets_general = 9, consumer_goods = 7, electronics = 6, furniture = 7, car_parts = 11,
+  glassware = 8, food_dry = 8, beer = 11, bricks = 14,
 }
 local fluid = { milk = 1.03, fuel = 0.83, chemicals = 1.25 }
 local dryBulk = { gravel = 1.8, sand = 1.6, grain = 0.75, wood_chips = 0.35, fertilizer = 0.9,
@@ -108,8 +111,8 @@ function M.freight(tier, id, rows)
   if not kind then return end
   local t = M.tiers[tier]
   local nominal = kind == 'parcel' and t.parcel or t.bulk
-  -- The assigned dry-bulk trailer starts with four 800 L aggregate boxes.
-  local capacity = tier == 'semi' and (kind == 'dryBulk' and 3200 or nominal) or M.capacity(rows, kind)
+  -- The assigned dry-bulk trailer has an 800 L aggregate box in each of its 16 box slots (cargoEarth/trailers).
+  local capacity = tier == 'semi' and (kind == 'dryBulk' and M.SEMI_BULK_L or nominal) or M.capacity(rows, kind)
   local amount = math.min(nominal, capacity, math.floor(t.kg / density))
   if amount < (kind == 'parcel' and 8 or 100) then return end
   return { tier = tier, kind = kind, amount = amount, kg = math.floor(amount * density + 0.5), density = density }

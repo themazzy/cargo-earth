@@ -1394,6 +1394,22 @@ test('a parcel route loads the van, empties the containers stop by stop and pays
   assert(core.careerState().reputation.freight.rated == 1)
 end)
 
+test('freight weighs like real loads: about 1 t in a van, 4-8 t in a box truck, 10-22 t on a semi', function()
+  local haul = require('cargoEarth/haul')
+  local trailers = require('cargoEarth/trailers')
+  local box = function(slots) return { { id = 1, cargoTypes = { 'parcel' }, capacity = slots } } end
+  local van = haul.freight('van', 'consumer_goods', box(96))
+  assert(van and van.kg >= 600 and van.kg <= 1000, 'a van of consumer goods')
+  assert(haul.freight('van', 'bricks', box(96)).kg <= 1000, 'a van never goes over 1 t')
+  local rigid = haul.freight('rigid', 'pallets_general', box(640))
+  assert(rigid.kg >= 4000 and rigid.kg <= 8000, 'a box truck of pallets')
+  local semi = haul.freight('semi', 'consumer_goods')
+  assert(semi.kg >= 10000 and semi.kg <= 22000, 'a box trailer of consumer goods')
+  local gravel = haul.freight('semi', 'gravel')
+  assert(trailers.AGGREGATE_L == haul.SEMI_BULK_L and gravel.amount <= haul.SEMI_BULK_L and gravel.kg >= 20000
+    and gravel.kg <= 22000, 'gravel fills the aggregate boxes up to the semi limit')
+end)
+
 test('cargo weight: meals, parcel routes and freight count only once picked up', function()
   local meal = { kind = 'food', items = { { name = 'Pizza', qty = 2 }, { name = 'Cola', qty = 1 } } }
   assert(math.abs(cargo.weight(meal) - (0.2 + 2 * 0.55 + 0.25)) < 1e-9, 'a meal')
