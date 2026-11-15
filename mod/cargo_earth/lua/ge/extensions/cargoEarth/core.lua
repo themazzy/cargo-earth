@@ -1297,7 +1297,7 @@ local function finishDelivery(force)
     end
     j.cargoCondition = tow.condition((j.tow.damageDone or 0)
       + math.max(0, trailers.towedDamage() - (j.tow.damage0 or trailers.towedDamage())))
-  elseif not force and j.kind ~= 'food' and S.config.requireTrailer and S.config.spawnTrailer and not trailers.withPlayer() then
+  elseif not force and j.kind ~= 'food' and not j.taxi and S.config.requireTrailer and S.config.spawnTrailer and not trailers.withPlayer() then
     say('Bring the trailer: it is not with your truck.', 3)
     S.stopT = -10   -- don't repeat the message every tick
     return
@@ -1702,7 +1702,7 @@ local function tick(dt)
     S.roadM, S.etaS = nil, nil
   end
   if not S.dist or S.dist > arrivalRadius(S.job) or (p.speed or 0) > M.STOP_SPEED or p.camera
-    or (S.job.kind == 'food' and not garage.inOwnCar(M.G, S.career.garage)) or M.towWaiting() then
+    or ((S.job.kind == 'food' or S.job.taxi) and not garage.inOwnCar(M.G, S.career.garage)) or M.towWaiting() then
     S.stopT = 0
     return
   end

@@ -1645,6 +1645,7 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   c.garage.debt = 0
   vehicle.bodyStyle = 'Hatchback'
   riders = nil
+  s.config.spawnTrailer, s.config.requireTrailer = true, true   -- the game's defaults: a taxi needs no trailer
   s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
     everywhere)
   core.setMode('trucking')
@@ -1662,6 +1663,11 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   assert(s.job == job and s.phase == 'toPickup')
   assert(core.phoneState().active.taxi.people == job.taxi.people)
   pose.lat, pose.lon, pose.speed = job.from.g[1], job.from.g[2], 0
+  local ownModel = vehicle.model
+  vehicle.model = 'someone_elses'
+  advance(core, 10)
+  assert(s.phase == 'toPickup', 'nobody gets into another car')
+  vehicle.model = ownModel
   advance(core)
   assert(s.phase == 'toDelivery' and riders == job.taxi.people, 'the passengers sit in the car')
   s.taxiSeated, riders = nil, 0   -- as a loaded save: the ride is on, nobody seated yet
