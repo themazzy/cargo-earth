@@ -33,9 +33,13 @@ end
 -- near(lat, lon, maxKm): address rows around a point (where passengers wait); sights(lat, lon, minKm, maxKm): the
 -- places a taxi takes people to, { id, n, town, g } (airports, stations, museums, sights, hotels: the helper's 't'
 -- places), nearest first; roadKm(a, b, maxKm): the real road km when known, false for a detour, nil when unknown;
--- range: the player's { nearKm, minKm, maxKm } (road km). Returns up to OFFERS rides.
-function M.offers(near, sights, lat, lon, rnd, roadKm, range)
+-- range: the player's { nearKm, minKm, maxKm } (road km); seats: free passenger seats in the car (nil: unknown, a car
+-- without the game's seat system), a ride never has more people than seats. Returns up to OFFERS rides.
+function M.offers(near, sights, lat, lon, rnd, roadKm, range, seats)
   rnd = rnd or math.random
+  local most = M.PEOPLE[2]
+  if type(seats) == 'number' then most = math.min(most, math.floor(seats)) end
+  if most < M.PEOPLE[1] then return {} end
   if type(near) ~= 'function' or type(sights) ~= 'function' or type(lat) ~= 'number' or type(lon) ~= 'number' then return {} end
   local nearKm = math.min(M.NEAR_KM, tonumber(range and range.nearKm) or M.NEAR_KM)
   local minRoad = math.max(M.KM[1] * M.ROAD_FACTOR, tonumber(range and range.minKm) or 0)
@@ -69,7 +73,7 @@ function M.offers(near, sights, lat, lon, rnd, roadKm, range)
     end
     if drop then
       used[drop.id] = true
-      local people = M.PEOPLE[1] + rnd(M.PEOPLE[2] - M.PEOPLE[1] + 1) - 1
+      local people = M.PEOPLE[1] + rnd(most - M.PEOPLE[1] + 1) - 1
       local pickupKm = km(lat, lon, pick.a[1], pick.a[2])
       out[#out + 1] = {
         id = 'taxi:' .. pick.p.id .. '>' .. tostring(drop.id), kind = 'taxi', cargo = 'passengers',

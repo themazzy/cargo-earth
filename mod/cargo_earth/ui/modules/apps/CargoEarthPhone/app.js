@@ -710,12 +710,12 @@ angular.module('beamng.apps')
           '<div class="cep-sub" ng-if="places.discovery.msg">{{ fmt.text(places.discovery.msg) }}</div>' +
           '<div class="cep-sub">The company lends you a van, or a truck once you unlock it, and pays its costs. You get 80 % of the delivery pay when the work ends; damaged loads pay less, ruined ones nothing.</div>' +
           '<div class="cep-card" ng-if="places.shift"><div class="cep-name" style="white-space:normal">{{ places.shift.company }}</div>' +
-            '<div class="cep-label" ng-if="places.shift.ownerOperator">Your own van</div>' +
+            '<div class="cep-label" ng-if="places.shift.ownerOperator">Your own {{ places.shift.vehicle || "van" }}</div>' +
             '<div class="cep-sub">{{ places.shift.completed }} of {{ places.shift.total }} deliveries · {{ fmt.money(places.shift.held) }} held</div>' +
             '<div class="cep-impact-note" ng-if="places.shift.failed">{{ places.shift.failed }} ruined, unpaid.</div>' +
             '<div class="cep-sub" ng-if="places.shift.vehicleDamage > 0">Vehicle damage {{ fmt.money(places.shift.vehicleDamage) }}{{ places.shift.ownerOperator ? "" : ": the company pays, your reputation suffers" }}.</div>' +
             '<div class="cep-sub">Reputation {{ places.shift.reputationScore > 0 ? "+" : "" }}{{ places.shift.reputationScore }} so far.</div>' +
-            '<div class="cep-sub" ng-if="places.shift.phase === \'preparing\'">Getting the {{ places.shift.vehicle || "van" }} ready…</div>' +
+            '<div class="cep-sub" ng-if="places.shift.phase === \'preparing\'">Getting the {{ places.shift.vehicle || "vehicle" }} ready…</div>' +
             '<div class="cep-sub" ng-if="places.shift.phase === \'working\'">The deliveries are on the phone under Work.</div>' +
             '<div class="cep-sub" ng-if="places.shift.phase === \'returning\'">Drive back to the yard and park to collect your wages.</div>' +
             '<div class="cep-sub" ng-if="places.shift.phase === \'settled\'">Wages paid. Bringing back your car…</div>' +
@@ -743,7 +743,7 @@ angular.module('beamng.apps')
             '<div class="cep-keyval" ng-if="places.last.toDebt"><span>Debt repayment</span><strong>-{{ fmt.money(places.last.toDebt) }}</strong></div>' +
             '<div class="cep-keyval"><span>Added to balance</span><strong>{{ fmt.money(places.last.net) }}</strong></div>' +
             '<div class="cep-sub" ng-if="places.last.failed">{{ places.last.failed }} ruined, unpaid.</div>' +
-            '<div class="cep-sub" ng-if="places.last.vehicleDamage > 0">Van damage {{ fmt.money(places.last.vehicleDamage) }}</div>' +
+            '<div class="cep-sub" ng-if="places.last.vehicleDamage > 0">{{ places.last.ownerOperator ? "Your" : "Company" }} {{ places.last.vehicle || "vehicle" }} damage {{ fmt.money(places.last.vehicleDamage) }}</div>' +
             '<div class="cep-keyval" ng-if="places.last.reputationChange !== undefined"><span>Reputation change</span><strong>{{ places.last.reputationChange > 0 ? "+" : "" }}{{ places.last.reputationChange }}</strong></div>' +
             '<div class="cep-sub" ng-if="places.last.reputationScore < 0">Score {{ places.last.reputationScore }} (reputation stops at zero).</div>' +
             '<div class="cep-sub" ng-if="places.last.aborted">Ended early; done deliveries paid.</div></div></div>' +
@@ -1132,7 +1132,7 @@ angular.module('beamng.apps')
       '</div>' +
       '<div class="cep-center" ng-if="!s.bus" ng-class="{\'cep-freight-summary\': s.trucking}">' +
         '<div class="cep-label" ng-if="!s.canSwitch">{{ s.mode === "courier" ? "Food delivery" : "Freight" }}</div>' +
-        '<div class="cep-big">{{ s.trucking && !s.trucking.carrier ? "No van of your own" : "You are offline" }}</div>' +
+        '<div class="cep-big">{{ s.trucking && !s.trucking.carrier ? "No work vehicle of your own" : "You are offline" }}</div>' +
         '<div class="cep-sub" ng-if="!s.trucking || !s.trucking.hint">Go online to get orders from nearby {{ s.mode === "courier" ? "restaurants and shops" : "depots" }}.</div>' +
         '<div class="cep-sub" ng-if="s.trucking.carrier">{{ s.trucking.label }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.hint">{{ s.trucking.hint }}</div>' +
@@ -1341,7 +1341,7 @@ angular.module('beamng.apps')
       // done
       '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'done\'"><div class="cep-center">' +
         '<div class="cep-label">{{ s.done.held ? "Delivered · pay held" : "Delivered" }}</div><div class="cep-pay">{{ s.done.held ? "" : "+" }}{{ fmt.money(s.done.net) }}</div>' +
-        '<div class="cep-sub" ng-if="s.done.held">Paid when the contract ends: {{ s.done.ownerOperator ? "all of it with your own van" : "80 % with the company van" }}.</div>' +
+        '<div class="cep-sub" ng-if="s.done.held">Paid when the contract ends: {{ s.done.ownerOperator ? "all of it with your own " + (s.done.vehicle || "van") : "80 % with the company " + (s.done.vehicle || "vehicle") }}.</div>' +
         '<div class="cep-sub">{{ s.done.to }}</div>' +
         '<div class="cep-sub" ng-if="s.dropped">Dropped {{ fmt.kg(s.dropped.kg) }}<span ng-if="s.dropped.left > 0"> · {{ fmt.kg(s.dropped.left) }} still on board</span></div>' +
         '<div ng-if="s.done.stars"><div class="cep-stars big" role="img" ng-attr-aria-label="{{ s.done.stars }} of 5 stars">{{ fmt.stars(s.done.stars) }}<i>{{ fmt.noStars(s.done.stars) }}</i></div>' +
@@ -1431,7 +1431,7 @@ angular.module('beamng.apps')
         '<span ng-if="s.flash.owed > 0"> ({{ fmt.money(s.flash.owed) }} added to your debt)</span>' +
         '<span ng-if="s.flash.stars > 0">. One star off the order on board</span>.</div>' +
       '<div class="cep-impact-note" ng-if="s.camera && !s.flash">Speed camera in {{ s.camera.m }} m · limit {{ s.camera.limit }} km/h</div>' +
-      '<div class="cep-impact-note" ng-if="s.companyDamage > 0">Van damage noted. It costs company reputation.</div>' +
+      '<div class="cep-impact-note" ng-if="s.companyDamage > 0">{{ s.companyOwnerOperator ? "Your" : "Company" }} {{ s.companyVehicle || "vehicle" }} damage noted. It costs company reputation.</div>' +
       '</div>' +
       // one quiet line under the content: cargo space (Work only), fuel and damage. Debt is in the Menu.
       '<div class="cep-foot" ng-if="s.screen !== \'resume\'">' +

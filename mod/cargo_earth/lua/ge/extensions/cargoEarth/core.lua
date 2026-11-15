@@ -844,7 +844,8 @@ function M.generate()
           end
           return out
         end
-        for _, offer in ipairs(require('cargoEarth/taxi').offers(near, sights, p.lat, p.lon, M.random, roadKmFn(p), freightOptions(tier))) do
+        local seats = M.taxiFreeSeats()
+        for _, offer in ipairs(require('cargoEarth/taxi').offers(near, sights, p.lat, p.lon, M.random, roadKmFn(p), freightOptions(tier), seats)) do
           offers[#offers + 1] = offer
         end
       end
@@ -1032,6 +1033,13 @@ local function takeJob(j)
   elseif j.taxi then
     local _, tier = freightCarrier()
     if tier ~= 'car' then say('Taxi rides are for cars: get in your car to take this ride.', 4) return end
+    local seats = M.taxiFreeSeats(true)
+    if seats and seats < j.taxi.people then
+      say(seats == 0 and 'This car has no passenger seats: taxi rides need a car with seats for passengers.'
+        or string.format('This ride is for %d passengers and your car has %d free %s.', j.taxi.people, seats,
+          seats == 1 and 'seat' or 'seats'), 5)
+      return
+    end
   elseif j.tow then
     local v, tier = freightCarrier()
     if not v or tow.class(tier, tow.hasHitch(v)) ~= j.tow.class then
@@ -1373,7 +1381,7 @@ local function finishDelivery(force)
   S.phone.lastDone = { pay = pay, tip = tip, late = math.floor(late + 0.5), to = j.to.n, untilT = S.clock + M.PHONE.doneShowS,
     toDebt = toDebt, net = pay + tip - toDebt, rankUp = rankUp, truckUnlock = truckUnlock,
     cargoCondition = condition < 100 and condition or nil, held = j.companyShift ~= nil,
-    ownerOperator = c.employment and c.employment.ownerOperator,
+    ownerOperator = c.employment and c.employment.ownerOperator, vehicle = employment.vehicleLabel(c.employment),
     stars = stars, note = note, track = track, records = #newRecords > 0 and newRecords or nil, premium = j.premium,
     tipWhy = tip > 0 and tipWhy or (tipWhy and tipWhy.damaged and tipWhy) or nil, special = special.info(j) }
   nextPing()
@@ -1531,6 +1539,18 @@ function M.busDoors(fromVehicle)
   M.busSeats(j, j.bus.onBoard - off)   -- those getting off leave their seats first
   say(string.format('Doors open at %s: %d off, %d on.%s', j.bus.stops[j.bus.at].n, off, on,
     late >= 1 and string.format(' %d min behind the timetable.', math.floor(late + 0.5)) or ''), math.ceil(dwell))
+end
+
+-- Free passenger seats in the car the player drives, or nil when the game can't tell (a car without its seat system).
+-- Asked again at most every 2 s (the phone polls often); fresh asks now (accepting a ride).
+function M.taxiFreeSeats(fresh)
+  if not M.G.freeSeats then return nil end
+  local memo = S.freeSeats
+  if not fresh and memo and (S.clock or 0) < memo.untilT then return memo.n end
+  local ok, n = pcall(M.G.freeSeats)
+  n = ok and type(n) == 'number' and n or nil
+  S.freeSeats = { n = n, untilT = (S.clock or 0) + 2 }
+  return n
 end
 
 function M.busDoorWatch()
@@ -1998,6 +2018,8 @@ local function truckingState()
   end
   if not v or not tier then
     out.hint = 'Take a contract: park at its yard and the company gives you its vehicle.'
+  elseif tier == 'car' and M.taxiFreeSeats() == 0 then
+    out.hint = 'This car has no passenger seats for taxi rides: take a company contract below.'
   elseif tier == 'car' then
     out.hint = 'In a car: taxi rides near you, or a company contract below.'
   elseif tier == 'suv' and rows and haul.capacity(rows, 'parcel') < 4 then
@@ -2079,7 +2101,7 @@ function M.placesState()
     out.shift = { company = shift.companyName, phase = shift.phase, completed = shift.completed, total = #shift.jobs,
       held = math.floor(shift.gross * (shift.share or employment.SHARE) + 0.5), atYard = employment.atYard(c, p),
         failed = shift.failed or 0, vehicleDamage = shift.vehicleDamage or 0, reputationScore = employment.reputation(shift, false),
-      error = S.companyError, ownerOperator = shift.ownerOperator, vehicle = haul.loaners[shift.tier or 'van'].label }
+      error = S.companyError, ownerOperator = shift.ownerOperator, vehicle = employment.vehicleLabel(shift) }
   end
   return out
 end
@@ -2420,6 +2442,7 @@ function M.phoneState()
     todayCount = today.count, status = earth.status(), clock = os.date('%H:%M'), hidden = S.phoneHidden,
       helper = M.helperInfo(), saveError = S.saveError, company = c.employment and c.employment.companyName,
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
+      companyVehicle = c.employment and employment.vehicleLabel(c.employment),
       currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
       fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
       canSwitch = S.job == nil and not c.employment }
@@ -2464,7 +2487,7 @@ function M.phoneState()
     local receipt = ph.lastDone
     out.done = { pay = receipt.pay, tip = receipt.tip, late = receipt.late, to = receipt.to,
       toDebt = receipt.toDebt, net = receipt.net, rankUp = receipt.rankUp, truckUnlock = receipt.truckUnlock,
-      cargoCondition = receipt.cargoCondition, held = receipt.held, ownerOperator = receipt.ownerOperator,
+      cargoCondition = receipt.cargoCondition, held = receipt.held, ownerOperator = receipt.ownerOperator, vehicle = receipt.vehicle,
       stars = receipt.stars, note = receipt.note, track = receipt.track, records = receipt.records, premium = receipt.premium,
       tipWhy = receipt.tipWhy, special = receipt.special }
   end
@@ -3179,7 +3202,7 @@ local function garageTick(dt)
     S.dirtyAt = S.dirtyAt or (S.clock + 5)
   elseif what == 'debt' then
     if shift and not shift.ownerOperator then
-      say('Company van repaired. Recorded damage still affects employer reputation.', 8)
+      say('Company ' .. employment.vehicleLabel(shift) .. ' repaired. Recorded damage still affects employer reputation.', 8)
     else
       say(string.format('Your car was fixed without paying (menu repair, reset or respawn): %d CZK added to your debt.', amount), 8)
     end
