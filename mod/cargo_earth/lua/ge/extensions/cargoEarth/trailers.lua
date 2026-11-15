@@ -642,12 +642,17 @@ function M.placeTowed(x, y, refZ)
     d.z = 0
     if d:length() > 0.1 then dir = d:normalized() end
   end
+  -- only on a known road: its height tells the road from a roof; else they are spawned at the stop (spawnRoadside)
+  if not (ok and ex and ez) then return false end
+  local skip = {}
+  for _, tid in ipairs(towed) do skip[tid] = true end
   local spots = {}
   for i = 1, #towed do
-    local p = vec3(cx, cy, 0) - dir * ((i - 1) * M.CAR_GAP_M)
-    local z = marker.groundZ(p.x, p.y, ez or refZ, 30, 150)
-    if not z then return false end   -- the ground there is not loaded yet
-    spots[i] = vec3(p.x, p.y, z)
+    local p = vec3(cx, cy, ez) - dir * ((i - 1) * M.CAR_GAP_M)
+    -- ground near the road's height with free headroom (not loaded yet, a roof or an overhang: not here), no vehicle
+    local g = ground(p, ez)
+    if not g or vehicleIn(g, dir, 2.6, 1.2, skip) then return false end
+    spots[i] = vec3(g.x, g.y, g.z - 0.5)
   end
   for i, tid in ipairs(towed) do
     local o = scenetree.findObjectById(tid)
