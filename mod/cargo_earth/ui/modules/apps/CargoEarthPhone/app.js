@@ -1161,7 +1161,7 @@ angular.module('beamng.apps')
         '<div class="cep-scroll cep-order-scroll">' +
           '<div class="cep-card cep-next-card">' +
             '<div class="cep-keyval"><span class="cep-step" ng-class="{to: s.active.phase === \'toDelivery\'}">' +
-              '{{ s.active.phase === "toPickup" ? (s.active.kind === "food" ? "Pick up" : "Load freight") : "Drop off" }}</span>' +
+              '{{ s.active.here ? "Trailer" : (s.active.phase === "toPickup" ? (s.active.kind === "food" ? "Pick up" : (s.active.tow ? "Load the car" : "Load freight")) : "Drop off") }}</span>' +
               '<strong>{{ fmt.money(s.active.pay) }}</strong></div>' +
             '<div><div class="cep-name">{{ here().name }}</div>' +
               '<div class="cep-meta">{{ here().label }}{{ here().town ? " · " + here().town : "" }}</div></div>' +
@@ -1232,6 +1232,9 @@ angular.module('beamng.apps')
           '<div class="cep-keyval cep-sub" ng-if="s.active.tow && s.active.phase === \'toDelivery\'"><span>{{ s.active.tow.trailer }}</span>' +
             '<strong ng-style="{color: s.active.tow.onBoard < s.active.tow.cars ? \'var(--tomato)\' : \'var(--ok)\'}">' +
             '{{ s.active.tow.onBoard }} of {{ s.active.tow.cars }} car{{ s.active.tow.cars > 1 ? "s" : "" }} on board</strong></div>' +
+          '<div class="cep-sub" ng-if="s.active.here && !s.active.towHitch">Borrow the {{ s.active.tow.trailer.toLowerCase() }} here, then fetch the car and bring both back.</div>' +
+          '<button class="cep-sm" ng-if="s.active.towHitch" ng-click="act(\'towHitch\')">Hitch the trailer</button>' +
+          '<div class="cep-sub" ng-if="s.active.towHitch">Stop, then hitch. The trailer stands behind you.</div>' +
           '<button class="cep-sm" ng-if="s.active.towWaiting" ng-click="act(\'towLoad\')">Load {{ s.active.tow.cars > 1 ? "the cars" : "it" }} on the trailer</button>' +
           '<div class="cep-sub" ng-if="s.active.towWaiting">{{ s.active.tow.wreck ? s.active.tow.wreck + ". " : "" }}Park the trailer next to the car, stop, then load.</div>' +
           '<button class="cep-sm" ng-if="s.active.canRestoreTrailer" ng-click="act(\'restoreTrailer\')">' +
@@ -1367,7 +1370,7 @@ angular.module('beamng.apps')
         remaining: function (seconds) { return clock(Math.abs(seconds)) },
         short: shortMoney
       }
-      scope.here = function () { var a = scope.s && scope.s.active; return a ? (a.phase === 'toPickup' ? a.from : a.to) : {} }
+      scope.here = function () { var a = scope.s && scope.s.active; return a ? (a.here || (a.phase === 'toPickup' ? a.from : a.to)) : {} }
       scope.near = function () { var a = scope.s && scope.s.active; return a && a.distM !== null && a.distM !== undefined && a.distM <= a.arriveM }
       scope.timePct = function () {
         var a = scope.s && scope.s.active
