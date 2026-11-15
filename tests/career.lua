@@ -2702,6 +2702,22 @@ test('bus comfort: passengers feel harsh moments and bumps, an empty bus does no
   assert(bus.comfort(j) == 0)
 end)
 
+test('bus signs: the line number, the destination in plain letters and the stops ahead', function()
+  local idx = bus.index()
+  local data = busData()
+  data.lines[1].stops[5][1] = 'Nedomice, Škola u Křížku a kostela'
+  data.lines[1].colour = '#ff8800'
+  bus.set(idx, data)
+  local j = bus.board(idx, 50, 14)[1].jobs[1]
+  local sg = bus.sign(j)
+  assert(sg.routeID == '136' and sg.routeColor == '#ff8800')
+  assert(sg.direction == ('Nedomice, Skola u Krizku a kostela'):sub(1, bus.SIGN_CHARS), sg.direction)
+  assert(#sg.tasklist == 5 and sg.tasklist[1][2] == 'Stop A' and sg.tasklist[5][2] == 'Nedomice, Škola u Křížku a kostela')
+  bus.served(j, 0, 1, 60)
+  assert(#bus.sign(j).tasklist == 4 and bus.sign(j).tasklist[1][2] == 'Stop B', 'the next stop first')
+  assert(bus.plain('ŽLUŤOUČKÝ kůň') == 'ZLUTOUCKY kun')
+end)
+
 test('bus names: escapes that lost their backslash on the way into the game are letters again', function()
   assert(bus.text('Tiu0161ice, Chru00e1st') == 'Tišice, Chrást')
   assert(bus.text('Ku0159u00edu017eek') == 'Křížek')
