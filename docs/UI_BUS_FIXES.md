@@ -1,6 +1,6 @@
-# Phone and bus discovery test build
+# Phone and bus fixes included in 0.10.1
 
-Based on GitHub v0.10.0 (aeccb2400b0b774c73564621379f82b49acdbbe0). This is an unpublished test build.
+Included in release 0.10.1, based on GitHub v0.10.0 and the reviewed fixes in PR #96.
 
 - Freight's offline summary is compact, its nearby contracts take the remaining scrolling area, and the daily statistics card no longer crowds that list. Long company names wrap beside the wage.
 - Bus searches show checked, queued and failed areas, elapsed loading time, the active server, retry cooldown and the actual error. A helper timeout no longer means an outdated helper; only HTTP 404 does.
@@ -18,7 +18,7 @@ Based on GitHub v0.10.0 (aeccb2400b0b774c73564621379f82b49acdbbe0). This is an u
 
 ## Install for testing
 
-Close BeamNG and stop the helper. Replace the installed Cargo Earth mod ZIP with `cargo_earth_career_0.10.0_ui_bus_fix.zip` (keep just one Cargo Earth ZIP). Replace the contents of the helper file that BeamNG.Earth actually launches with the supplied helper, keeping its registered path, or update the add-on registration to the new file. Restart the helper and BeamNG. The installed helper may be in BeamNG.Earth's add-ons folder rather than the standalone installer's helper folder. Career saves do not need to be reset.
+Close BeamNG and stop the helper. Replace the installed Cargo Earth mod ZIP with `cargo_earth_career_0.10.1.zip` (keep just one Cargo Earth ZIP). Replace the contents of the helper file that BeamNG.Earth actually launches with the supplied helper, keeping its registered path, or update the add-on registration to the new file. Restart the helper and BeamNG. The installed helper may be in BeamNG.Earth's add-ons folder rather than the standalone installer's helper folder. Career saves do not need to be reset.
 
 ## Verification
 

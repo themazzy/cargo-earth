@@ -66,7 +66,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from contextlib import contextmanager
 
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 AREA_CACHE_VERSION = "7"  # taxi destinations (airports, stations, sights); retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
