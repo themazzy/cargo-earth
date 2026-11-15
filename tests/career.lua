@@ -2299,7 +2299,7 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   -- the game side, stubbed: what trailers.lua would do in BeamNG
   local saved = {}
   for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
-    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive' }) do
+    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow' }) do
     saved[k] = trailers[k]
   end
   local spawned, distances, damage = 0, {}, 0
@@ -2311,13 +2311,16 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   trailers.towedDamage = function() return damage end
   trailers.towedCount = function() return #distances end
   trailers.remove = function() distances = {} end
+  local towRemoved = 0
+  trailers.removeTow = function() towRemoved = towRemoved + 1 distances = {} end
   trailers.id = function() return #distances > 0 and 7 or nil end
   local roadside, nearTrailer, loaded = 0, false, 0
   local alive = true
   trailers.towedAlive = function() return alive and #distances or 0 end
-  trailers.spawnRoadside = function(kind, cars) roadside = roadside + 1 distances = { 20 } return kind == 'cartrailer' and #cars == 1 end
+  trailers.spawnRoadside = function(kind, cars) roadside = roadside + 1 distances = { 20 } alive = true return kind == 'cartrailer' and #cars == 1 end
   trailers.towedNear = function() if nearTrailer then return true end return false, 'Park the trailer next to the broken-down car first.' end
   trailers.loadTowed = function(cars) loaded = loaded + 1 distances = { 1 } return #cars == 1 end
+  local here = { pose.lat, pose.lon }
   local ok, err = pcall(function()
     core.setMode('trucking')
     advance(core, 2)
@@ -2358,12 +2361,13 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     -- the car waits by the road; Load puts it on once the trailer is next to it
     assert(roadside == 1 and spawned == 0 and s.phase == 'toPickup' and job.tow.waiting and job.tow.onBoard == 0)
     assert(core.phoneState().active.towWaiting, 'the phone offers Load')
+    assert(core.towWaiting() and core.stopInfo() == nil and s.stopT == 0, 'no stop countdown while the car waits for Load')
     advance(core, 40)
+    assert(s.stopT == 0, 'the countdown does not run over and over')
     assert(roadside == 1, 'stopping again does not spawn the car twice')
     alive = false                   -- the waiting car was deleted: stopping again brings it back
     advance(core, 40)
     assert(roadside == 2 and job.tow.waiting, 'a lost car is placed again')
-    alive = true
     core.phoneAction('towLoad')
     assert(loaded == 0 and s.phase == 'toPickup', 'not loaded while the trailer is away')
     nearTrailer = true
@@ -2391,6 +2395,18 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     assert(not s.job, 'delivered')
     assert(s.phone.lastDone.cargoCondition == 85 and s.phone.lastDone.pay <= math.floor(job.pay * 0.85 + 0.5))
     assert(c.history[1].kind == 'tow')
+    -- a cancelled tow job takes its trailer and car(s) along
+    pose.lat, pose.lon = here[1], here[2]
+    s.offers = {}
+    core.generate()
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    core.take(i)
+    pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+    advance(core)
+    assert(job.tow.waiting and #distances == 1)
+    local before = towRemoved
+    core.cancel(true)
+    assert(not s.job and towRemoved == before + 1 and #distances == 0, 'cancel clears the tow trailer and cars')
   end)
   for k, f in pairs(saved) do trailers[k] = f end
   assert(ok, err)
