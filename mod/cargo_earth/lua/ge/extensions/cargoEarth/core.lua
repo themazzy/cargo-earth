@@ -4529,7 +4529,7 @@ function M.onUpdate(dtReal, dtSim)
   end
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
-  trailers.update(dtReal)                                   -- couples a tow trailer once the game knows its hitch
+  trailers.update(dtReal, dtSim)                                 -- couples a tow trailer once the game knows its hitch
   if trailers.hitchFailed() and S.job and S.job.tow and S.job.tow.stage == 'hitch' then
     say('The trailer did not latch on. Stand still and press Hitch on the phone to try again.', 8)
   end

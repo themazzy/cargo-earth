@@ -423,9 +423,10 @@ local function stagedTick(dt)
   end
 end
 
-function M.update(dt)
+-- dtSim: simulation time (the staged crumple runs in physics time: paused or slow motion holds the countdown)
+function M.update(dt, dtSim)
   latchTick(dt or 0)
-  stagedTick(dt or 0)
+  stagedTick(dtSim or dt or 0)
   followTick()
   local h = hitchWanted
   if not h then return end
