@@ -754,7 +754,7 @@ function M.partsOffers(p, room, range)
   return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p), range)
 end
 
-local function towOffers(class, p)
+local function towOffers(class, p, weak)
   local c = S.career
   local kind = tow.CLASSES[class].trailer
   S.towCars = S.towCars or trailers.existing(tow.CARS)
@@ -787,6 +787,7 @@ local function towOffers(class, p)
   local factor = rating.freightPay(c)
   for _, offer in ipairs(out) do
     if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
+    if weak and offer.tow then offer.tow.weak = true end
     if firm.ownsTrailer(c, kind) then
       offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
       offer.pay = offer.pay + offer.trailerBonus
@@ -872,7 +873,7 @@ function M.generate()
     -- tow jobs: broken-down cars at real addresses, for a vehicle with a tow hitch or a tractor
     local class = v and tow.class(tier, tow.hasHitch(v))
     if class and S.fidx and garage.inOwnCar(M.G, S.career.garage) then
-      for _, offer in ipairs(towOffers(class, p)) do S.offers[#S.offers + 1] = offer end
+      for _, offer in ipairs(towOffers(class, p, tow.weak(class, v.specs))) do S.offers[#S.offers + 1] = offer end
     end
   end
   S.offeredAt = { lat = p.lat, lon = p.lon }
@@ -1091,9 +1092,9 @@ local function finishPickup()
     S.stopT = -10
     if j.tow.stage == 'hitch' and trailers.id() then return end
     local ok, why = trailers.spawnBorrowed(tow.CLASSES[j.tow.class].trailer)
-    if not ok then say('The trailer could not be put out: ' .. tostring(why), 6) return end
+    if not ok then say('No room for the trailer here (' .. tostring(why) .. '). Stop where it is free behind you.', 6) return end
     j.tow.stage, j.trailerSpawned = 'hitch', true
-    say(string.format('The %s is behind you. Press Hitch on the phone.', tow.CLASSES[j.tow.class].name:lower()), 8)
+    say(string.format('Putting the %s on your hitch…', tow.CLASSES[j.tow.class].name:lower()), 5)
     saveCareer()
     return
   elseif j.tow then
@@ -1157,9 +1158,14 @@ function M.towHitch()
     say('Back up to the trailer first: it stands at the workshop.', 5)
     return
   end
-  if not coupled and not trailers.hitch() then
-    j.tow.stage = 'shop'
-    say('The trailer is gone. Stop at the workshop again to get it.', 5)
+  if not coupled then
+    -- put on the hitch again; it counts once the game reports it coupled (tick)
+    if not trailers.hitch() then
+      j.tow.stage = 'shop'
+      say('The trailer is gone. Stop at the workshop again to get it.', 5)
+    else
+      say('Hitching the trailer…', 3)
+    end
     return
   end
   j.tow.stage = nil
@@ -4460,7 +4466,10 @@ function M.onUpdate(dtReal, dtSim)
   end
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
-  trailers.update()                                         -- couples a tow trailer once the game knows its hitch
+  trailers.update(dtReal)                                   -- couples a tow trailer once the game knows its hitch
+  if trailers.hitchFailed() and S.job and S.job.tow and S.job.tow.stage == 'hitch' then
+    say('The trailer did not latch on. Stand still and press Hitch on the phone to try again.', 8)
+  end
   if M.G.seatTick then M.G.seatTick() end                   -- the player sits in a car the mod just spawned
   if helper.commanding() then helper.pump(S.clock) end     -- radio presses: answered within frames, not ticks
   if S.clock >= (S.radioSyncAt or 0) then S.radioSyncAt = S.clock + 0.5 M.radioSync() end -- the UI page went away: the helper plays
@@ -4601,6 +4610,7 @@ end
 -- BeamNG.Earth moved the world's origin (modding API 1.7): positions worked out in the old frame are stale.
 function M.onBeamNGEarthRebased()
   marker.reset()
+  trailers.onRebased()
 end
 
 function M.onBeamNGEarthTeleported(info)
