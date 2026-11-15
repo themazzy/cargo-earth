@@ -2654,6 +2654,45 @@ test('bus depot marker: selection never spawns a bus until your car parks inside
   assert(s.career.employment.personalGarage.car.model == 'pigeon', 'your own car is stored before replacement')
 end)
 
+test('bus pickup preserves the selected depot when discovery refreshes or removes its board entry', function()
+  for _, refreshed in ipairs({true, false}) do
+    local core, s = fresh()
+    core.setMode('bus')
+    s.busIdx = bus.index()
+    bus.set(s.busIdx, busData())
+    s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+    core.busSelect(s.busBoard[1].id)
+    local selected = s.busDepot.offer
+    local other = copy(selected)
+    other.id = 'bus:other'
+    if refreshed then
+      local data = busData()
+      data.depots = {{id = 'newDepot', name = 'Newly discovered depot', lat = 50.012, lon = 14.002}}
+      bus.set(s.busIdx, data)
+      s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+      assert(s.busBoard[1].id == selected.id and s.busBoard[1].yard.id ~= selected.yard.id,
+        'same line discovered with a different depot')
+      s.busBoard[#s.busBoard + 1] = other
+    else
+      s.busBoard = {other}
+    end
+    pose.lat, pose.lon = selected.yard.g[1], selected.yard.g[2]
+    assert(core.busDepotInfo(pose).inZone, 'the displayed marker still uses the selected depot')
+    core.busDepotTick(pose, bus.PARK_S)
+    local shift = s.career.employment
+    assert(shift and not s.busDepot and s.career.garage.car.model == 'citybus',
+      'parking at the selected marker starts the shift after a board refresh')
+    assert(shift.yard.id == selected.yard.id and shift.yard.g[1] == selected.yard.g[1],
+      'the saved shift uses the selected depot for returning the personal car')
+    local kept = false
+    for _, offer in ipairs(s.busBoard) do
+      if offer.id == selected.id then assert(offer == selected, 'start uses the selected offer snapshot') end
+      if offer == other then kept = true end
+    end
+    assert(kept and #s.busBoard == 2, 'unrelated offers are preserved')
+  end
+end)
+
 test('the native bus doors and phone share boarding; closing early cancels without serving the stop', function()
   local core, s = fresh()
   core.setMode('bus')

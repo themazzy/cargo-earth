@@ -22,7 +22,7 @@ Close BeamNG and stop the helper. Replace the installed Cargo Earth mod ZIP with
 
 ## Verification
 
-- Lua syntax, 9 helper-client checks, 123 career checks, 9 dashboard checks, wreck checks, bundled depot data and the phone interaction/template checks passed. Native bus-door observation, the actual overlay rendering calls, depot parking and active-shift name recovery also passed isolated checks. Bus GPS distance/ETA refresh and stale-metric clearing are covered while keeping door-only stop progression.
+- Lua syntax, 9 helper-client checks, 124 career checks, 9 dashboard checks, wreck checks, bundled depot data and the phone interaction/template checks passed. Native bus-door observation, the actual overlay rendering calls, depot parking and active-shift name recovery also passed isolated checks. Bus GPS distance/ETA refresh and stale-metric clearing are covered while keeping door-only stop progression. Depot pickup preserves the selected offer when helper discovery changes its depot or removes its board entry.
 - 38 Python helper checks passed, including UTF-8 API output, retry/error-cache handling, queued/active progress and camera pause. One existing radio-relay check that opens a local socket was excluded after the execution sandbox blocked the socket.
 - Visual preview could not be opened because browser policy blocks local file URLs. Freight at the normal 290 x 560 size, depot marker placement, physical door controls and live bus discovery still need in-game verification.
 - The installed helper's log showed both successful bus downloads and repeated Overpass timeouts. The patch addresses local queueing, handling and visibility; it does not guarantee availability of the public Overpass servers.

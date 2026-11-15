@@ -2225,7 +2225,9 @@ function M.busDepotTick(p, dt)
   -- Keep the chosen offer even if the nearby board refreshed while driving to it.
   S.busBoard = S.busBoard or {}
   local found = false
-  for _, offer in ipairs(S.busBoard) do if offer.id == d.offer.id then found = true end end
+  for i, offer in ipairs(S.busBoard) do
+    if offer.id == d.offer.id then S.busBoard[i], found = d.offer, true break end
+  end
   if not found then S.busBoard[#S.busBoard + 1] = d.offer end
   local ok, why = companyStart(d.offer.id)
   if ok or S.career.employment then S.busDepot = nil else d.error = why end
