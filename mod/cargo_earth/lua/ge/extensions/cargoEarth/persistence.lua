@@ -23,6 +23,7 @@ local function job(j)
     and finite(j.pay) and j.pay >= 0 and finite(j.minutes) and j.minutes > 0) then return false end
   for _, key in ipairs({'startedActive', 'startedAt', 'km', 'pickupKm'}) do if j[key] ~= nil and not finite(j[key]) then return false end end
   if j.cargoCondition ~= nil and (not finite(j.cargoCondition) or j.cargoCondition < 0 or j.cargoCondition > 100) then return false end
+  if j.taxi ~= nil and (type(j.taxi) ~= 'table' or not finite(j.taxi.people) or j.taxi.people < 1 or j.taxi.people > 8) then return false end
   if j.bus ~= nil then
     local b = j.bus
     if type(b) ~= 'table' or type(b.stops) ~= 'table' or #b.stops < 2 or not finite(b.at) or b.at < 1 or b.at > #b.stops

@@ -223,9 +223,11 @@ package.loaded['cargoEarth/earth'] = {
   worldXY = function(p, pt) return p.x + (pt[2] - p.lon) * 71700, p.y + (pt[1] - p.lat) * 111320 end,
 }
 local seated   -- bus passengers the game was asked to seat
+local riders   -- taxi passengers the game was asked to seat
 local function adapter()
   return {
     busPassengers = function(n) seated = n return n end,
+    carPassengers = function(n) riders = n return n end,
     vehicle = function() return vehicle end, ownedVehicle = function() return vehicle end,
     isOwned = function() return true end, damage = function() return damageValue end, configs = function() return {} end,
     playerId = function() return vehicle and vehicle.id end, ownsVehicleId = function(id) return vehicle and vehicle.id == id end,
@@ -1573,11 +1575,101 @@ test('a small car in freight mode gets no parcel rounds and still sees company c
   advance(core, 2)
   core.generate()
   for _, offer in ipairs(s.offers) do
-    assert(offer.tow, 'no parcel rounds and no company freight board in a car')
+    assert(offer.tow or offer.taxi, 'no parcel rounds and no company freight board in a car')
   end
   local t = core.phoneState().trucking
   assert(t.carrier == 'Car' and #t.contracts == 1, 'company contracts are still listed')
   assert(t.hint and not t.hint:find('parcel'), 'the hint does not offer parcel rounds')
+end)
+
+-- addresses everywhere: a 5 x 5 grid in every 0.05 degree tile
+local function everywhere(row, col)
+  local rows = {}
+  for a = 0, 4 do
+    for b = 0, 4 do
+      local lat, lon = row * 0.05 + 0.005 + a * 0.01, col * 0.05 + 0.005 + b * 0.01
+      rows[#rows + 1] = {lat, lon, lat, lon, string.format('Street %d-%d %d%d', row, col, a, b), 'Town'}
+    end
+  end
+  return rows
+end
+
+-- places people take a taxi to (the helper's 't' rows): a ring of sights 3-9 km around 50.02, 14.02
+local function sightRows()
+  local rows = {}
+  for i = 1, 12 do
+    local a, d = i * math.pi / 6, 0.03 + (i % 4) * 0.015
+    rows[#rows + 1] = {'s' .. i, 50.02 + d * math.sin(a), 14.02 + d * 1.5 * math.cos(a), 'Sight ' .. i, 't', 'Town'}
+  end
+  rows[#rows + 1] = {'f1', 50.05, 14.05, 'A fuel station', 'f', 'Town'}
+  return rows
+end
+
+test('taxi rules: a passenger near you, a sight at the ride length, paid by the km', function()
+  local taxi = require('cargoEarth/taxi')
+  local idx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  local places = fuel.index()
+  fuel.addArea(places, 'k', sightRows())
+  local function near(lat, lon, k) return food.addressesNear(idx, lat, lon, k) end
+  local function sights(lat, lon, a, b)
+    local out = {}
+    for _, row in ipairs(fuel.within(places, lat, lon, 'sight', a, b)) do
+      local d = row.station
+      out[#out + 1] = { id = 'sight:' .. d.id, n = d.n, town = d.town, g = d.g }
+    end
+    return out
+  end
+  local seq = 0
+  local function rnd(n) seq = seq % n + 1 return seq end
+  local offers = taxi.offers(near, sights, 50.02, 14.02, rnd)
+  assert(#offers == taxi.OFFERS, 'three rides: ' .. #offers)
+  local seen = {}
+  for _, o in ipairs(offers) do
+    assert(o.taxi and o.kind == 'taxi' and o.taxi.people >= 1 and o.taxi.people <= 3)
+    assert(o.pickupKm <= taxi.NEAR_KM + 1e-9, 'the passenger waits near you')
+    assert(o.to.id:sub(1, 6) == 'sight:' and o.to.n:find('^Sight'), 'rides end at a sight, not an address')
+    assert(not seen[o.to.id], 'three different places') seen[o.to.id] = true
+    assert(o.km >= taxi.KM[1] * taxi.ROAD_FACTOR - 1e-9 and o.km <= taxi.KM[2] * taxi.ROAD_FACTOR + 1e-9)
+    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) / 5 + 0.5) * 5 and o.minutes > 0)
+    assert(cargo.supports(o) and cargo.handling(o) == 'Fragile', 'a rough ride is felt')
+  end
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, {maxKm = 1}) == 0, 'the longest-job setting holds')
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, function() return false end) == 0, 'a long detour is out')
+  assert(#taxi.offers(function() return {} end, sights, 50.02, 14.02, rnd) == 0, 'no addresses, no rides')
+  assert(#taxi.offers(near, function() return {} end, 50.02, 14.02, rnd) == 0, 'no sights, no rides')
+end)
+
+test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and gets out', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  vehicle.bodyStyle = 'Hatchback'
+  riders = nil
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    everywhere)
+  core.setMode('trucking')
+  advance(core, 2)
+  s.autoIdx = fuel.index()
+  core.generate()
+  for _, offer in ipairs(s.offers) do assert(not offer.taxi, 'no sights known, no taxi rides') end
+  fuel.addArea(s.autoIdx, 'k', sightRows())
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if offer.taxi then i, job = k, offer end end
+  assert(job, 'a car is offered taxi rides')
+  assert(job.to.n:find('^Sight'), 'to a sight')
+  core.take(i)
+  assert(s.job == job and s.phase == 'toPickup')
+  assert(core.phoneState().active.taxi.people == job.taxi.people)
+  pose.lat, pose.lon, pose.speed = job.from.g[1], job.from.g[2], 0
+  advance(core)
+  assert(s.phase == 'toDelivery' and riders == job.taxi.people, 'the passengers sit in the car')
+  local money = c.money
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(not s.job and c.money > money, 'paid at the sight')
+  advance(core, 4)
+  assert(riders == 0, 'and they get out')
 end)
 
 local cameras = require('cargoEarth/cameras')
