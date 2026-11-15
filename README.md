@@ -2,7 +2,7 @@
 
 A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight, work company contracts and build a garage at an address you choose.
 
-**Early development · mod 0.9.1 · helper 0.9.1**
+**Early development · mod 0.10.0 · helper 0.10.0**
 
 [Download the mod and helper (latest release)](https://github.com/themazzy/cargo-earth/releases/latest) · [Landing page](website/index.html) · [Payout statistics](docs/research/payout-statistics-0.3.5/README.md)
 
@@ -31,7 +31,7 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
 - **Tractor:** trailer freight, fuel tanker runs that resupply real fuel stations, heavy tow jobs.
 - **Anything with a tow hitch:** tow jobs. A wrecked car (crashed front, rear or side, rolled over, stripped or with
   flat tyres) waits by the road; park your trailer next to it and press **Load** on the phone. It goes to a real auto
-  repair shop or your own headquarters.
+  repair shop or your own headquarters. No trailer of your own? Borrow one at the repair shop first.
 - **Company contracts:** the phone lists the three nearest. Take one and the company lends you its van, box truck or
   tractor for the job; your own car waits for you. Independent contracts unlock at 20 reputation per employer.
 - Special cargo: fragile, chilled and oversize loads pay more and need care.
@@ -40,8 +40,8 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
 
 **Bus** (new)
 - Drive real city bus and trolleybus lines from OpenStreetMap. The city lends you a bus at the depot or terminus,
-  you stop at each stop and press **Open doors**, passengers get on and off, and the shift is paid when you bring the
-  bus back. See [bus lines](docs/BUS_LINES.md).
+  you stop at each stop and press **Open doors**, passengers get on and off and sit in the seats, and at the last stop
+  the bus is handed over and you go back to the depot and your car. See [bus lines](docs/BUS_LINES.md).
 
 ### Career
 
@@ -96,7 +96,7 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | Option | What it does |
 | --- | --- |
 | `-user-folder "D:\BeamNG\user"` | Use this BeamNG user folder when it is not found automatically |
-| `-version 0.9.1` | Install a specific release instead of the latest |
+| `-version 0.10.0` | Install a specific release instead of the latest |
 | `-mod-only`, `-helper-only` | Install only one part |
 | `-skip-python` | Don't install the helper's Python libraries |
 | `-zip <file>`, `-helper <file>` | Use files you already downloaded |
@@ -155,13 +155,13 @@ node tools/payout-stats.cjs
 
 The Windows installer is a small Go program in `installer/` (`cd installer && GOOS=windows go build -o CargoEarthSetup.exe .`).
 
-To publish a release, create a GitHub release with a tag such as `v0.9.1` and attach the mod ZIP and `cargo_earth_helper_*.py`. A workflow then builds `CargoEarthSetup.exe` and adds it to the same release.
+To publish a release, create a GitHub release with a tag such as `v0.10.0` and attach the mod ZIP and `cargo_earth_helper_*.py`. A workflow then builds `CargoEarthSetup.exe` and adds it to the same release.
 
 `npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
-This is an early development build, made by one person with a lot of help and tested in game as time allows. Bus lines, tow jobs (wrecks, coupling and loading), parts runs, vehicle-type detection, heavier loads and the BeamNG.Earth 1.10 speed limits are new in 0.10 and still need more driving; check the [release notes](docs/CAREER_0.10.0.md) for what is untested. Public places are candidate stops rather than certified loading bays, and a truck may not fit every yard a van does. Bulk and fluid loads have no condition yet. Bus passengers are counted, not seated people. The payout report describes 0.3.5, before fuel costs.
+This is an early development build, made by one person with a lot of help and tested in game as time allows. Bus lines, tow jobs (wrecks, coupling and loading), parts runs, vehicle-type detection, heavier loads and the BeamNG.Earth 1.10 speed limits are new in 0.10 and still need more driving; check the [release notes](docs/CAREER_0.10.0.md) for what is untested. Public places are candidate stops rather than certified loading bays, and a truck may not fit every yard a van does. Bulk and fluid loads have no condition yet. The payout report describes 0.3.5, before fuel costs.
 
 The helper fetches public Overture source data; busy areas and first visits may take time to load. Python queries and connections are bounded, but real-world latency and coverage vary.
 
