@@ -10,6 +10,12 @@ local M = { SHARE = 0.8, RADIUS = 60, PREPARE_TIMEOUT = 25, INDEPENDENT_REP = 20
 -- The contracts stay short (two deliveries out of one yard) so a shift fits one sitting even in a truck.
 M.KM = { van = { 1, 20 }, rigid = { 12, 40 }, semi = { 20, 60 } }
 M.PER_TIER = { van = 5, rigid = 3, semi = 3 }
+
+-- What the shift is driven in, for phone texts: 'van', 'box truck', 'tractor' or 'city bus'.
+function M.vehicleLabel(shift)
+  local loaner = shift and haul.loaners[shift.tier or 'van']
+  return loaner and loaner.label or 'vehicle'
+end
 -- What the company vehicle carries, for quoting. The loaded amounts are fitted to the real containers at the yard.
 local containers = {
   van = { { id = 1, cargoTypes = { 'parcel' }, capacity = 96 } },
@@ -187,7 +193,8 @@ function M.settle(c, aborted)
   c.lastContract = { company = s.companyName, gross = s.gross, share = s.gross - wages, wages = wages,
     toDebt = toDebt, net = wages - toDebt, completed = s.completed, failed = s.failed or 0,
     vehicleDamage = s.vehicleDamage or 0, reputationChange = company.reputation - previous,
-    reputationScore = M.reputation(s, aborted), aborted = aborted == true, ownerOperator = s.ownerOperator }
+    reputationScore = M.reputation(s, aborted), aborted = aborted == true, ownerOperator = s.ownerOperator,
+    vehicle = M.vehicleLabel(s) }
   s.phase = 'settled'
   return true
 end

@@ -41,6 +41,13 @@ function M.order(seats, seed)
   return out
 end
 
+-- How many people can ride along: the seats of the game's getSeats list other than the driver's and the player's.
+-- nil when the car has no seat system (the game can't say, most mod cars).
+function M.freeSeats(seats)
+  if type(seats) ~= 'table' then return nil end
+  return #M.order(seats, '')
+end
+
 -- What to change so n people sit: { add = { seatId... }, remove = { seatId... }, shown = seated count }.
 function M.plan(seats, n, seed)
   local order = M.order(seats, seed)

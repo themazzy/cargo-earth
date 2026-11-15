@@ -263,6 +263,17 @@ function M.busDoors(open)
   return true
 end
 
+function M.watchBusDoors(id, token)
+  local v = getObjectByID and getObjectByID(id)
+  if not v or not v.queueLuaCommand then return false end
+  if token then
+    v:queueLuaCommand(string.format('extensions.load("cargoEarth_busdoors"); if extensions.cargoEarth_busdoors then extensions.cargoEarth_busdoors.watch(%d) end', token))
+  else
+    v:queueLuaCommand('if extensions.cargoEarth_busdoors then extensions.unload("cargoEarth_busdoors") end')
+  end
+  return true
+end
+
 ------------------------------------------------------------------------------------------ people in the seats
 local function seatSystem() return rawget(_G, 'gameplay_seatOccupants') or ext('gameplay_seatOccupants') end
 
@@ -300,6 +311,21 @@ function M.carPassengers(n, seed)
   for _, seatId in ipairs(plan.remove) do pcall(so.clearDummyOccupant, id, seatId) end
   for _, seatId in ipairs(plan.add) do pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG) end
   return plan.shown
+end
+
+-- Passenger seats in the car the player drives (taxi rides): the seats besides the driver's, or nil when the car has no
+-- seat system (most mod cars), so its seats are unknown.
+function M.freeSeats()
+  local so, v = seatSystem(), playerVeh()
+  if not (so and so.getSeats and v) then return nil end
+  local id = v:getID()
+  if so.usesSeatSystem then
+    local okUses, uses = pcall(so.usesSeatSystem, id)
+    if not okUses or not uses then return nil end
+  end
+  local okSeats, seats = pcall(so.getSeats, id)
+  if not okSeats or type(seats) ~= 'table' or #seats == 0 then return nil end
+  return require('cargoEarth/occupants').freeSeats(seats)
 end
 
 -- After the mod spawned, swapped or respawned the player's car: once the game knows its seats, the player sits in the
@@ -608,3 +634,4 @@ end
 function M._reset() configsCache, jbeamIO = nil, nil end
 
 return M
+

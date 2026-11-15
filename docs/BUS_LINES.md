@@ -5,7 +5,7 @@ A third work mode beside food delivery and freight: pick **Bus** on the phone's 
 ## Where the lines come from
 
 The helper asks OpenStreetMap (Overpass API), one request per 0.04 degree cell (about 4 x 3 km) around the player,
-one request at a time (waits up to 90 s), kept for 14 days (`/v1/buslines`). It finds the bus stops and platforms of
+one request at a time (waits up to 40 s per server), kept for 14 days (`/v1/buslines`). It finds the bus stops and platforms of
 the cell first, then only the bus and trolleybus route relations (`type=route`, `route=bus|trolleybus`) that stop
 there, then only those lines' stops and platforms (not their roads), and the bus stations / depots of the cell
 (`amenity=bus_station`, `depot=bus`; a bare `landuse=depot` is left out, it is as often a tram or train depot). Each relation is one direction of a
@@ -18,11 +18,13 @@ OpenStreetMap maps the lines; data (c) OpenStreetMap contributors, ODbL.
 
 1. The phone lists up to 6 lines whose bus is lent within 4 km of you: at the bus station or depot nearest to the
    line's first stop (within 3 km), else at that first stop ("Terminus ...").
-2. Drive your own career car there and press **Start**: the city lends you a stock Wentward city bus (a city
-   configuration when the game has one); your car is kept, as with company contracts.
-3. Drive to each stop in turn. Stop within 30 m and press **Open doors**. People get off (none at the first stop,
+2. Press **Choose line** to set GPS and show a depot marker. Drive your own career car there and park inside the
+   12 m marker for two seconds. Only then is your car stored and replaced by a stock Wentward city bus. A helper
+   refresh cannot move the pickup after you have selected it. **Cancel selection** cancels before bus pickup.
+3. Drive to each stop in turn. Stop within 30 m and press **Open doors** or **O**. People get off (none at the first stop,
    0-40 % at the others, everyone at the last) and get on (fewer towards the end, never more than 70 on board). The
-   doors stay open 3 s plus 0.6 s a person (15 s at most). Driving off before they close serves nobody: stop and open
+   doors stay open 3 s plus 0.6 s a person (15 s at most), with the same timer on the phone and upper overlay.
+   Closing the doors early cancels boarding. Driving off before they close serves nobody: stop and open
    them again. A stop the bus cannot reach (a road missing in BeamNG.Earth, say) can be passed with **Skip stop**:
    nobody gets on there and the stop is not paid.
 4. After the last stop the line is paid: 120 + 12 per km + 6 per stop (less each skipped stop's share), plus 2 per
@@ -52,3 +54,4 @@ shows the player in the driver's seat, and the game can seat dummy people in the
 - **Driver.** After the mod spawns, swaps or respawns the player's car, it checks once (1 to 8 s later) that the
   player sits in a seat and asks the game to seat them if not. Mod cars without seat occupant slots show no driver;
   that is up to the car's author.
+

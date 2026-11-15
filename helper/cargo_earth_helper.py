@@ -64,8 +64,9 @@ import time
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from contextlib import contextmanager
 
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 AREA_CACHE_VERSION = "7"  # taxi destinations (airports, stations, sights); retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
@@ -848,8 +849,29 @@ class Areas:
 ######################################################################################## speed cameras (OpenStreetMap)
 
 OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
-OVERPASS_TIMEOUT_S = 90       # the helper waits this long for an answer (a city's bus lines take a while)
-OVERPASS_ONE = threading.Lock()   # one Overpass request at a time: a burst of them is refused (HTTP 429)
+OVERPASS_TIMEOUT_S = 40       # fail over without blocking the queue for minutes per mirror
+OVERPASS_ONE = threading.Condition()
+OVERPASS_WAITING = []
+OVERPASS_ACTIVE = False
+
+
+@contextmanager
+def overpass_slot(priority=1):
+    """One request at a time; the player's bus search goes ahead of background camera downloads."""
+    global OVERPASS_ACTIVE
+    ticket = (priority, time.monotonic(), object())
+    with OVERPASS_ONE:
+        OVERPASS_WAITING.append(ticket)
+        while OVERPASS_ACTIVE or min(OVERPASS_WAITING, key=lambda t: t[:2]) is not ticket:
+            OVERPASS_ONE.wait()
+        OVERPASS_WAITING.remove(ticket)
+        OVERPASS_ACTIVE = True
+    try:
+        yield
+    finally:
+        with OVERPASS_ONE:
+            OVERPASS_ACTIVE = False
+            OVERPASS_ONE.notify_all()
 CAMERA_CELL = 0.5          # one Overpass request covers this many degrees
 CAMERA_REACH = 0.15        # cells this close to the player are fetched too, degrees
 CAMERA_DAYS = 30           # a cached cell is asked for again after this long
@@ -919,12 +941,14 @@ class OsmCells:
     disk. A subclass names the cache folder and field (NAME), the cell size, reach and age (CELL, REACH, DAYS), the
     query for a cell (query) and how its answer becomes rows (rows)."""
     NAME, CELL, REACH, DAYS, MAX_BYTES = "cells", 0.5, 0.15, 30, 4 * 1024 * 1024
+    CACHE_VERSION = 1
 
     def __init__(self, cache_dir, fetch=None):
         self.dir = os.path.join(cache_dir, self.NAME)
         os.makedirs(self.dir, exist_ok=True)
-        self.fetch = fetch or self._overpass
+        self.fetch = fetch
         self.state, self.fail_at = {}, {}
+        self.details, self.retried_at = {}, {}
         self.lock = threading.Lock()
 
     def path(self, key):
@@ -936,14 +960,21 @@ class OsmCells:
     def rows(self, data):
         raise NotImplementedError
 
-    def _overpass(self, box):
+    def _overpass(self, box, progress=lambda **fields: None):
         q = self.query(box)
         err = None
-        with OVERPASS_ONE:
-            for base in OVERPASS:
+        with overpass_slot(0 if self.NAME == "lines" else 1):
+            for attempt, base in enumerate(OVERPASS, 1):
+                progress(phase="fetching", server=urllib.parse.urlsplit(base).hostname, attempt=attempt)
                 try:
-                    return json.loads(http_get(base + "?data=" + urllib.parse.quote(q), tries=1,
+                    data = json.loads(http_get(base + "?data=" + urllib.parse.quote(q), tries=1,
                                                timeout=OVERPASS_TIMEOUT_S))
+                    # Overpass can return HTTP 200 with a runtime error and incomplete/empty elements.
+                    if not isinstance(data, dict) or not isinstance(data.get("elements"), list):
+                        raise ValueError("OpenStreetMap returned an invalid response")
+                    if data.get("remark"):
+                        raise ValueError(str(data["remark"])[:300])
+                    return data
                 except Exception as e2:  # noqa: BLE001 - the next mirror
                     err = e2
         raise err
@@ -952,7 +983,8 @@ class OsmCells:
         try:
             with open(self.path(key), "rb") as f:
                 data = json.loads(f.read(self.MAX_BYTES))
-            if time.time() - data["at"] < self.DAYS * 86400 and isinstance(data[self.NAME], list):
+            if (data.get("format", 1) == self.CACHE_VERSION and time.time() - data["at"] < self.DAYS * 86400
+                    and isinstance(data[self.NAME], list)):
                 return data[self.NAME]
         except (OSError, ValueError, KeyError, TypeError):
             pass
@@ -960,31 +992,53 @@ class OsmCells:
 
     def _work(self, key):
         r, c = map(int, key.split("_"))
+        def progress(**fields):
+            with self.lock:
+                self.details.setdefault(key, {}).update(fields)
         try:
-            rows = self.rows(self.fetch((r * self.CELL, c * self.CELL, (r + 1) * self.CELL, (c + 1) * self.CELL)))
+            box = (r * self.CELL, c * self.CELL, (r + 1) * self.CELL, (c + 1) * self.CELL)
+            data = self.fetch(box) if self.fetch else self._overpass(box, progress)
+            if isinstance(data, dict) and data.get("remark"):
+                raise ValueError(str(data["remark"])[:300])
+            rows = self.rows(data)
             tmp = self.path(key) + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"at": time.time(), self.NAME: rows}, f, separators=(",", ":"))
+                json.dump({"at": time.time(), "format": self.CACHE_VERSION, self.NAME: rows}, f, separators=(",", ":"))
             os.replace(tmp, self.path(key))
             log(f"{self.NAME} {key}: {len(rows)}")
             with self.lock:
                 self.state[key] = rows
+                self.details[key] = {"phase": "ready"}
+                self.fail_at.pop(key, None)
         except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
             log(f"{self.NAME} {key} failed:", repr(e))
             with self.lock:
                 self.state.pop(key, None)
                 self.fail_at[key] = time.time()
+                self.details[key] = {"phase": "failed", "error": str(e)[:300] or type(e).__name__}
 
-    def near(self, lat, lon):
+    def near(self, lat, lon, retry=False):
         if not math.isfinite(lat) or not math.isfinite(lon) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
             raise ValueError("coordinates must be finite WGS84 latitude/longitude")
         keys = sorted({f"{int(math.floor((lat + a) / self.CELL))}_{int(math.floor((lon + b) / self.CELL))}"
                        for a in (-self.REACH, 0, self.REACH) for b in (-self.REACH, 0, self.REACH)
                        if abs(lat + a) < 90 and abs(lon + b) < 180})
         out = {"state": "ready", "cells": keys, self.NAME: []}
+        out.update(ready=0, loading=0, queued=0, failed=0, total=len(keys), elapsed=0, errors=[], retryAfter=0)
         for key in keys:
             with self.lock:
                 rows = self.state.get(key)
+                # Manual retry rechecks failures and empty caches, never duplicates an in-flight request.
+                if (retry and rows != "loading" and time.time() - self.retried_at.get(key, 0) >= 15
+                        and (rows == [] or key in self.fail_at or rows is None)):
+                    self.retried_at[key] = time.time()
+                    self.state.pop(key, None)
+                    self.fail_at.pop(key, None)
+                    try:
+                        os.remove(self.path(key))
+                    except FileNotFoundError:
+                        pass
+                    rows = None
                 if rows is None:
                     rows = self._load(key)
                     if rows is not None:
@@ -993,7 +1047,21 @@ class OsmCells:
                         rows = "failed"
                     else:
                         rows = self.state[key] = "loading"
+                        self.details[key] = {"phase": "queued", "since": time.time()}
                         threading.Thread(target=self._work, args=(key,), daemon=True).start()
+                detail = self.details.get(key, {})
+                if isinstance(rows, list):
+                    out["ready"] += 1
+                elif rows == "failed":
+                    out["failed"] += 1
+                    out["errors"].append(detail.get("error", "OpenStreetMap request failed"))
+                    out["retryAfter"] = max(out["retryAfter"], math.ceil(max(0, 300 - (time.time() - self.fail_at[key]))))
+                else:
+                    out["loading"] += 1
+                    out["queued"] += int(detail.get("phase") == "queued")
+                    out["elapsed"] = max(out["elapsed"], int(time.time() - detail.get("since", time.time())))
+                    if detail.get("server"):
+                        out["server"], out["attempt"] = detail["server"], detail["attempt"]
                 for old in [k for k in self.state if k not in keys and self.state[k] != "loading"]:
                     del self.state[old]
             if isinstance(rows, list):
@@ -1006,6 +1074,15 @@ class OsmCells:
 class Cameras(OsmCells):
     """Speed cameras around the player."""
     NAME, CELL, REACH, DAYS, MAX_BYTES = "cameras", CAMERA_CELL, CAMERA_REACH, CAMERA_DAYS, MAX_CAMERA_BYTES
+
+    def __init__(self, cache_dir, fetch=None, enabled=True):
+        super().__init__(cache_dir, fetch)
+        self.enabled = enabled
+
+    def near(self, lat, lon):
+        if not self.enabled:
+            return {"state": "paused", "cameras": [], "message": "Speed cameras are temporarily paused."}
+        return super().near(lat, lon)
 
     def query(self, box):
         s, w, n, e = box
@@ -1115,6 +1192,7 @@ def bus_rows(data):
 class BusLines(OsmCells):
     """City bus lines (OSM route relations) and bus stations / depots around the player."""
     NAME, CELL, REACH, DAYS, MAX_BYTES = "lines", BUS_CELL, BUS_REACH, BUS_DAYS, MAX_BUS_BYTES
+    CACHE_VERSION = 2       # old empty results may be cached Overpass runtime errors
 
     def query(self, box):
         s, w, n, e = box
@@ -1124,8 +1202,7 @@ class BusLines(OsmCells):
         stops = "".join(f'node(r.r:"{role}");' for role in BUS_STOP_ROLES + BUS_PLATFORM_ROLES)
         platforms = "".join(f'way(r.r:"{role}");' for role in BUS_PLATFORM_ROLES)
         return (f'[out:json][timeout:{OVERPASS_TIMEOUT_S - 10}];'
-                f'(node["highway"="bus_stop"]{b};node["public_transport"~"^(stop_position|platform)$"]["bus"="yes"]{b};'
-                f'node["public_transport"~"^(stop_position|platform)$"]["trolleybus"="yes"]{b};)->.s;'
+                f'(node["highway"="bus_stop"]{b};node["public_transport"~"^(stop_position|platform)$"]{b};)->.s;'
                 f'way["public_transport"="platform"]{b}->.p;'
                 f'(rel(bn.s);rel(bw.p);)->.a;'
                 f'rel.a["type"="route"]["route"~"^(bus|trolleybus)$"]->.r;.r out body;'
@@ -1135,9 +1212,9 @@ class BusLines(OsmCells):
     def rows(self, data):
         return bus_rows(data)
 
-    def near(self, lat, lon):
+    def near(self, lat, lon, retry=False):
         """The lines once each (a line crosses cells), and the depots apart: {"state", "cells", "lines", "depots"}."""
-        out = super().near(lat, lon)
+        out = super().near(lat, lon, retry)
         lines, depots, seen = [], [], set()
         for row in out["lines"]:
             if row.get("id") in seen:
@@ -1749,7 +1826,8 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
-                body = json.dumps(body).encode()
+                # BeamNG's SJSON decoder does not preserve JSON \u escapes. Send the actual UTF-8 text.
+                body = json.dumps(body, ensure_ascii=False).encode('utf-8')
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
@@ -1829,7 +1907,7 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                 if u.path == "/v1/cameras" and cameras:
                     return self._send(200, cameras.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/buslines" and buslines:
-                    return self._send(200, buslines.near(float(q["lat"]), float(q["lon"])))
+                    return self._send(200, buslines.near(float(q["lat"]), float(q["lon"]), retry=q.get("retry") == "1"))
                 if u.path == "/v1/radio" and radio:
                     lat, lon = q.get("lat"), q.get("lon")
                     return self._send(200, radio.near(q.get("cc", ""), float(lat) if lat else None, float(lon) if lon else None))
@@ -1931,9 +2009,10 @@ def main():
         budget.prune(force=True)
         return
     updates = Updates(a.cache, enabled=not a.no_update_check).start()
-    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache), player=Player(), srv=srv,
+    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=Player(), srv=srv,
           updates=updates, buslines=BusLines(a.cache))
 
 
 if __name__ == "__main__":
     main()
+

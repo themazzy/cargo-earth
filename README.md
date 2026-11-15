@@ -2,7 +2,7 @@
 
 A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight, work company contracts and build a garage at an address you choose.
 
-**Early development · mod 0.10.0 · helper 0.10.0**
+**Early development · mod 0.10.1 · helper 0.10.1**
 
 [Download the mod and helper (latest release)](https://github.com/themazzy/cargo-earth/releases/latest) · [Landing page](website/index.html) · [Payout statistics](docs/research/payout-statistics-0.3.5/README.md)
 
@@ -10,7 +10,7 @@ A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight,
 
 Cargo Earth turns BeamNG.Earth's real-world maps into a working life. Real restaurants, addresses, depots, repair shops,
 fuel stations, bus lines and speed cameras come from Overture Maps and OpenStreetMap, so the same game works in your
-own town and anywhere else on Earth. Everything is done by clicking on an in-game phone; the mod has no key bindings.
+own town and anywhere else on Earth. Every action is available on the in-game phone; buses also support the normal door key (O).
 
 ### Three ways to work
 
@@ -39,9 +39,9 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
   and the phone shows the kg on board and dropped at each stop.
 
 **Bus** (new)
-- Drive real city bus and trolleybus lines from OpenStreetMap. The city lends you a bus at the depot or terminus,
-  you stop at each stop and press **Open doors**, passengers get on and off and sit in the seats, and at the last stop
-  the bus is handed over and you go back to the depot and your car. See [bus lines](docs/BUS_LINES.md).
+- Choose a real city bus or trolleybus line, then park your own car inside its depot marker for two seconds.
+  Your car is stored and replaced by a city bus. Open its doors at each stop using **O** or the phone; both displays
+  show the same passenger timer. At the last stop, hand over the bus and return to your car. See [bus lines](docs/BUS_LINES.md).
 
 ### Career
 
@@ -59,8 +59,8 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
   office, buy trucks and trailers and hire drivers. Drivers have licences (car, truck, articulated), speed, care, a
   wage and a vehicle they know best.
 - Get paid in the money of the country you drive in; crossing a border exchanges it for free.
-- Mind real speed cameras: a fine and a lost star for passing one too fast. The phone shows the posted speed limit of
-  the road you are on.
+- Speed cameras are temporarily paused: no camera downloads, camera fines or lost stars. The normal road speed-limit
+  display still works.
 - A delivery map with your personal records, and a full progress and finance overview.
 - Restart the career any time from Menu → Settings (type DELETE to confirm).
 
@@ -80,7 +80,7 @@ Career Overhaul project.
 
 ## Install
 
-You need **BeamNG.drive** (Windows) and **[BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) 1.9.0-beta or newer** installed and working first (1.10 adds posted speed limits). Cargo Earth has two parts:
+You need **BeamNG.drive** (Windows or Linux) and **[BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) 1.9.0-beta or newer** installed and working first (1.10 adds posted speed limits). Cargo Earth has two parts:
 
 - **the mod** (a ZIP in BeamNG's `mods` folder): the career and the phone, in the game;
 - **the helper** (a small Python program): it downloads restaurants, shops, workplaces, addresses, fuel stations, speed cameras, bus lines, repair shops and radio stations around you, and plays the radio. The game cannot go online itself, so the helper does it. BeamNG.Earth starts it for you.
@@ -98,7 +98,7 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | Option | What it does |
 | --- | --- |
 | `-user-folder "D:\BeamNG\user"` | Use this BeamNG user folder when it is not found automatically |
-| `-version 0.10.0` | Install a specific release instead of the latest |
+| `-version 0.10.1` | Install a specific release instead of the latest |
 | `-mod-only`, `-helper-only` | Install only one part |
 | `-skip-python` | Don't install the helper's Python libraries |
 | `-zip <file>`, `-helper <file>` | Use files you already downloaded |
@@ -107,6 +107,26 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | `-dry-run` | Only show what would happen |
 
 In the game you can do the same from the phone: Menu → Settings → Restart career (type DELETE to confirm). It also works on the screen that offers to load a saved career.
+
+### Quick install (Linux x86_64 / Steam Deck Desktop Mode)
+
+1. Download **[CargoEarthSetup-linux-x86_64](https://github.com/themazzy/cargo-earth/releases/latest/download/CargoEarthSetup-linux-x86_64)** from a release that includes the Linux installer.
+2. Open a terminal in the download folder and run:
+
+   ```sh
+   chmod +x CargoEarthSetup-linux-x86_64
+   ./CargoEarthSetup-linux-x86_64
+   ```
+
+3. Choose **1** (install or update), then follow **First start** below. Run as your normal user, without `sudo`. Python 3.9+ with `venv` support is required (some distributions package this as `python3-venv`). The installer creates a private Python environment for the manual helper launcher and installs `duckdb` and `fsspec` there.
+
+The installer uses the active profile remembered by BeamNG.Earth, or detects native, Flatpak and Snap BeamNG user folders. If several profiles exist, or you use Proton or a custom location, specify the active profile explicitly:
+
+```sh
+./CargoEarthSetup-linux-x86_64 -user-folder "/path/to/BeamNG/BeamNG.drive/current"
+```
+
+The same command-line options listed for Windows work on Linux. The helper is installed in `${XDG_DATA_HOME:-$HOME/.local/share}/CargoEarth/helper`; run `start_helper.sh` there to start it manually. Registration goes in `~/.cache/beamng-earth/addons/local.json`, matching BeamNG.Earth's Linux app directory. For helper radio playback, install `ffplay`, `mpv`, or `cvlc`. `-skip-python` skips environment and dependency installation; the manual helper launcher then uses your system Python, whose dependencies you must provide yourself.
 
 ### Manual install
 
@@ -124,7 +144,7 @@ In the game you can do the same from the phone: Menu → Settings → Restart ca
 4. **Choose Career or Free play** on the phone, pick Food delivery, Freight or Bus and go online on **Work**.
 5. Optional: turn **traffic on in BeamNG.Earth** for the speed-limit sign on the phone (it reads Earth's road graph).
 
-If the phone says the helper is not running: check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras, bus lines, parts runs, repair shops and grocery runs still need it.
+If the phone says the helper is not running: check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` on Windows or `start_helper.sh` from `${XDG_DATA_HOME:-$HOME/.local/share}/CargoEarth/helper` on Linux and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras, bus lines, parts runs, repair shops and grocery runs still need it.
 
 The phone keeps what you need while driving: **Work** (deliveries), **Radio**, and a fuel line at the bottom. **Menu** opens a big window over the game with **Garage**, **Home**, **Companies**, **Progress**, **Finances**, **Delivery map**, **Firm** and **Settings**. The firm's headquarters opens from Firm as a full-screen plan of the building.
 
@@ -155,15 +175,15 @@ node tools/payout-stats.cjs
 
 `earth-addons/cz-terrain/` is a separate BeamNG.Earth add-on: Czech DMR 5G lidar terrain in place of Mapterhorn's 5 m grid (see its README).
 
-The Windows installer is a small Go program in `installer/` (`cd installer && GOOS=windows go build -o CargoEarthSetup.exe .`).
+Both installers share the Go program in `installer/`. From that folder, build with `GOOS=windows GOARCH=amd64 go build -o CargoEarthSetup.exe .` or `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o CargoEarthSetup-linux-x86_64 .`. Run installer checks with `go test ./...` and `go vet ./...`.
 
-To publish a release, create a GitHub release with a tag such as `v0.10.0` and attach the mod ZIP and `cargo_earth_helper_*.py`. A workflow then builds `CargoEarthSetup.exe` and adds it to the same release.
+To publish a release, create a GitHub release with a tag such as `v0.10.1` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
-This is an early development build, made by one person with a lot of help and tested in game as time allows. Bus lines, tow jobs (wrecks, coupling and loading), parts runs, vehicle-type detection, heavier loads and the BeamNG.Earth 1.10 speed limits are new in 0.10 and still need more driving; check the [release notes](docs/CAREER_0.10.0.md) for what is untested. Public places are candidate stops rather than certified loading bays, and a truck may not fit every yard a van does. Bulk and fluid loads have no condition yet. The payout report describes 0.3.5, before fuel costs.
+This is an early development build, made by one person with a lot of help and tested in game as time allows. Bus lines, tow jobs (wrecks, coupling and loading), parts runs, vehicle-type detection, heavier loads and the BeamNG.Earth 1.10 speed limits are new in 0.10 and still need more driving; check the [release notes](docs/CAREER_0.10.1.md) for what is untested. Public places are candidate stops rather than certified loading bays, and a truck may not fit every yard a van does. Bulk and fluid loads have no condition yet. The payout report describes 0.3.5, before fuel costs.
 
 The helper fetches public Overture source data; busy areas and first visits may take time to load. Python queries and connections are bounded, but real-world latency and coverage vary.
 
