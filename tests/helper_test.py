@@ -320,6 +320,49 @@ class NetworkAndStorageTests(unittest.TestCase):
             self.assertEqual(cameras.near(50.25, 14.25)["state"], "failed")
             self.assertEqual(len(calls), 1)
 
+    def test_bus_lines_from_route_relations(self):
+        def node(i, lat, lon, name=None):
+            return {"type": "node", "id": i, "lat": lat, "lon": lon, "tags": {"name": name} if name else {}}
+        els = [node(1, 50.000, 14.000, "A"), node(2, 50.005, 14.000), node(3, 50.010, 14.000, "C"),
+               node(4, 50.015, 14.000, "D"), node(5, 50.020, 14.000, "E"),
+               node(11, 50.0051, 14.0002, "B platform"), node(12, 50.30, 14.0, "Far")]
+        good = {"type": "relation", "id": 100, "tags": {"type": "route", "route": "bus", "ref": "136", "name": "Bus 136",
+                                                         "operator": "DPP", "to": "Terminal E"},
+                "members": [{"type": "node", "ref": r, "role": "stop"} for r in (1, 2, 3, 3, 4, 5)]
+                + [{"type": "node", "ref": 11, "role": "platform"}, {"type": "way", "ref": 99, "role": ""}]}
+        gappy = {"type": "relation", "id": 101, "tags": {"type": "route", "route": "bus"},
+                 "members": [{"type": "node", "ref": r, "role": "stop"} for r in (1, 2, 3, 12)]}
+        tram = dict(good, id=102, tags={"type": "route", "route": "tram"})
+        short = {"type": "relation", "id": 103, "tags": {"type": "route", "route": "bus"},
+                 "members": [{"type": "node", "ref": r, "role": "stop"} for r in (1, 2)]}
+        station = {"type": "way", "id": 7, "center": {"lat": 50.001, "lon": 14.001}, "tags": {"amenity": "bus_station", "name": "Hub"}}
+        depot = {"type": "node", "id": 8, "lat": 50.002, "lon": 14.002, "tags": {"landuse": "depot", "depot": "tram"}}
+        rows = helper.bus_rows({"elements": els + [good, gappy, tram, short, station, depot]})
+        lines = [r for r in rows if not r.get("depot")]
+        self.assertEqual([r["id"] for r in lines], ["r100"])
+        line = lines[0]
+        self.assertEqual([st[0] for st in line["stops"]], ["A", "B platform", "C", "D", "E"])
+        self.assertEqual((line["ref"], line["from"], line["to"], line["operator"]), ("136", "A", "Terminal E", "DPP"))
+        self.assertAlmostEqual(line["km"], 2.23, places=1)
+        self.assertEqual([r for r in rows if r.get("depot")],
+                         [{"depot": True, "id": "w7", "name": "Hub", "kind": "station", "lat": 50.001, "lon": 14.001}])
+
+    def test_bus_lines_crossing_cells_come_once(self):
+        line = {"id": "r1", "ref": "5", "name": "", "from": "A", "to": "B", "operator": "", "colour": "", "km": 3,
+                "stops": [["A", 50, 14], ["B", 50.01, 14], ["C", 50.02, 14], ["D", 50.03, 14]]}
+        with cache_dir() as cache:
+            lines = helper.BusLines(str(cache), lambda box: {"elements": []})
+            lines.rows = lambda data: [line, {"depot": True, "id": "n1", "name": "Hub", "kind": "station", "lat": 50, "lon": 14}]
+            for _ in range(200):
+                got = lines.near(50.099, 14.099)
+                if got["state"] == "ready":
+                    break
+                time.sleep(0.01)
+            self.assertEqual(got["state"], "ready")
+            self.assertEqual(len(got["lines"]), 1)
+            self.assertGreaterEqual(len(got["depots"]), 1)
+            self.assertGreater(len(got["cells"]), 1)
+
     def test_radio_rows_keep_working_streams_of_the_country(self):
         good = {"stationuuid": "960e57c5-0601-11e8-ae97-52543be04c81", "name": " Radio  Jih ", "url": "http://a/x.pls",
                 "url_resolved": "http://a/stream", "codec": "MP3", "bitrate": 128, "countrycode": "CZ", "state": "South Bohemia",

@@ -3,8 +3,8 @@
 --     really bends; the rest of the car is pushed back just as hard, so it does not move off;
 --   a few break groups (bumpers, mirrors, lights) are broken off, all of them for 'stripped', with the doors too;
 --   one or two tyres go flat.
--- It is done again after a reset (a teleport onto the trailer can reset the car). Every game call is guarded: a call
--- the game does not have is skipped.
+-- It is done again after a reset (moving the car onto the trailer with setPositionRotation resets it: the game's
+-- vePartTree.lua). Every game call is guarded: a call the game does not have is skipped.
 local M = {}
 
 M.DELAY_S = 1.0          -- let the car settle on its wheels first
@@ -25,10 +25,8 @@ local function rand(n)
   return seed % n + 1
 end
 
-local function vecOf(x, y, z)
-  if float3 then return float3(x, y, z) end
-  return vec3(x, y, z)
-end
+-- the game passes forces as vec3 in newtons, world frame (lua/vehicle/playerController.lua)
+local function vecOf(x, y, z) return vec3(x, y, z) end
 
 local function nodePos(cid)
   local ok, p = pcall(function() return obj:getNodePosition(cid) end)
@@ -92,12 +90,14 @@ local function breakParts()
   end
 end
 
+-- beamstate.deflateTire takes the wheel's key in wheels.wheels (its index, not its name)
 local function flatTyres()
   if not beamstate or type(beamstate.deflateTire) ~= 'function' then return end
-  local count = 0
-  for _ in pairs(wheels and wheels.wheels or {}) do count = count + 1 end
-  if count == 0 then return end
-  for _ = 1, (kind == 'flat' or kind == 'stripped') and 2 or 1 do call(beamstate.deflateTire, rand(count) - 1) end
+  local keys = {}
+  for k in pairs(wheels and wheels.wheels or {}) do keys[#keys + 1] = k end
+  if #keys == 0 then return end
+  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+  for _ = 1, (kind == 'flat' or kind == 'stripped') and 2 or 1 do call(beamstate.deflateTire, keys[rand(#keys)]) end
 end
 
 -- Damage this car as `newKind` (see tow.WRECKS), the same way every time for the same seed.
@@ -116,6 +116,14 @@ function M.updateGFX(dt)
     startPush()
   end
   if push then
+    -- applyForceVectorTime holds the force for the whole push (the game's container locks use it); without it the
+    -- force is given again every frame
+    if not push.timed and type(obj.applyForceVectorTime) == 'function' then
+      for _, cid in ipairs(push.hit) do pcall(obj.applyForceVectorTime, obj, cid, push.force, M.PUSH_S) end
+      for _, cid in ipairs(push.rest) do pcall(obj.applyForceVectorTime, obj, cid, push.counter, M.PUSH_S) end
+      push = nil
+      return
+    end
     for _, cid in ipairs(push.hit) do pcall(obj.applyForceVector, obj, cid, push.force) end
     for _, cid in ipairs(push.rest) do pcall(obj.applyForceVector, obj, cid, push.counter) end
     push.t = push.t - dt

@@ -51,6 +51,7 @@ local CONFIG = '/settings/cargoEarth/config.json'
 M.RULES = {
   courier = { arriveM = 30, stopS = 5, cancelFee = 50 },
   trucking = { arriveM = 35, stopS = 3, cancelFee = 2000 },
+  bus = { arriveM = 30, stopS = 1, cancelFee = 0 },   -- city bus lines (cargoEarth/bus): doors open from the phone
 }
 M.COUNTRY_S = 5   -- seconds between border checks
 M.TOW_RULES = { arriveM = 30, stopS = 3, cancelFee = 200 }
@@ -58,8 +59,6 @@ M.TOW_RELOAD_FEE = 150  -- putting a car that slid off back on the trailer
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
 M.random = function(...) return math.random(...) end   -- (tests replace it)
 M.INTACT_TIP = 0.06      -- a customer tips this share of the pay when the order arrives in perfect condition
-M.ROUTE_CHECK_S = 3      -- how often a parcel route's GPS stops are compared with the route
-M.ROUTE_PASS_M = 80      -- ... only this far from the current address (Earth drops a waypoint within 40 m)
 M.PARCEL_TIP_SHARE = 0.5 -- a parcel route's tip for speed is figured on this share of its pay
 M.ROAD_M = 20          -- the car is on the road edge this close (else: a car park, a field; no limit shown)
 M.LIMIT_S = 0.5        -- the limit under the car is read this often
@@ -93,7 +92,7 @@ M.KEEP_ON_START = { 'mode', 'options', 'camerasOff', 'updateHidden', 'country', 
 local S = {
   idx = nil, fidx = nil, packInfo = '', loadError = nil, mode = 'courier',
   phase = 'idle', job = nil, orders = {}, offers = {}, offerStats = nil, offeredAt = nil,
-  optsByMode = { courier = {}, trucking = {} }, opts = nil,
+  optsByMode = { courier = {}, trucking = {}, bus = {} }, opts = nil,
   career = { money = 0, delivered = 0, km = 0, history = {}, garage = nil },
   stopT = 0, tick = 0, dist = nil, log = {}, config = {}, window = false, phoneHidden = false,
   clock = 0,
@@ -305,6 +304,7 @@ end
 
 local function rules(job)
   if job and job.kind == 'tow' then return M.TOW_RULES end
+  if job and job.kind == 'bus' then return M.RULES.bus end
   return M.RULES[(job and job.kind == 'food') and 'courier' or (job and 'trucking') or S.mode]
 end
 local function arrivalRadius(job)
@@ -438,8 +438,8 @@ local function loadCareer(c)
     if c.garage.started then c.garage.debt = math.floor((c.garage.debt or 0) * garage.PRICE_PER_VALUE / 3 / 5 + 0.5) * 5 end
     c.garage.priceV = garage.PRICE_V
   end
-  if c.mode == 'courier' or c.mode == 'trucking' then S.mode = c.mode end
-  if c.employment then S.mode = 'trucking' end
+  if M.RULES[c.mode] then S.mode = c.mode end
+  if c.employment then S.mode = c.employment.tier == 'bus' and 'bus' or 'trucking' end
   if type(c.options) == 'table' then
     -- saved choices over config.json's defaults, key by key
     for m, o in pairs(c.options) do
@@ -478,7 +478,7 @@ local function loadConfig()
   S.config = type(c) == 'table' and c or {}
   if S.config.spawnTrailer == nil then S.config.spawnTrailer = true end
   if S.config.requireTrailer == nil then S.config.requireTrailer = true end
-  if S.config.mode == 'courier' or S.config.mode == 'trucking' then S.mode = S.config.mode end
+  if M.RULES[S.config.mode] then S.mode = S.config.mode end
   trailers.configure(S.config)
   helper.configure(S.config)
   for m, o in pairs(S.config.jobOptions or {}) do
@@ -496,27 +496,14 @@ local function target()
   return S.phase == 'toPickup' and S.job.from or S.job.to
 end
 
--- The GPS to the current target. A parcel route on the way to its addresses goes through all the stops still ahead
--- in one route where BeamNG.Earth can (modding API 1.2), so the whole round shows on the map. keep (such a route
--- only): leave a route that already has the right stops ahead as it is (Earth drops a waypoint within 40 m of it),
--- and a GPS the player cleared alone.
-local function gpsToTarget(keep)
+-- The GPS to the current target: the depot, then a parcel route's next undelivered address. Only that one address
+-- (Jan, 2026-11-15): BeamNG.Earth puts its destination, and the map's teleport to it, at the last point of a route
+-- through several stops, so a whole round on the GPS sent a teleport to the final address and Navigate to the same
+-- place. The phone lists the stops still ahead.
+local function gpsToTarget()
   local d = target()
   if not d then return end
-  local j, stops = S.job, nil
-  if j.route and S.phase ~= 'toPickup' and earth.canRoute() then
-    stops = {}
-    for i = j.route.at, #j.route.stops do
-      local st = j.route.stops[i]
-      stops[#stops + 1] = { st.g[1], st.g[2], st.n }
-    end
-  end
-  if keep and stops then
-    local rt = earth.route()
-    if not rt or rt.stops == math.min(#stops, earth.ROUTE_MAX) then return end
-  end
-  local ok, why
-  if stops then ok, why = earth.gpsStops(stops) else ok, why = earth.gps(d.g[1], d.g[2], d.n) end
+  local ok, why = earth.gps(d.g[1], d.g[2], d.n)
   if not ok then say('GPS not set: ' .. tostring(why)) end
 end
 
@@ -649,6 +636,7 @@ end
 
 local function modeReady()
   if S.mode == 'courier' then return S.fidx ~= nil end
+  if S.mode == 'bus' then return true end    -- lines come from the helper, on the bus board
   return S.idx ~= nil
 end
 
@@ -766,7 +754,7 @@ local function towOffers(class, p)
 end
 
 function M.generate()
-  if not modeReady() then S.offers, S.offerStats = {}, nil return end
+  if not modeReady() or S.mode == 'bus' then S.offers, S.offerStats = {}, nil return end   -- bus lines: no ringing
   local p = earth.pose()
   if not p then S.offers, S.offerStats = {}, nil return end
   if S.mode == 'courier' then
@@ -853,6 +841,7 @@ function M.setMode(m)
   if S.job or S.career.employment or not M.RULES[m] or m == S.mode then return end
   S.mode = m
   S.opts = S.optsByMode[m]
+  if m == 'bus' then S.phone.online = false end   -- bus lines are started from the board, nothing rings
   S.offers, S.offerStats, S.offeredAt = {}, nil, nil
   S.phone.incoming, S.phone.declined = nil, {}
   saveCareer()
@@ -1021,6 +1010,21 @@ function M.take(i) takeJob(S.offers[i]) end
 
 local function finishPickup()
   local j = S.job
+  if j.bus then
+    -- the first stop: the doors open from the phone (M.busDoors); the bus leaves once they close
+    if not j.bus.ready then
+      S.stopT = -10
+      if j.bus.told ~= j.bus.at then j.bus.told = j.bus.at say('Open the doors on the phone.', 4) end
+      return
+    end
+    j.bus.ready = nil
+    local _, o = orderOf(j)
+    if o then o.phase = 'toDelivery' end
+    nextStop()
+    saveCareer()
+    phoneSound('pickup')
+    return
+  end
   if j.kind == 'food' then
     -- every order waiting at this restaurant comes along
     local n = 0
@@ -1123,7 +1127,23 @@ end
 local function finishDelivery(force)
   local j = S.job
   if cargo.supports(j) and cargo.condition(j) == 0 then M.spoil(nil, {[j] = true}) return end
-  if j.haul then
+  if j.bus then
+    if not j.bus.ready then
+      S.stopT = -10
+      if j.bus.told ~= j.bus.at then j.bus.told = j.bus.at say('Open the doors on the phone.', 4) end
+      return
+    end
+    j.bus.ready = nil
+    if not j.bus.finished then
+      S.stopT, S.dist, S.roadM, S.etaS = 0, nil, nil, nil
+      gpsToTarget(true)
+      saveCareer()
+      phoneSound('pickup')
+      return
+    end
+    -- the end of the line: the quote and the fares
+    j.pay = j.pay + require('cargoEarth/bus').fares(j)
+  elseif j.haul then
     local cmd = S.freightLoad and S.freightLoad.command or ''
     if cmd ~= 'unload' and cmd ~= 'unloadDone' and not cmd:match('^stop') then
       if not workFreight(j, false) then return end
@@ -1138,7 +1158,7 @@ local function finishDelivery(force)
       say(string.format('%d parcels (%d kg) left at %s. Next stop %d of %d: %s.', served.slots, droppedKg, served.n,
         j.route.at, #j.route.stops, j.to.n), 6)
       S.stopT, S.dist, S.roadM, S.etaS = 0, nil, nil, nil
-      gpsToTarget(true)
+      gpsToTarget()
       saveCareer()
       phoneSound('pickup')
       return
@@ -1224,6 +1244,93 @@ local function finishDelivery(force)
   syncStorage()
   phoneSound('delivered')
   if free and not c.employment then M.generate() end
+end
+
+------------------------------------------------------------------------------------------ city bus lines
+-- Lines come from the helper (OpenStreetMap); a line is a company shift with one job of kind 'bus' (cargoEarth/bus).
+M.BUS_ASK_S, M.BUS_LOADING_S = 30, 4
+
+function M.busFetch(p)
+  if S.mode ~= 'bus' or S.job or not p or S.clock < (S.busAskAt or 0) then return end
+  S.busAskAt = S.clock + M.BUS_ASK_S
+  S.busIdx = S.busIdx or require('cargoEarth/bus').index()
+  helper.ask(string.format('/v1/buslines?lat=%.5f&lon=%.5f', p.lat, p.lon), function(data, err)
+    local bus = require('cargoEarth/bus')
+    if type(data) ~= 'table' then
+      -- a helper that answers but has no bus lines yet is an old one
+      S.busIdx.state = helper.status().state == 'off' and 'off' or (err and 'old') or 'failed'
+      return
+    end
+    bus.set(S.busIdx, data)
+    if data.state == 'loading' then S.busAskAt = S.clock + M.BUS_LOADING_S end
+    local here = earth.pose()
+    if here then S.busBoard = bus.board(S.busIdx, here.lat, here.lon) end
+  end, '/v1/buslines')
+end
+
+-- The bus page: the lines near you, or the line you drive.
+function M.busState()
+  local bus, c, p = require('cargoEarth/bus'), S.career, earth.pose()
+  local shift = c.employment
+  local out = { state = S.busIdx and S.busIdx.state or 'loading', helper = helper.status().state }
+  if shift and shift.tier == 'bus' then
+    out.shift = { name = shift.companyName, depot = shift.yard.n, phase = shift.phase, error = S.companyError,
+      atDepot = employment.atYard(c, p) }
+  end
+  if S.job and S.job.bus then
+    out.line = bus.state(S.job, S.busDwell, S.clock)
+    out.canDoors = not S.busDwell and S.dist ~= nil and S.dist <= rules(S.job).arriveM and p and not p.camera
+      and (p.speed or 0) <= M.STOP_SPEED or nil
+    return out
+  end
+  out.lines = {}
+  for _, o in ipairs(not shift and S.busBoard or {}) do
+    local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
+    out.lines[#out.lines + 1] = { id = o.id, ref = o.bus.ref, name = o.bus.name, from = o.bus.from, to = o.bus.to,
+      stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.SHARE / 5 + 0.5) * 5,
+      minutes = o.minutes, depot = o.yard.n,
+      depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= employment.RADIUS and not p.camera
+        and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour }
+  end
+  out.message = S.contractMsg and S.clock - S.contractMsg.at < 8 and S.contractMsg.text or nil
+  return out
+end
+
+-- At a stop: the doors open, people get off and on, and the doors close again after a few seconds (stay stopped).
+function M.busDoors()
+  local j, p = S.job, earth.pose()
+  if not (j and j.bus) or S.busDwell then return end
+  if not p or p.camera or (p.speed or 0) > M.STOP_SPEED then say('Stop at the bus stop first.') return end
+  if not S.dist or S.dist > rules(j).arriveM then say('Drive up to the stop first.') return end
+  local bus = require('cargoEarth/bus')
+  local off, on, dwell = bus.passengers(j, M.random)
+  S.busDwell = { off = off, on = on, untilT = S.clock + dwell, at = j.bus.at, job = j }
+  if M.G.busDoors then M.G.busDoors(true) end
+  say(string.format('Doors open at %s: %d off, %d on.', j.bus.stops[j.bus.at].n, off, on), math.ceil(dwell))
+end
+
+function M.busTick(p)
+  local d, j = S.busDwell, S.job
+  if not d then return end
+  if not (j and j.bus) or d.job ~= j or j.bus.at ~= d.at then S.busDwell = nil return end
+  if p and (p.speed or 0) > M.STOP_SPEED then
+    -- drove off with the doors open: nobody got on or off, open them again at the stop
+    S.busDwell = nil
+    if M.G.busDoors then M.G.busDoors(false) end
+    say('You drove off with the doors open. Stop and open them again.', 5)
+    return
+  end
+  if S.clock < d.untilT then return end
+  S.busDwell = nil
+  if M.G.busDoors then M.G.busDoors(false) end
+  local bus = require('cargoEarth/bus')
+  local last = bus.last(j)
+  bus.served(j, d.off, d.on)
+  j.bus.ready, j.bus.finished = true, last or nil
+  if S.phase == 'toPickup' then finishPickup() else finishDelivery(false) end
+  if S.job == j and not last then
+    say(string.format('Next stop %d of %d: %s. %d on board.', j.bus.at, #j.bus.stops, j.bus.stops[j.bus.at].n, j.bus.onBoard), 5)
+  end
 end
 
 -- Cancels the current order (all of them with `all`); free: no fee (a crash, the debug window).
@@ -1389,6 +1496,10 @@ local function tick(dt)
       and not (S.freightLoad.command or ''):match('^stop'))) then
     workFreight(S.job, false)
   end
+  if S.job.bus then
+    M.busTick(p)
+    if not S.job then return end
+  end
   -- a tow job: the damage the cars came with is not yours; a car that slides off is noticed
   if S.job.tow and S.phase == 'toDelivery' and S.clock >= (S.towCheckAt or 0) then
     local t = S.job.tow
@@ -1421,12 +1532,6 @@ local function tick(dt)
     S.roadM, S.etaS = rt.remaining, type(rt.eta) == 'number' and rt.eta or nil
   else
     S.roadM, S.etaS = nil, nil
-  end
-  -- a parcel route's GPS that passed an address without the stop being served (or the other way round) gets its
-  -- stops again, once the car is clear of the address
-  if S.job.route and rt and S.phase ~= 'toPickup' and S.clock >= (S.routeCheckAt or 0) and earth.canRoute() then
-    S.routeCheckAt = S.clock + M.ROUTE_CHECK_S
-    if not S.dist or S.dist > M.ROUTE_PASS_M then gpsToTarget(true) end
   end
   if not S.dist or S.dist > arrivalRadius(S.job) or (p.speed or 0) > M.STOP_SPEED or p.camera
     or (S.job.kind == 'food' and not garage.inOwnCar(M.G, S.career.garage)) or M.towWaiting() then
@@ -1692,6 +1797,7 @@ local function companyReturn(aborted)
     clearFreight()
     releaseStorage()
     S.orders, S.job, S.phase, S.stopT = {}, nil, 'idle', 0
+    S.busDwell = nil
     trailers.remove()
     earth.gpsClear()
   end
@@ -1703,7 +1809,7 @@ local function companyReturn(aborted)
     if not ok then return false, why .. ' Your wages are saved; retry returning your car.' end
   end
   c.garage, c.employment = personal, nil
-  S.mode = shift.previousMode == 'trucking' and 'trucking' or 'courier'
+  S.mode = M.RULES[shift.previousMode] and shift.previousMode or 'courier'
   S.opts, S.offeredAt, S.odometerPose = S.optsByMode[S.mode], nil, nil
   S.companyError, S.companyPreparedAt = nil, nil
   S.phone.lastDone = nil
@@ -1718,6 +1824,7 @@ local function companyStart(id, independent)
   if earth.status() ~= 'ok' or not p or p.camera or (p.speed or 0) > M.STOP_SPEED then return false, 'Park at the company yard first.' end
   local offer
   for _, row in ipairs(S.companyBoard or {}) do if row.id == id then offer = row break end end
+  for _, row in ipairs(not offer and S.busBoard or {}) do if row.id == id then offer = row break end end
   if not offer then return false, 'Refresh the company board.' end
   if jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) * 1000 > employment.RADIUS then
     return false, 'Drive to the company yard, then park to start.'
@@ -1726,7 +1833,7 @@ local function companyStart(id, independent)
   local damage = M.G.damage and M.G.damage()
   if damage then garage.trackDamage(g, damage) end
   local want = offer.tier or 'van'
-  if not haul.allowed(c, want) then return false, 'Unlock the ' .. haul.tiers[want].name:lower() .. ' first.' end
+  if want ~= 'bus' and not haul.allowed(c, want) then return false, 'Unlock the ' .. haul.tiers[want].name:lower() .. ' first.' end
   if independent then
     if want ~= 'van' then return false, 'Independent contracts are for vans.' end
     local v, tier = freightCarrier()
@@ -1745,8 +1852,14 @@ local function companyStart(id, independent)
     S.offeredAt = nil
     return true, 'Independent contract accepted. Use your own van; keep 100% of delivery revenue and cover your vehicle costs.'
   end
-  local preset = haul.loaners[want]
-  local config = M.G.freightLoanerConfig and M.G.freightLoanerConfig(preset.model, preset.key)
+  local preset, config = haul.loaners[want], nil
+  if want == 'bus' then
+    local key
+    config, key = M.G.busLoanerConfig and M.G.busLoanerConfig()
+    preset = { model = haul.loaners.bus.model, key = key, name = haul.loaners.bus.name, label = haul.loaners.bus.label }
+  else
+    config = M.G.freightLoanerConfig and M.G.freightLoanerConfig(preset.model, preset.key)
+  end
   if not config then return false, 'The company ' .. preset.label .. ' configuration is unavailable in this game version.' end
   local companyGarage = garage.new()
   companyGarage.started = true
@@ -1767,10 +1880,15 @@ local function companyStart(id, independent)
     S.companyError = err .. ' End company work to restore your car.'
     return false, S.companyError
   end
-  S.mode, S.opts, S.companyPreparedAt = 'trucking', S.optsByMode.trucking, c.activeSeconds or 0
+  S.mode = want == 'bus' and 'bus' or 'trucking'
+  S.opts, S.companyPreparedAt = S.optsByMode[S.mode], c.activeSeconds or 0
   S.phone.online, S.phone.incoming, S.phone.lastDone = false, nil, nil
   S.offeredAt, S.odometerPose = nil, nil
   saveCareer()
+  if want == 'bus' then
+    return true, string.format('Your %s is ready. Drive %s, open the doors at every stop, then bring the bus back here.',
+      preset.label, offer.jobs[1].cargoName)
+  end
   return true, 'Company ' .. preset.label .. ' loading. Two deliveries, then return here for wages. The company keeps 20% and covers vehicle costs.'
 end
 
@@ -1785,6 +1903,7 @@ function M.companyTick()
     end
     return
   end
+  if shift.phase == 'preparing' and shift.tier == 'bus' then shift.phase = 'working' end
   if shift.phase == 'preparing' then
     S.companyPreparedAt = S.companyPreparedAt or c.activeSeconds or 0
     local v, tier = freightCarrier()
@@ -1805,8 +1924,13 @@ function M.companyTick()
     takeJob(employment.nextJob(c))
   elseif shift.phase == 'returning' and not S.job and not shift.routed then
     shift.routed = earth.gps(shift.yard.g[1], shift.yard.g[2], shift.yard.n) == true
-    say('Company route finished. Return to the yard and settle in Menu → Companies.')
+    say(shift.tier == 'bus' and ('Line done. Bring the bus back to ' .. shift.yard.n .. '.')
+      or 'Company route finished. Return to the yard and settle in Menu → Companies.')
     saveCareer()
+  elseif shift.phase == 'returning' and not S.job and shift.tier == 'bus' and employment.atYard(c, earth.pose()) then
+    -- the bus is back: the shift is paid and your own car returns
+    local ok, why = companyReturn(false)
+    if ok then say(why, 8) else S.companyError = why end
   end
 end
 
@@ -1847,8 +1971,10 @@ function M.placesDo(name, value)
     elseif c.employment then
       ok, why = earth.gps(c.employment.yard.g[1], c.employment.yard.g[2], c.employment.yard.n)
     else
-      for _, offer in ipairs(S.companyBoard or {}) do
-        if offer.id == value then ok, why = earth.gps(offer.yard.g[1], offer.yard.g[2], offer.yard.n) break end
+      for _, list in ipairs({ S.companyBoard or {}, S.busBoard or {} }) do
+        for _, offer in ipairs(list) do
+          if offer.id == value then ok, why = earth.gps(offer.yard.g[1], offer.yard.g[2], offer.yard.n) break end
+        end
       end
     end
   elseif name == 'startCompany' then ok, why = companyStart(value)
@@ -1895,6 +2021,7 @@ function M.phoneState()
     return out
   end
   if S.mode == 'trucking' then out.trucking = truckingState() end
+  if S.mode == 'bus' then out.bus = M.busState() end
   local gauge = c.garage.started and c.garage.car and fuel.state(c.garage.car)
   if gauge then
     out.fuel = { pct = math.floor(gauge.share * 100 + 0.5), low = gauge.low, empty = gauge.empty, rangeKm = gauge.rangeKm }
@@ -2073,6 +2200,15 @@ function M.phoneAction(a, orderId)
     M.spawnTrailer()
   elseif a == 'towLoad' then
     M.towLoad()
+  elseif a == 'busDoors' then
+    M.busDoors()
+  elseif a == 'busEnd' then
+    M.placesDo('endCompany')
+    S.contractMsg = S.placesMsg and { text = S.placesMsg, at = S.clock or 0 } or nil
+  elseif a == 'busGps' or a == 'busStart' then
+    S.placesOk = nil
+    M.placesDo(a == 'busGps' and 'companyGps' or 'startCompany', orderId)
+    S.contractMsg = not S.placesOk and S.placesMsg and { text = S.placesMsg, at = S.clock or 0 } or nil
   elseif a == 'contractGps' or a == 'contractStart' then
     -- a failure (not parked at the yard, no van config...) shows on the freight page for a while
     S.placesOk = nil
@@ -2248,6 +2384,7 @@ local function helperTick(p)
   local places = S.placesRequestedAt and S.clock - S.placesRequestedAt < 30
   local areas = (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
   local wantCameras = camerasOn() and onHelperCameras or nil
+  M.busFetch(p)
   radioAlive()
   askUpdate()
   if areas or wantCameras or helper.asking() then
@@ -3497,6 +3634,7 @@ M.SETTINGS = {
     { 'maxKm', 'Longest order', 0.5, 1, 8, 'km' }, { 'maxOrders', 'Orders at once', 1, 1, 3, '' } },
   trucking = { { 'nearKm', 'Pickups within', 5, 5, 200, 'km' }, { 'minKm', 'Shortest job', 10, 10, 600, 'km' },
     { 'maxKm', 'Longest job', 10, 20, 1000, 'km' } },
+  bus = {},   -- the lines near you are offered as they are
 }
 
 function M.settingsState()
@@ -3511,7 +3649,7 @@ function M.settingsState()
   local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil, window = S.window,
     reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
     canRestart = S.pendingCareer ~= nil or S.career.garage.started == true or nil, restartWord = M.RESTART_WORD }
-  for _, d in ipairs(M.SETTINGS[S.mode]) do
+  for _, d in ipairs(M.SETTINGS[S.mode] or {}) do
     local key, step, min, max, default = d[1], d[3], d[4], d[5], defs[d[1]]
     if freightTier and (key == 'minKm' or key == 'maxKm') then
       min, max, default = freightTier.minKm, freightTier.maxKm, freightTier[key]
@@ -3534,7 +3672,7 @@ function M.settingsState()
   return out
 end
 
--- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
+-- name: mode (a = courier | trucking | bus), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
 -- dark (a = true | false), restart (a = the confirm word, see restartCareer), dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
 function M.settingsDo(name, a, b)
   -- the dash phone is the player's own choice, outside the career: it works on the resume screen too
