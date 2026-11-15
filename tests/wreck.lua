@@ -61,6 +61,16 @@ local ok, err = pcall(function()
   wreck.onReset()
   wreck.updateGFX(1.1)
   assert(#broken == 2 and broken[2] == first, 'the same damage again after a reset')
+  -- put on a trailer deck: the reset of the move breaks parts again but never pushes (it threw the car off the deck)
+  local pushes = #forces
+  wreck.calm()
+  wreck.onReset()
+  wreck.updateGFX(1.1)
+  for _ = 1, 10 do wreck.updateGFX(0.05) end
+  assert(#broken == 3 and #forces == pushes, 'no push on the deck')
+  wreck.start('front', 42, true)
+  wreck.updateGFX(1.1)
+  assert(#forces == pushes, 'spawned on the deck: no push either')
   -- stripped: everything breaks off, the doors too, two flat tyres, no push
   forces, flat = {}, {}
   wreck.start('stripped', 7)

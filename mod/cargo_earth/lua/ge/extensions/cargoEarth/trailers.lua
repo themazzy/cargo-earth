@@ -110,10 +110,57 @@ function M.spawn(kind, freightKind)
   return true
 end
 
-function M.coupled(vehicleId)
+function M.coupledIds(vehicleId, trailerId)
   local couplings = core_vehicles and core_vehicles.vehsCouplings
   local attached = couplings and couplings[vehicleId]
-  return id ~= nil and attached ~= nil and attached[id] == true
+  return trailerId ~= nil and attached ~= nil and attached[trailerId] == true
+end
+
+function M.coupled(vehicleId) return M.coupledIds(vehicleId, id) end
+
+M.TRAILER_LEN = { cartrailer = 9.5, flatbed = 15 }   -- metres behind the vehicle a trailer of this kind takes
+
+-- Other vehicles (parked cars, traffic) standing in a box: centre c, unit direction dir, half length and half width
+-- (each vehicle by its own bounding box when the game gives one). The first one found, or nil.
+local function vehicleIn(c, dir, halfLen, halfWid, skip)
+  local right = vec3(dir.y, -dir.x, 0)
+  local list = getAllVehicles and getAllVehicles() or {}
+  for _, o in ipairs(list) do
+    local vid = o:getID()
+    if not skip[vid] then
+      local p = o:getPosition()
+      local r = 1.2
+      pcall(function() local e = o:getSpawnWorldOOBB():getHalfExtents() r = math.min(3, math.max(e.x, e.y)) end)
+      local d = p - c
+      local along, side = math.abs(d:dot(dir)), math.abs(d:dot(right))
+      if along <= halfLen + r * 0.8 and side <= halfWid + r * 0.6 and math.abs(d.z) < 4 then return o end
+    end
+  end
+end
+
+-- Is there room behind the player's vehicle for this kind of trailer (no other vehicle, wall or building there)?
+-- True, or false and why.
+function M.roomBehind(kind)
+  local veh = getPlayerVehicle and getPlayerVehicle(0)
+  if not veh then return false, 'no player vehicle' end
+  local dir = veh:getDirectionVector()
+  dir.z = 0
+  if dir:length() < 1e-3 then return true end
+  dir = dir:normalized()
+  local half = 2.4
+  pcall(function() half = veh:getSpawnWorldOOBB():getHalfExtents().y end)
+  local len = M.TRAILER_LEN[kind] or 14
+  local pos = veh:getPosition()
+  local c = pos - dir * (half + len / 2 + 0.3)
+  local skip = { [veh:getID()] = true }
+  if id then skip[id] = true end
+  for _, tid in ipairs(towed) do skip[tid] = true end
+  if vehicleIn(c, dir, len / 2, 1.3, skip) then return false, 'another car stands behind you' end
+  local eye = vec3(pos.x, pos.y, pos.z + 1)
+  local tail = pos - dir * (half + len)
+  local d = castRayStatic(eye - dir * half, -dir, len + 0.5)
+  if d and d < len then return false, 'a wall or a building is behind you' end
+  return true
 end
 
 -- Metres between the trailer and the player's vehicle, or nil.
@@ -184,10 +231,11 @@ local PARK_CMD = 'if input and input.event then input.event("parkingbrake", 1, 2
   .. 'if electrics and electrics.set_warn_signal then pcall(electrics.set_warn_signal, true) end'
 
 -- wreck: { kind, seed } for the vehicle-side cargoEarth_wreck, or nil for an undamaged car
-local function wreckCmd(wreck)
+local function wreckCmd(wreck, onDeck)
   if type(wreck) ~= 'table' or type(wreck[1]) ~= 'string' then return '' end
   return string.format(' extensions.load("cargoEarth_wreck") if extensions.cargoEarth_wreck then '
-    .. 'extensions.cargoEarth_wreck.start(%q, %d) end', wreck[1], math.floor(tonumber(wreck[2]) or 1))
+    .. 'extensions.cargoEarth_wreck.start(%q, %d, %s) end', wreck[1], math.floor(tonumber(wreck[2]) or 1),
+    onDeck and 'true' or 'false')
 end
 
 -- How far a car's position is above its lowest point (its box bottom), so its wheels, not its middle, go on the deck.
@@ -209,13 +257,15 @@ local function spawnCar(model, p, dir, wreck, onDeckSpot)
     pcall(function() v:setPosition(vec3(p.x, p.y, p.z + lift)) end)
   end
   towed[#towed + 1] = v:getID()
-  v:queueLuaCommand(PARK_CMD .. wreckCmd(wreck))
+  v:queueLuaCommand(PARK_CMD .. wreckCmd(wreck, onDeckSpot))
   return true
 end
 
 -- Move a car that is out. setPositionRotation resets the car (the wreck extension damages it again after the reset);
 -- vehicles face backwards there, so the rotation is turned around as the game's own callers do.
 local function moveCar(o, p, dir)
+  -- the wreck's crumple push must not run again on the deck
+  pcall(function() o:queueLuaCommand('if extensions.cargoEarth_wreck then extensions.cargoEarth_wreck.calm() end') end)
   local rot = quatFromDir(-dir, vec3(0, 0, 1))
   local z = p.z + lowestBelow(o)
   return pcall(function() o:setPositionRotation(p.x, p.y, z, rot.x, rot.y, rot.z, rot.w) end)
@@ -237,6 +287,9 @@ end
 -- Put the trailer on the vehicle's hitch the way the game itself does after a reset (spawn.placeTrailer: moved to
 -- the hitch, then the game's auto coupling latches it). True when done, false while the couplers are not known yet,
 -- nil when the two have no hitch in common.
+local latch = nil   -- { vehicle id, trailer id, tag, car node, trailer node, seconds left, next try }: after placing
+local hitchFailed = false
+
 local function hitchNow(vid, tid)
   if not (spawn and spawn.placeTrailer and core_vehicles and core_vehicles.couplerTagsOptions) then return nil end
   local offsets = core_vehicles.vehsCouplerOffset or {}
@@ -244,15 +297,64 @@ local function hitchNow(vid, tid)
   for _, tag in ipairs({ 'tow_hitch', 'fifthwheel', 'gooseneck_hitch', 'pintle', 'fifthwheel_v2' }) do
     local vc, tc = couplerNode(vid, tag, 'couplerTag'), couplerNode(tid, tag, 'tag')
     if vc and tc and vc ~= nil and offsets[vid][vc] and offsets[tid][tc] then
-      local ok = pcall(spawn.placeTrailer, vid, offsets[vid][vc], tid, offsets[tid][tc], tag)
+      local ok, err = pcall(spawn.placeTrailer, vid, offsets[vid][vc], tid, offsets[tid][tc], tag)
+      log('I', 'cargoEarth', string.format('trailer %s placed on the %s hitch of %s: %s', tostring(tid), tag, tostring(vid),
+        ok and 'ok' or tostring(err)))
+      -- the game's auto coupling should latch it; it is checked and helped along for a few seconds (M.update)
+      if ok then latch = { vid, tid, tag, vc, tc, 6, 0.5 } end
       return ok
     end
   end
+  log('W', 'cargoEarth', 'no hitch in common between vehicle ' .. tostring(vid) .. ' and trailer ' .. tostring(tid))
   return nil
 end
 
+-- World metres between two coupler nodes, or nil.
+local function couplerGap(vid, vc, tid, tc)
+  local ok, d = pcall(function()
+    local a, b = scenetree.findObjectById(vid), scenetree.findObjectById(tid)
+    local pa = a:getPosition() + a:getNodePosition(vc)
+    local pb = b:getPosition() + b:getNodePosition(tc)
+    return (pa - pb):length()
+  end)
+  return ok and type(d) == 'number' and d or nil
+end
+
+-- After placing: is it coupled? If not, ask the car to latch its coupler again (as the game's auto coupling does every
+-- half second); give up after a few seconds and say so (M.hitchFailed), with the gap in the log.
+local function latchTick(dt)
+  local l = latch
+  if not l then return end
+  if not scenetree.findObjectById(l[1]) or not scenetree.findObjectById(l[2]) then latch = nil return end
+  if M.coupledIds(l[1], l[2]) then
+    log('I', 'cargoEarth', 'trailer coupled')
+    latch = nil
+    return
+  end
+  l[6], l[7] = l[6] - dt, l[7] - dt
+  if l[7] <= 0 then
+    l[7] = 0.5
+    local car = scenetree.findObjectById(l[1])
+    pcall(function() car:queueLuaCommand(string.format('beamstate.activateAutoCoupling(%q) beamstate.attachCouplers(%q)', l[3], l[3])) end)
+  end
+  if l[6] <= 0 then
+    local gap = couplerGap(l[1], l[4], l[2], l[5])
+    log('W', 'cargoEarth', string.format('trailer did not couple (%s, coupler gap %s m)', l[3], gap and string.format('%.2f', gap) or '?'))
+    hitchFailed, latch = true, nil
+  end
+end
+
+-- Did the last hitch fail to latch? (read once: true clears it)
+function M.hitchFailed()
+  local f = hitchFailed
+  hitchFailed = false
+  return f
+end
+function M.latching() return latch ~= nil end
+
 -- Every frame (core onUpdate): couples the trailer that was just spawned once the game knows its couplers.
-function M.update()
+function M.update(dt)
+  latchTick(dt or 0)
   local h = hitchWanted
   if not h then return end
   if not scenetree.findObjectById(h[1]) or not scenetree.findObjectById(h[2]) then hitchWanted = nil return end
@@ -279,7 +381,7 @@ function M.hitch()
   local veh = getPlayerVehicle and getPlayerVehicle(0)
   local o = obj()
   if not veh or not o then return false end
-  hitchWanted = { veh:getID(), o:getID(), M.HITCH_TRIES }
+  hitchWanted, hitchFailed = { veh:getID(), o:getID(), M.HITCH_TRIES }, false
   return true
 end
 function M.hitching() return hitchWanted ~= nil end
@@ -340,9 +442,12 @@ local function towTrailer(kind, fresh, parked)
   return ok, why
 end
 
--- The borrowed trailer at the workshop: spawned standing behind the player. True, or false and why.
+-- The borrowed trailer at the workshop: spawned on the player's hitch (Jan: no separate step) once there is room
+-- behind. True, or false and why.
 function M.spawnBorrowed(kind)
-  return towTrailer(kind, true, true)
+  local room, why = M.roomBehind(kind)
+  if not room then return false, why end
+  return towTrailer(kind, true)
 end
 
 -- Is this vehicle id one of the models a tow trailer of this kind can be?
@@ -406,9 +511,18 @@ local function clear(a, b)
 end
 
 -- Where a car can stand on the ground at p, or nil when nothing solid is below.
-local function ground(p)
-  local d = castRayStatic(vec3(p.x, p.y, p.z + 20), vec3(0, 0, -1), 60)
-  if d and d < 60 then return vec3(p.x, p.y, p.z + 20 - d + 0.5) end
+-- refZ: the player's height. The ground must be near it (not a roof: Jan's test had a car land on a house) and have
+-- room above for a car (no roof, balcony or overhang).
+local function ground(p, refZ)
+  refZ = refZ or p.z
+  local top = refZ + 2.5
+  local d = castRayStatic(vec3(p.x, p.y, top), vec3(0, 0, -1), 10)
+  if not d or d >= 10 then return nil end
+  local z = top - d
+  if math.abs(z - refZ) > 1.5 then return nil end
+  local up = castRayStatic(vec3(p.x, p.y, z + 0.2), vec3(0, 0, 1), 3)
+  if up and up < 3 then return nil end
+  return vec3(p.x, p.y, z + 0.5)
 end
 
 -- The broken-down cars waiting by the road near the player (the trailer is spawned behind the player when it is not
@@ -417,6 +531,10 @@ end
 function M.spawnRoadside(kind, cars, wrecks)
   local veh = getPlayerVehicle and getPlayerVehicle(0)
   if not veh then return false, 'no player vehicle' end
+  if not obj() then
+    local room, whyNot = M.roomBehind(kind)
+    if not room then return false, 'no room for the trailer: ' .. whyNot end
+  end
   local ok, why = towTrailer(kind)
   if not ok then return false, why end
   removeTowed()
@@ -429,7 +547,9 @@ function M.spawnRoadside(kind, cars, wrecks)
     local spots = {}
     for i = 1, #cars do
       local p = pos + dir * (spot[1] + (i - 1) * M.CAR_GAP_M) + right * spot[2]
-      local g = clear(eye, vec3(p.x, p.y, pos.z + 1)) and ground(p)
+      local skip = { [veh:getID()] = true }
+      if id then skip[id] = true end
+      local g = clear(eye, vec3(p.x, p.y, pos.z + 1)) and not vehicleIn(p, dir, 2.6, 1.2, skip) and ground(p, pos.z)
       if not g then spots = nil break end
       spots[i] = g
     end

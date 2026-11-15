@@ -14,6 +14,7 @@ M.SHARE = 0.12           -- share of the nodes at the hit end that are pushed
 M.BREAK_SHARE = 0.35     -- share of the break groups broken off (all of them when stripped)
 
 local kind, seed, seed0, timer, push
+local calm = false   -- on a trailer deck: no push (Jan's test: the push crushed the car and threw it off the deck)
 
 local function call(f, ...)
   if type(f) ~= 'function' then return false end
@@ -101,9 +102,15 @@ local function flatTyres()
 end
 
 -- Damage this car as `newKind` (see tow.WRECKS), the same way every time for the same seed.
-function M.start(newKind, newSeed)
+-- onDeck: the car stands on a trailer: only parts broken off and flat tyres, no push.
+function M.start(newKind, newSeed, onDeck)
   kind, seed0 = newKind, math.floor(tonumber(newSeed) or 1) % 2147483648
-  seed, timer, push = seed0, M.DELAY_S, nil
+  seed, timer, push, calm = seed0, M.DELAY_S, nil, onDeck == true
+end
+
+-- The car is being put on a trailer deck: from now on no push (also after the reset the move causes).
+function M.calm()
+  calm, push = true, nil
 end
 
 function M.updateGFX(dt)
@@ -113,7 +120,7 @@ function M.updateGFX(dt)
     timer = nil
     breakParts()
     flatTyres()
-    startPush()
+    if not calm then startPush() end
   end
   if push then
     -- applyForceVectorTime holds the force for the whole push (the game's container locks use it); without it the

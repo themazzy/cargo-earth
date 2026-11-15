@@ -3552,7 +3552,11 @@ test('a tow job without your own trailer: borrow it at the workshop, hitch it, f
     assert(job.tow.stage == 'hitch' and hitched == 0, 'not from far away (it would pull the trailer across the map)')
     nearTrailer = true
     core.phoneAction('towHitch')
-    assert(hitched == 1 and job.tow.stage == nil and s.phase == 'toPickup')
+    assert(hitched == 1 and job.tow.stage == 'hitch', 'hitched again, but not done before the game reports it coupled')
+    coupled = true
+    advance(core, 2)
+    assert(job.tow.stage == nil and s.phase == 'toPickup', 'coupled: on to the car')
+    coupled = false
     assert(core.phoneState().active.here == nil, 'now the broken-down car')
     pose.lat, pose.lon = job.from.g[1], job.from.g[2]
     advance(core)

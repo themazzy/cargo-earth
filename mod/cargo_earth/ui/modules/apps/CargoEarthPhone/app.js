@@ -1233,8 +1233,8 @@ angular.module('beamng.apps')
             '<strong ng-style="{color: s.active.tow.onBoard < s.active.tow.cars ? \'var(--tomato)\' : \'var(--ok)\'}">' +
             '{{ s.active.tow.onBoard }} of {{ s.active.tow.cars }} car{{ s.active.tow.cars > 1 ? "s" : "" }} on board</strong></div>' +
           '<div class="cep-sub" ng-if="s.active.here && !s.active.towHitch">Borrow the {{ s.active.tow.trailer.toLowerCase() }} here, then fetch the car and bring both back.</div>' +
-          '<button class="cep-sm" ng-if="s.active.towHitch" ng-click="act(\'towHitch\')">Hitch the trailer</button>' +
-          '<div class="cep-sub" ng-if="s.active.towHitch">Stop, then hitch. The trailer stands behind you.</div>' +
+          '<button class="cep-sm" ng-if="s.active.towHitch" ng-click="act(\'towHitch\')">Hitch again</button>' +
+          '<div class="cep-sub" ng-if="s.active.towHitch">The trailer goes on your hitch. If it does not latch, stand still and press Hitch again.</div>' +
           '<button class="cep-sm" ng-if="s.active.towWaiting" ng-click="act(\'towLoad\')">Load {{ s.active.tow.cars > 1 ? "the cars" : "it" }} on the trailer</button>' +
           '<div class="cep-sub" ng-if="s.active.towWaiting">{{ s.active.tow.wreck ? s.active.tow.wreck + ". " : "" }}Park the trailer next to the car, stop, then load.</div>' +
           '<button class="cep-sm" ng-if="s.active.canRestoreTrailer" ng-click="act(\'restoreTrailer\')">' +
