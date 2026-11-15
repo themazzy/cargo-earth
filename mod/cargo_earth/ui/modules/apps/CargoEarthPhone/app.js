@@ -1037,10 +1037,11 @@ angular.module('beamng.apps')
       // city bus lines: the lines near you (the bus is lent at a depot near the first stop), or the shift you are on
       '<div class="cep-scroll" ng-if="s.bus">' +
         '<div class="cep-card" ng-if="s.bus.shift"><div class="cep-label">{{ s.bus.shift.name }}</div>' +
-          '<div class="cep-big" style="font-size:15px">Bring the bus back to {{ s.bus.shift.depot }}</div>' +
-          '<div class="cep-sub">Park there to finish the shift and get paid.</div>' +
+          '<div class="cep-big" style="font-size:15px" ng-if="s.bus.shift.handover">Taking you back to {{ s.bus.shift.depot }}</div>' +
+          '<div class="cep-sub" ng-if="s.bus.shift.handover">The bus is handed over. Your car is waiting at the depot.</div>' +
+          '<div class="cep-big" style="font-size:15px" ng-if="!s.bus.shift.handover">Your bus is getting ready</div>' +
           '<div class="cep-sub" ng-if="s.bus.shift.error" style="color:var(--tomato)">{{ s.bus.shift.error }}</div>' +
-          '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'busGps\')">Route</button>' +
+          '<div class="cep-row" style="margin-top:6px" ng-if="!s.bus.shift.handover">' +
             '<button class="cep-sm ghost" ng-click="act(\'busEnd\')">End shift</button></div></div>' +
         '<div class="cep-label" ng-if="!s.bus.shift">Bus lines nearby</div>' +
         '<div class="cep-sub" ng-if="!s.bus.shift && !s.bus.lines.length && s.bus.helper === \'off\'">Start the Cargo Earth helper to load the bus lines around you.</div>' +
@@ -1224,7 +1225,10 @@ angular.module('beamng.apps')
             '<div class="cep-sub" ng-if="s.bus.line.doors">Doors open: {{ s.bus.line.doors.off }} off, {{ s.bus.line.doors.on }} on · {{ s.bus.line.doors.left }} s</div>' +
             '<button class="cep-btn go" ng-if="!s.bus.line.doors" ng-disabled="!s.bus.canDoors" ng-click="act(\'busDoors\')">Open doors</button>' +
             '<div class="cep-sub" ng-if="!s.bus.line.doors && !s.bus.canDoors">Stop at the bus stop to open the doors.</div>' +
-            '<button class="cep-sm ghost" style="margin-top:6px" ng-click="act(\'busEnd\')">End shift</button></div>' +
+            '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-if="!s.bus.line.doors" ng-click="act(\'busSkip\')">Skip stop</button>' +
+              '<button class="cep-sm ghost" ng-click="act(\'busEnd\')">End shift</button></div>' +
+            '<div class="cep-sub" ng-if="s.bus.line.skipped">{{ s.bus.line.skipped }} skipped (not paid)</div>' +
+            '<div class="cep-sub">Skip a stop you cannot reach. Ending early costs {{ fmt.money(s.bus.collectFee) }}.</div></div>' +
           '<div class="cep-keyval cep-sub" ng-if="s.active.tow && s.active.phase === \'toDelivery\'"><span>{{ s.active.tow.trailer }}</span>' +
             '<strong ng-style="{color: s.active.tow.onBoard < s.active.tow.cars ? \'var(--tomato)\' : \'var(--ok)\'}">' +
             '{{ s.active.tow.onBoard }} of {{ s.active.tow.cars }} car{{ s.active.tow.cars > 1 ? "s" : "" }} on board</strong></div>' +

@@ -337,7 +337,8 @@ class NetworkAndStorageTests(unittest.TestCase):
                  "members": [{"type": "node", "ref": r, "role": "stop"} for r in (1, 2)]}
         station = {"type": "way", "id": 7, "center": {"lat": 50.001, "lon": 14.001}, "tags": {"amenity": "bus_station", "name": "Hub"}}
         depot = {"type": "node", "id": 8, "lat": 50.002, "lon": 14.002, "tags": {"landuse": "depot", "depot": "tram"}}
-        rows = helper.bus_rows({"elements": els + [good, gappy, tram, short, station, depot]})
+        yard = {"type": "way", "id": 9, "center": {"lat": 50.003, "lon": 14.003}, "tags": {"landuse": "depot"}}
+        rows = helper.bus_rows({"elements": els + [good, gappy, tram, short, station, depot, yard]})
         lines = [r for r in rows if not r.get("depot")]
         self.assertEqual([r["id"] for r in lines], ["r100"])
         line = lines[0]

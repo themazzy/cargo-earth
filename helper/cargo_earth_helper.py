@@ -1087,8 +1087,8 @@ def bus_rows(data):
                         "stops": clean[:80]})
     for e in elements:
         tags = e.get("tags") or {}
-        if tags.get("amenity") == "bus_station" or (tags.get("landuse") == "depot" and tags.get("depot") in (None, "bus")) \
-                or tags.get("depot") == "bus":
+        # only places mapped for buses: a landuse=depot without depot=bus is as often a tram or train depot
+        if tags.get("amenity") == "bus_station" or tags.get("depot") == "bus":
             if e.get("type") == "node":
                 lat, lon = e.get("lat"), e.get("lon")
             elif isinstance(e.get("center"), dict):
@@ -1112,7 +1112,7 @@ class BusLines(OsmCells):
         return (f'[out:json][timeout:60];'
                 f'rel["type"="route"]["route"~"^(bus|trolleybus)$"]({s},{w},{n},{e})->.r;.r out body;'
                 f'node(r.r);out body;way(r.r);out tags center;'
-                f'(nwr["amenity"="bus_station"]({s},{w},{n},{e});nwr["landuse"="depot"]({s},{w},{n},{e});'
+                f'(nwr["amenity"="bus_station"]({s},{w},{n},{e});'
                 f'nwr["depot"="bus"]({s},{w},{n},{e}););out tags center;')
 
     def rows(self, data):
