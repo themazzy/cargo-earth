@@ -2050,7 +2050,11 @@ function M.placesDo(name, value)
   elseif name == 'startCompany' then ok, why = companyStart(value)
   elseif name == 'startIndependent' then ok, why = companyStart(value, true)
   elseif name == 'settleCompany' then ok, why = companyReturn(false)
-  elseif name == 'endCompany' then ok, why = companyReturn(true)
+  elseif name == 'endCompany' then
+    local shift = c.employment
+    -- a bus shift ends the same way from the Menu as from the phone: handed over, with the fee away from the depot
+    if shift and shift.tier == 'bus' then ok, why = M.busHandover(shift.phase ~= 'returning')
+    else ok, why = companyReturn(true) end
   end
   if why then S.placesMsg = why elseif ok then S.placesMsg = 'GPS updated.' end
   S.placesOk = ok

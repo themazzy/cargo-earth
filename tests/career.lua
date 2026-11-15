@@ -2549,7 +2549,7 @@ test('a bus shift ended with the doors open leaves nothing behind for the next s
   core.phoneAction('busDoors')
   assert(s.busDwell, 'the doors are open')
   local money = c.money
-  core.phoneAction('busEnd')
+  core.placesDo('endCompany')   -- the Menu's End early ends it the same way as the phone
   assert(not s.job and not s.busDwell, 'the open doors go with the shift')
   advance(core, 4)
   assert(c.employment and pose.lat == st.g[1], 'a moment to read the message first')
