@@ -42,6 +42,8 @@ limits. Little of this has been driven in game yet.
 - The borrowed trailer goes straight onto your hitch, only where there's room; the coupling is checked and **Hitch**
   again retries if it doesn't latch. Wrecks no longer spawn on roofs or inside other cars, are held still while they
   crumple (no flying), aren't crushed off the deck when loaded, and come along when you teleport.
+- The broken-down car is spawned out of sight when you take the job and waits by the road before you arrive (no
+  spawn lag, no crumple at the pickup). Moving it keeps its damage.
 - Tow offers warn "Your car may struggle" when your car is short on power (a warning only).
 
 ## Heavier, visible loads

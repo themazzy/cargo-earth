@@ -10,6 +10,7 @@
 local M = {}
 
 M.DELAY_S = 1.0          -- let the car settle on its wheels first
+M.AIR_DELAY_S = 0.2      -- in the air there is nothing to settle on
 M.PUSH_S = 0.3           -- how long the push lasts
 M.HIT_ACCEL = 1200       -- m/s² on each pushed node (newtons = this x the node's mass)
 M.HOLD_S = 1.5           -- the car is held in place this long from the start of the push
@@ -18,6 +19,7 @@ M.SHARE = 0.12           -- share of the nodes at the hit end that are pushed
 M.BREAK_SHARE = 0.35     -- share of the break groups broken off (all of them when stripped)
 
 local kind, seed, seed0, timer, push, hold
+local air = false    -- spawned in the air out of sight: no ground to wait for or to hold a rolled roof's push
 local calm = false   -- on a trailer deck: no push (Jan's test: the push crushed the car and threw it off the deck)
 
 local function call(f, ...)
@@ -74,7 +76,7 @@ local function startPush()
     if i <= cut then hitMass = hitMass + n.m else restMass = restMass + n.m end
   end
   -- the rest of the car gets the same total force back (a rolled car: none, the ground takes the roof's push)
-  local back = kind == 'rolled' and 0 or M.HIT_ACCEL * hitMass / math.max(1e-6, restMass)
+  local back = (kind == 'rolled' and not air) and 0 or M.HIT_ACCEL * hitMass / math.max(1e-6, restMass)
   local forces = {}
   for i, n in ipairs(list) do
     local a = i <= cut and -M.HIT_ACCEL or back
@@ -136,14 +138,16 @@ end
 
 -- Damage this car as `newKind` (see tow.WRECKS), the same way every time for the same seed.
 -- onDeck: the car stands on a trailer: only parts broken off and flat tyres, no push.
-function M.start(newKind, newSeed, onDeck)
+-- inAir: spawned high up out of sight (cargoEarth/trailers stageTowed): crumpled at once, a rolled roof pushed back too.
+function M.start(newKind, newSeed, onDeck, inAir)
   kind, seed0 = newKind, math.floor(tonumber(newSeed) or 1) % 2147483648
-  seed, timer, push, hold, calm = seed0, M.DELAY_S, nil, nil, onDeck == true
+  air = inAir == true
+  seed, timer, push, hold, calm = seed0, air and M.AIR_DELAY_S or M.DELAY_S, nil, nil, onDeck == true
 end
 
 -- The car is being put on a trailer deck: from now on no push (also after the reset the move causes).
 function M.calm()
-  calm, push, hold = true, nil, nil
+  calm, push, hold, air = true, nil, nil, false
 end
 
 function M.updateGFX(dt)
@@ -172,7 +176,7 @@ end
 
 -- a reset repairs the car: damage it again
 function M.onReset()
-  if kind then seed, timer, push, hold = seed0, M.DELAY_S, nil, nil end
+  if kind then seed, timer, push, hold, air = seed0, M.DELAY_S, nil, nil, false end
 end
 
 return M
