@@ -104,10 +104,12 @@ function M.carrier(vehicle)
     local name = type(part) == 'string' and part:lower() or ''
     if name:find('fifthwheel_top', 1, true) or name:find('upfit_fifthwheel', 1, true) then return 'semi' end
   end
-  if vehicle.model == 'van' then return 'van' end
-  if vehicle.model == 'md_series' or vehicle.model == 'us_semi' or vehicle.model == 'midtruck' then return 'rigid' end
   if type(vehicle.model) ~= 'string' or vehicle.model == 'unicycle' then return end
-  return M.bodyClass(vehicle.model, vehicle.bodyStyle)
+  if vehicle.model == 'us_semi' then return 'rigid' end   -- no fifth wheel: a box, flatbed or dump body
+  -- the same rules as the used-car market's listings (configClass), so a listing gets the work it advertises
+  local kind = M.configClass(vehicle.model, vehicle.bodyStyle)
+  if kind == 'semi' then return 'rigid' end
+  return kind or M.bodyClass(vehicle.model, vehicle.bodyStyle)
 end
 
 local function material(tier, id)

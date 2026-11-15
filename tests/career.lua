@@ -3613,6 +3613,10 @@ test('used-car market: every vehicle kind has at least 6 listings at cheap, midd
   assert(haul.configClass('pickup', 'Pickup', 'D15') == 'suv')
   assert(haul.configClass('covet', 'Hatchback', 'Covet') == 'car')
   assert(haul.configClass('citybus', 'Bus', 'City bus') == nil)
+  -- a spawned vehicle gets the same kind as its listing (a modded van or box truck too)
+  assert(haul.carrier({ model = 'modvan', bodyStyle = 'Van' }) == 'van')
+  assert(haul.carrier({ model = 'modtruck', bodyStyle = 'Box Truck' }) == 'rigid')
+  assert(haul.carrier({ model = 'covet', bodyStyle = 'Minivan' }) == 'car')
   local configs = {}
   local function add(model, style, n, typ)
     for i = 1, n do
