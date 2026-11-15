@@ -1646,7 +1646,7 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
   local cpRough, ctRough = taxi.settle(comfortRide, 200, 10, 30, 0.02, 0.5, 50, tipFn)
   assert(cpRough == 130 and ctRough == 0, 'comfort, rough and fast: speed earns nothing, bumps cost a lot: ' .. cpRough)
   local rp, rt = taxi.settle(rushRide, 200, 10, 30, 0.02, 0.5, 50, tipFn)
-  assert(rp == 185 and rt == 50, 'rush, rough and fast: bumps barely matter, a double speed tip: ' .. rp .. ' ' .. rt)
+  assert(rp == 200 and rt == 100, 'rush, rough and fast: comfort is not counted, a double speed tip: ' .. rp .. ' ' .. rt)
   local rpLate = taxi.settle(rushRide, 200, 40, 30, 0.02, 0.5, 100, tipFn)
   assert(rpLate == 100, 'rush, ten minutes late: half the fare (floor): ' .. rpLate)
   assert(taxi.info({ taxi = { people = 2 } }).mode == 'comfort', 'an older ride counts as comfort')

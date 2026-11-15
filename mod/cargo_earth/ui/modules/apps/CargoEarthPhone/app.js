@@ -1217,7 +1217,7 @@ angular.module('beamng.apps')
             '<span ng-if="s.incoming.farPickup > 0 && !s.incoming.batch"> · +{{ fmt.money(s.incoming.farPickup) }} for the far pickup</span></div>' +
           '<div class="cep-sub" ng-if="s.incoming.sizeBonus">+{{ fmt.money(s.incoming.sizeBonus) }} for the larger load</div>' +
           '<div class="cep-sub" ng-if="s.incoming.premium">Premium customer: pays more, wants it sooner.</div>' +
-          '<div class="cep-sub" ng-if="s.incoming.taxi">{{ s.incoming.taxi.people > 1 ? s.incoming.taxi.people + " passengers ride" : "One passenger rides" }} with you. {{ s.incoming.taxi.mode === "rush" ? "Rush: in a hurry, a fast ride pays a big tip and late minutes cost more." : "Comfort: no hurry, a smooth ride pays a big tip and bumps cost a lot." }}</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.taxi">{{ s.incoming.taxi.people > 1 ? s.incoming.taxi.people + " passengers ride" : "One passenger rides" }} with you. {{ s.incoming.taxi.mode === "rush" ? "Rush: in a hurry, only speed counts. Arriving early pays a big tip, late minutes cost more." : "Comfort: no hurry, a smooth ride pays a big tip and bumps cost a lot." }}</div>' +
           '<div class="cep-sub" ng-if="s.incoming.tow && s.incoming.tow.wreck"><b>{{ s.incoming.tow.wreck }}</b></div>' +
           '<div class="cep-sub cep-warn" ng-if="s.incoming.tow && s.incoming.tow.weak">Your car may struggle: little power for this load.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.tow">{{ s.incoming.tow.cars > 1 ? s.incoming.tow.cars + " cars go" : "The car goes" }} ' +
@@ -1249,7 +1249,7 @@ angular.module('beamng.apps')
               '<strong>{{ fmt.money(s.active.pay) }}</strong></div>' +
             '<div><div class="cep-name">{{ here().name }}</div>' +
               '<div class="cep-meta">{{ here().label }}{{ here().town ? " · " + here().town : "" }}</div>' +
-              '<div class="cep-meta" ng-if="s.active.taxi">{{ s.active.taxi.mode === "rush" ? "Rush: speed pays" : "Comfort: drive smoothly" }}</div></div>' +
+              '<div class="cep-meta" ng-if="s.active.taxi">{{ s.active.taxi.mode === "rush" ? "Rush: only speed counts" : "Comfort: drive smoothly" }}</div></div>' +
             '<div class="cep-drive">' +
               '<div class="cep-dist">{{ fmt.dist(s.active.distM).v }}<small>{{ fmt.dist(s.active.distM).u }}</small></div>' +
               '<div class="cep-sub" ng-if="!s.active.stop.inZone">{{ s.active.distRoad ? "by road" : ' +

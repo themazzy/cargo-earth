@@ -15,14 +15,14 @@ M.OFFERS = 3
 M.TRIES = 8
 
 -- What a passenger wants (Jan, 2026-11-15). comfort: no hurry, a smooth ride is everything (rough driving costs much
--- more, a smooth one earns a big tip, speed earns nothing). rush: late for something, speed is everything (tighter time,
--- higher fare, a bigger tip for arriving early, a bigger loss per late minute, and bumps barely matter).
+-- more, a smooth one earns a big tip, speed earns nothing). rush: late for something, only speed counts (tighter time,
+-- higher fare, a bigger tip for arriving early, a bigger loss per late minute; comfort is not counted at all, Jan).
 -- time: share of the normal minutes; pay: fare factor; late: factor on the per-minute late loss; floor and slope: pay
 -- factor = floor + slope * comfort (comfort 0-100); fastTip: factor on the speed tip; smoothTip: share of the fare
 -- tipped for a ride kept at 100 % comfort; share: how often the mode comes.
 M.MODES = {
   comfort = { name = 'Comfort', time = 1.3, pay = 1.0, late = 0.5, floor = 0.3, slope = 0.007, fastTip = 0, smoothTip = 0.15, share = 0.5 },
-  rush = { name = 'Rush', time = 0.8, pay = 1.25, late = 2.5, floor = 0.85, slope = 0.0015, fastTip = 2, smoothTip = 0, share = 0.5 },
+  rush = { name = 'Rush', time = 0.8, pay = 1.25, late = 2.5, floor = 1, slope = 0, fastTip = 2, smoothTip = 0, share = 0.5, speedOnly = true },
 }
 
 -- The rules of a ride's mode (an older ride without one counts as comfort).
@@ -126,6 +126,7 @@ function M.settle(job, fare, minutes, limit, perMin, floor, comfort, fastTip)
   pay = math.floor(pay * math.min(1, rules.floor + rules.slope * comfort) + 0.5)
   local fast = rules.fastTip > 0 and fastTip and math.floor(fastTip(fare, minutes, limit) * rules.fastTip + 0.5) or 0
   local smooth = comfort >= 100 and math.floor(fare * rules.smoothTip / 5 + 0.5) * 5 or 0
+  if rules.speedOnly then return pay, fast, { fast = fast > 0 or nil } end
   local tip = math.floor((fast + smooth) * comfort / 100 + 0.5)
   local rough = comfort < 100 and math.floor(comfort + 0.5) or nil
   return pay, tip, { fast = fast > 0 or nil, smooth = smooth > 0 or nil, rough = rough, damaged = rough }
