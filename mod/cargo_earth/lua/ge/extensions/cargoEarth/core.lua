@@ -756,7 +756,7 @@ function M.partsOffers(p, room, range)
   return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p), range)
 end
 
-local function towOffers(class, p)
+local function towOffers(class, p, weak)
   local c = S.career
   local kind = tow.CLASSES[class].trailer
   S.towCars = S.towCars or trailers.existing(tow.CARS)
@@ -789,6 +789,7 @@ local function towOffers(class, p)
   local factor = rating.freightPay(c)
   for _, offer in ipairs(out) do
     if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
+    if weak and offer.tow then offer.tow.weak = true end
     if firm.ownsTrailer(c, kind) then
       offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
       offer.pay = offer.pay + offer.trailerBonus
@@ -890,7 +891,7 @@ function M.generate()
     -- tow jobs: broken-down cars at real addresses, for a vehicle with a tow hitch or a tractor
     local class = v and tow.class(tier, tow.hasHitch(v))
     if class and S.fidx and garage.inOwnCar(M.G, S.career.garage) then
-      for _, offer in ipairs(towOffers(class, p)) do S.offers[#S.offers + 1] = offer end
+      for _, offer in ipairs(towOffers(class, p, tow.weak(class, v.specs))) do S.offers[#S.offers + 1] = offer end
     end
   end
   S.offeredAt = { lat = p.lat, lon = p.lon }
@@ -1119,9 +1120,9 @@ local function finishPickup()
     S.stopT = -10
     if j.tow.stage == 'hitch' and trailers.id() then return end
     local ok, why = trailers.spawnBorrowed(tow.CLASSES[j.tow.class].trailer)
-    if not ok then say('The trailer could not be put out: ' .. tostring(why), 6) return end
+    if not ok then say('No room for the trailer here (' .. tostring(why) .. '). Stop where it is free behind you.', 6) return end
     j.tow.stage, j.trailerSpawned = 'hitch', true
-    say(string.format('The %s is behind you. Press Hitch on the phone.', tow.CLASSES[j.tow.class].name:lower()), 8)
+    say(string.format('Putting the %s on your hitch…', tow.CLASSES[j.tow.class].name:lower()), 5)
     saveCareer()
     return
   elseif j.tow then
@@ -1185,9 +1186,14 @@ function M.towHitch()
     say('Back up to the trailer first: it stands at the workshop.', 5)
     return
   end
-  if not coupled and not trailers.hitch() then
-    j.tow.stage = 'shop'
-    say('The trailer is gone. Stop at the workshop again to get it.', 5)
+  if not coupled then
+    -- put on the hitch again; it counts once the game reports it coupled (tick)
+    if not trailers.hitch() then
+      j.tow.stage = 'shop'
+      say('The trailer is gone. Stop at the workshop again to get it.', 5)
+    else
+      say('Hitching the trailer…', 3)
+    end
     return
   end
   j.tow.stage = nil
@@ -3623,7 +3629,41 @@ function M.garageDealer(filter)
   local cars = garage.market(g, filter)
   local inCar = g.car and not g.car.loaner and garage.inOwnCar(M.G, g)
   return { cars = cars, tradeIn = inCar and math.floor(garage.carWorth(M.G, g) * garage.TRADE_IN / 5 + 0.5) * 5 or 0,
-    money = S.career.money or 0, debt = g.debt or 0 }
+    money = S.career.money or 0, debt = g.debt or 0, kinds = M.vehicleKinds() }
+end
+
+-- What each kind of vehicle is and the work it gets (the used-car list's type, cargo and "?"). Follows the job rules:
+-- parcel.TIERS, haul.tiers and the freight unlocks, so it stays right when they change.
+function M.vehicleKinds()
+  local state = haul.state(S.career)
+  local function kg(n) return n >= 1000 and (string.format('%g', math.floor(n / 100 + 0.5) / 10) .. ' t') or (n .. ' kg') end
+  local function fits(tier)
+    local t = haul.tiers[tier]
+    return string.format('Fits about %d parcels · %s', t.parcel, kg(t.kg))
+  end
+  local towJob = 'Tow jobs: one broken-down car on a car trailer (with a tow hitch)'
+  local out, list = {}, {
+    car = { fits('car'), { 'Food delivery', parcel.TIERS.car and 'Short parcel rounds from a depot' or nil, towJob } },
+    suv = { fits('suv'), { 'Food delivery', 'Parts runs from parts suppliers to repair shops', towJob } },
+    van = { fits('van'), { 'Food delivery', 'Parcel routes from a depot to real addresses', 'Freight jobs between companies', towJob } },
+    rigid = { fits('rigid'), { 'Business shipping between companies', towJob } },
+    semi = { string.format('Pulls trailers · up to %s', kg(haul.tiers.semi.kg)),
+      { 'Freight jobs with trailers', 'Fuel tanker runs to real fuel stations',
+        'Tow jobs: two cars on a flatbed trailer' } },
+  }
+  for _, kind in ipairs(haul.KIND_ORDER) do
+    local k = list[kind]
+    local jobsOf = {}
+    for i = 1, 4 do if k[2][i] then jobsOf[#jobsOf + 1] = k[2][i] end end
+    local locked
+    if kind == 'rigid' and state.unlocked == 'van' then
+      locked = string.format('Freight unlocks after %d van freight jobs (%d done).', state.vanGoal, state.van)
+    elseif kind == 'semi' and state.unlocked ~= 'semi' then
+      locked = string.format('Freight unlocks after %d box truck freight jobs (%d done).', state.rigidGoal, state.rigid)
+    end
+    out[#out + 1] = { id = kind, name = haul.KIND_NAMES[kind], fits = k[1], jobs = jobsOf, locked = locked }
+  end
+  return out
 end
 function M.garageBuyListing(id, keepCar)
   if S.job then return false, 'Finish the order first' end
@@ -4470,7 +4510,10 @@ function M.onUpdate(dtReal, dtSim)
   end
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
-  trailers.update()                                         -- couples a tow trailer once the game knows its hitch
+  trailers.update(dtReal)                                   -- couples a tow trailer once the game knows its hitch
+  if trailers.hitchFailed() and S.job and S.job.tow and S.job.tow.stage == 'hitch' then
+    say('The trailer did not latch on. Stand still and press Hitch on the phone to try again.', 8)
+  end
   if M.G.seatTick then M.G.seatTick() end                   -- the player sits in a car the mod just spawned
   if helper.commanding() then helper.pump(S.clock) end     -- radio presses: answered within frames, not ticks
   if S.clock >= (S.radioSyncAt or 0) then S.radioSyncAt = S.clock + 0.5 M.radioSync() end -- the UI page went away: the helper plays
@@ -4612,6 +4655,7 @@ end
 -- BeamNG.Earth moved the world's origin (modding API 1.7): positions worked out in the old frame are stale.
 function M.onBeamNGEarthRebased()
   marker.reset()
+  trailers.onRebased()
 end
 
 function M.onBeamNGEarthTeleported(info)
