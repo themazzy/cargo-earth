@@ -222,8 +222,10 @@ package.loaded['cargoEarth/earth'] = {
   teleport = function(lat, lon) pose.lat, pose.lon = lat, lon return true end,
   worldXY = function(p, pt) return p.x + (pt[2] - p.lon) * 71700, p.y + (pt[1] - p.lat) * 111320 end,
 }
+local seated   -- bus passengers the game was asked to seat
 local function adapter()
   return {
+    busPassengers = function(n) seated = n return n end,
     vehicle = function() return vehicle end, ownedVehicle = function() return vehicle end,
     isOwned = function() return true end, damage = function() return damageValue end, configs = function() return {} end,
     playerId = function() return vehicle and vehicle.id end, ownsVehicleId = function(id) return vehicle and vehicle.id == id end,
@@ -2509,6 +2511,7 @@ test('a bus shift: the lent bus, doors at every stop, the line paid and your car
   end
   atStop(1)
   assert(s.phase == 'toDelivery' and j.bus.at == 2 and j.bus.onBoard > 0)
+  assert(seated == j.bus.onBoard, 'the people on board sit in the bus')
   -- driving off with the doors open: nobody moves, open them again
   local st = j.bus.stops[2]
   pose.lat, pose.lon = st.g[1], st.g[2]
@@ -2520,6 +2523,7 @@ test('a bus shift: the lent bus, doors at every stop, the line paid and your car
   pose.speed = 0
   for n = 2, 5 do atStop(n) end
   assert(not s.job, 'the line is done')
+  assert(seated == 0, 'everyone got off at the last stop')
   assert(shift.phase == 'returning' and shift.gross >= j.pay, 'the line and the fares are held as wages')
   -- back at the depot: paid, and your own car again
   pose.lat, pose.lon = 50.0005, 14.0005
@@ -3405,4 +3409,32 @@ test('a load the mod lost track of is emptied once nothing is on board', functio
   s.sweepWanted, s.sweepAt = true, 0
   advance(core, 2)
   assert(boxes[1].currentVolume == 3, 'passenger seats are left alone')
+end)
+
+test('seat occupants: bus seats, a fixed scattered order, and seating the player', function()
+  local occ = require('cargoEarth/occupants')
+  local cfg = occ.fillBusSeats({ parts = { citybus_seats = 'citybus_seats', seat_occupant_1RA = 'occupant_generic' } })
+  local n = 0
+  for k, v in pairs(cfg.parts) do if k:find('^seat_occupant_') then n = n + 1 assert(v == 'occupant_generic') end end
+  assert(n == 34, 'every passenger seat of the city bus: ' .. n)
+  local seats = { { seatId = 'FL', isDriver = true, occupantType = 'player' } }
+  for _, id in ipairs(occ.BUS_SEATS) do seats[#seats + 1] = { seatId = id } end
+  local p = occ.plan(seats, 5, '136')
+  assert(#p.add == 5 and #p.remove == 0 and p.shown == 5)
+  for _, id in ipairs(p.add) do assert(id ~= 'FL', 'never the driver seat') end
+  -- the same five stay seated when two more get on
+  local set = {}
+  for _, id in ipairs(p.add) do set[id] = true end
+  for _, s in ipairs(seats) do if set[s.seatId] then s.occupantType = 'dummy' end end
+  local p2 = occ.plan(seats, 7, '136')
+  assert(#p2.add == 2 and #p2.remove == 0)
+  local p3 = occ.plan(seats, 2, '136')
+  assert(#p3.add == 0 and #p3.remove == 3)
+  assert(occ.plan(seats, 100, '136').shown == 34, 'standing people are not shown')
+  local other = occ.plan(seats, 5, '9')
+  local same = 0
+  for _, id in ipairs(other.add) do if set[id] then same = same + 1 end end
+  assert(same < 5 or #other.add < 5, 'another line seats people elsewhere')
+  assert(occ.needsSeat(true, nil, 5) and occ.needsSeat(true, { vehicleId = 5 }, 5))
+  assert(not occ.needsSeat(true, { vehicleId = 5, seatId = 'FL' }, 5) and not occ.needsSeat(false, nil, 5))
 end)

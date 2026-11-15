@@ -1343,17 +1343,27 @@ function M.busDoors()
   local off, on, dwell = bus.passengers(j, M.random)
   S.busDwell = { off = off, on = on, untilT = S.clock + dwell, at = j.bus.at, job = j }
   if M.G.busDoors then M.G.busDoors(true) end
+  M.busSeats(j, j.bus.onBoard - off)   -- those getting off leave their seats first
   say(string.format('Doors open at %s: %d off, %d on.', j.bus.stops[j.bus.at].n, off, on), math.ceil(dwell))
+end
+
+-- The people on board, seated in the bus (BeamNG's seat occupants, real weight; standing ones are not shown).
+function M.busSeats(j, n)
+  S.busSeatsAt = S.clock + 5
+  if M.G.busPassengers then pcall(M.G.busPassengers, math.max(0, n or 0), j and j.bus and j.bus.line or 'bus') end
 end
 
 function M.busTick(p)
   local d, j = S.busDwell, S.job
+  -- now and then, so a loaded save or a reset bus gets its passengers back
+  if not d and j and j.bus and S.clock >= (S.busSeatsAt or 0) then M.busSeats(j, j.bus.onBoard) end
   if not d then return end
   if not (j and j.bus) or d.job ~= j or j.bus.at ~= d.at then S.busDwell = nil return end
   if p and (p.speed or 0) > M.STOP_SPEED then
     -- drove off with the doors open: nobody got on or off, open them again at the stop
     S.busDwell = nil
     if M.G.busDoors then M.G.busDoors(false) end
+    M.busSeats(j, j.bus.onBoard)
     say('You drove off with the doors open. Stop and open them again.', 5)
     return
   end
@@ -1363,6 +1373,7 @@ function M.busTick(p)
   local bus = require('cargoEarth/bus')
   local last = bus.last(j)
   bus.served(j, d.off, d.on)
+  M.busSeats(j, j.bus.onBoard)
   j.bus.ready, j.bus.finished = true, last or nil
   if S.phase == 'toPickup' then finishPickup() else finishDelivery(false) end
   if S.job == j and not last then
@@ -4282,6 +4293,7 @@ function M.onUpdate(dtReal, dtSim)
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
   trailers.update()                                         -- couples a tow trailer once the game knows its hitch
+  if M.G.seatTick then M.G.seatTick() end                   -- the player sits in a car the mod just spawned
   if helper.commanding() then helper.pump(S.clock) end     -- radio presses: answered within frames, not ticks
   if S.clock >= (S.radioSyncAt or 0) then S.radioSyncAt = S.clock + 0.5 M.radioSync() end -- the UI page went away: the helper plays
   local worldReady = earth.status() == 'ok'
