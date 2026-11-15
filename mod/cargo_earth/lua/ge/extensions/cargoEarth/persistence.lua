@@ -26,7 +26,8 @@ local function job(j)
   if j.bus ~= nil then
     local b = j.bus
     if type(b) ~= 'table' or type(b.stops) ~= 'table' or #b.stops < 2 or not finite(b.at) or b.at < 1 or b.at > #b.stops
-      or not finite(b.onBoard) or b.onBoard < 0 or not finite(b.boarded) or b.boarded < 0 then return false end
+      or not finite(b.onBoard) or b.onBoard < 0 or not finite(b.boarded) or b.boarded < 0
+      or b.skipped ~= nil and (not finite(b.skipped) or b.skipped < 0 or b.skipped > #b.stops) then return false end
     for _, st in ipairs(b.stops) do if type(st) ~= 'table' or not point(st.g) then return false end end
   end
   if j.haul ~= nil then
@@ -67,6 +68,7 @@ local function valid(c)
       or not finite(s.index) or s.index < 1 or s.index > #s.jobs + 1 or s.index ~= math.floor(s.index)
       or not finite(s.completed) or s.completed < 0 or s.completed > #s.jobs or not finite(s.gross) or s.gross < 0
       or type(s.yard) ~= 'table' or not point(s.yard.g) then return false end
+    if s.handover ~= nil and s.handover ~= 'done' and s.handover ~= 'aborted' then return false end
     if not optional(s, 'ownerOperator', 'boolean') or (s.share ~= nil and (not finite(s.share) or s.share < 0 or s.share > 1)) then return false end
     for _, key in ipairs({'failed', 'quality', 'vehicleDamage'}) do
       if s[key] ~= nil and (not finite(s[key]) or s[key] < 0) then return false end

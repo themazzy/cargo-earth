@@ -1,6 +1,7 @@
 -- City bus lines: real lines from OpenStreetMap (route relations, streamed by the helper's /v1/buslines). The city lends
 -- you a bus at a bus station or depot near the line's first stop (or at that stop when none is mapped); you drive the
--- line stop by stop, open the doors at each one (people get off and on), and bring the bus back where you got it.
+-- line one way, stop by stop, and open the doors at each one (people get off and on). At the last stop the bus is
+-- handed over and you are taken back to the depot, to your own car.
 -- The shift runs as a company contract (cargoEarth/employment) with one job of kind 'bus'. Pure rules: no game calls.
 local jobs = require('cargoEarth/jobs')
 local M = {}
@@ -15,6 +16,7 @@ M.CAPACITY = 70          -- people a city bus takes
 M.DWELL_S, M.PER_PERSON_S, M.MAX_DWELL_S = 3, 0.6, 15
 M.MAX_STOPS = 40         -- a longer line is cut here (its last stop is the end of this run)
 M.STOP_ARRIVE_M = 30     -- a stop counts as reached this close
+M.COLLECT_FEE = 150      -- CZK: ending a shift away from the depot, the company fetches the bus
 
 local function place(id, n, lat, lon)
   return { id = id, n = n, town = '', g = { lat, lon } }
@@ -149,8 +151,25 @@ function M.served(job, off, on)
   end
 end
 
+-- A stop the bus cannot reach: nobody gets on (everyone gets off at the last one) and the stop is not paid.
+-- Returns how many got off.
+function M.skip(job)
+  local b = job.bus
+  local off = M.last(job) and b.onBoard or 0
+  b.skipped = (b.skipped or 0) + 1
+  M.served(job, off, 0)
+  return off
+end
+
 -- What the line pays at its end: the quote and the fares of the people who rode.
 function M.fares(job) return M.PER_PASSENGER * (job.bus.boarded or 0) end
+
+-- The line's pay at its end: the quote less the skipped stops' share, and the fares.
+function M.linePay(job)
+  local b = job.bus
+  local served = math.max(0, #b.stops - (b.skipped or 0)) / #b.stops
+  return math.floor(job.pay * served / 5 + 0.5) * 5 + M.fares(job)
+end
 
 -- For the phone: the line, where you are on it and the next few stops.
 function M.state(job, dwell, clock)
@@ -158,7 +177,7 @@ function M.state(job, dwell, clock)
   local b, next = job.bus, {}
   for i = b.at, math.min(#b.stops, b.at + 3) do next[#next + 1] = { n = b.stops[i].n, current = i == b.at or nil } end
   return { ref = b.ref, name = b.name, colour = b.colour, at = b.at, count = #b.stops, onBoard = b.onBoard,
-    boarded = b.boarded, next = next, last = M.last(job), capacity = M.CAPACITY,
+    boarded = b.boarded, skipped = b.skipped or 0, next = next, last = M.last(job), capacity = M.CAPACITY,
     doors = dwell and { off = dwell.off, on = dwell.on, left = math.max(0, math.ceil(dwell.untilT - (clock or 0))) } or nil }
 end
 

@@ -2521,15 +2521,23 @@ test('a bus shift: the lent bus, doors at every stop, the line paid and your car
   advance(core, 2)
   assert(j.bus.at == 2 and not core.phoneState().bus.line.doors, 'the stop is not served')
   pose.speed = 0
-  for n = 2, 5 do atStop(n) end
+  atStop(2)
+  -- a stop the bus cannot reach is skipped: nobody gets on and it is not paid
+  local quote, boarded = j.pay, j.bus.boarded
+  core.phoneAction('busSkip')
+  assert(j.bus.at == 4 and j.bus.skipped == 1 and j.bus.boarded == boarded, 'stop 3 skipped')
+  assert(core.phoneState().bus.line.skipped == 1)
+  atStop(4)
+  atStop(5)
   assert(not s.job, 'the line is done')
+  assert(j.pay == math.floor(quote * 4 / 5 / 5 + 0.5) * 5 + bus.fares(j), 'the skipped stop is not paid')
   assert(seated == 0, 'everyone got off at the last stop')
-  assert(shift.phase == 'returning' and shift.gross >= j.pay, 'the line and the fares are held as wages')
-  -- back at the depot: paid, and your own car again
-  pose.lat, pose.lon = 50.0005, 14.0005
+  -- the bus is handed over at the last stop and you are taken back to the depot, to your own car
   advance(core, 4)
+  assert(math.abs(pose.lat - 50.0005) < 1e-9 and math.abs(pose.lon - 14.0005) < 1e-9, 'back at the depot')
+  advance(core, 2)
   assert(not c.employment and c.garage.car.model == 'pigeon', 'your car is back')
-  assert(c.money > money and c.lastContract.completed == 1)
+  assert(c.money > money and c.lastContract.completed == 1 and c.lastContract.gross == j.pay)
   assert(s.mode == 'bus', 'still on the bus board')
 end)
 
@@ -2550,14 +2558,49 @@ test('a bus shift ended with the doors open leaves nothing behind for the next s
   advance(core, 4)
   core.phoneAction('busDoors')
   assert(s.busDwell, 'the doors are open')
-  core.phoneAction('busEnd')
-  assert(not c.employment and not s.job and not s.busDwell, 'the open doors go with the shift')
+  local money = c.money
+  core.placesDo('endCompany')   -- the Menu's End early ends it the same way as the phone
+  assert(not s.job and not s.busDwell, 'the open doors go with the shift')
+  advance(core, 4)
+  assert(c.employment and pose.lat == st.g[1], 'a moment to read the message first')
+  advance(core, 6)
+  assert(not c.employment and c.money == money - bus.COLLECT_FEE, 'ended away from the depot: the bus is collected for a fee')
+  assert(math.abs(pose.lat - 50.0005) < 1e-9, 'and you are back at the depot')
   -- a new shift at the depot: its first stop is not served by the old doors
   c.garage.pendingUsed = nil   -- your car finished loading its parts
   pose.lat, pose.lon = 50.0005, 14.0005
   core.phoneAction('busStart', id)
   advance(core, 40)
   assert(s.job and s.job.bus.at == 1 and s.phase == 'toPickup', 'the new line still waits at its first stop')
+end)
+
+test('ending a bus shift: free at the depot; settled where you are when BeamNG.Earth cannot take you back', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  helperAsks = {}
+  core.setMode('bus')
+  advance(core, 2)
+  for _, a in ipairs(helperAsks) do if a.path:find('/v1/buslines', 1, true) then a.cb(busData()) end end
+  pose.lat, pose.lon, pose.speed = 50.0005, 14.0005, 0
+  local id = core.phoneState().bus.lines[1].id
+  local money = c.money
+  core.phoneAction('busStart', id)
+  advance(core, 2)
+  core.phoneAction('busEnd')
+  assert(not c.employment and c.money == money and c.garage.car.model == 'pigeon', 'ended at the depot: no fee')
+  c.garage.pendingUsed = nil
+  core.phoneAction('busStart', id)
+  advance(core, 2)
+  local st = s.job.bus.stops[2]
+  pose.lat, pose.lon = st.g[1], st.g[2]
+  local earth = package.loaded['cargoEarth/earth']
+  local teleport = earth.teleport
+  earth.teleport = function() return false, 'not now' end
+  core.phoneAction('busEnd')
+  advance(core, 10)
+  earth.teleport = teleport
+  assert(not c.employment and c.garage.car.model == 'pigeon' and pose.lat == st.g[1], 'your car comes where you are')
 end)
 
 test('local money: country borders, exchange rates and free exchange at the border', function()

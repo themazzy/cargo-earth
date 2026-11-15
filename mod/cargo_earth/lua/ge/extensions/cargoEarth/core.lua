@@ -70,6 +70,7 @@ M.TICK_S = 0.5
 M.SAVE_RETRY_S = 5      -- try again if the last career checkpoint could not be written
 M.RESUME_TIMEOUT_S = 120  -- allow time for BeamNG.Earth to stream the saved area
 M.RESUME_NEAR_M = 3       -- skip teleport if already at the saved spot
+M.BUS_HANDOVER_S = 3      -- after a bus handover, before the trip back to the depot
 M.RESUME_ARRIVAL_M = 100  -- BeamNG.Earth may set the car down on nearby safe ground
 -- several orders at once (courier), like the real apps' batched orders: a second one rings while you carry the first,
 -- from the same restaurant or with a pickup close by, going to the same part of town
@@ -1179,7 +1180,7 @@ local function finishDelivery(force)
       return
     end
     -- the end of the line: the quote and the fares
-    j.pay = j.pay + require('cargoEarth/bus').fares(j)
+    j.pay = require('cargoEarth/bus').linePay(j)
   elseif j.haul then
     local cmd = S.freightLoad and S.freightLoad.command or ''
     if cmd ~= 'unload' and cmd ~= 'unloadDone' and not cmd:match('^stop') then
@@ -1309,10 +1310,10 @@ end
 function M.busState()
   local bus, c, p = require('cargoEarth/bus'), S.career, earth.pose()
   local shift = c.employment
-  local out = { state = S.busIdx and S.busIdx.state or 'loading', helper = helper.status().state }
+  local out = { state = S.busIdx and S.busIdx.state or 'loading', helper = helper.status().state, collectFee = bus.COLLECT_FEE }
   if shift and shift.tier == 'bus' then
     out.shift = { name = shift.companyName, depot = shift.yard.n, phase = shift.phase, error = S.companyError,
-      atDepot = employment.atYard(c, p) }
+      atDepot = employment.atYard(c, p), handover = shift.handover }
   end
   if S.job and S.job.bus then
     out.line = bus.state(S.job, S.busDwell, S.clock)
@@ -1378,6 +1379,21 @@ function M.busTick(p)
   if S.phase == 'toPickup' then finishPickup() else finishDelivery(false) end
   if S.job == j and not last then
     say(string.format('Next stop %d of %d: %s. %d on board.', j.bus.at, #j.bus.stops, j.bus.stops[j.bus.at].n, j.bus.onBoard), 5)
+  end
+end
+
+-- A stop the bus cannot reach: skipped, unpaid, and the line goes on (or ends, at the last stop).
+function M.busSkip()
+  local j = S.job
+  if not (j and j.bus) or S.busDwell then return end
+  local bus = require('cargoEarth/bus')
+  local name, last = j.bus.stops[j.bus.at].n, bus.last(j)
+  bus.skip(j)
+  M.busSeats(j, j.bus.onBoard)
+  j.bus.ready, j.bus.finished = true, last or nil
+  if S.phase == 'toPickup' then finishPickup() else finishDelivery(false) end
+  if S.job == j and not last then
+    say(string.format('Skipped %s. Next stop %d of %d: %s.', name, j.bus.at, #j.bus.stops, j.bus.stops[j.bus.at].n), 5)
   end
 end
 
@@ -1829,12 +1845,13 @@ function M.placesState()
   return out
 end
 
-local function companyReturn(aborted)
+-- here: settle where the player is (a bus handed over: the trip back to the depot already happened)
+local function companyReturn(aborted, here)
   local c, shift = S.career, S.career.employment
   if not shift then return false, 'No company contract is active.' end
   if S.parts then return false, 'Close the parts preview before ending the contract.' end
   if shift.phase ~= 'settled' then
-    if not aborted and not employment.atYard(c, earth.pose()) then return false, 'Park at the company yard first.' end
+    if not aborted and not here and not employment.atYard(c, earth.pose()) then return false, 'Park at the company yard first.' end
     local g = c.garage
     local what, cost = garage.trackDamage(g, M.G.damage())
     if what == 'hit' then employment.damage(c, math.max(0, cost)) end
@@ -1861,7 +1878,7 @@ local function companyReturn(aborted)
   c.garage, c.employment = personal, nil
   S.mode = M.RULES[shift.previousMode] and shift.previousMode or 'courier'
   S.opts, S.offeredAt, S.odometerPose = S.optsByMode[S.mode], nil, nil
-  S.companyError, S.companyPreparedAt = nil, nil
+  S.companyError, S.companyPreparedAt, S.busHome = nil, nil, nil
   S.phone.lastDone = nil
   if not saveCareer() then return false, S.saveError end
   return true, string.format('Company work ended. Paid %d CZK; %d CZK went to debt.', c.lastContract.net, c.lastContract.toDebt)
@@ -1953,6 +1970,10 @@ function M.companyTick()
     end
     return
   end
+  if shift.tier == 'bus' and (shift.handover or shift.phase == 'returning' and not S.job) then
+    M.busHomeTick(shift)
+    return
+  end
   if shift.phase == 'preparing' and shift.tier == 'bus' then shift.phase = 'working' end
   if shift.phase == 'preparing' then
     S.companyPreparedAt = S.companyPreparedAt or c.activeSeconds or 0
@@ -1974,13 +1995,63 @@ function M.companyTick()
     takeJob(employment.nextJob(c))
   elseif shift.phase == 'returning' and not S.job and not shift.routed then
     shift.routed = earth.gps(shift.yard.g[1], shift.yard.g[2], shift.yard.n) == true
-    say(shift.tier == 'bus' and ('Line done. Bring the bus back to ' .. shift.yard.n .. '.')
-      or 'Company route finished. Return to the yard and settle in Menu → Companies.')
+    say('Company route finished. Return to the yard and settle in Menu → Companies.')
     saveCareer()
-  elseif shift.phase == 'returning' and not S.job and shift.tier == 'bus' and employment.atYard(c, earth.pose()) then
-    -- the bus is back: the shift is paid and your own car returns
-    local ok, why = companyReturn(false)
-    if ok then say(why, 8) else S.companyError = why end
+  end
+end
+
+-- The bus is handed over where the line ends (or where the shift was ended) and the player is taken back to the
+-- depot, where the shift is paid and the player's own car comes back. aborted: ended before the last stop; away from
+-- the depot that costs bus.COLLECT_FEE.
+function M.busHandover(aborted)
+  local c, shift, p = S.career, S.career.employment, earth.pose()
+  if not shift or shift.tier ~= 'bus' then return false, 'No bus shift is active.' end
+  if shift.handover then return false, 'The bus is being handed over.' end
+  if employment.atYard(c, p) then return companyReturn(aborted) end
+  if aborted then
+    local fee = require('cargoEarth/bus').COLLECT_FEE
+    local paid = math.max(0, math.min(fee, math.floor(c.money or 0)))
+    local what = 'Bus collected: ' .. tostring(shift.companyName)
+    if paid > 0 then economy.post(c, -paid, 'fine', economy.nextId(c, 'fine'), what) end
+    if paid < fee then garage.addDebt(shift.personalGarage, fee - paid, 'fine', what) end
+  end
+  if S.busDwell and M.G.busDoors then M.G.busDoors(false) end
+  clearFreight()
+  S.orders, S.job, S.phase, S.stopT, S.busDwell = {}, nil, 'idle', 0, nil
+  earth.gpsClear()
+  shift.handover = aborted and 'aborted' or 'done'
+  saveCareer()
+  return true, (aborted and string.format('Shift ended. The company collects the bus (-%d CZK). ', require('cargoEarth/bus').COLLECT_FEE)
+    or 'Line done, the bus is handed over. ') .. 'Taking you back to ' .. shift.yard.n .. '.'
+end
+
+-- After the handover: the trip to the depot, then the shift is settled there. When BeamNG.Earth cannot take the
+-- player there, the shift is settled where they are.
+function M.busHomeTick(shift)
+  if not shift.handover then
+    local ok, why = M.busHandover(false)
+    say(why, 6)
+    if not ok then S.companyError = why end
+    return
+  end
+  local p, yard = earth.pose(), { lat = shift.yard.g[1], lon = shift.yard.g[2] }
+  local trip = S.busHome
+  if not trip then
+    -- a moment to read the handover message before the trip
+    trip = { goAt = S.clock + M.BUS_HANDOVER_S }
+    S.busHome = trip
+  end
+  if trip.goAt then
+    if S.clock < trip.goAt then return end
+    trip.goAt, trip.untilT = nil, S.clock + M.RESUME_TIMEOUT_S
+    if not atLocation(p, yard, M.RESUME_ARRIVAL_M) then
+      local ok = earth.teleport(yard.lat, yard.lon, shift.yard.n)
+      if not ok then trip.untilT = S.clock end
+    end
+  end
+  if p and not p.camera and (atLocation(p, yard, M.RESUME_ARRIVAL_M) or S.clock >= trip.untilT) then
+    local ok, why = companyReturn(shift.handover == 'aborted', true)
+    if ok then say(why, 8) else S.companyError, trip.untilT = why, S.clock + 5 end
   end
 end
 
@@ -2030,7 +2101,11 @@ function M.placesDo(name, value)
   elseif name == 'startCompany' then ok, why = companyStart(value)
   elseif name == 'startIndependent' then ok, why = companyStart(value, true)
   elseif name == 'settleCompany' then ok, why = companyReturn(false)
-  elseif name == 'endCompany' then ok, why = companyReturn(true)
+  elseif name == 'endCompany' then
+    local shift = c.employment
+    -- a bus shift ends the same way from the Menu as from the phone: handed over, with the fee away from the depot
+    if shift and shift.tier == 'bus' then ok, why = M.busHandover(shift.phase ~= 'returning')
+    else ok, why = companyReturn(true) end
   end
   if why then S.placesMsg = why elseif ok then S.placesMsg = 'GPS updated.' end
   S.placesOk = ok
@@ -2253,8 +2328,12 @@ function M.phoneAction(a, orderId)
   elseif a == 'busDoors' then
     M.busDoors()
   elseif a == 'busEnd' then
-    M.placesDo('endCompany')
-    S.contractMsg = S.placesMsg and { text = S.placesMsg, at = S.clock or 0 } or nil
+    local shift = S.career.employment
+    local ok, why = M.busHandover(not (shift and shift.phase == 'returning'))
+    S.contractMsg = why and { text = why, at = S.clock or 0 } or nil
+    if ok and why then say(why, 6) end
+  elseif a == 'busSkip' then
+    M.busSkip()
   elseif a == 'busGps' or a == 'busStart' then
     S.placesOk = nil
     M.placesDo(a == 'busGps' and 'companyGps' or 'startCompany', orderId)
@@ -4496,7 +4575,7 @@ end
 function M.onClientEndMission()
   dash.forgetLoaded()
   dash.forget()
-  S.resumeTrip = nil
+  S.resumeTrip, S.busHome = nil, nil
   releaseStorage()
   clearFreight()
   stopForceWatch()
