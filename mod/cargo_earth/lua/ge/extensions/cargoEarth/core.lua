@@ -4575,6 +4575,7 @@ end
 -- BeamNG.Earth moved the world's origin (modding API 1.7): positions worked out in the old frame are stale.
 function M.onBeamNGEarthRebased()
   marker.reset()
+  trailers.onRebased()
 end
 
 function M.onBeamNGEarthTeleported(info)

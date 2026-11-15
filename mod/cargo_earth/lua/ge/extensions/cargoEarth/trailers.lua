@@ -367,11 +367,16 @@ local function followTick()
   local pos = trailer:getPosition()
   if follow and (pos - follow[1]):length() > M.TELEPORT_M then
     local spots, dir = M.deckSpotsFor(trailer, #towed)
+    local moved = 0
     for i, tid in ipairs(towed) do
       local o = scenetree.findObjectById(tid)
-      if o and follow[2][tid] then M.moveCarTo(o, spots[i], dir) end
+      -- left behind only: an origin rebase moves the cars with the world, they are still by the deck (no reset)
+      if o and follow[2][tid] and (o:getPosition() - pos):length() > M.DECK_NEAR_M then
+        M.moveCarTo(o, spots[i], dir)
+        moved = moved + 1
+      end
     end
-    log('I', 'cargoEarth', 'trailer teleported: the cars on its deck went along')
+    if moved > 0 then log('I', 'cargoEarth', 'trailer teleported: the cars on its deck went along') end
   end
   local on = {}
   for _, tid in ipairs(towed) do
@@ -382,6 +387,9 @@ local function followTick()
   end
   follow = { pos, on }
 end
+
+-- BeamNG.Earth moved the world origin: positions jumped without a teleport
+function M.onRebased() follow = nil end
 
 function M.update(dt)
   latchTick(dt or 0)
