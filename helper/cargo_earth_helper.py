@@ -65,7 +65,7 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.9.1"
+VERSION = "0.10.0"
 AREA_CACHE_VERSION = "6"  # parts shops and repair workshops (parts runs); retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
