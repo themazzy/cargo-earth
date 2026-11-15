@@ -27,12 +27,25 @@ OpenStreetMap maps the lines; data (c) OpenStreetMap contributors, ODbL.
    Closing the doors early cancels boarding. Driving off before they close serves nobody: stop and open
    them again. A stop the bus cannot reach (a road missing in BeamNG.Earth, say) can be passed with **Skip stop**:
    nobody gets on there and the stop is not paid.
-4. After the last stop the line is paid: 120 + 12 per km + 6 per stop (less each skipped stop's share), plus 2 per
-   passenger, late minutes cost as for freight. As with company work, 80 % is your wage.
-5. The line runs one way. At the last stop the bus is handed over; 3 s later BeamNG.Earth takes you back to the depot,
+4. **Timetable.** Every stop has its own time, counted from the moment the doors closed at the stop before (from the
+   start at the depot for the first stop, plus a minute to get the bus out). A hop's time is its road km at a bus
+   speed that grows with the hop: 18 km/h plus 8 km/h per km, at most 45 km/h (short city hops are slow, long ones
+   between villages faster), times 1.15, plus 0.6 min for pulling in, the doors and pulling out, at least 1.5 min.
+   Until the GPS has the route the road km is the straight line times 1.25; once it knows the road, that stop's time
+   follows the real road (once per stop). The phone shows **Stop due in** for the current stop, and **Behind by**
+   once it is late. The minutes late at each stop add up.
+5. After the last stop the line is paid: 60 + 7 per timetable minute + 3 per stop (less each skipped stop's share),
+   plus 2 per passenger; each minute behind the timetable (added up over the stops) takes 1 % (never below half).
+   As with company work, 80 % is your wage. That is about 500-620 CZK an hour at the timetable's pace with the
+   fares, near van freight; the board shows the wage and the fares a line usually brings.
+   **Comfort** (as in a taxi): with people on board, every harsh moment (hard braking, accelerating or cornering,
+   0.55 g for 0.4 s) costs 4 points and a bump or crash from 3.5 g costs 10-40. The phone shows it once it drops.
+   The line's pay is multiplied by 0.6 + 0.004 x comfort (60 % at worst) and comfort counts in the stars and the
+   company reputation like a load's condition. An empty bus feels nothing.
+6. The line runs one way. At the last stop the bus is handed over; 3 s later BeamNG.Earth takes you back to the depot,
    where the shift is paid and your own car comes back. When Earth cannot take you there (2 minutes), the shift is
    settled where you are.
-6. **End shift** before the last stop pays nothing for the line. At the depot it is free; anywhere else the company
+7. **End shift** before the last stop pays nothing for the line. At the depot it is free; anywhere else the company
    collects the bus for 150 CZK (`bus.COLLECT_FEE`, from your money, the rest as debt) and you are taken back to the
    depot as above.
 

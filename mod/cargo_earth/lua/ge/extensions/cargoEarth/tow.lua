@@ -13,9 +13,14 @@ local M = {}
 M.CLASSES = {
   light = { name = 'Car trailer', trailer = 'cartrailer', cars = 1, base = 220, rate = 14, speed = 45, slack = 15 },
   heavy = { name = 'Flatbed trailer', trailer = 'flatbed', cars = 2, base = 380, rate = 20, speed = 50, slack = 20 },
+  -- Jan: the 22 ft car trailer (2.4 t) is too big and heavy for a small car. The game's Large Box Utility Trailer
+  -- (490 kg, its tailgate left off: cargoEarth/trailers) takes one, behind any car with a tow hitch.
+  small = { name = 'Small car trailer', trailer = 'smalltrailer', cars = 1, base = 200, rate = 13, speed = 50, slack = 15 },
 }
 -- stock BeamNG cars that break down (the first ones found in the game are used)
-M.CARS = { 'covet', 'pessima', 'legran', 'midsize', 'fullsize', 'etk800', 'vivace', 'wendover' }
+M.CARS = { 'covet', 'pessima', 'legran', 'midsize', 'fullsize', 'etk800', 'vivace', 'wendover', 'autobello', 'pigeon' }
+-- the ones short, narrow and light enough for the small car trailer (floor 4.2 m x 1.9 m)
+M.SMALL_CARS = { covet = true, autobello = true, pigeon = true }
 M.OFFERS = 2
 M.NEAR_KM = 8              -- broken-down cars this close to the player...
 M.LIKELY_KM = 3            -- ...all equally likely this close, less and less likely further out
@@ -66,6 +71,18 @@ function M.class(tier, hitch)
   if hitch then return 'light' end
 end
 
+-- Can a rig of this class (M.class) take a tow job of this class? A tow hitch takes both car trailers.
+function M.fits(rig, jobClass)
+  return rig ~= nil and (rig == jobClass or (rig == 'light' and jobClass == 'small'))
+end
+
+-- The class of a job for a rig of `class` towing `model`: a small car goes on the small car trailer when it may.
+-- opts.small: the small trailer is in the game and no big car trailer of your own is coupled.
+function M.jobClass(class, model, opts)
+  if class == 'light' and opts and opts.small and M.SMALL_CARS[model] then return 'small' end
+  return class
+end
+
 -- Does this vehicle have a tow hitch? (parts named like a hitch or a tow ball, not a delete or cover)
 function M.hasHitch(vehicle)
   for _, part in pairs(type(vehicle) == 'table' and vehicle.slotPartMap or {}) do
@@ -80,7 +97,7 @@ end
 
 -- Power check (Jan: warn only, the job can still be taken): tonnes a tow job adds behind the vehicle (trailer and
 -- the cars on it), and the power per tonne of the whole rig below which the phone says the car may struggle.
-M.ADDED_T = { light = 2.6, heavy = 9 }
+M.ADDED_T = { light = 2.6, heavy = 9, small = 1.6 }
 M.MIN_HP_PER_T = 20
 
 -- Is this vehicle short on power for this class of tow job? specs = { power = hp, weight = kg } from the game's
@@ -104,10 +121,17 @@ end
 -- the delivery place for a car there (or nil); models: the car models that exist in the game; rnd(n) picks 1..n;
 -- roadKm(from, to, maxKm) (optional): the road km to the workshop when the game's road graph knows it.
 -- borrow: the player has no car trailer coupled, so the job starts at the workshop with a borrowed one.
-function M.offers(class, lat, lon, addresses, workshop, models, rnd, count, roadKm, borrow)
+-- opts (optional): small = small cars go on the small car trailer (M.jobClass); onlySmall = only small cars (your
+-- own small trailer is coupled: a big car does not fit on it).
+function M.offers(class, lat, lon, addresses, workshop, models, rnd, count, roadKm, borrow, opts)
   rnd = rnd or math.random
-  local out, c = {}, M.CLASSES[class]
-  if not c or #(models or {}) == 0 or #(addresses or {}) == 0 then return out end
+  local out = {}
+  if opts and opts.onlySmall then
+    local small = {}
+    for _, m in ipairs(models or {}) do if M.SMALL_CARS[m] then small[#small + 1] = m end end
+    models = small
+  end
+  if not M.CLASSES[class] or #(models or {}) == 0 or #(addresses or {}) == 0 then return out end
   local tries, used = 0, {}
   while #out < (count or M.OFFERS) and tries < 40 do
     tries = tries + 1
@@ -122,18 +146,21 @@ function M.offers(class, lat, lon, addresses, workshop, models, rnd, count, road
       used[key] = true
       local cars = {}
       local wrecks = {}
+      local first = models[math.max(1, math.min(#models, rnd(#models)))]
+      local jobClass = M.jobClass(class, first, opts)
+      local c = M.CLASSES[jobClass]
       for i = 1, c.cars do
-        cars[i] = models[math.max(1, math.min(#models, rnd(#models)))]
+        cars[i] = i == 1 and first or models[math.max(1, math.min(#models, rnd(#models)))]
         wrecks[i] = M.wreckFor(key, i)
       end
       local straight = jobs.km(g[1], g[2], to.g[1], to.g[2])
       local road = roadKm and roadKm(g, to.g, straight * 4 + 5)
       if type(road) ~= 'number' then road = straight * jobs.ROAD_FACTOR end   -- paid by the road when it is known
-      local offer = { id = 'tow:' .. key .. ':' .. #out + 1, kind = 'tow', tow = { class = class, cars = cars, wrecks = wrecks },
+      local offer = { id = 'tow:' .. key .. ':' .. #out + 1, kind = 'tow', tow = { class = jobClass, cars = cars, wrecks = wrecks },
         from = { id = 'tow:' .. key, n = a[5] or 'Roadside', town = a[6] or '', g = g, label = 'Broken-down car' },
         to = to, cargoName = #cars > 1 and string.format('Tow %d broken-down cars', #cars) or 'Tow a broken-down car',
-        trailer = c.trailer, straightKm = straight, km = road, pickupKm = pickupKm, pay = M.pay(class, road),
-        minutes = M.minutes(class, road, pickupKm) }
+        trailer = c.trailer, straightKm = straight, km = road, pickupKm = pickupKm, pay = M.pay(jobClass, road),
+        minutes = M.minutes(jobClass, road, pickupKm) }
       if borrow then M.borrow(offer, lat, lon) end
       out[#out + 1] = offer
     end

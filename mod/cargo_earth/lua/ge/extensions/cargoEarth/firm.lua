@@ -45,8 +45,9 @@ M.VEHICLES = {
 M.TRAILERS = {
   { id = 'dryvan', name = 'Box trailer', price = 6000, text = 'Parcels, pallets and dry bulk' },
   { id = 'tanker', name = 'Tanker trailer', price = 8000, text = 'Milk, fuel and chemicals' },
-  { id = 'flatbed', name = 'Flatbed trailer', price = 7000, text = 'Tow jobs behind a tractor: two cars at a time' },
-  { id = 'cartrailer', name = 'Car trailer', price = 2500, text = 'Tow jobs behind a vehicle with a tow hitch' },
+  { id = 'flatbed', name = 'Flatbed trailer', price = 7000, text = 'Tow jobs behind a tractor: two cars at a time. Take it out here' },
+  { id = 'cartrailer', name = 'Car trailer', price = 2500, text = 'Tow jobs behind a car with a tow hitch. Take it out here, so you need not borrow one' },
+  { id = 'smalltrailer', name = 'Small car trailer', price = 1200, text = 'Light tow jobs for small cars only. Take it out here, so you need not borrow one' },
 }
 M.TRAILER_BONUS = 0.12
 M.TRAILER_MAX = 6

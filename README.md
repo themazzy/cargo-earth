@@ -2,7 +2,7 @@
 
 A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight, work company contracts and build a garage at an address you choose.
 
-**Early development · mod 0.10.1 · helper 0.10.1**
+**Early development · mod 0.10.2 · helper 0.10.2**
 
 [Download the mod and helper (latest release)](https://github.com/themazzy/cargo-earth/releases/latest) · [Landing page](website/index.html) · [Payout statistics](docs/research/payout-statistics-0.3.5/README.md)
 
@@ -24,14 +24,15 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
   *Deliver in* targets.
 
 **Freight** (the work depends on what you drive, see [vehicle types](docs/VEHICLE_TYPES.md))
-- **Car:** taxi rides: a passenger from a real address near you to an airport, a station, a museum, a sight or a hotel, seated in the car; drive smoothly (needs the latest helper).
+- **Car:** taxi rides: a passenger from a real address near you to an airport, a station, a museum, a sight or a hotel, seated in the car. Comfort passengers want a smooth ride and tip for it; rush passengers pay more for a fast one (needs the latest helper).
 - **SUV or pickup:** parts runs from parts shops and car plants to repair workshops.
 - **Van:** parcel routes from a depot to 4-7 addresses, emptying the cargo containers stop by stop; van freight.
 - **Box truck:** business shipping between real companies.
 - **Tractor:** trailer freight, fuel tanker runs that resupply real fuel stations, heavy tow jobs.
 - **Anything with a tow hitch:** tow jobs. A wrecked car (crashed front, rear or side, rolled over, stripped or with
   flat tyres) waits by the road; park your trailer next to it and press **Load** on the phone. It goes to a real auto
-  repair shop or your own headquarters. No trailer of your own? Borrow one at the repair shop first.
+  repair shop or your own headquarters. No trailer of your own? Borrow one at the repair shop first, or take your
+  firm's own car trailer out at HQ. Small cars go on a light box utility trailer any car can pull.
 - **Company contracts:** the phone lists the three nearest. Take one and the company lends you its van, box truck or
   tractor for the job; your own car waits for you. Independent contracts unlock at 20 reputation per employer.
 - Special cargo: fragile, chilled and oversize loads pay more and need care.
@@ -41,7 +42,8 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
 **Bus** (new)
 - Choose a real city bus or trolleybus line, then park your own car inside its depot marker for two seconds.
   Your car is stored and replaced by a city bus. Open its doors at each stop using **O** or the phone; both displays
-  show the same passenger timer. At the last stop, hand over the bus and return to your car. See [bus lines](docs/BUS_LINES.md).
+  show the same passenger timer. Each stop has its own timetable time, and harsh braking or bumps cost passenger comfort
+  and pay. At the last stop, hand over the bus and return to your car. See [bus lines](docs/BUS_LINES.md).
 
 ### Career
 
@@ -98,7 +100,7 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | Option | What it does |
 | --- | --- |
 | `-user-folder "D:\BeamNG\user"` | Use this BeamNG user folder when it is not found automatically |
-| `-version 0.10.1` | Install a specific release instead of the latest |
+| `-version 0.10.2` | Install a specific release instead of the latest |
 | `-mod-only`, `-helper-only` | Install only one part |
 | `-skip-python` | Don't install the helper's Python libraries |
 | `-zip <file>`, `-helper <file>` | Use files you already downloaded |
@@ -177,13 +179,13 @@ node tools/payout-stats.cjs
 
 Both installers share the Go program in `installer/`. From that folder, build with `GOOS=windows GOARCH=amd64 go build -o CargoEarthSetup.exe .` or `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o CargoEarthSetup-linux-x86_64 .`. Run installer checks with `go test ./...` and `go vet ./...`.
 
-To publish a release, create a GitHub release with a tag such as `v0.10.1` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
+To publish a release, create a GitHub release with a tag such as `v0.10.2` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.2 notes](docs/CAREER_0.10.2.md), [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
-This is an early development build, made by one person with a lot of help and tested in game as time allows. Bus lines, tow jobs (wrecks, coupling and loading), parts runs, vehicle-type detection, heavier loads and the BeamNG.Earth 1.10 speed limits are new in 0.10 and still need more driving; check the [release notes](docs/CAREER_0.10.1.md) for what is untested. Public places are candidate stops rather than certified loading bays, and a truck may not fit every yard a van does. Bulk and fluid loads have no condition yet. The payout report describes 0.3.5, before fuel costs.
+This is an early development build, made by one person with a lot of help and tested in game as time allows. Bus lines, tow jobs (wrecks, coupling and loading), parts runs, vehicle-type detection, heavier loads and the BeamNG.Earth 1.10 speed limits are new in 0.10 and still need more driving; check the [release notes](docs/CAREER_0.10.2.md) for what is untested. Public places are candidate stops rather than certified loading bays, and a truck may not fit every yard a van does. Bulk and fluid loads have no condition yet. The payout report describes 0.3.5, before fuel costs.
 
 The helper fetches public Overture source data; busy areas and first visits may take time to load. Python queries and connections are bounded, but real-world latency and coverage vary.
 

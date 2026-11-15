@@ -224,10 +224,12 @@ package.loaded['cargoEarth/earth'] = {
 }
 local seated   -- bus passengers the game was asked to seat
 local riders   -- taxi passengers the game was asked to seat
+local freeSeats   -- passenger seats the game reports in the player's car (nil: no seat system)
 local function adapter()
   return {
     busPassengers = function(n) seated = n return n end,
     carPassengers = function(n) riders = n return n end,
+    freeSeats = function() return freeSeats end,
     vehicle = function() return vehicle end, ownedVehicle = function() return vehicle end,
     isOwned = function() return true end, damage = function() return damageValue end, configs = function() return {} end,
     playerId = function() return vehicle and vehicle.id end, ownsVehicleId = function(id) return vehicle and vehicle.id == id end,
@@ -1630,13 +1632,33 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
     assert(o.to.id:sub(1, 6) == 'sight:' and o.to.n:find('^Sight'), 'rides end at a sight, not an address')
     assert(not seen[o.to.id], 'three different places') seen[o.to.id] = true
     assert(o.km >= taxi.KM[1] * taxi.ROAD_FACTOR - 1e-9 and o.km <= taxi.KM[2] * taxi.ROAD_FACTOR + 1e-9)
-    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) / 5 + 0.5) * 5 and o.minutes > 0)
+    local rules = taxi.MODES[o.taxi.mode]
+    assert(rules, 'every ride has a mode: ' .. tostring(o.taxi.mode))
+    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) * rules.pay / 5 + 0.5) * 5 and o.minutes > 0)
     assert(cargo.supports(o) and cargo.handling(o) == 'Fragile', 'a rough ride is felt')
   end
   assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, {maxKm = 1}) == 0, 'the longest-job setting holds')
+  -- comfort and rush: the same ride, driven fast and rough or slow and smooth
+  local function tipFn(pay, m, limit) return m < limit * 0.5 and 50 or 0 end
+  local comfortRide, rushRide = { taxi = { people = 1, mode = 'comfort' } }, { taxi = { people = 1, mode = 'rush' } }
+  local cp, ct = taxi.settle(comfortRide, 200, 20, 30, 0.02, 0.5, 100, tipFn)
+  assert(cp == 200 and ct == 30, 'comfort, smooth: full fare and a 15 % smooth tip: ' .. cp .. ' ' .. ct)
+  local cpRough, ctRough = taxi.settle(comfortRide, 200, 10, 30, 0.02, 0.5, 50, tipFn)
+  assert(cpRough == 130 and ctRough == 0, 'comfort, rough and fast: speed earns nothing, bumps cost a lot: ' .. cpRough)
+  local rp, rt = taxi.settle(rushRide, 200, 10, 30, 0.02, 0.5, 50, tipFn)
+  assert(rp == 200 and rt == 100, 'rush, rough and fast: comfort is not counted, a double speed tip: ' .. rp .. ' ' .. rt)
+  local rpLate = taxi.settle(rushRide, 200, 40, 30, 0.02, 0.5, 100, tipFn)
+  assert(rpLate == 100, 'rush, ten minutes late: half the fare (floor): ' .. rpLate)
+  assert(taxi.info({ taxi = { people = 2 } }).mode == 'comfort', 'an older ride counts as comfort')
   assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, function() return false end) == 0, 'a long detour is out')
   assert(#taxi.offers(function() return {} end, sights, 50.02, 14.02, rnd) == 0, 'no addresses, no rides')
   assert(#taxi.offers(near, function() return {} end, 50.02, 14.02, rnd) == 0, 'no sights, no rides')
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 0) == 0, 'no passenger seats, no rides')
+  for _ = 1, 5 do
+    for _, o in ipairs(taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 1)) do
+      assert(o.taxi.people == 1, 'one free seat: one passenger')
+    end
+  end
 end)
 
 test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and gets out', function()
@@ -1644,7 +1666,7 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   local c = s.career
   c.garage.debt = 0
   vehicle.bodyStyle = 'Hatchback'
-  riders = nil
+  riders, freeSeats = nil, nil
   s.config.spawnTrailer, s.config.requireTrailer = true, true   -- the game's defaults: a taxi needs no trailer
   s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
     everywhere)
@@ -1655,10 +1677,21 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   for _, offer in ipairs(s.offers) do assert(not offer.taxi, 'no sights known, no taxi rides') end
   fuel.addArea(s.autoIdx, 'k', sightRows())
   core.generate()
+  freeSeats = 0   -- a car with no passenger seats (a two-seater with the seat on the cargo side, say)
+  s.freeSeats = nil
+  core.generate()
+  for _, offer in ipairs(s.offers) do assert(not offer.taxi, 'no passenger seats, no taxi rides') end
+  freeSeats = 4
+  s.freeSeats = nil
+  core.generate()
   local i, job
   for k, offer in ipairs(s.offers) do if offer.taxi then i, job = k, offer end end
   assert(job, 'a car is offered taxi rides')
   assert(job.to.n:find('^Sight'), 'to a sight')
+  freeSeats = job.taxi.people - 1   -- switched to a smaller car after the offer came
+  core.take(i)
+  assert(s.job ~= job, 'more passengers than free seats: the ride is refused')
+  freeSeats = nil   -- a mod car without the seat system: seats unknown, the ride is allowed
   core.take(i)
   assert(s.job == job and s.phase == 'toPickup')
   assert(core.phoneState().active.taxi.people == job.taxi.people)
@@ -2152,6 +2185,31 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   money = c.money
   core.hqDo('sellTrailer', hq.trailers[1].id)
   assert(c.money == money + 3000 and #firm.trailers(c) == 0)
+  -- a tow trailer of the firm's is taken out here and goes on your hitch (Jan: how do I get my own trailer?)
+  local tr = require('cargoEarth/trailers')
+  local saved = { tr.takeOwn, tr.ownOut, tr.putAwayOwn }
+  local out = nil
+  tr.takeOwn = function(kind) out = kind return true end
+  tr.ownOut = function() return out and 5 or nil end
+  tr.putAwayOwn = function() out = nil end
+  local ok, err = pcall(function()
+    c.money = c.money + 5000
+    vehicle.slotPartMap = { body = 'pigeon', hitch = 'pigeon_tow_hitch' }
+    hq = core.hqDo('buyTrailer', 'smalltrailer')
+    local row = hq.trailers[#hq.trailers]
+    assert(row.tow and row.canTake and not row.out, 'a tow trailer can be taken out: ' .. tostring(hq.msg) .. ' ' .. tostring(row.needs))
+    hq = core.hqDo('takeTrailer', row.id)
+    row = hq.trailers[#hq.trailers]
+    assert(out == 'smalltrailer' and row.out and not row.canTake, tostring(hq.msg))
+    hq = core.hqDo('leaveTrailer', row.id)
+    assert(out == nil and not hq.trailers[#hq.trailers].out, 'left in the yard')
+    -- not without a tow hitch
+    vehicle.slotPartMap = { body = 'pigeon' }
+    hq = core.hqState()
+    assert(not hq.trailers[#hq.trailers].canTake and hq.trailers[#hq.trailers].needs == 'Needs a tow hitch')
+  end)
+  tr.takeOwn, tr.ownOut, tr.putAwayOwn = saved[1], saved[2], saved[3]
+  assert(ok, err)
 end)
 
 test('customers tip by speed and the order\'s condition, not by how it was driven', function()
@@ -2391,6 +2449,16 @@ test('tow rules: who can tow, offers to a workshop, cars on board, damage costs 
   local kinds = {}
   for n = 1, 60 do kinds[tow.wreckFor(tostring(n), 1)] = true end
   for _, w in ipairs(tow.WRECKS) do assert(kinds[w.id], 'every look comes up: ' .. w.id) end
+  -- Jan: a small car goes on the small, light car trailer (TSFB) when the game has it and no big one of yours is coupled
+  local small = tow.offers('light', 50, 14, addresses, workshop, { 'covet' }, function() return 1 end, nil, nil, true, { small = true })[1]
+  assert(small.tow.class == 'small' and small.trailer == 'smalltrailer' and tow.info(small).trailer == 'Small car trailer')
+  assert(small.pay < tow.pay('light', small.km) + tow.CLASSES.light.rate * tow.BORROW_RATE * small.borrowKm, 'the small trailer pays a little less')
+  local big = tow.offers('light', 50, 14, addresses, workshop, { 'midsize' }, function() return 1 end, nil, nil, false, { small = true })[1]
+  assert(big.tow.class == 'light' and big.trailer == 'cartrailer', 'a big car still goes on the 22 ft car trailer')
+  assert(#tow.offers('light', 50, 14, addresses, workshop, { 'midsize' }, function() return 1 end, nil, nil, false, { small = true, onlySmall = true }) == 0,
+    'your own small trailer coupled: no big cars')
+  assert(tow.fits('light', 'small') and tow.fits('light', 'light') and not tow.fits('light', 'heavy') and not tow.fits('heavy', 'small'))
+  assert(tow.weak('small', { power = 55, weight = 900 }) == false and tow.weak('light', { power = 55, weight = 900 }), 'the small trailer is light')
   assert(tow.onBoard({ 1, 5.9, 7, nil }) == 2)
   assert(tow.condition(0) == 100 and tow.condition(600) == 90 and tow.condition(1e9) == 100 - tow.MAX_LOSS)
 end)
@@ -2575,6 +2643,85 @@ test('bus lines: offers at the depot, passengers on and off, fares', function()
   local offEnd, onEnd = bus.passengers(j, top)
   assert(offEnd == 12 and onEnd == 0 and bus.last(j))
   assert(bus.fares(j) == bus.PER_PASSENGER * j.bus.boarded)
+end)
+
+test('bus timetable: each stop has its own time from its distance, late minutes add up stop by stop', function()
+  -- slow on short hops, faster on long ones, never under the floor
+  assert(bus.legMinutes(0.1) == bus.LEG_MIN)
+  local short, long = bus.legMinutes(0.5), bus.legMinutes(4)
+  assert(0.5 / (short / 60) < 4 / (long / 60), 'a long hop is driven faster on average')
+  assert(long < 4 / bus.LEG_KMH[1] * 60 * bus.LEG_SLACK + 1, 'a long hop is not driven at the slow city speed')
+  local idx = bus.index()
+  bus.set(idx, busData())
+  local j = bus.board(idx, 50, 14)[1].jobs[1]
+  local sum = 0
+  for i, st in ipairs(j.bus.stops) do
+    assert(st.min and st.min >= bus.LEG_MIN, 'stop ' .. i .. ' has its time')
+    sum = sum + st.min
+  end
+  assert(j.minutes == math.ceil(sum), 'the line takes the sum of its stops')
+  assert(j.bus.stops[1].min > j.bus.stops[2].min, 'the first stop includes getting out of the depot')
+  -- the pay follows the timetable's minutes
+  assert(j.pay == math.floor((bus.BASE + bus.PER_MIN * sum + bus.PER_STOP * 5) / 5 + 0.5) * 5)
+  -- the first stop: on time
+  local left, min = bus.due(j, 30)
+  assert(min == j.bus.stops[1].min and math.abs(left - (min * 60 - 30)) < 1e-6)
+  assert(bus.arrived(j, 30) == 0 and bus.arrived(j, 9999) == 0, 'counted once per stop')
+  bus.served(j, 0, 3, 60)
+  -- the second stop: the GPS road is longer than the guess, the time grows; once only
+  local before, total = j.bus.stops[2].min, j.minutes
+  assert(bus.roadKnown(j, 2, 90) and j.bus.stops[2].min > before and j.minutes > total)
+  assert(not bus.roadKnown(j, 9, 95), 'the road is taken once per stop')
+  -- two minutes late at the second stop
+  local due = 60 + j.bus.stops[2].min * 60
+  assert(math.abs(bus.arrived(j, due + 120) - 2) < 1e-6 and math.abs(bus.lateMinutes(j) - 2) < 1e-6)
+  bus.served(j, 0, 0, due + 140)
+  assert(bus.due(j, due + 140) == j.bus.stops[3].min * 60, 'the next stop gets its own time from the doors closing')
+  -- a skipped stop starts the next one's time too
+  bus.skip(j, due + 500)
+  assert(j.bus.at == 4 and j.bus.legStart == due + 500)
+  local st = bus.state(j, nil, 0, due + 500)
+  assert(st.dueMin == j.bus.stops[4].min and st.late == 2)
+  -- a line saved before the timetable existed: its stops have no times, nothing counts as late
+  j.bus.stops[5].min = nil
+  bus.served(j, 0, 0, due + 600)
+  assert(bus.arrived(j, due + 99999) == 0 and math.abs(bus.lateMinutes(j) - 2) < 1e-6)
+end)
+
+test('bus comfort: passengers feel harsh moments and bumps, an empty bus does not', function()
+  local idx = bus.index()
+  bus.set(idx, busData())
+  local j = bus.board(idx, 50, 14)[1].jobs[1]
+  assert(bus.harsh(j) == 0 and bus.bump(j, 9) == 0 and bus.comfort(j) == 100, 'nobody on board')
+  bus.served(j, 0, 5, 60)
+  assert(bus.harsh(j) == bus.HARSH_LOSS and bus.comfort(j) == 100 - bus.HARSH_LOSS)
+  assert(bus.bump(j, 3) == 0, 'below a bump')
+  assert(bus.bump(j, 99) == bus.BUMP_LOSS[2])
+  assert(bus.state(j, nil, 0, 60).comfort == bus.comfort(j))
+  for _ = 1, 40 do bus.harsh(j) end
+  assert(bus.comfort(j) == 0)
+end)
+
+test('bus names: escapes that lost their backslash on the way into the game are letters again', function()
+  assert(bus.text('Tiu0161ice, Chru00e1st') == 'Tišice, Chrást')
+  assert(bus.text('Ku0159u00edu017eek') == 'Křížek')
+  assert(bus.text('\\u010cerven\\u00e1') == 'Červená')
+  assert(bus.text('Nádraží 12') == 'Nádraží 12', 'right text stays')
+  assert(bus.text('Bus 0041') == 'Bus 0041' and bus.text('u0041') == 'u0041', 'plain letters are not guessed')
+  local idx = bus.index()
+  local data = busData()
+  data.lines[1].stops[1][1] = 'Ovu010du00e1ry'
+  data.lines[1].to = 'Nedomice, u0160kola'
+  data.depots[1].name = 'Garu00e1u017e'
+  bus.set(idx, data)
+  assert(idx.lines[1].stops[1].n == 'Ovčáry' and idx.lines[1].to == 'Nedomice, Škola' and idx.depots[1].n == 'Garáž')
+end)
+
+test('bus board: the fares a line is expected to bring are shown with its pay', function()
+  local idx = bus.index()
+  bus.set(idx, busData())
+  local o = bus.board(idx, 50, 14)[1]
+  assert(o.fares == bus.PER_PASSENGER * bus.expectedRiders(5) and o.fares > 0)
 end)
 
 test('speed cameras are paused even for a save that previously enabled them', function()
@@ -3790,6 +3937,8 @@ test('seat occupants: bus seats, a fixed scattered order, and seating the player
   assert(n == 34, 'every passenger seat of the city bus: ' .. n)
   local seats = { { seatId = 'FL', isDriver = true, occupantType = 'player' } }
   for _, id in ipairs(occ.BUS_SEATS) do seats[#seats + 1] = { seatId = id } end
+  assert(occ.freeSeats(seats) == 34 and occ.freeSeats(nil) == nil, 'free seats: all but the driver')
+  assert(occ.freeSeats({ { seatId = 'FL', isDriver = true } }) == 0, 'a one-seater has none')
   local p = occ.plan(seats, 5, '136')
   assert(#p.add == 5 and #p.remove == 0 and p.shown == 5)
   for _, id in ipairs(p.add) do assert(id ~= 'FL', 'never the driver seat') end
@@ -3826,7 +3975,7 @@ test('a tow job without your own trailer: borrow it at the workshop, hitch it, f
   end
   local trailerOut, hitched, coupled, roadside = false, 0, false, 0
   local distances = {}
-  trailers.existing = function(list) return { list[1] } end
+  trailers.existing = function() return { 'midsize' } end   -- a big car: the 22 ft car trailer
   trailers.towModel = function() return 'tiltdeck' end
   trailers.ownTowTrailer = function() return nil end
   trailers.adopt = function() return false end
@@ -3928,10 +4077,15 @@ test('your own coupled car trailer is used and never deleted', function()
   local oldScene, oldPlayer, oldCv = scenetree, getPlayerVehicle, core_vehicles
   scenetree = { findObjectById = function(id) return objs[id] end }
   getPlayerVehicle = function() return { getID = function() return 1 end } end
-  core_vehicles = { vehsCouplings = { [1] = { [9] = true } } }
+  core_vehicles = { vehsCouplings = { [1] = { [9] = true } }, getModel = function(m) return { model = m } end }
   local ok, err = pcall(function()
     assert(trailers.ownTowTrailer('cartrailer') == 9)
     assert(trailers.ownTowTrailer('flatbed') == nil, 'a tilt deck is not a flatbed')
+    assert(trailers.ownTowTrailer('smalltrailer') == nil, 'nor the small car trailer')
+    -- the large box utility trailer counts as the small car trailer only (the game has the tilt deck for the big one)
+    objs[9].getJBeamFilename = function() return 'boxutility_large' end
+    assert(trailers.ownTowTrailer('smalltrailer') == 9 and trailers.ownTowTrailer('cartrailer') == nil)
+    objs[9].getJBeamFilename = function() return 'tiltdeck' end
     assert(trailers.adopt('cartrailer') and trailers.id() == 9 and trailers.adopted())
     trailers.removeTow()
     trailers.remove()
@@ -3939,6 +4093,35 @@ test('your own coupled car trailer is used and never deleted', function()
   end)
   scenetree, getPlayerVehicle, core_vehicles = oldScene, oldPlayer, oldCv
   assert(ok, err)
+end)
+
+test('a car goes on the deck by the middle of its body, not its ref node', function()
+  local V = {}
+  V.__index = V
+  local oldVec = rawget(_G, 'vec3')
+  vec3 = function(x, y, z)
+    if type(x) == 'table' then x, y, z = x.x, x.y, x.z end
+    return setmetatable({ x = x, y = y, z = z }, V)
+  end
+  function V:dot(b) return self.x * b.x + self.y * b.y + self.z * b.z end
+  function V:normalized() local l = math.sqrt(self:dot(self)) return vec3(self.x / l, self.y / l, self.z / l) end
+  -- a car facing +y whose ref node sits 1 m behind its middle and 0.3 m to the left of it; a broken-off part lies
+  -- further away in another cluster
+  local nodes = { { -0.9, -1.0 }, { 0.3, -1.0 }, { -0.9, 3.0 }, { 0.3, 3.0 }, { 5, 9 } }
+  local o = {
+    getDirectionVector = function() return vec3(0, 1, 0) end,
+    getNodeClusters = function() return { 1, 1, 1, 1, 2 } end,
+    getRefNodeId = function() return 0 end,
+    getNodeCount = function() return #nodes end,
+    getNodePosition = function(_, i) return vec3(nodes[i + 1][1], nodes[i + 1][2], 0) end,
+  }
+  local f, r = trailers.bodyOffset(o)
+  -- right of a car facing +y is +x here (the trailer side's own convention): middle at x = -0.3, y = 1.0
+  assert(math.abs(f - 1.0) < 1e-9 and math.abs(r + 0.3) < 1e-9, 'body middle from the ref node: ' .. f .. ' ' .. r)
+  -- a game without these calls: no shift
+  local f0, r0 = trailers.bodyOffset({})
+  vec3 = oldVec
+  assert(f0 == 0 and r0 == 0)
 end)
 
 test('used-car market: every vehicle kind has at least 6 listings at cheap, middle and dear prices', function()
