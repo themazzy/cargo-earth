@@ -86,9 +86,43 @@ func TestEarthCopyFollowsNewHelper(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	local = tmp
 	dir := earthCopyDir()
-	// Earth has not installed the helper: nothing to do
-	if err := updateEarthCopy(filepath.Join(tmp, "x.py"), "v1"); err != nil {
+	readState := func() map[string]any {
+		raw, err := os.ReadFile(filepath.Join(dir, "installed.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := map[string]any{}
+		if err := json.Unmarshal(raw, &state); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	// Earth has not installed the helper: the installer does, set to start with BeamNG.Earth
+	first := filepath.Join(tmp, "CargoEarth", "helper", "cargo_earth_helper_0.9.0.py")
+	writeTestFile(t, first, "first")
+	if err := updateEarthCopy(first, "v0.9.0"); err != nil {
 		t.Fatal(err)
+	}
+	if st := readState(); st["file"] != "cargo_earth_helper_0.9.0.py" || st["autostart"] != true || st["local"] != true {
+		t.Fatalf("fresh copy: %v", st)
+	}
+	// the player turned autostart off on the Add-ons page: kept
+	writeTestFile(t, filepath.Join(dir, "installed.json"),
+		`{"file": "cargo_earth_helper_0.9.0.py", "tag": "v0.9.0", "sha256": "x", "local": true, "autostart": false}`)
+	if err := updateEarthCopy(first, "v0.9.1"); err != nil {
+		t.Fatal(err)
+	}
+	if st := readState(); st["autostart"] != false || st["tag"] != "v0.9.1" {
+		t.Fatalf("player's choice: %v", st)
+	}
+	// Earth's own Install writes no autostart key: turned on, even when the file is already current
+	writeTestFile(t, filepath.Join(dir, "installed.json"),
+		`{"file": "cargo_earth_helper_0.9.0.py", "tag": "v0.9.1", "sha256": "x", "local": true}`)
+	if err := updateEarthCopy(first, "v0.9.1"); err != nil {
+		t.Fatal(err)
+	}
+	if st := readState(); st["autostart"] != true {
+		t.Fatalf("Earth's install: %v", st)
 	}
 	writeTestFile(t, filepath.Join(dir, "cargo_earth_helper_0.10.0.py"), "old")
 	writeTestFile(t, filepath.Join(dir, "installed.json"),

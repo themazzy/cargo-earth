@@ -1100,6 +1100,11 @@ angular.module('beamng.apps')
 
       // offline: the job type can be switched here too (Settings has the same switch)
       '<div class="cep-body" ng-class="{\'cep-work-board\': s.trucking || s.bus}" ng-if="tab === \'orders\' && s.screen === \'offline\'">' +
+      '<div class="cep-card cep-helperstart" ng-if="s.helperStart"><b>The Cargo Earth helper is not running</b>' +
+        '<div class="cep-sub">{{ s.helperStart.installed ? "Start it in BeamNG.Earth. It will start with BeamNG.Earth from now on." : "BeamNG.Earth installs and starts the helper by " + s.helperStart.author + " beside the game. It finds places, addresses and radio near you, and starts with BeamNG.Earth from now on." }}</div>' +
+        '<div class="cep-sub" ng-if="s.helperStart.error">Could not start it: {{ s.helperStart.error }}</div>' +
+        '<button class="cep-btn ok" ng-disabled="s.helperStart.busy" ng-click="act(\'helperStart\')">{{ s.helperStart.busy ? "Starting…" : (s.helperStart.installed ? "Start helper" : "Install and start") }}</button>' +
+        '<button class="cep-sm ghost" ng-click="act(\'helperHide\')">Not now</button></div>' +
       '<div class="cep-subtabs cep-modes" ng-if="s.canSwitch" role="group" aria-label="Job type">' +
         '<button ng-class="{on: s.mode === \'courier\'}" ng-click="act(\'mode\', \'courier\')">Food delivery</button>' +
         '<button ng-class="{on: s.mode === \'trucking\'}" ng-click="act(\'mode\', \'trucking\')">Freight</button>' +
@@ -1165,6 +1170,11 @@ angular.module('beamng.apps')
 
       // waiting
       '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'waiting\'">' +
+      '<div class="cep-card cep-helperstart" ng-if="s.helperStart"><b>The Cargo Earth helper is not running</b>' +
+        '<div class="cep-sub">{{ s.helperStart.installed ? "Start it in BeamNG.Earth. It will start with BeamNG.Earth from now on." : "BeamNG.Earth installs and starts the helper by " + s.helperStart.author + " beside the game. It finds places, addresses and radio near you, and starts with BeamNG.Earth from now on." }}</div>' +
+        '<div class="cep-sub" ng-if="s.helperStart.error">Could not start it: {{ s.helperStart.error }}</div>' +
+        '<button class="cep-btn ok" ng-disabled="s.helperStart.busy" ng-click="act(\'helperStart\')">{{ s.helperStart.busy ? "Starting…" : (s.helperStart.installed ? "Start helper" : "Install and start") }}</button>' +
+        '<button class="cep-sm ghost" ng-click="act(\'helperHide\')">Not now</button></div>' +
       '<button class="cep-btn ghost" ng-click="act(\'offline\')">Go offline</button><div class="cep-center">' +
         '<div class="cep-pulse"><i></i></div><div class="cep-big">Looking for orders</div>' +
         '<div class="cep-sub" ng-if="s.trucking">{{ s.trucking.hint || ("Looking for " + s.trucking.carrier + " freight near you.") }}</div>' +

@@ -140,13 +140,13 @@ The same command-line options listed for Windows work on Linux. The helper is in
 
 ### First start
 
-1. **Start BeamNG.Earth** and open its **Add-ons** page. Allow **Cargo Earth helper** the first time it asks, and turn on **Start with BeamNG.Earth** so it runs whenever you play. The helper needs internet access.
+1. **Start BeamNG.Earth.** The installer sets the helper up there with **Start with BeamNG.Earth** on, so it runs whenever you play (you can turn that off on Earth's **Add-ons** page). After a manual install, the phone shows **Install and start** or **Start helper** when the helper isn't running; one press starts it through BeamNG.Earth and turns that switch on. The helper needs internet access.
 2. **Load a BeamNG.Earth map** with the mod enabled (BeamNG's Mods menu shows **cargo_earth_career**).
 3. **The phone:** the first time, the mod adds the **Cargo Earth: Phone** app to BeamNG.Earth's ".Earth" UI layout, above the speedometer. Move or resize it with the UI Apps editor (Escape → **UI Apps**). If you play with another layout, or removed the phone, add **Cargo Earth: Phone** there yourself and save the layout. Everything is done by clicking on the phone; the mod has no key bindings.
 4. **Choose Career or Free play** on the phone, pick Food delivery, Freight or Bus and go online on **Work**.
 5. Optional: turn **traffic on in BeamNG.Earth** for the speed-limit sign on the phone (it reads Earth's road graph).
 
-If the phone says the helper is not running: check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` on Windows or `start_helper.sh` from `${XDG_DATA_HOME:-$HOME/.local/share}/CargoEarth/helper` on Linux and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras, bus lines, parts runs, repair shops and grocery runs still need it.
+If the phone says the helper is not running: press **Start helper** on the phone, check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` on Windows or `start_helper.sh` from `${XDG_DATA_HOME:-$HOME/.local/share}/CargoEarth/helper` on Linux and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras, bus lines, parts runs, repair shops and grocery runs still need it.
 
 The phone keeps what you need while driving: **Work** (deliveries), **Radio**, and a fuel line at the bottom. **Menu** opens a big window over the game with **Garage**, **Home**, **Companies**, **Progress**, **Finances**, **Delivery map**, **Firm** and **Settings**. The firm's headquarters opens from Firm as a full-screen plan of the building.
 

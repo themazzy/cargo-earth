@@ -3207,6 +3207,48 @@ test('the phone says when a newer release is out (the helper looks it up)', func
   assert(ok, why)
 end)
 
+test('the phone starts a helper that is not running through BeamNG.Earth\'s add-on list', function()
+  local helper = require('cargoEarth/helper')
+  local enabled, status = helper.enabled, helper.status
+  local h = { state = 'off' }
+  helper.status = function() return h end
+  local sent, card = {}, { id = 'cargo-earth-helper', author = 'themazzy', installed = false, running = false, canInstall = true }
+  package.loaded['beamngEarth/addons'] = {
+    uiState = function() return { connected = true, addons = { card } } end,
+    install = function(id, agreed) sent[#sent + 1] = 'install:' .. id .. ':' .. tostring(agreed) return true end,
+    manage = function(id, op) sent[#sent + 1] = op return true end,
+  }
+  package.loaded['cargoEarth/earthaddon'] = nil
+  local ok, why = pcall(function()
+    local core, s = fresh()
+    helper.enabled = true
+    assert(core.phoneState().helperStart == nil, 'not before a failed ask')
+    h.msg = 'Cargo Earth helper not running (connection refused)'
+    local hs = core.phoneState().helperStart
+    assert(hs and not hs.installed and hs.author == 'themazzy' and not hs.busy, 'offered')
+    core.phoneAction('helperStart')
+    assert(sent[1] == 'install:cargo-earth-helper:true' and #sent == 1, table.concat(sent, ','))
+    assert(core.phoneState().helperStart.busy, 'starting')
+    card.installed = true
+    core.phoneState()
+    assert(sent[2] == 'start' and sent[3] == 'autostart_on', table.concat(sent, ','))
+    -- already installed: Start only
+    s.clock = s.clock + 60
+    sent = {}
+    core.phoneAction('helperStart')
+    assert(sent[1] == 'start' and sent[2] == 'autostart_on' and #sent == 2)
+    core.phoneAction('helperHide')
+    assert(core.phoneState().helperStart == nil, 'hidden')
+    -- no BeamNG.Earth add-on list: nothing offered
+    package.loaded['beamngEarth/addons'] = nil
+    s.helperStartHidden = nil
+    assert(core.phoneState().helperStart == nil)
+    h.state, h.msg = 'ready', nil
+  end)
+  package.loaded['beamngEarth/addons'], helper.enabled, helper.status = nil, enabled, status
+  assert(ok, why)
+end)
+
 test('the dash phone part only runs the phone app\'s own calls', function()
   local core = fresh()
   assert(core.dashAllowed('cargoEarth_core and cargoEarth_core.phoneAction("online") or nil'))

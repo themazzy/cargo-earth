@@ -38,6 +38,8 @@ function M.configure(cfg)
 end
 
 function M.status() return st end
+-- ask again by time t (the helper was just started: no need to wait out RETRY_S)
+function M.retrySoon(t) if st.state == 'off' and t < nextAsk then nextAsk, nextCameras = t, math.min(nextCameras, t) end end
 function M.hasArea(key) return got[key] == true end
 function M.forget(key) got[key] = nil end
 
