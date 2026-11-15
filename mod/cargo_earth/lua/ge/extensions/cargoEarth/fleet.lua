@@ -1,4 +1,6 @@
--- Hired drivers: people with a speed, a level of care and a wage, each driving one of the firm's parked vehicles.
+-- Hired drivers: people with a speed, a level of care, the licences they hold, a kind of vehicle they know best and a
+-- wage, each driving one of the firm's parked vehicles. A driver only takes a vehicle their licence covers, and the
+-- vehicle has to be fit for its work (a car, an SUV or a van needs cargo boxes, a tractor one of the firm's trailers).
 -- Their runs are simulated while the career is active (10-minute shifts of play). What a shift brings in depends on
 -- the vehicle (a car does small jobs, a tractor long hauls and needs one of the firm's trailers), the driver's speed
 -- and the dispatch office; the wage is paid out of it. Careless drivers wear the vehicle faster and have more
@@ -12,10 +14,19 @@ local M = {}
 M.SHIFT_S = 600
 M.NET_PER_SHIFT = 45       -- an average driver (wage 25) in a car: what drivers earned before 0.5
 M.HIRE_FEE = 350
-M.GROSS = { car = 70, van = 110, rigid = 170, semi = 260 }     -- CZK a shift brings in, before the wage
-M.KM = { car = 8, van = 10, rigid = 12, semi = 15 }            -- km a shift drives
+M.GROSS = { car = 70, suv = 90, van = 110, rigid = 170, semi = 260 }   -- CZK a shift brings in, before the wage
+M.KM = { car = 8, suv = 10, van = 10, rigid = 12, semi = 15 }           -- km a shift drives
 M.INCIDENT = 0.03          -- chance a shift ends in an incident for an average driver (care 1)
-M.INCIDENT_COST = { car = 250, van = 350, rigid = 700, semi = 1000 }
+M.INCIDENT_COST = { car = 250, suv = 300, van = 350, rigid = 700, semi = 1000 }
+-- Licences: every driver may drive cars, SUVs and vans; some also hold a truck licence (box trucks), and some of those
+-- an articulated one (tractors). Each one adds to the wage.
+M.LICENCES = {
+  { id = 'car', name = 'Car', covers = { car = true, suv = true, van = true }, wage = 0 },
+  { id = 'truck', name = 'Truck', covers = { rigid = true }, wage = 10, chance = 0.45 },
+  { id = 'artic', name = 'Articulated', covers = { semi = true }, wage = 15, chance = 0.5 },   -- of the truck holders
+}
+M.KNOWS_BONUS = 1.15       -- a driver brings in this much more in the kind of vehicle they know best
+M.KINDS = { car = 'cars', suv = 'SUVs and pickups', van = 'vans', rigid = 'box trucks', semi = 'tractors' }
 M.APPLICANTS = 3           -- people looking for work at a time
 M.APPLICANT_MIN = 20       -- minutes of play before a new list of applicants
 M.SPEED = { 0.8, 1.25 }
@@ -34,11 +45,37 @@ end
 local function round5(x) return math.floor(x / 5 + 0.5) * 5 end
 local function between(r, rnd) return r[1] + (r[2] - r[1]) * rnd() end
 
--- A skilled driver asks for more: 15 to 70 CZK a shift.
-function M.wage(speed, care)
+-- A skilled driver asks for more: 15 to 70 CZK a shift, and more for each truck licence.
+function M.wage(speed, care, licences)
   local s = (speed - M.SPEED[1]) / (M.SPEED[2] - M.SPEED[1])
   local k = (care - M.CARE[1]) / (M.CARE[2] - M.CARE[1])
-  return round5(15 + 30 * s + 25 * k)
+  local extra = 0
+  for _, l in ipairs(M.LICENCES) do
+    if type(licences) == 'table' and licences[l.id] then extra = extra + l.wage end
+  end
+  return round5(15 + 30 * s + 25 * k + extra)
+end
+
+-- May this driver take a vehicle of this kind (car, suv, van, rigid, semi)?
+function M.licensed(driver, kind)
+  local held = type(driver) == 'table' and driver.licences
+  for _, l in ipairs(M.LICENCES) do
+    if l.covers[kind] and type(held) == 'table' and held[l.id] then return true end
+  end
+  return false
+end
+
+function M.licenceFor(kind)
+  for _, l in ipairs(M.LICENCES) do if l.covers[kind] then return l end end
+end
+
+-- The licence names a driver holds, for the screen.
+function M.licenceNames(driver)
+  local out = {}
+  for _, l in ipairs(M.LICENCES) do
+    if type(driver) == 'table' and type(driver.licences) == 'table' and driver.licences[l.id] then out[#out + 1] = l.name end
+  end
+  return out
 end
 
 function M.applicant(rnd, n)
@@ -47,8 +84,18 @@ function M.applicant(rnd, n)
   local care = math.floor(between(M.CARE, rnd) * 100 + 0.5) / 100
   local i = math.floor(rnd() * #M.NAMES) + 1
   local j = math.floor(rnd() * #M.INITIALS) + 1
+  local licences = { car = true }
+  if rnd() < M.LICENCES[2].chance then
+    licences.truck = true
+    if rnd() < M.LICENCES[3].chance then licences.artic = true end
+  end
+  -- the kind of vehicle they know best, among those they may drive
+  local kinds = { 'car', 'suv', 'van' }
+  if licences.truck then kinds[#kinds + 1] = 'rigid' end
+  if licences.artic then kinds[#kinds + 1] = 'semi' end
+  local knows = kinds[math.min(#kinds, math.floor(rnd() * #kinds) + 1)]
   return { id = 'a' .. tostring(n or 1), name = M.NAMES[math.min(i, #M.NAMES)] .. ' ' .. M.INITIALS:sub(j, j) .. '.',
-    speed = speed, care = care, wage = M.wage(speed, care) }
+    speed = speed, care = care, licences = licences, knows = knows, wage = M.wage(speed, care, licences) }
 end
 
 -- The applicants now; a new list after APPLICANT_MIN minutes of play (playMin: the career's play clock in minutes).
@@ -67,13 +114,20 @@ function M.applicants(f, playMin, rnd)
   return f.applicants
 end
 
--- A driver from before 0.5 (no skills): an average one.
-function M.restore(driver)
+-- A driver from before 0.5 (no skills): an average one. A driver hired before licences holds the one for the
+-- vehicle they already drive (kind), so nobody is stopped by the change.
+function M.restore(driver, kind)
   if type(driver) ~= 'table' then return nil end
   driver.name = type(driver.name) == 'string' and driver.name or 'Your driver'
   driver.speed = tonumber(driver.speed) or 1
   driver.care = tonumber(driver.care) or 1
   driver.wage = tonumber(driver.wage) or 25
+  if type(driver.licences) ~= 'table' then
+    driver.licences = { car = true }
+    if kind == 'rigid' or kind == 'semi' then driver.licences.truck = true end
+    if kind == 'semi' then driver.licences.artic = true end
+  end
+  if not M.KINDS[driver.knows] then driver.knows = nil end
   return driver
 end
 
@@ -91,10 +145,15 @@ function M.hire(g, career, id, applicantId)
   for i, a in ipairs(list) do if a.id == applicantId then pick, index = a, i end end
   if not pick then pick, index = list[1], 1 end
   if not pick then return false, 'Nobody is looking for work right now.' end
+  local kind = upkeep.tier(car)
+  M.restore(pick, 'car')
+  if not M.licensed(pick, kind) then
+    return false, string.format('%s has no %s licence for %s.', pick.name, M.licenceFor(kind).name:lower(), car.name)
+  end
   career.money = career.money - M.HIRE_FEE
   table.remove(list, index)
-  car.driver = { name = pick.name, speed = pick.speed, care = pick.care, wage = pick.wage, elapsed = 0, earned = 0,
-    km = 0, shifts = 0 }
+  car.driver = { name = pick.name, speed = pick.speed, care = pick.care, wage = pick.wage, licences = pick.licences,
+    knows = pick.knows, elapsed = 0, earned = 0, km = 0, shifts = 0 }
   return true, string.format('%s now drives %s.', pick.name, car.name)
 end
 
@@ -112,16 +171,22 @@ local function trailerFor(f, kind, used)
   end
 end
 
--- What a shift of this driver in this vehicle brings in after the wage (an estimate, without incidents).
-function M.net(driver, car, factor)
-  local tier = upkeep.tier(car)
-  return math.floor(M.GROSS[tier] * (driver.speed or 1) * (tonumber(factor) or 1) + 0.5) - (driver.wage or 0)
+-- What a shift of this driver in a vehicle of this kind brings in after the wage (an estimate, without incidents).
+function M.netFor(driver, kind, factor)
+  local knows = driver.knows == kind and M.KNOWS_BONUS or 1
+  return math.floor((M.GROSS[kind] or M.GROSS.car) * (driver.speed or 1) * knows * (tonumber(factor) or 1) + 0.5)
+    - (driver.wage or 0)
 end
+function M.net(driver, car, factor) return M.netFor(driver, upkeep.tier(car), factor) end
 
 -- Why a driver cannot work right now, or nil. used: trailers already taken this round.
-local function blocked(car, f, used)
+local function blocked(car, f, used, driver)
+  local kind = upkeep.tier(car)
+  if not M.licensed(driver, kind) then return 'licence' end
+  -- a car, an SUV or a van needs cargo boxes (known once you have driven it: boxCount 0 means none fitted)
+  if (kind == 'car' or kind == 'suv' or kind == 'van') and car.boxCount == 0 then return 'boxes' end
   if garage.parkedRepairCost(car) > 0 then return 'repair' end
-  if upkeep.tier(car) == 'semi' then
+  if kind == 'semi' then
     local t = trailerFor(f, 'dryvan', used) or trailerFor(f, 'tanker', used) or trailerFor(f, 'flatbed', used)
     if not t then return 'trailer' end
     used[t] = true
@@ -136,9 +201,9 @@ function M.advance(g, dt, factor, career, rnd)
   local f = career and career.firm
   if dt <= 0 then return income, events end
   for _, car in ipairs(g.parked or {}) do
-    local driver = M.restore(car.driver)
+    local driver = M.restore(car.driver, upkeep.tier(car))
     if driver then
-      driver.waiting = blocked(car, f, used)
+      driver.waiting = blocked(car, f, used, driver)
       if not driver.waiting then
         local elapsed = (driver.elapsed or 0) + dt
         local shifts = math.floor(elapsed / M.SHIFT_S)
@@ -178,8 +243,9 @@ end
 
 function M.driverState(driver, car, factor)
   if not driver then return nil end
-  M.restore(driver)
+  M.restore(driver, upkeep.tier(car))
   return { name = driver.name, speed = driver.speed, care = driver.care, wage = driver.wage, earned = driver.earned or 0,
+    licences = M.licenceNames(driver), knows = driver.knows and M.KINDS[driver.knows] or nil,
     km = math.floor(driver.km or 0), net = M.net(driver, car, factor), waiting = driver.waiting,
     nextMin = math.max(1, math.ceil((M.SHIFT_S - (driver.elapsed or 0)) / 60)) }
 end

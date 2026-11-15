@@ -97,13 +97,44 @@ end
 
 local ownedId, replacedData
 
+-- The config's "Body Style" from the game's vehicle list (Sedan, Hatchback, SUV, Pickup...), or the model's; nil
+-- when the game gives none. Looked up once per model and config.
+local styles = {}
+local function styleOf(t)
+  if type(t) ~= 'table' then return nil end
+  if type(t['Body Style']) == 'string' then return t['Body Style'] end
+  local agg = type(t.aggregates) == 'table' and t.aggregates['Body Style']
+  if type(agg) == 'table' then
+    local first = next(agg)
+    if type(first) == 'string' then return first end
+  end
+end
+local function bodyStyle(model, config)
+  if type(model) ~= 'string' then return nil end
+  local file = type(config) == 'table' and config.partConfigFilename
+  local key = type(file) == 'string' and file:match('([^/\\]+)%.pc$') or ''
+  local cacheKey = model .. '/' .. key
+  if styles[cacheKey] == nil then
+    local found = false
+    local cv = ext('core_vehicles')
+    if cv and cv.getModel then
+      local ok, md = pcall(cv.getModel, model)
+      if ok and type(md) == 'table' then
+        found = styleOf(type(md.configs) == 'table' and md.configs[key] or nil) or styleOf(md.model) or false
+      end
+    end
+    styles[cacheKey] = found
+  end
+  return styles[cacheKey] or nil
+end
+
 local function describe(v, d)
   if not d then return nil end
   local vdata, config = d.vdata or {}, d.config or {}
   local model = vdata.model or config.model or (d.model)
   if not model then model = v and v.getJBeamFilename and v:getJBeamFilename() or nil end
   return { model = model, slotPartMap = vdata.slotPartMap, tree = config.partsTree, ioCtx = d.ioCtx,
-    id = v and v:getID(), data = d, config = config }
+    id = v and v:getID(), data = d, config = config, bodyStyle = bodyStyle(model, config) }
 end
 
 function M.vehicle() return describe(playerVeh(), vehData()) end
@@ -152,6 +183,96 @@ function M.freightLoanerConfig(model, key)
   if type(config) ~= 'table' or type(config.parts) ~= 'table' then return end
   if model == 'van' then config.parts.van_load = 'van_cargo_load_box_2XL' end
   return config
+end
+
+-- The city bus the city lends for a bus line: a stock Wentward citybus configuration, a city one when the game has one
+-- (not a coach or highway one). Returns the config and its key, or nil.
+M.BUS_MODEL = 'citybus'
+function M.busLoanerConfig()
+  local ok, info = pcall(function() return core_vehicles.getModel(M.BUS_MODEL) end)
+  local configs = ok and type(info) == 'table' and type(info.configs) == 'table' and info.configs or {}
+  local keys = {}
+  for key in pairs(configs) do keys[#keys + 1] = key end
+  table.sort(keys)
+  local pick
+  for _, key in ipairs(keys) do
+    local k = key:lower()
+    if k:find('city', 1, true) and not k:find('coach', 1, true) and not k:find('highway', 1, true) then pick = key break end
+  end
+  for _, key in ipairs(pick and {} or keys) do
+    local k = key:lower()
+    if not k:find('coach', 1, true) and not k:find('highway', 1, true) then pick = key break end
+  end
+  pick = pick or keys[1]
+  if not pick then return nil end
+  local entry = configs[pick]
+  local file = type(entry) == 'table' and type(entry.pcFilename) == 'string' and entry.pcFilename
+    or ('vehicles/' .. M.BUS_MODEL .. '/' .. pick .. '.pc')
+  local config = jsonReadFile(file)
+  if type(config) ~= 'table' or type(config.parts) ~= 'table' then return nil end
+  require('cargoEarth/occupants').fillBusSeats(config)   -- a seat for every passenger
+  return config, pick
+end
+
+-- The city bus's real doors (content/vehicles/citybus: controller 'bus' keeps the lever state, the pneumatic 'doors'
+-- controller moves the frontDoors and rearDoors beam groups). open: true opens, false closes.
+function M.busDoors(open)
+  local v = playerVeh()
+  if not v or not v.queueLuaCommand then return false end
+  local want = open and 'true' or 'false'
+  v:queueLuaCommand('local b = controller and controller.getControllerSafe and controller.getControllerSafe("bus") '
+    .. 'if b and b.setState then pcall(b.setState, { bus_doorsRequestedOpen = ' .. want .. ' }) else '
+    .. 'local d = controller and controller.getControllerSafe and controller.getControllerSafe("doors") '
+    .. 'if d and d.setBeamGroupsValveState then pcall(d.setBeamGroupsValveState, { "frontDoors", "rearDoors" }, '
+    .. (open and '-1' or '1') .. ') end end')
+  return true
+end
+
+------------------------------------------------------------------------------------------ people in the seats
+local function seatSystem() return rawget(_G, 'gameplay_seatOccupants') or ext('gameplay_seatOccupants') end
+
+-- Seated passengers in the player's vehicle: n people (BeamNG's dummy occupants, real weight) in the order the seed
+-- gives. Returns how many sit, or nil when the vehicle has no seat system.
+function M.busPassengers(n, seed)
+  local so, v = seatSystem(), playerVeh()
+  if not (so and so.getSeats and so.setDummyOccupant and v) then return nil end
+  local id = v:getID()
+  -- only the lent bus itself: not a car the player switched to during the line
+  if id ~= ownedId or (v.getJBeamFilename and v:getJBeamFilename() ~= M.BUS_MODEL) then return nil end
+  if so.usesSeatSystem and not so.usesSeatSystem(id) then return nil end
+  local okSeats, seats = pcall(so.getSeats, id)
+  if not okSeats or type(seats) ~= 'table' then return nil end
+  local occupants = require('cargoEarth/occupants')
+  local plan = occupants.plan(seats, n, seed)
+  for _, seatId in ipairs(plan.remove) do pcall(so.clearDummyOccupant, id, seatId) end
+  for _, seatId in ipairs(plan.add) do pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG) end
+  return plan.shown
+end
+
+-- After the mod spawned, swapped or respawned the player's car: once the game knows its seats, the player sits in the
+-- driver's seat (so the driver figure shows, as in any stock car). Tried for a few seconds, then left alone (the
+-- player may choose to stand up from the game's own seat menu).
+local seatWatch
+function M.watchSeat() local now = os.clock() seatWatch = { fromT = now + 1, untilT = now + 8 } end
+
+function M.seatTick()
+  if not seatWatch then return end
+  local now = os.clock()
+  if now > seatWatch.untilT then seatWatch = nil return end
+  if now < seatWatch.fromT then return end   -- the game's own seating runs first, on the spawn
+  local so, v = seatSystem(), playerVeh()
+  if not (so and so.requestEnterBestSeat and v) then return end
+  local id = v:getID()
+  local okUses, uses = pcall(function() return so.usesSeatSystem and so.usesSeatSystem(id) end)
+  if not okUses then seatWatch = nil return end
+  local d = vehData(id)
+  if not (d and d.vdata) then return end   -- still loading
+  if not uses then seatWatch = nil return end   -- a car without seat occupants (most mod cars): nothing to show
+  local okP, presence = pcall(function() return so.getPlayerPresence and so.getPlayerPresence(0) end)
+  if okP and require('cargoEarth/occupants').needsSeat(true, presence, id) then
+    seatWatch = nil   -- one go: a car that refuses is left alone
+    pcall(so.requestEnterBestSeat, id, 0)
+  end
 end
 
 function M.vehicleData(id) return vehData(id) end
@@ -286,6 +407,7 @@ function M.respawnPlayer(edit)
     replacedData = previousData
     error(err)
   end
+  M.watchSeat()
 end
 
 local configsCache
@@ -360,6 +482,7 @@ function M.spawn(model, key, config, vehicleId, position)
   if not ok then error(spawned) end
   if not spawned then error('BeamNG refused to spawn ' .. tostring(model)) end
   ownedId, replacedData = spawned:getID(), previousData
+  M.watchSeat()
 end
 
 function M.repair()

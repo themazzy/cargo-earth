@@ -36,6 +36,16 @@ end
 
 local function speedOf(l) return tonumber(l and l.speedLimit) or 0 end
 
+-- The legal limit BeamNG.Earth 1.10+ keeps on an edge (`posted`, m/s: positive the map's own limit, negative the road
+-- class's default for that country), or nil on an older Earth / where it is not known. Unlike speedLimit it is never
+-- lowered in a bend.
+local function postedOf(l)
+  local p = tonumber(l and l.posted)
+  if not p or p == 0 then return nil end
+  return math.abs(p), p > 0
+end
+M.postedOf = postedOf
+
 -- A speed (m/s) that is a posted limit: a whole 5 km/h or 5 mph step (Earth stores m/s to 2 decimals); only the
 -- country's own unit counts when it is known.
 local function posted(ms, units)
@@ -75,6 +85,7 @@ local function walk(nodes, from, at)
   return best
 end
 
+-- Earth's own posted limit is used when the graph has it (Earth 1.10+); otherwise the guess below.
 -- km/h of the road edge a-b, then what its sign says and in which unit ('km/h', or 'mph' where the limit is a whole
 -- number of mph and not of km/h, as in the US or the UK), and whether it is a posted limit (false: a bend speed the
 -- graph around it could not resolve yet); nil when the graph has no limit there. units: the country's sign unit
@@ -83,16 +94,17 @@ function M.at(graph, a, b, units)
   local nodes = type(graph) == 'table' and graph.nodes
   if type(nodes) ~= 'table' or a == nil or b == nil then return nil end
   local l = link(nodes, a, b)
-  local base = speedOf(l)
+  local legal = postedOf(l)
+  local base = legal or speedOf(l)
   if base <= 0 then return nil end
   local ms = base
-  if not posted(base, units) then ms = math.max(base, math.min(walk(nodes, a, b), walk(nodes, b, a))) end
+  if not legal and not posted(base, units) then ms = math.max(base, math.min(walk(nodes, a, b), walk(nodes, b, a))) end
   local kmh = ms * 3.6
   if kmh < M.MIN_KMH then return nil end
   local five = math.floor(kmh / 5 + 0.5) * 5
   local mph = ms / 0.44704
   local fiveMph = math.floor(mph / 5 + 0.5) * 5
-  local sure = posted(ms, units)
+  local sure = legal ~= nil or posted(ms, units)
   if units and not sure then return math.floor(kmh + 0.5), nil, units, false end
   if units == 'mph' or (not units and math.abs(kmh - five) > 0.2 and math.abs(mph - fiveMph) <= 0.1) then
     return math.floor(kmh + 0.5), fiveMph, 'mph', sure

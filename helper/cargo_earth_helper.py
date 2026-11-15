@@ -19,6 +19,10 @@ API (GET, JSON):
   /v1/cameras?lat=..&lon=..   speed cameras around the point, from OpenStreetMap (Overpass API, one request per
                               0.5 degree cell, kept for 30 days): {"state": "ready" | "loading" | "failed",
                               "cells": [...], "cameras": [[id, lat, lon, limit km/h (0 = unknown), road class], ...]}
+  /v1/buslines?lat=..&lon=..  city bus lines around the point, from OpenStreetMap (route relations, one Overpass
+                              request per 0.1 degree cell, kept for 14 days): {"state", "cells", "lines": [{"id",
+                              "ref", "name", "from", "to", "operator", "colour", "km", "stops": [[name, lat, lon], ...]}],
+                              "depots": [{"id", "name", "kind": "station" | "depot", "lat", "lon"}]}
   /v1/radio?cc=CZ&lat=..&lon=..  internet radio stations of the country, from Radio Browser (one request per country a
                               day): {"state": "ready" | "loading" | "failed", "country", "top": [[id, name, stream url,
                               codec, kbps, tags, region], ...] (most listened first), "near": [[... the same, km], ...]}
@@ -32,7 +36,9 @@ API (GET, JSON):
                               nearest first
   /v1/area?key=r_c            one ready area: {"key", "restaurants": [[id, lat, lon, curbLat, curbLon, name, cat, town],
                               ...], "grocers": [rows in the same format],
-                              "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...], "tiles": {"row_col":
+                              "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...],
+                              "autos": [[id, lat, lon, name, "p" (parts shop) | "g" (repair workshop), town], ...],
+                              "tiles": {"row_col":
                               [[lat, lon, curbLat, curbLon, label, town], ...]}, "houses": bool,
                               "depots": [{id, n, g: [lat, lon], t: "yard" | "shop", town, source, access}, ...]}
 Areas are AREA x AREA degrees (r = floor(lat / AREA), c = floor(lon / AREA)); address tiles inside are TILE degrees,
@@ -40,7 +46,7 @@ the same keys as the mod's own data pack (food_CZ/a/<row>_<col>.json).
 
 Data: Overture Maps Foundation, places (CDLA-Permissive-2.0), addresses (sources' licences), buildings (ODbL and
 others); https://docs.overturemaps.org/attribution/
-Speed cameras: (c) OpenStreetMap contributors, ODbL; https://www.openstreetmap.org/copyright
+Speed cameras, bus lines: (c) OpenStreetMap contributors, ODbL; https://www.openstreetmap.org/copyright
 Radio stations: Radio Browser (https://www.radio-browser.info), free community directory; the streams belong to the stations
 """
 import argparse
@@ -59,8 +65,8 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.9.1"
-AREA_CACHE_VERSION = "5"  # fuel depots for tanker runs; retain existing downloaded Parquet blocks
+VERSION = "0.10.0"
+AREA_CACHE_VERSION = "6"  # parts shops and repair workshops (parts runs); retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
 STAC_ROOT = "https://stac.overturemaps.org"
@@ -97,6 +103,22 @@ DEPOT_RULES = [
     ("shop", r"hardware|home_improvement|building_material|furniture|electronics|appliance|auto_parts|grocery|supermarket|hypermarket|department_store"),
 ]
 DEPOT_RX = [(kind, re.compile(pattern)) for kind, pattern in DEPOT_RULES]
+# Car places for parts runs: "p" sells car parts, "g" repairs cars (a parts run goes from a "p" to a "g").
+AUTO_RULES = [
+    ("p", r"auto_parts|automotive_parts|car_parts|tire_dealer|tire_shop|tire_store"),
+    ("g", r"auto_repair|automotive_repair|automotive_service|auto_service|car_repair|car_service|auto_body|body_shop"
+          r"|collision|mechanic|oil_change|transmission_repair|car_dealer|used_car_dealer|tire_repair"),
+]
+AUTO_RX = [(kind, re.compile(pattern)) for kind, pattern in AUTO_RULES]
+AUTO_SQL_RX = "|".join(pattern for _, pattern in AUTO_RULES)
+
+
+def auto_kind(primary, hierarchy, basic):
+    taxonomy = " ".join(str(value or "") for value in (primary, hierarchy, basic)).lower()
+    for kind, pattern in AUTO_RX:
+        if pattern.search(taxonomy):
+            return kind
+    return None
 DEPOT_SQL_RX = "|".join(pattern for _, pattern in DEPOT_RULES)
 
 
@@ -486,13 +508,13 @@ class Builder:
         con, paths = self._con("places/place", box)
         if not paths:
             con.close()
-            return [], [], []
+            return [], [], [], []
         food = ", ".join(f"'{c}'" for c in sorted(FOOD))
         # Overture groups grocery subtypes under food_and_beverage_store at the basic level.
         grocer = """(list_contains(taxonomy.hierarchy, 'grocery_store')
                      OR taxonomy.primary IN ('grocery_store', 'supermarket', 'hypermarket'))"""
         depot = ("regexp_matches(lower(concat_ws(' ', basic_category, taxonomy.primary, "
-                 f"array_to_string(taxonomy.hierarchy, ' '))), '{DEPOT_SQL_RX}')")
+                 f"array_to_string(taxonomy.hierarchy, ' '))), '{DEPOT_SQL_RX}|{AUTO_SQL_RX}')")
         kinds = ", ".join(f"'{c}'" for c in sorted(FUEL))
         fuel = f"(coalesce(basic_category IN ({kinds}), false) OR coalesce(taxonomy.primary IN ({kinds}), false))"
         q = f"""SELECT id, names.primary, basic_category, taxonomy.primary, array_to_string(taxonomy.hierarchy, ' '),
@@ -508,7 +530,7 @@ class Builder:
         finally:
             con.close()
         out, depots = [], []
-        stations = []
+        stations, autos = [], []
         for pid, name, basic, prim, hier, lat, lon, town, is_grocer in rows:
             name = (name or "").strip()
             sells = FUEL.get(prim) or FUEL.get(basic)
@@ -527,7 +549,10 @@ class Builder:
                 if kind:
                     depots.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)],
                                    "t": kind, "town": town, "source": "Overture", "access": "candidate"})
-        return out, depots, stations
+                car = auto_kind(prim, hier, basic)
+                if car:
+                    autos.append([f"o{pid[:16]}", round(lat, 6), round(lon, 6), name, car, town])
+        return out, depots, stations, autos
     def addresses(self, box):
         con, paths = self._con("addresses/address", box)
         if not paths:
@@ -575,6 +600,7 @@ class Builder:
         addr = self.addresses(box)
         found = fut.result()
         places, depots, stations = found[0], found[1], (found[2] if len(found) > 2 else [])
+        autos = found[3] if len(found) > 3 else []
         houses = False
         if len(addr) < HOUSES_BELOW:
             try:
@@ -616,10 +642,18 @@ class Builder:
                     row[5] = min(kept[:: max(1, len(kept) // 2000)],
                                  key=lambda a: (a[0] - row[1]) ** 2 + (a[1] - row[2]) ** 2)[3]
         stations = [s for s in stations if box[1] <= s[1] < box[3] and box[0] <= s[2] < box[2]]
+        if kept:
+            for row in autos:
+                if not row[5]:
+                    row[5] = min(kept[:: max(1, len(kept) // 2000)],
+                                 key=lambda a: (a[0] - row[1]) ** 2 + (a[1] - row[2]) ** 2)[3]
+        autos = [a for a in autos if box[1] <= a[1] < box[3] and box[0] <= a[2] < box[2]]
         log(f"area {r}_{c}: {len(restaurants)} restaurants, {len(grocers)} grocery stores, "
-            f"{len(depots)} workplaces, {len(stations)} fuel stations, {sum(len(v) for v in tiles.values())} customers"
+            f"{len(depots)} workplaces, {len(stations)} fuel stations, {len(autos)} car places, "
+            f"{sum(len(v) for v in tiles.values())} customers"
             f"{' (with houses)' if houses else ''} in {time.time() - t0:.1f} s")
         return {"key": f"{r}_{c}", "restaurants": restaurants, "grocers": grocers, "depots": depots, "fuel": stations,
+                "autos": autos,
                 "tiles": tiles, "houses": houses,
                 "release": self.index.release}
 
@@ -649,6 +683,13 @@ def valid_area(data, key, release):
     for row in data["fuel"]:
         if not isinstance(row, list) or len(row) < 5 or not isinstance(row[0], str) or not coordinates(row[1:3] * 2, 0) \
                 or not isinstance(row[3], str) or row[4] not in ("f", "e"):
+            return False
+    autos = data.get("autos", [])
+    if not isinstance(autos, list):
+        return False
+    for row in autos:
+        if not isinstance(row, list) or len(row) < 5 or not isinstance(row[0], str) or not coordinates(row[1:3] * 2, 0) \
+                or not isinstance(row[3], str) or row[4] not in ("p", "g"):
             return False
     for depot in data["depots"]:
         if not isinstance(depot, dict) or not isinstance(depot.get("id"), str) or not isinstance(depot.get("n"), str) or depot.get("t") not in ("yard", "shop", "fuel"):
@@ -707,7 +748,7 @@ class Areas:
         r0, c0 = int(math.floor(lat / AREA)), int(math.floor(lon / AREA))
         keys = [f"{r0 + dr}_{(c0 + dc + 1800) % 3600 - 1800}" for dr in (0, -1, 1) for dc in (0, -1, 1)
                 if -900 <= r0 + dr < 900]
-        out = {"ready": [], "loading": 0, "failed": 0, "errors": [], "grocers": True, "depots": True, "fuel": True,
+        out = {"ready": [], "loading": 0, "failed": 0, "errors": [], "grocers": True, "depots": True, "fuel": True, "autos": True,
                "release": self.builder.index.release, "areaFormat": AREA_CACHE_VERSION, "cellSize": AREA}
         with self.cv:
             self.last = (lat, lon)
@@ -866,12 +907,14 @@ def camera_rows(data):
     return rows
 
 
-class Cameras:
-    """Speed cameras around the player, from OpenStreetMap through the Overpass API; one small request per cell,
-    kept on disk."""
+class OsmCells:
+    """Rows from OpenStreetMap through the Overpass API, one small request per grid cell around the player, kept on
+    disk. A subclass names the cache folder and field (NAME), the cell size, reach and age (CELL, REACH, DAYS), the
+    query for a cell (query) and how its answer becomes rows (rows)."""
+    NAME, CELL, REACH, DAYS, MAX_BYTES = "cells", 0.5, 0.15, 30, 4 * 1024 * 1024
 
     def __init__(self, cache_dir, fetch=None):
-        self.dir = os.path.join(cache_dir, "cameras")
+        self.dir = os.path.join(cache_dir, self.NAME)
         os.makedirs(self.dir, exist_ok=True)
         self.fetch = fetch or self._overpass
         self.state, self.fail_at = {}, {}
@@ -880,11 +923,14 @@ class Cameras:
     def path(self, key):
         return os.path.join(self.dir, key + ".json")
 
+    def query(self, box):
+        raise NotImplementedError
+
+    def rows(self, data):
+        raise NotImplementedError
+
     def _overpass(self, box):
-        s, w, n, e = box
-        q = (f'[out:json][timeout:25];node["highway"="speed_camera"]({s},{w},{n},{e})->.c;.c out body;'
-             f'rel(bn.c)["type"="enforcement"];out body;'
-             f'way(around.c:{CAMERA_ROAD_M})["highway"~"^({CAMERA_ROADS})(_link)?$"];out tags geom;')
+        q = self.query(box)
         err = None
         for base in OVERPASS:
             try:
@@ -896,9 +942,9 @@ class Cameras:
     def _load(self, key):
         try:
             with open(self.path(key), "rb") as f:
-                data = json.loads(f.read(MAX_CAMERA_BYTES))
-            if time.time() - data["at"] < CAMERA_DAYS * 86400 and isinstance(data["cameras"], list):
-                return data["cameras"]
+                data = json.loads(f.read(self.MAX_BYTES))
+            if time.time() - data["at"] < self.DAYS * 86400 and isinstance(data[self.NAME], list):
+                return data[self.NAME]
         except (OSError, ValueError, KeyError, TypeError):
             pass
         return None
@@ -906,16 +952,16 @@ class Cameras:
     def _work(self, key):
         r, c = map(int, key.split("_"))
         try:
-            rows = camera_rows(self.fetch((r * CAMERA_CELL, c * CAMERA_CELL, (r + 1) * CAMERA_CELL, (c + 1) * CAMERA_CELL)))
+            rows = self.rows(self.fetch((r * self.CELL, c * self.CELL, (r + 1) * self.CELL, (c + 1) * self.CELL)))
             tmp = self.path(key) + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"at": time.time(), "cameras": rows}, f, separators=(",", ":"))
+                json.dump({"at": time.time(), self.NAME: rows}, f, separators=(",", ":"))
             os.replace(tmp, self.path(key))
-            log(f"cameras {key}: {len(rows)}")
+            log(f"{self.NAME} {key}: {len(rows)}")
             with self.lock:
                 self.state[key] = rows
         except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
-            log(f"cameras {key} failed:", repr(e))
+            log(f"{self.NAME} {key} failed:", repr(e))
             with self.lock:
                 self.state.pop(key, None)
                 self.fail_at[key] = time.time()
@@ -923,10 +969,10 @@ class Cameras:
     def near(self, lat, lon):
         if not math.isfinite(lat) or not math.isfinite(lon) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
             raise ValueError("coordinates must be finite WGS84 latitude/longitude")
-        keys = sorted({f"{int(math.floor((lat + a) / CAMERA_CELL))}_{int(math.floor((lon + b) / CAMERA_CELL))}"
-                       for a in (-CAMERA_REACH, 0, CAMERA_REACH) for b in (-CAMERA_REACH, 0, CAMERA_REACH)
+        keys = sorted({f"{int(math.floor((lat + a) / self.CELL))}_{int(math.floor((lon + b) / self.CELL))}"
+                       for a in (-self.REACH, 0, self.REACH) for b in (-self.REACH, 0, self.REACH)
                        if abs(lat + a) < 90 and abs(lon + b) < 180})
-        out = {"state": "ready", "cells": keys, "cameras": []}
+        out = {"state": "ready", "cells": keys, self.NAME: []}
         for key in keys:
             with self.lock:
                 rows = self.state.get(key)
@@ -942,9 +988,146 @@ class Cameras:
                 for old in [k for k in self.state if k not in keys and self.state[k] != "loading"]:
                     del self.state[old]
             if isinstance(rows, list):
-                out["cameras"] += rows
+                out[self.NAME] += rows
             elif out["state"] != "loading":
                 out["state"] = rows
+        return out
+
+
+class Cameras(OsmCells):
+    """Speed cameras around the player."""
+    NAME, CELL, REACH, DAYS, MAX_BYTES = "cameras", CAMERA_CELL, CAMERA_REACH, CAMERA_DAYS, MAX_CAMERA_BYTES
+
+    def query(self, box):
+        s, w, n, e = box
+        return (f'[out:json][timeout:25];node["highway"="speed_camera"]({s},{w},{n},{e})->.c;.c out body;'
+                f'rel(bn.c)["type"="enforcement"];out body;'
+                f'way(around.c:{CAMERA_ROAD_M})["highway"~"^({CAMERA_ROADS})(_link)?$"];out tags geom;')
+
+    def rows(self, data):
+        return camera_rows(data)
+
+
+######################################################################################## bus lines (OpenStreetMap)
+
+BUS_CELL = 0.1             # one Overpass request covers this many degrees (a city's lines are many)
+BUS_REACH = 0.03           # cells this close to the player are fetched too, degrees
+BUS_DAYS = 14              # a cached cell is asked for again after this long
+BUS_MIN_STOPS = 4          # a line with fewer stops is left out
+BUS_MAX_GAP_KM = 4         # stops further apart than this: the relation has gaps, the line is left out
+BUS_MIN_KM = 1.2           # a shorter line is left out
+BUS_STOP_ROLES = ("stop", "stop_entry_only", "stop_exit_only")
+BUS_PLATFORM_ROLES = ("platform", "platform_entry_only", "platform_exit_only")
+MAX_BUS_BYTES = 12 * 1024 * 1024
+
+
+def _stop_km(a, b):
+    k = math.cos(math.radians((a[0] + b[0]) / 2))
+    return math.hypot((b[1] - a[1]) * k, b[0] - a[0]) * 111.32
+
+
+def bus_rows(data):
+    """Overpass JSON -> bus lines: [{"id", "ref", "name", "from", "to", "operator", "colour", "depots"?,
+    "stops": [[name, lat, lon], ...]}] in the line's own order, and the bus stations / depots of the cell as
+    {"depot": true, ...} rows: [{"depot": true, "id", "name", "lat", "lon"}]. The stops are the stop positions on the
+    road where the relation has them, else its platforms; a line with gaps or too few stops is left out."""
+    elements = data.get("elements", []) if isinstance(data, dict) else []
+    nodes, ways = {}, {}
+    for e in elements:
+        if e.get("type") == "node" and type(e.get("lat")) in (int, float) and type(e.get("lon")) in (int, float):
+            nodes[e["id"]] = e
+        elif e.get("type") == "way" and isinstance(e.get("center"), dict):
+            ways[e["id"]] = e
+    out = []
+    for e in elements:
+        tags = e.get("tags") or {}
+        if e.get("type") == "relation" and tags.get("type") == "route" and tags.get("route") in ("bus", "trolleybus"):
+            if tags.get("disused") == "yes" or tags.get("access") == "private":
+                continue
+            stops, platforms = [], []
+            for m in e.get("members", []):
+                role, ref = m.get("role", ""), m.get("ref")
+                if m.get("type") == "node" and ref in nodes:
+                    n = nodes[ref]
+                    point = [str((n.get("tags") or {}).get("name", "")).strip(), n["lat"], n["lon"]]
+                elif m.get("type") == "way" and ref in ways:
+                    w = ways[ref]
+                    point = [str((w.get("tags") or {}).get("name", "")).strip(), w["center"]["lat"], w["center"]["lon"]]
+                else:
+                    continue
+                if role in BUS_STOP_ROLES and m.get("type") == "node":
+                    stops.append(point)
+                elif role in BUS_PLATFORM_ROLES:
+                    platforms.append(point)
+            # a stop position without a name takes the name of the platform nearest to it
+            for st in stops:
+                if not st[0] and platforms:
+                    near = min(platforms, key=lambda p: _stop_km(st[1:], p[1:]))
+                    if _stop_km(st[1:], near[1:]) < 0.1:
+                        st[0] = near[0]
+            line = stops if len(stops) >= BUS_MIN_STOPS else platforms
+            clean = []
+            for st in line:
+                if not all(math.isfinite(x) for x in st[1:]) or abs(st[1]) > 90 or abs(st[2]) > 180:
+                    continue
+                if clean and (st[0] and st[0] == clean[-1][0] or _stop_km(clean[-1][1:], st[1:]) < 0.05):
+                    continue          # the same stop twice in a row
+                clean.append([st[0] or f"Stop {len(clean) + 1}", round(st[1], 6), round(st[2], 6)])
+            if len(clean) < BUS_MIN_STOPS:
+                continue
+            gaps = [_stop_km(a[1:], b[1:]) for a, b in zip(clean, clean[1:])]
+            if max(gaps) > BUS_MAX_GAP_KM or sum(gaps) < BUS_MIN_KM:
+                continue
+            ref = str(tags.get("ref", "")).strip()[:12]
+            out.append({"id": f"r{e.get('id')}", "ref": ref, "name": str(tags.get("name", "")).strip()[:120],
+                        "from": str(tags.get("from", "")).strip()[:80] or clean[0][0],
+                        "to": str(tags.get("to", "")).strip()[:80] or clean[-1][0],
+                        "operator": str(tags.get("operator", "")).strip()[:80],
+                        "colour": str(tags.get("colour", "")).strip()[:16], "km": round(sum(gaps), 2),
+                        "stops": clean[:80]})
+    for e in elements:
+        tags = e.get("tags") or {}
+        # only places mapped for buses: a landuse=depot without depot=bus is as often a tram or train depot
+        if tags.get("amenity") == "bus_station" or tags.get("depot") == "bus":
+            if e.get("type") == "node":
+                lat, lon = e.get("lat"), e.get("lon")
+            elif isinstance(e.get("center"), dict):
+                lat, lon = e["center"].get("lat"), e["center"].get("lon")
+            else:
+                continue
+            if type(lat) in (int, float) and type(lon) in (int, float) and abs(lat) <= 90 and abs(lon) <= 180:
+                kind = "station" if tags.get("amenity") == "bus_station" else "depot"
+                name = str(tags.get("name", "")).strip()[:80] or ("Bus station" if kind == "station" else "Bus depot")
+                out.append({"depot": True, "id": f"{e.get('type', 'x')[0]}{e.get('id')}", "name": name, "kind": kind,
+                            "lat": round(lat, 6), "lon": round(lon, 6)})
+    return out
+
+
+class BusLines(OsmCells):
+    """City bus lines (OSM route relations) and bus stations / depots around the player."""
+    NAME, CELL, REACH, DAYS, MAX_BYTES = "lines", BUS_CELL, BUS_REACH, BUS_DAYS, MAX_BUS_BYTES
+
+    def query(self, box):
+        s, w, n, e = box
+        return (f'[out:json][timeout:60];'
+                f'rel["type"="route"]["route"~"^(bus|trolleybus)$"]({s},{w},{n},{e})->.r;.r out body;'
+                f'node(r.r);out body;way(r.r);out tags center;'
+                f'(nwr["amenity"="bus_station"]({s},{w},{n},{e});'
+                f'nwr["depot"="bus"]({s},{w},{n},{e}););out tags center;')
+
+    def rows(self, data):
+        return bus_rows(data)
+
+    def near(self, lat, lon):
+        """The lines once each (a line crosses cells), and the depots apart: {"state", "cells", "lines", "depots"}."""
+        out = super().near(lat, lon)
+        lines, depots, seen = [], [], set()
+        for row in out["lines"]:
+            if row.get("id") in seen:
+                continue
+            seen.add(row.get("id"))
+            (depots if row.get("depot") else lines).append(row)
+        out["lines"], out["depots"] = lines, depots
         return out
 
 
@@ -1544,7 +1727,8 @@ td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
 <table>{body}</table>{notes}</body></html>""".encode()
 
 
-def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None):
+def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None,
+          buslines=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -1619,7 +1803,7 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
-                                            "cameras": cameras is not None, "radio": radio is not None,
+                                            "cameras": cameras is not None, "buslines": buslines is not None, "radio": radio is not None,
                                             "player": player is not None, "missing": missing_libraries(),
                                             "network": network, "cache": areas.budget.stats,
                                             "update": updates.info() if updates else None})
@@ -1627,6 +1811,8 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     return self._send(200, updates.open())
                 if u.path == "/v1/cameras" and cameras:
                     return self._send(200, cameras.near(float(q["lat"]), float(q["lon"])))
+                if u.path == "/v1/buslines" and buslines:
+                    return self._send(200, buslines.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/radio" and radio:
                     lat, lon = q.get("lat"), q.get("lon")
                     return self._send(200, radio.near(q.get("cc", ""), float(lat) if lat else None, float(lon) if lon else None))
@@ -1720,6 +1906,7 @@ def main():
             cats[x[6]] = cats.get(x[6], 0) + 1
         print(json.dumps({"area": d["key"], "restaurants": len(d["restaurants"]), "grocers": len(d["grocers"]), "depots": len(d["depots"]), "cats": cats,
                           "fuel": len(d["fuel"]), "fuelExamples": d["fuel"][:3],
+                          "autos": len(d["autos"]), "autoExamples": d["autos"][:5],
                           "customers": sum(len(v) for v in d["tiles"].values()), "houses": d["houses"],
                           "grocerExamples": d["grocers"][:3], "depotExamples": d["depots"][:3],
                           "examples": d["restaurants"][:3] + [next(iter(d["tiles"].values()), [None])[0]]},
@@ -1728,7 +1915,7 @@ def main():
         return
     updates = Updates(a.cache, enabled=not a.no_update_check).start()
     serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache), radio=Radio(a.cache), player=Player(), srv=srv,
-          updates=updates)
+          updates=updates, buslines=BusLines(a.cache))
 
 
 if __name__ == "__main__":

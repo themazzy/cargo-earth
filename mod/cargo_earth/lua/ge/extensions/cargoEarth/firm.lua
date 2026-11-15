@@ -36,7 +36,7 @@ M.VEHICLES = {
   { id = 'van', model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', fallback = 6000,
     text = 'Parcels and van freight' },
   { id = 'rigid', model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', fallback = 14000,
-    text = 'Box truck freight and longer parcel routes' },
+    text = 'Box truck business shipping' },
   { id = 'semi', model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', fallback = 20000,
     text = 'Articulated freight; a hired driver needs one of your trailers' },
 }

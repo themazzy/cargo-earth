@@ -166,6 +166,9 @@ local function finish(data, err, now, lat, lon, onArea)
     local supportsFuel = data.fuel == true
     if st.supportsFuel == false and supportsFuel then got, wanted = {}, {} end
     st.supportsFuel = supportsFuel
+    local supportsAutos = data.autos == true
+    if st.supportsAutos == false and supportsAutos then got, wanted = {}, {} end
+    st.supportsAutos = supportsAutos
     st.loading, st.ready = data.loading or 0, #(data.ready or {})
     st.msg = (data.failed or 0) > 0 and data.errors and data.errors[1] or nil
     st.state = (data.loading or 0) > 0 and 'loading' or ((data.failed or 0) > 0 and st.ready == 0 and 'error' or 'ready')

@@ -5,6 +5,7 @@ let directive
 const audios = []
 const commands = []
 const timers = [], destroy = [], pending = [], watches = {}, later = []
+let localStorage
 let now = 0, hold = false, answer = {screen: 'offline'}, digests = 0
 vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPhone/app.js', 'utf8'), {
   angular: { module: () => ({ directive: (name, factory) => { directive = factory[factory.length - 1]() } }) },
@@ -16,7 +17,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
   Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {}; audios.push(this) } addEventListener (n, f) { this.on[n] = f }
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
     getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
-  localStorage: { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
+  localStorage: localStorage = { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
   setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: fn => { later.push(fn); return later.length }, clearTimeout: id => { if (later[id - 1]) later[id - 1] = () => {} }
 })
 assert(directive.template.includes('placeSearch.text'))
@@ -280,6 +281,37 @@ assert.equal(commands.length, stopped)
 pending.shift()({rank: 'late response'})
 assert.notEqual(scope.career && scope.career.rank, 'late response')
 console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded polling, backpressure and teardown verified')
+// A phone the game rebuilds (cockpit camera and back, the pause menu) comes back folded if it was folded.
+{
+  hold = false
+  const rebuilt = {$evalAsync: fn => fn(), $watch: (name, fn) => { watches[name] = fn }, $on: () => {}}
+  answer = {screen: 'waiting', fold: 'waiting', dark: true}
+  const n = timers.length
+  directive.link(rebuilt)
+  for (const t of timers.slice(n).filter(timer => timer.interval === 250)) t.fn()
+  watches['s.screen']('waiting', undefined)
+  assert.equal(rebuilt.min, true, 'a rebuilt phone stays folded')
+  assert.equal(rebuilt.dark, true, 'dark mode comes from the game')
+  rebuilt.s = {screen: 'incoming', fold: 'waiting'}
+  watches['s.screen']('incoming', undefined)
+  assert.equal(rebuilt.min, false, 'a ring that came while it was hidden opens it')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneFold(false'), 'opening tells the game')
+  rebuilt.fold(true)
+  assert(commands.at(-1).includes('cargoEarth_core.phoneFold(true, "incoming")'), 'folding tells the game with the screen')
+  assert(directive.template.includes("sdo(\\'dark\\', !st.dark)") || directive.template.includes("sdo('dark', !st.dark)"), 'Settings has Dark mode')
+  // the next rebuild draws its first frame folded and dark, before the game answers (no open, light blip)
+  hold = true
+  const next = {$evalAsync: fn => fn(), $watch: () => {}, $on: () => {}}
+  directive.link(next)
+  assert.equal(next.ready, true, 'a rebuilt phone knows how it looked')
+  assert.equal(next.min, true, 'first frame folded, as it was folded')
+  assert.equal(next.dark, true, 'first frame dark, as it was dark')
+  assert.equal(JSON.parse(localStorage.data['cargoEarth.look']).min, true, 'the page storage keeps it too')
+  assert(directive.template.includes('ng-if="ready && !min && !menuOnly"'), 'the open phone waits until the look is known')
+  pending.length = 0
+  hold = false
+  console.log('Phone: fold kept across rebuilds, dark mode, first frame as it looked')
+}
 // The holder page's own styles must not reuse a class of the phone app's (a fixed .cep-dot squeezed the stop names)
 {
   const page = fs.readFileSync('mod/cargo_earth/vehicles/common/cargo_earth_phone/phone.html', 'utf8')
@@ -317,4 +349,44 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   menus[0].s.openPanel('settings', undefined, true)
   menus[0].s.openPanel('garage', undefined, true)
   assert.equal(menus[0].s.gview, 'home', 'Garage chosen from another section starts on its first page')
+}
+
+// a saved career waiting to be loaded: the tabs, Radio and Settings work; the Menu shows only Settings
+{
+  assert(!/cep-tabs" aria-label="Phone sections" ng-if/.test(directive.template), 'tabs show on the resume screen too')
+  assert(directive.template.includes('class="cep-settings-link" title'), 'the settings link shows on the resume screen too')
+  assert(directive.template.includes("ng-if=\"tab === 'orders' && s.screen === 'resume'\""), 'the resume card is on Work only')
+  const sc = {$evalAsync: fn => fn(), $watch: () => {}, $on: () => {}, menuOnly: true}
+  directive.link(sc)
+  sc.s = {screen: 'resume'}
+  assert(sc.paused())
+  sc.openPanel('garage', undefined, true)
+  assert.equal(sc.panel, 'settings', 'career sections wait for the save')
+  sc.s = {screen: 'offline'}
+  sc.openPanel('garage', undefined, true)
+  assert.equal(sc.panel, 'garage')
+}
+// Settings > Restart career: nothing is sent until DELETE is typed; success closes the Menu
+{
+  assert(directive.template.includes('ng-disabled="restart.word !== st.restartWord" ng-click="restartGo()"'), 'the delete button waits for the word')
+  const sc = {$evalAsync: fn => fn(), $watch: () => {}, $on: () => {}, menuOnly: true}
+  directive.link(sc)
+  sc.st = {canRestart: true, restartWord: 'DELETE'}
+  sc.panel = 'settings'
+  sc.restartOpen()
+  sc.restart.word = 'delete'
+  const before = commands.length
+  sc.restartGo()
+  assert.equal(commands.length, before, 'a wrong word sends nothing')
+  sc.restart.word = 'DELETE'
+  answer = {restarted: true, restartWord: 'DELETE'}
+  sc.restartGo()
+  assert(commands.at(-1).includes(JSON.stringify('restart') + ', ' + JSON.stringify('DELETE')), commands.at(-1))
+  assert(!sc.restart.open && sc.panel === null, 'the Menu closes on the new start')
+  answer = {restartError: 'Type DELETE to confirm. Nothing was deleted.', restartWord: 'DELETE'}
+  sc.panel = 'settings'
+  sc.restartOpen()
+  sc.restart.word = 'DELETE'
+  sc.restartGo()
+  assert(sc.restart.open && sc.restart.error.includes('Nothing was deleted'))
 }

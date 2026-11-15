@@ -6,6 +6,7 @@ local employment = require('cargoEarth/employment')
 local cargo = require('cargoEarth/cargo')
 local jobs = require('cargoEarth/jobs')
 local food = require('cargoEarth/food')
+local earthReal = require('cargoEarth/earth')
 local total = 0
 local function test(name, fn)
   local ok, why = pcall(fn)
@@ -30,6 +31,40 @@ test('deadlines freeze while paused, disconnected or loading', function()
   c.savedAt = 160
   clock.restoreJob(c, j)
   assert(clock.elapsed(c, j) == 60)
+end)
+
+test('BeamNG.Earth 1.10 API: multi-stop GPS, the next stop of a route, Earth\'s own conversion', function()
+  local set, setRoute
+  local api = {
+    version = function() return 1, 8 end, has = function(n) return n == 'gpsRoute' or n == 'transform' end,
+    gpsSet = function(lat, lon, name) set = {lat, lon, name} return true end,
+    gpsSetRoute = function(points) setRoute = points return true end,
+    gps = function()
+      return {remaining = 3000, eta = 300, waypoints = {{lat = 1, lon = 1}}, legs = {{500, 50}, {1000, 100}, {1200, 120}}}
+    end,
+    toGame = function(lat, lon) return lon * 10, lat * 10, 0 end,
+  }
+  beamngEarth_api = api
+  assert(earthReal.canRoute())
+  local stops = {}
+  for i = 1, 13 do stops[i] = {50 + i / 100, 14, 'Stop ' .. i} end
+  assert(earthReal.gpsStops(stops) and #setRoute == earthReal.ROUTE_MAX and setRoute[1][3] == 'Stop 1')
+  assert(earthReal.gpsStops({stops[2]}) and set[3] == 'Stop 2', 'one stop: an ordinary destination')
+  -- one waypoint ahead: the last leg (1200 m) lies past it
+  local r = earthReal.route()
+  assert(r.stops == 2 and r.remaining == 1800 and r.toEnd == 3000 and math.abs(r.eta - 180) < 1e-9)
+  local x, y = earthReal.worldXY({x = 0, y = 0, lat = 50, lon = 14, anchorLat = 50, anchorLon = 14}, {2, 3})
+  assert(x == 30 and y == 20, 'Earth converts')
+  -- an older Earth: no multi-stop routes, the stops go one by one, the maths done here
+  api.has = function() return false end
+  set, setRoute = nil, nil
+  assert(not earthReal.canRoute() and earthReal.gpsStops(stops) and set[3] == 'Stop 1' and not setRoute)
+  api.gps = function() return {remaining = 900, eta = 90} end
+  r = earthReal.route()
+  assert(r.stops == 1 and r.remaining == 900)
+  x = earthReal.worldXY({x = 0, y = 0, lat = 50, lon = 14, anchorLat = 50, anchorLon = 14}, {50, 14.001})
+  assert(math.abs(x - 71.7) < 0.5)
+  beamngEarth_api = nil
 end)
 
 test('odometer survives rebases and excludes teleport jumps', function()
@@ -162,7 +197,8 @@ end)
 -- Integration: real core/job/garage code with isolated game, Earth and filesystem adapters.
 local pose, vehicle, boxes, spawnFailure, ready, payWrites = nil, nil, nil, nil, true, 0
 local damageValue, impactToken = 0, nil
-local gps
+local gps, gpsRoute, routeCapable
+helperAsks = {}
 log = function() end
 ui_imgui = {}
 FS = {findFiles = function() return {} end}
@@ -174,23 +210,29 @@ end
 package.loaded['cargoEarth/ui'] = {drawStop = function() end, drawPartsExit = function() end}
 package.loaded['cargoEarth/marker'] = {reset = function() end, draw = function() end}
 package.loaded['cargoEarth/helper'] = {configure = function() end, tick = function() end, forget = function() end,
-  status = function() return {state = 'off'} end, commanding = function() return false end, pump = function() end}
+  status = function() return {state = 'off'} end, commanding = function() return false end, pump = function() end,
+  asking = function() return false end, ask = function(path, cb) helperAsks[#helperAsks + 1] = { path = path, cb = cb } end}
 package.loaded['cargoEarth/earth'] = {
   pose = function() return pose end, status = function() return ready and 'ok' or 'World loading' end,
-  notify = function() end, route = function() return nil end,
+  notify = function() end, route = function() return gpsRoute end,
   gps = function(lat, lon) gps = {lat = lat, lon = lon} return true end,
+  canRoute = function() return routeCapable end, ROUTE_MAX = 11,
+  gpsStops = function(stops) gps = {lat = stops[1][1], lon = stops[1][2], stops = #stops} return true end,
   gpsClear = function() gps = nil end,
   teleport = function(lat, lon) pose.lat, pose.lon = lat, lon return true end,
   worldXY = function(p, pt) return p.x + (pt[2] - p.lon) * 71700, p.y + (pt[1] - p.lat) * 111320 end,
 }
+local seated   -- bus passengers the game was asked to seat
 local function adapter()
   return {
+    busPassengers = function(n) seated = n return n end,
     vehicle = function() return vehicle end, ownedVehicle = function() return vehicle end,
     isOwned = function() return true end, damage = function() return damageValue end, configs = function() return {} end,
     playerId = function() return vehicle and vehicle.id end, ownsVehicleId = function(id) return vehicle and vehicle.id == id end,
     watchForces = function(_, token) impactToken = token return true end,
     captureConfig = function() return {parts = {body = vehicle.model}} end,
     freightLoanerConfig = function() return {parts = {load = 'box'}} end,
+    busLoanerConfig = function() return {parts = {body = 'citybus'}}, 'city' end,
     spawn = function(model)
       if spawnFailure == model then error('simulated spawn failure') end
       vehicle = {model = model, id = 1, data = {}, slotPartMap = {body = model}}
@@ -205,11 +247,18 @@ local function adapter()
       end
       return true
     end,
-    setCargoLoad = function() return true end,
+    setCargoLoad = function(_, weights)
+      for _, row in ipairs(boxes) do
+        local kg = weights[row.id]
+        if kg then row.currentVolume, row.targetVolume, row.currentDensity = kg, kg, 1 end
+      end
+      return true
+    end,
   }
 end
 local function fresh()
   disk, failPath, spawnFailure, ready = {}, nil, nil, true
+  gps, gpsRoute, routeCapable = nil, nil, nil
   damageValue, impactToken = 0, nil
   pose = {lat = 50, lon = 14, speed = 0}
   local G = adapter()
@@ -1213,6 +1262,7 @@ test('parcel route rules: real addresses in nearest-first order, sized to the ve
   assert(small and small.haul.amount <= 9, 'the load is cut to the free container space')
   assert(not parcel.route(depot, streets(50, 14), 'van', 3, rnd, 3), 'too little room: no route')
   assert(not parcel.route(depot, streets(51, 15), 'van', 96, rnd, 4), 'no addresses near the depot: no route')
+  assert(not parcel.route(depot, streets(50, 14), 'rigid', 640, rnd, 5), 'box trucks do business shipping, not parcel routes')
   local plan = {[7] = {volume = 40, density = 1}, [8] = {volume = 20, density = 1}}
   local kept = parcel.keep(plan, 10, 2.5)
   assert(kept[7].volume == 25 and kept[8].volume == 0)
@@ -1339,10 +1389,203 @@ test('a parcel route loads the van, empties the containers stop by stop and pays
     if n < stops then
       assert(job.route.at == n + 1 and c.money == money, 'paid only at the end')
       assert(math.abs(boxes[1].currentVolume - parcel.left(job, true) * parcel.DENSITY) < 0.01, 'this stop took its parcels')
+      -- the phone tells what came out and what is still on board
+      local ps = core.phoneState()
+      assert(ps.dropped and ps.dropped.kg == math.floor(stop.slots * parcel.DENSITY + 0.5), 'the phone shows the kg dropped')
+      assert(math.abs(ps.dropped.left - parcel.left(job, true) * parcel.DENSITY) < 1, 'and the kg left')
+      assert(math.abs(ps.active.loadKg - parcel.left(job, true) * parcel.DENSITY) < 0.1, 'the active screen shows the load')
+      assert(ps.active.route.kg == math.floor(parcel.left(job, true) * parcel.DENSITY + 0.5), 'the route card too')
     end
   end
+  local last = job.route.stops[stops]
+  local ps = core.phoneState()
+  assert(ps.dropped and ps.dropped.kg == last.slots * parcel.DENSITY and ps.dropped.left == 0, 'the last stop empties it')
   assert(not s.job and c.money > money and boxes[1].currentVolume == 0, 'emptied and paid')
   assert(core.careerState().reputation.freight.rated == 1)
+end)
+
+test('freight weighs like real loads: about 1 t in a van, 4-8 t in a box truck, 10-22 t on a semi', function()
+  local haul = require('cargoEarth/haul')
+  local trailers = require('cargoEarth/trailers')
+  local box = function(slots) return { { id = 1, cargoTypes = { 'parcel' }, capacity = slots } } end
+  local van = haul.freight('van', 'consumer_goods', box(96))
+  assert(van and van.kg >= 600 and van.kg <= 1000, 'a van of consumer goods')
+  assert(haul.freight('van', 'bricks', box(96)).kg <= 1000, 'a van never goes over 1 t')
+  local rigid = haul.freight('rigid', 'pallets_general', box(640))
+  assert(rigid.kg >= 4000 and rigid.kg <= 8000, 'a box truck of pallets')
+  local semi = haul.freight('semi', 'consumer_goods')
+  assert(semi.kg >= 10000 and semi.kg <= 22000, 'a box trailer of consumer goods')
+  local gravel = haul.freight('semi', 'gravel')
+  assert(trailers.AGGREGATE_L == haul.SEMI_BULK_L and gravel.amount <= haul.SEMI_BULK_L and gravel.kg >= 20000
+    and gravel.kg <= 22000, 'gravel fills the aggregate boxes up to the semi limit')
+end)
+
+test('cargo weight: meals, parcel routes and freight count only once picked up', function()
+  local meal = { kind = 'food', items = { { name = 'Pizza', qty = 2 }, { name = 'Cola', qty = 1 } } }
+  assert(math.abs(cargo.weight(meal) - (0.2 + 2 * 0.55 + 0.25)) < 1e-9, 'a meal')
+  local route = { kind = 'cargo', haul = { kind = 'parcel', density = parcel.DENSITY, kg = 80 },
+    route = { at = 2, stops = { { slots = 4 }, { slots = 3 }, { slots = 3 } } } }
+  assert(cargo.weight(route) == 6 * parcel.DENSITY, 'a route counts the parcels it has not dropped')
+  local freight = { kind = 'cargo', haul = { kind = 'fluid', density = 0.83, kg = 3486 } }
+  assert(cargo.weight(freight) == 3486 and cargo.weight({ kind = 'tow' }) == 0, 'freight and tow')
+  assert(math.abs(cargo.onBoard({ { job = meal, phase = 'toDelivery' }, { job = freight, phase = 'toPickup' },
+    { job = route, phase = 'toDelivery' } }) - (cargo.weight(meal) + 6 * parcel.DENSITY)) < 1e-9, 'only what is picked up')
+  assert(parcel.DENSITY >= 8, 'parcels weigh enough to feel a stop')
+end)
+
+test('a parcel route GPS goes to the next undelivered address only, also after a teleport', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  core.setMode('trucking')
+  advance(core, 2)
+  routeCapable = true   -- even where Earth could route through every stop
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if offer.route then i, job = k, offer break end end
+  assert(job, 'a parcel route is offered in a van')
+  core.take(i)
+  assert(gps and not gps.stops and gps.lat == job.from.g[1], 'to the depot')
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  local first, last = job.route.stops[1], job.route.stops[#job.route.stops]
+  assert(s.phase == 'toDelivery' and gps and not gps.stops and gps.lat == first.g[1], 'loaded: the first address alone')
+  -- the map's teleport lands at the round's last address: the current stop is still the first, and the GPS goes back
+  -- to it once the world is loaded there
+  pose.lat, pose.lon = last.g[1], last.g[2]
+  gps = nil
+  core.onBeamNGEarthTeleported({lat = last.g[1], lon = last.g[2]})
+  core.onBeamNGEarthWorldReady()
+  advance(core, 4)
+  assert(job.route.at == 1 and gps and gps.lat == first.g[1] and gps.lon == first.g[2], 'back to the first address')
+  -- Navigate on the phone: the next address again
+  gps = nil
+  core.phoneAction('gps')
+  assert(gps and gps.lat == first.g[1], 'Navigate: the next undelivered address')
+  -- served: on to the second address
+  pose.lat, pose.lon = first.g[1], first.g[2]
+  advance(core, 4)
+  advance(core)
+  local second = job.route.stops[2]
+  assert(job.route.at == 2 and gps and not gps.stops and gps.lat == second.g[1], 'then the second address alone')
+end)
+
+test('a car parcel round and an SUV parts run can be saved', function()
+  local persistence = require('cargoEarth/persistence')
+  local function career(tier)
+    return { money = 100, orders = { { phase = 'toDelivery', data = { id = 'route:x', from = { g = { 50, 14 } },
+      to = { g = { 50.01, 14.01 } }, pay = 100, minutes = 30,
+      haul = { tier = tier, kind = 'parcel', amount = 10, kg = 80, density = 8 } } } } }
+  end
+  assert(persistence.valid(career('car')) and persistence.valid(career('suv')) and persistence.valid(career('van')))
+  assert(not persistence.valid(career('boat')))
+end)
+
+test('the kind of vehicle comes from its body: car, SUV or pickup, van, box truck, tractor', function()
+  local haul = require('cargoEarth/haul')
+  assert(haul.carrier({model = 'etk800', bodyStyle = 'Sedan'}) == 'car')
+  assert(haul.carrier({model = 'roamer', bodyStyle = 'SUV'}) == 'suv')
+  assert(haul.carrier({model = 'pickup', bodyStyle = 'Pickup'}) == 'suv')
+  assert(haul.carrier({model = 'pickup'}) == 'suv', 'a known pickup without a style')
+  assert(haul.carrier({model = 'covet'}) == 'car')
+  assert(haul.carrier({model = 'van', bodyStyle = 'Van'}) == 'van')
+  assert(haul.carrier({model = 'md_series'}) == 'rigid')
+  assert(haul.carrier({model = 'us_semi', slotPartMap = {a = 'us_semi_fifthwheel_top'}}) == 'semi')
+  assert(haul.carrier({model = 'unicycle'}) == nil and haul.carrier(nil) == nil)
+  assert(haul.allowed({}, 'car') and haul.allowed({}, 'suv') and not haul.allowed({}, 'rigid'))
+  -- small vehicles carry boxed goods only
+  local rows = {{id = 1, cargoTypes = {'parcel', 'fluid'}, capacity = 100}}
+  assert(haul.freight('suv', 'milk', rows) == nil and haul.freight('suv', 'car_parts', rows))
+end)
+
+test('a car gets short parcel rounds; an SUV parts runs from a supplier to a workshop', function()
+  local seq = 0
+  local function rnd(n) seq = seq % n + 1 return seq end
+  local depot = {id = 'yard', n = 'Warehouse', g = {50, 14}}
+  local job = parcel.route(depot, streets(50, 14), 'car', 24, rnd, 1)
+  assert(job and #job.route.stops >= 2 and #job.route.stops <= 4 and job.haul.tier == 'car' and job.haul.amount <= 24)
+  assert(not parcel.route(depot, streets(50, 14), 'car', 2, rnd, 2), 'no room in the boot: no round')
+  local parts = require('cargoEarth/parts')
+  local suppliers = {{id = 'p1', n = 'Parts Plus', g = {50.01, 14}, town = 'Town'}, {id = 'far', n = 'Far', g = {51, 14}}}
+  local function workshops(lat, lon, a, b)
+    local out = {}
+    for _, w in ipairs({{id = 'g1', n = 'Auto Fix', g = {50.08, 14}}, {id = 'g0', n = 'Too close', g = {50.011, 14}}}) do
+      local k = parts.km(lat, lon, w.g[1], w.g[2])
+      if k >= a and k <= b then out[#out + 1] = w end
+    end
+    return out
+  end
+  local offers = parts.offers(suppliers, workshops, 50, 14, 10, rnd)
+  assert(#offers == 1, 'only the near supplier, to a workshop far enough')
+  local o = offers[1]
+  assert(o.partsRun and o.from.id == 'p1' and o.to.id == 'g1' and o.haul.tier == 'suv' and o.haul.kind == 'parcel')
+  assert(o.haul.amount <= 10 and o.pay > 0 and o.minutes > 0 and o.cargo == 'car_parts')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 3, rnd) == 0, 'too little room for parts')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {maxKm = 8}) == 0, 'the longest-job setting holds')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {minKm = 5, maxKm = 15}) == 1)
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, function() return false end) == 0, 'a long detour is out')
+  assert(#parts.offers(suppliers, workshops, 50, 14, 10, rnd, nil, {nearKm = 0.5}) == 0, 'the pickup-distance setting holds')
+  local detour = parts.offers(suppliers, workshops, 50, 14, 10, rnd, function(a, b) return parts.km(a[1], a[2], b[1], b[2]) < 1 and 12 or nil end, {minKm = 10})
+  assert(#detour == 1 and detour[1].to.id == 'g0' and detour[1].km == 12, 'a near workshop with a long road counts by its road')
+  local near = parts.offers(suppliers, workshops, 50, 14, 10, rnd, function() return 8 end, {maxKm = 8.5})
+  assert(#near == 1 and near[1].km == 8, 'a workshop just inside the road range is found by its road km')
+end)
+
+test('a pickup in freight mode is offered parts runs only, loads the parts into its boxes and is paid', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('pickup')
+  vehicle.bodyStyle = 'Pickup'
+  c.garage.car.model = 'pickup'
+  s.autoIdx = fuel.index()
+  fuel.addPack(s.autoIdx, {stations = {{'p1', 50.005, 14, 'Parts Plus', 'p', 'Town'}, {'g1', 50.08, 14, 'Auto Fix', 'g', 'Town'}}})
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do
+    assert(offer.partsRun or offer.tow, 'no company freight board in a pickup')
+    if offer.partsRun then i, job = k, offer end
+  end
+  assert(job and job.from.n == 'Parts Plus' and job.to.n == 'Auto Fix', 'a parts run from the helper places')
+  assert(c.garage.car.vclass == 'suv' and core.phoneState().trucking.carrier == 'SUV or pickup')
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and math.abs(boxes[1].currentVolume - job.haul.amount * job.haul.density) < 0.01, 'loaded')
+  local money = c.money
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(not s.job and c.money > money and boxes[1].currentVolume == 0, 'unloaded and paid')
+end)
+
+test('a small car in freight mode gets short parcel rounds and still sees company contracts', function()
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  vehicle.bodyStyle = 'Hatchback'
+  boxes[1].capacity = 24
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local route
+  for _, offer in ipairs(s.offers) do
+    assert(offer.route or offer.tow, 'no company freight board in a car')
+    if offer.route then route = offer end
+  end
+  assert(route and route.haul.tier == 'car' and #route.route.stops <= 4, 'a short round')
+  core.setOption('maxKm', 0.5)
+  core.generate()
+  for _, offer in ipairs(s.offers) do assert(not offer.route, 'the longest-job setting holds for rounds') end
+  s.opts.freightRanges = nil
+  local t = core.phoneState().trucking
+  assert(t.carrier == 'Car' and #t.contracts == 1, 'company contracts are still listed')
 end)
 
 local cameras = require('cargoEarth/cameras')
@@ -1392,6 +1635,15 @@ test('a speed camera fines the driver and costs a star on the order on board', f
   assert(rating.stars(10, 30, 100, s.job.starPenalty) == 4)
   -- switched off in the settings: nothing is measured
   assert(core.settingsDo('cameras', false).cameras.on == false)
+  -- dark mode and the folded phone live outside the career, in the player's own file and the game's state
+  local written
+  core.uiStore.write = function(t) written = t end
+  assert(core.settingsDo('dark', true).dark == true and written.dark == true and core.phoneState().dark == true)
+  assert(core.settingsDo('dark', false).dark == false and written.dark == false)
+  core.phoneFold(true, 'waiting')
+  assert(core.phoneState().fold == 'waiting')
+  core.phoneFold(false)
+  assert(core.phoneState().fold == false)
   s.career.money = 5000
   pose.lat = 49.999
   for step = 0, 30 do
@@ -1446,6 +1698,14 @@ test('speed limit from the road graph: bends do not lower it, a change ahead is 
   assert(select(2, speedlimit.at(straightRoad(function() return 13.89 end), 'n0', 'n1', 'km/h')) == 50)
   assert(select(3, speedlimit.at(straightRoad(function() return 26.82 end), 'n0', 'n1', 'mph')) == 'mph', '60 mph in the UK')
   assert(speedlimit.unitsFor('gb') == 'mph' and speedlimit.unitsFor('DE') == 'km/h' and speedlimit.unitsFor(nil) == nil)
+  -- BeamNG.Earth 1.10 keeps the legal limit on each edge (posted: + the map's, - the road class default): no guess
+  local legal = straightRoad(function() return 15.65 end)
+  for _, n in pairs(legal.nodes) do for _, l in pairs(n.links) do l.speedLimit, l.posted = 8, -13.89 end end
+  local kmhP, signP, unitP, sureP = speedlimit.at(legal, 'n0', 'n1', speedlimit.unitsFor('CZ'))
+  assert(kmhP == 50 and signP == 50 and unitP == 'km/h' and sureP == true, 'a bend speed does not hide the posted 50')
+  legal.nodes.n0.links.n1.posted = 15.65
+  assert(select(2, speedlimit.at(legal, 'n0', 'n1', 'mph')) == 35, 'a mapped 35 mph')
+  assert(speedlimit.postedOf({posted = 0}) == nil and speedlimit.postedOf({}) == nil)
   assert(speedlimit.at({}, 'n0', 'n1') == nil and speedlimit.at(nil, 'a', 'b') == nil)
 end)
 
@@ -1758,8 +2018,12 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   hq = core.hqDo('buyVehicle', 'semi')
   assert(c.money == money - firm.VEHICLES[3].fallback and #hq.bays == 2 and hq.bays[2].tier == 'semi', tostring(hq.msg))
   assert(c.accounts.history[1].category == 'firm')
-  -- a driver for the tractor: nothing happens without a trailer
+  -- a driver for the tractor needs an articulated licence; then nothing happens without a trailer
   local pick = hq.drivers.applicants[1]
+  assert(not pick.can.semi and pick.can.van and #pick.licenceNames == 1, 'this applicant holds only a car licence')
+  hq = core.hqDo('hireDriver', hq.bays[2].id, pick.id)
+  assert(not c.garage.parked[1].driver and hq.msg:find('articulated licence'), tostring(hq.msg))
+  c.firm.applicants[1].licences = { car = true, truck = true, artic = true }
   hq = core.hqDo('hireDriver', hq.bays[2].id, pick.id)
   local truck = c.garage.parked[1]
   assert(truck.driver and truck.driver.name == pick.name, tostring(hq.msg))
@@ -2019,6 +2283,15 @@ test('tow rules: who can tow, offers to a workshop, cars on board, damage costs 
   assert(#tow.offers('light', 50, 14, far, workshop, { 'covet' }, function(n) return n end) == 0)
   local near = { { 50.018, 14, 50.018, 14, 'Close 1', 'Town' } }
   assert(#tow.offers('light', 50, 14, near, workshop, { 'covet' }, function(n) return n end) == 1)
+  -- each car has a wreck look, the same one for the same address; the game side gets a kind and a seed per car
+  assert(job.tow.wrecks and #job.tow.wrecks == 1 and tow.info(job).wreck, 'a wreck look')
+  assert(tow.wreckFor('50.01010,14.00000', 1) == tow.wreckFor('50.01010,14.00000', 1))
+  local plan = tow.wreckPlan(heavy)
+  assert(#plan == 2 and plan[1][1] == heavy.tow.wrecks[1] and plan[1][2] ~= plan[2][2])
+  assert(tow.wreckPlan({ tow = { class = 'light', cars = { 'covet' } } }) == nil, 'an old saved job: no wreck')
+  local kinds = {}
+  for n = 1, 60 do kinds[tow.wreckFor(tostring(n), 1)] = true end
+  for _, w in ipairs(tow.WRECKS) do assert(kinds[w.id], 'every look comes up: ' .. w.id) end
   assert(tow.onBoard({ 1, 5.9, 7, nil }) == 2)
   assert(tow.condition(0) == 100 and tow.condition(600) == 90 and tow.condition(1e9) == 100 - tow.MAX_LOSS)
 end)
@@ -2033,9 +2306,13 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   withStation(s, 50.1, 14)
   -- the game side, stubbed: what trailers.lua would do in BeamNG
   local saved = {}
-  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id' }) do
+  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
+    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow', 'ownTowTrailer', 'adopt' }) do
     saved[k] = trailers[k]
   end
+  -- your own car trailer is coupled: the job goes straight to the car (the borrowed one has its own test)
+  trailers.ownTowTrailer = function() return 9, 'tiltdeck' end
+  trailers.adopt = function() return true end
   local spawned, distances, damage = 0, {}, 0
   trailers.existing = function(list) return { list[1] } end
   trailers.towModel = function() return 'cartrailer' end
@@ -2045,7 +2322,16 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   trailers.towedDamage = function() return damage end
   trailers.towedCount = function() return #distances end
   trailers.remove = function() distances = {} end
+  local towRemoved = 0
+  trailers.removeTow = function() towRemoved = towRemoved + 1 distances = {} end
   trailers.id = function() return #distances > 0 and 7 or nil end
+  local roadside, nearTrailer, loaded = 0, false, 0
+  local alive = true
+  trailers.towedAlive = function() return alive and #distances or 0 end
+  trailers.spawnRoadside = function(kind, cars) roadside = roadside + 1 distances = { 20 } alive = true return kind == 'cartrailer' and #cars == 1 end
+  trailers.towedNear = function() if nearTrailer then return true end return false, 'Park the trailer next to the broken-down car first.' end
+  trailers.loadTowed = function(cars) loaded = loaded + 1 distances = { 1 } return #cars == 1 end
+  local here = { pose.lat, pose.lon }
   local ok, err = pcall(function()
     core.setMode('trucking')
     advance(core, 2)
@@ -2053,6 +2339,17 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     local i, job
     for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
     assert(job and job.to.n == 'Workshop at Test pump', 'a tow job to the workshop at a fuel station')
+    -- with a real repair shop known nearby, the car goes there instead
+    s.autoIdx = fuel.index()
+    fuel.addPack(s.autoIdx, {stations = {{'g1', 50.08, 14, 'Auto Fix', 'g', 'Town'}}})
+    s.offers = {}
+    core.generate()
+    local shop
+    for _, offer in ipairs(s.offers) do if offer.tow then shop = offer break end end
+    assert(shop and shop.to.n == 'Auto Fix' and shop.to.id == 'garage:g1' and shop.to.label == 'Repair shop', 'a tow job to a real repair shop')
+    s.autoIdx = nil
+    s.offers = {}
+    core.generate()
     -- the phone rings with it although three ordinary offers come first
     local generate, random = core.generate, math.random
     core.generate = function()
@@ -2072,7 +2369,23 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     damage = 500                    -- the damage it broke down with
     pose.lat, pose.lon = job.from.g[1], job.from.g[2]
     advance(core)
-    assert(spawned == 1 and s.phase == 'toDelivery' and job.tow.onBoard == 1)
+    -- the car waits by the road; Load puts it on once the trailer is next to it
+    assert(roadside == 1 and spawned == 0 and s.phase == 'toPickup' and job.tow.waiting and job.tow.onBoard == 0)
+    assert(core.phoneState().active.towWaiting, 'the phone offers Load')
+    assert(core.towWaiting() and core.stopInfo() == nil and s.stopT == 0, 'no stop countdown while the car waits for Load')
+    advance(core, 40)
+    assert(s.stopT == 0, 'the countdown does not run over and over')
+    assert(roadside == 1, 'stopping again does not spawn the car twice')
+    alive = false                   -- the waiting car was deleted: stopping again brings it back
+    advance(core, 40)
+    assert(roadside == 2 and job.tow.waiting, 'a lost car is placed again')
+    core.phoneAction('towLoad')
+    assert(loaded == 0 and s.phase == 'toPickup', 'not loaded while the trailer is away')
+    nearTrailer = true
+    core.phoneAction('towLoad')
+    assert(loaded == 1 and s.phase == 'toDelivery' and job.tow.onBoard == 1 and not job.tow.waiting)
+    assert(not core.phoneState().active.towWaiting)
+    advance(core)
     assert(job.tow.damage0 == 500, 'damage before the tow is not yours ' .. tostring(job.tow.damage0) .. ' ' .. tostring(job.tow.spawnedAt) .. ' ' .. tostring(s.clock))
     -- it is damaged and slides off
     damage = damage + 300
@@ -2085,7 +2398,7 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     assert(s.job == job, 'not delivered without the car')
     c.money = 1000
     core.phoneAction('restoreTrailer')
-    assert(spawned == 2 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
+    assert(spawned == 1 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
     damage = 0                      -- the cars spawned again are undamaged; the 300 stays counted
     advance(core, 8)
     damage = damage + 600           -- 10 % worse on the way, 5 % before the reload
@@ -2093,9 +2406,204 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     assert(not s.job, 'delivered')
     assert(s.phone.lastDone.cargoCondition == 85 and s.phone.lastDone.pay <= math.floor(job.pay * 0.85 + 0.5))
     assert(c.history[1].kind == 'tow')
+    -- a cancelled tow job takes its trailer and car(s) along
+    pose.lat, pose.lon = here[1], here[2]
+    s.offers = {}
+    core.generate()
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    core.take(i)
+    pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+    advance(core)
+    assert(job.tow.waiting and #distances == 1)
+    local before = towRemoved
+    core.cancel(true)
+    assert(not s.job and towRemoved == before + 1 and #distances == 0, 'cancel clears the tow trailer and cars')
   end)
   for k, f in pairs(saved) do trailers[k] = f end
   assert(ok, err)
+end)
+
+local bus = require('cargoEarth/bus')
+
+-- a line of five stops 400 m apart going north from the player, a bus station beside the first stop
+local function busData()
+  local stops = {}
+  for i = 1, 5 do stops[i] = { i == 3 and '' or ('Stop ' .. string.char(64 + i)), 50 + (i - 1) * 0.0036, 14.002 } end
+  return { state = 'ready', lines = {
+    { id = 'r1', ref = '136', name = 'Bus 136', from = 'Stop A', to = 'Stop E', operator = 'City Transit', stops = stops },
+    { id = 'bad', ref = 'X', stops = { { 'A', 50, 14 }, { 'B', 50.01, 14 } } },
+  }, depots = { { id = 'w7', name = 'Bus Garage', kind = 'depot', lat = 50.0005, lon = 14.0005 } } }
+end
+
+test('bus lines: offers at the depot, passengers on and off, fares', function()
+  local idx = bus.index()
+  bus.set(idx, busData())
+  assert(#idx.lines == 1 and #idx.depots == 1, 'a line with two stops is left out')
+  assert(idx.lines[1].stops[3].n == 'Stop 3', 'a stop without a name gets one')
+  local board = bus.board(idx, 50, 14)
+  assert(#board == 1)
+  local o = board[1]
+  assert(o.tier == 'bus' and o.yard.n == 'Bus Garage' and o.jobCount == 1 and #o.jobs == 1 and o.name == 'City Transit')
+  local j = o.jobs[1]
+  assert(j.kind == 'bus' and j.from.n == 'Stop A' and j.to.n == 'Stop B' and j.pay > 0 and j.minutes > 0)
+  assert(j.cargoName == 'Line 136 to Stop E')
+  assert(#bus.board(idx, 50.2, 14) == 0, 'no line near')
+  -- no depot near the first stop: the bus waits at the terminus
+  local far = bus.index()
+  local data = busData()
+  data.depots[1].lat = 50.5
+  bus.set(far, data)
+  assert(bus.board(far, 50, 14)[1].yard.n == 'Terminus Stop A')
+  -- people: none get off at the first stop, everyone at the last, never more than the bus takes
+  local top = function(n) return n end
+  local off, on, dwell = bus.passengers(j, top)
+  assert(off == 0 and on > 0 and dwell > bus.DWELL_S)
+  bus.served(j, off, on)
+  assert(j.bus.at == 2 and j.to.n == 'Stop B' and j.bus.onBoard == on and j.bus.boarded == on)
+  j.bus.onBoard = bus.CAPACITY
+  local fullOff, full = bus.passengers(j, top)
+  assert(full <= fullOff, 'a full bus takes only as many as got off')
+  j.bus.at, j.bus.onBoard = 5, 12
+  local offEnd, onEnd = bus.passengers(j, top)
+  assert(offEnd == 12 and onEnd == 0 and bus.last(j))
+  assert(bus.fares(j) == bus.PER_PASSENGER * j.bus.boarded)
+end)
+
+test('a bus shift: the lent bus, doors at every stop, the line paid and your car back', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  helperAsks = {}
+  core.random = function(a, b) if b then return b end return a or 0.5 end   -- the most people every time
+  core.setMode('bus')
+  assert(s.mode == 'bus' and not s.phone.online)
+  local set = core.settingsState()
+  assert(set.mode == 'bus' and #set.items == 0, 'Settings open in bus mode')
+  assert(core.settingsDo('mode', 'bus').mode == 'bus')
+  advance(core, 2)
+  local ask
+  for _, a in ipairs(helperAsks) do if a.path:find('/v1/buslines', 1, true) then ask = a end end
+  assert(ask, 'the helper is asked for the lines around you')
+  ask.cb(busData())
+  local state = core.phoneState()
+  assert(state.bus and #state.bus.lines == 1, 'the board shows the line')
+  local line = state.bus.lines[1]
+  assert(line.ref == '136' and line.depot == 'Bus Garage' and line.pay > 0 and not line.atDepot)
+  core.phoneAction('busStart', line.id)
+  assert(not c.employment, 'not started away from the depot')
+  pose.lat, pose.lon = 50.0005, 14.0005
+  assert(core.phoneState().bus.lines[1].atDepot)
+  local money = c.money
+  core.phoneAction('busStart', line.id)
+  local shift = c.employment
+  assert(shift and shift.tier == 'bus' and c.garage.car.model == 'citybus' and c.garage.car.loaner, 'the city lends a bus: ' .. tostring(s.placesMsg) .. ' ' .. tostring(shift and shift.tier) .. ' ' .. tostring(c.garage.car.model))
+  advance(core, 2)
+  local j = s.job
+  assert(j and j.bus and s.phase == 'toPickup' and j.from.n == 'Stop A')
+  -- at each stop: stop, open the doors, wait while people get off and on
+  local function atStop(n)
+    local st = j.bus.stops[n]
+    pose.lat, pose.lon, pose.speed = st.g[1], st.g[2], 0
+    advance(core, 4)
+    assert(j.bus.at == n, 'it waits for the doors at stop ' .. n)
+    local bs = core.phoneState().bus
+    assert(bs.canDoors, 'the doors can open at stop ' .. n .. ' dist ' .. tostring(s.dist) .. ' ' .. tostring(bs.line) .. ' ' .. tostring(s.mode))
+    core.phoneAction('busDoors')
+    assert(core.phoneState().bus.line.doors, 'the doors are open')
+    advance(core, 40)
+  end
+  atStop(1)
+  assert(s.phase == 'toDelivery' and j.bus.at == 2 and j.bus.onBoard > 0)
+  assert(seated == j.bus.onBoard, 'the people on board sit in the bus')
+  -- driving off with the doors open: nobody moves, open them again
+  local st = j.bus.stops[2]
+  pose.lat, pose.lon = st.g[1], st.g[2]
+  advance(core, 4)
+  core.phoneAction('busDoors')
+  pose.speed = 5
+  advance(core, 2)
+  assert(j.bus.at == 2 and not core.phoneState().bus.line.doors, 'the stop is not served')
+  pose.speed = 0
+  atStop(2)
+  -- a stop the bus cannot reach is skipped: nobody gets on and it is not paid
+  local quote, boarded = j.pay, j.bus.boarded
+  core.phoneAction('busSkip')
+  assert(j.bus.at == 4 and j.bus.skipped == 1 and j.bus.boarded == boarded, 'stop 3 skipped')
+  assert(core.phoneState().bus.line.skipped == 1)
+  atStop(4)
+  atStop(5)
+  assert(not s.job, 'the line is done')
+  assert(j.pay == math.floor(quote * 4 / 5 / 5 + 0.5) * 5 + bus.fares(j), 'the skipped stop is not paid')
+  assert(seated == 0, 'everyone got off at the last stop')
+  -- the bus is handed over at the last stop and you are taken back to the depot, to your own car
+  advance(core, 4)
+  assert(math.abs(pose.lat - 50.0005) < 1e-9 and math.abs(pose.lon - 14.0005) < 1e-9, 'back at the depot')
+  advance(core, 2)
+  assert(not c.employment and c.garage.car.model == 'pigeon', 'your car is back')
+  assert(c.money > money and c.lastContract.completed == 1 and c.lastContract.gross == j.pay)
+  assert(s.mode == 'bus', 'still on the bus board')
+end)
+
+test('a bus shift ended with the doors open leaves nothing behind for the next shift', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  helperAsks = {}
+  core.setMode('bus')
+  advance(core, 2)
+  for _, a in ipairs(helperAsks) do if a.path:find('/v1/buslines', 1, true) then a.cb(busData()) end end
+  pose.lat, pose.lon, pose.speed = 50.0005, 14.0005, 0
+  local id = core.phoneState().bus.lines[1].id
+  core.phoneAction('busStart', id)
+  advance(core, 2)
+  local st = s.job.bus.stops[1]
+  pose.lat, pose.lon = st.g[1], st.g[2]
+  advance(core, 4)
+  core.phoneAction('busDoors')
+  assert(s.busDwell, 'the doors are open')
+  local money = c.money
+  core.placesDo('endCompany')   -- the Menu's End early ends it the same way as the phone
+  assert(not s.job and not s.busDwell, 'the open doors go with the shift')
+  advance(core, 4)
+  assert(c.employment and pose.lat == st.g[1], 'a moment to read the message first')
+  advance(core, 6)
+  assert(not c.employment and c.money == money - bus.COLLECT_FEE, 'ended away from the depot: the bus is collected for a fee')
+  assert(math.abs(pose.lat - 50.0005) < 1e-9, 'and you are back at the depot')
+  -- a new shift at the depot: its first stop is not served by the old doors
+  c.garage.pendingUsed = nil   -- your car finished loading its parts
+  pose.lat, pose.lon = 50.0005, 14.0005
+  core.phoneAction('busStart', id)
+  advance(core, 40)
+  assert(s.job and s.job.bus.at == 1 and s.phase == 'toPickup', 'the new line still waits at its first stop')
+end)
+
+test('ending a bus shift: free at the depot; settled where you are when BeamNG.Earth cannot take you back', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  helperAsks = {}
+  core.setMode('bus')
+  advance(core, 2)
+  for _, a in ipairs(helperAsks) do if a.path:find('/v1/buslines', 1, true) then a.cb(busData()) end end
+  pose.lat, pose.lon, pose.speed = 50.0005, 14.0005, 0
+  local id = core.phoneState().bus.lines[1].id
+  local money = c.money
+  core.phoneAction('busStart', id)
+  advance(core, 2)
+  core.phoneAction('busEnd')
+  assert(not c.employment and c.money == money and c.garage.car.model == 'pigeon', 'ended at the depot: no fee')
+  c.garage.pendingUsed = nil
+  core.phoneAction('busStart', id)
+  advance(core, 2)
+  local st = s.job.bus.stops[2]
+  pose.lat, pose.lon = st.g[1], st.g[2]
+  local earth = package.loaded['cargoEarth/earth']
+  local teleport = earth.teleport
+  earth.teleport = function() return false, 'not now' end
+  core.phoneAction('busEnd')
+  advance(core, 10)
+  earth.teleport = teleport
+  assert(not c.employment and c.garage.car.model == 'pigeon' and pose.lat == st.g[1], 'your car comes where you are')
 end)
 
 test('local money: country borders, exchange rates and free exchange at the border', function()
@@ -2525,6 +3033,74 @@ test('the Menu window opens in the Menu app, else the floating phone, else on th
   guihooks = nil
 end)
 
+test('before a saved career is loaded the Menu opens on Settings, where only the dash phone can change', function()
+  local core = fresh()
+  local s = core.state()
+  local sent = {}
+  guihooks = {trigger = function(name, data) sent[#sent + 1] = {name, data} end}
+  core.now = function() return 100 end
+  core.menuHost('phone')
+  s.pendingCareer = { money = 500 }
+  assert(core.phoneState().screen == 'resume')
+  assert(core.openMenu('garage') == true and sent[1][2].panel == 'settings', 'career sections wait for the save')
+  assert(core.openMenu('toggle') == true and sent[2][2].panel == 'toggle')
+  local st = core.settingsState()
+  assert(st.paused and st.dash, 'Settings shows the dash phone while paused')
+  local mode = s.mode
+  core.settingsDo('mode', mode == 'courier' and 'trucking' or 'courier')
+  assert(s.mode == mode, 'job settings belong to the save')
+  -- the Radio tab works too: the helper's asks (the station list) and presses go on while the save waits
+  local helper = require('cargoEarth/helper')
+  local tick, asking, commanding, pump = helper.tick, helper.asking, helper.commanding, helper.pump
+  local ticked, pumped = 0, 0
+  helper.asking = function() return true end
+  helper.commanding = function() return true end
+  helper.tick = function(_, _, _, _, _, onlyAsks) assert(onlyAsks) ticked = ticked + 1 end
+  helper.pump = function() pumped = pumped + 1 end
+  local ok, why = pcall(function()
+    pose.lat, pose.lon = 50.08, 14.42
+    for _ = 1, 5 do core.onUpdate(0.3, 0.3) end
+    assert(pumped == 5 and ticked >= 2, 'radio requests are worked while paused')
+  end)
+  helper.tick, helper.asking, helper.commanding, helper.pump = tick, asking, commanding, pump
+  assert(ok, why)
+  s.pendingCareer = nil
+  assert(not core.settingsState().paused)
+  guihooks = nil
+end)
+
+test('drivers hold licences, know one kind of vehicle best and need a vehicle fit for its work', function()
+  local fleet = require('cargoEarth/fleet')
+  local seq = {0.5, 0.5, 0.1, 0.1, 0.1, 0.1, 0.01}
+  local n = 0
+  local function rnd() n = n + 1 return seq[n] or 0.5 end
+  local a = fleet.applicant(rnd, 1)
+  assert(a.licences.car and a.licences.truck and a.licences.artic and a.knows == 'car')
+  local plain = fleet.applicant(function() return 0.99 end, 2)
+  assert(plain.licences.car and not plain.licences.truck)
+  assert(a.wage == fleet.wage(a.speed, a.care) + 25, 'truck licences cost more')
+  assert(fleet.licensed(plain, 'van') and fleet.licensed(plain, 'suv') and not fleet.licensed(plain, 'rigid'))
+  assert(fleet.licensed(a, 'semi') and fleet.licensed(a, 'rigid'))
+  -- the kind they know best brings in more
+  local d = {speed = 1, care = 1, wage = 20, licences = {car = true}, knows = 'van'}
+  assert(fleet.netFor(d, 'van', 1) > fleet.netFor(d, 'car', 1) + (fleet.GROSS.van - fleet.GROSS.car) - 1)
+  -- a driver from before licences keeps driving what they drive
+  local old = fleet.restore({name = 'Old', speed = 1, care = 1, wage = 25}, 'semi')
+  assert(fleet.licensed(old, 'semi'))
+  -- a car with no cargo boxes leaves its driver waiting
+  local g = {parked = {{fleetId = 1, name = 'Hatch', model = 'covet', vclass = 'car', boxCount = 0, km = 0,
+    driver = {name = 'D', speed = 1, care = 1, wage = 20, licences = {car = true}}}}}
+  fleet.advance(g, fleet.SHIFT_S, 1, {firm = {}}, function() return 0.99 end)
+  assert(g.parked[1].driver.waiting == 'boxes')
+  g.parked[1].boxCount = 2
+  local income = fleet.advance(g, fleet.SHIFT_S, 1, {firm = {}}, function() return 0.99 end)
+  assert(not g.parked[1].driver.waiting and income > 0)
+  -- no truck licence: the box truck stands
+  g.parked[1].vclass, g.parked[1].model = 'rigid', 'md_series'
+  fleet.advance(g, fleet.SHIFT_S, 1, {firm = {}}, function() return 0.99 end)
+  assert(g.parked[1].driver.waiting == 'licence')
+end)
+
 print(string.format('%d career tests passed', total))
 
 do
@@ -2691,7 +3267,7 @@ test('freight without a van of your own lists company contracts and no loaner; a
   core.setMode('trucking')
   advance(core, 2)
   local state = core.phoneState()
-  assert(state.trucking and not state.trucking.carrier and state.trucking.canLoan == nil, 'no loaner offer')
+  assert(state.trucking and state.trucking.carrier == 'Car' and state.trucking.canLoan == nil, 'a car: no loaner offer')
   assert(#state.trucking.contracts == 1 and state.trucking.contracts[1].wages > 0, 'the nearby contract is listed')
   local id = state.trucking.contracts[1].id
   pose.speed = 15
@@ -2729,4 +3305,309 @@ test('first run asks free play or career; free play keeps nothing when a career 
   assert(c.money == garage.START_MONEY and (c.delivered or 0) == 0 and c.home == nil and c.play == nil, 'progress starts again')
   assert(c.camerasOff == true, 'settings stay')
   assert(core.phoneState().screen ~= 'choose')
+end)
+
+test('Settings restarts the career only after DELETE and leaves no copy of the old save', function()
+  local core, s = fresh()
+  s.career.camerasOff, s.career.delivered, s.career.home = true, 9, {g = {50, 14}, capacity = 1}
+  core.settingsDo('cameras', false)
+  assert(disk['/settings/cargoEarth/career.json'].money == 1000)
+  disk['/settings/cargoEarth/career.json.backup1'] = copy(disk['/settings/cargoEarth/career.json'])
+  local st = core.settingsState()
+  assert(st.canRestart and st.restartWord == 'DELETE')
+  -- anything but the word deletes nothing
+  for _, word in ipairs({'', 'delete', 'DELETE ', 'yes'}) do
+    local out = core.settingsDo('restart', word)
+    assert(out.restartError and not out.restarted and s.career.money == 1000 and s.career.garage.started, word)
+  end
+  s.job = {id = 'j1', kind = 'food', from = {g = {50, 14}}, to = {g = {50.05, 14}}, pay = 100, minutes = 30}
+  s.phase, s.orders[1] = 'toDelivery', {job = s.job, phase = 'toDelivery'}
+  local out = core.settingsDo('restart', 'DELETE')
+  assert(out.restarted and not out.restartError and not out.canRestart)
+  assert(not s.job and #s.orders == 0 and not s.career.garage.started and s.career.money == 0)
+  assert(s.career.home == nil and (s.career.delivered or 0) == 0 and s.career.camerasOff == true, 'settings stay')
+  assert(core.phoneState().screen == 'choose', 'the phone asks Career or Free play again')
+  for _, suffix in ipairs({'', '.backup1', '.backup2', '.legacy'}) do
+    local c = disk['/settings/cargoEarth/career.json' .. suffix]
+    assert(c == nil or (c.money == 0 and not c.garage.started), 'no copy of the old career: ' .. suffix)
+  end
+end)
+
+test('on the resume screen Restart career drops the saved career instead of loading it', function()
+  local core, s = fresh()
+  s.pendingCareer = {money = 5000, mode = 'trucking', currency = 'EUR', garage = {started = true, car = {model = 'pigeon'}}}
+  assert(core.phoneState().screen == 'resume' and core.settingsState().canRestart)
+  core.settingsDo('restart', 'nope')
+  assert(s.pendingCareer and s.pendingCareer.money == 5000)
+  assert(core.settingsDo('restart', 'DELETE').restarted)
+  assert(not s.pendingCareer and s.career.money == 0 and s.career.currency == 'EUR' and s.mode == 'trucking')
+  assert(core.phoneState().screen == 'choose')
+end)
+
+test('Restart career says so when the old save cannot be replaced', function()
+  local core, s = fresh()
+  core.settingsDo('cameras', false)
+  failPath = '/settings/cargoEarth/career.json.backup1'
+  local out = core.settingsDo('restart', 'DELETE')
+  failPath = nil
+  assert(out.restarted and out.restartWarning and out.restartWarning:find('installer'), 'the player hears the old save stayed')
+  assert(not s.career.garage.started)
+  core, s = fresh()
+  failPath = '/settings/cargoEarth/career.json'
+  out = core.settingsDo('restart', 'DELETE')
+  failPath = nil
+  assert(out.restarted and out.restartWarning, 'a failed new save is reported too')
+end)
+
+test('cancelling a picked-up meal takes its weight out of the car', function()
+  local marker = package.loaded['cargoEarth/marker']
+  marker.PICKUP_RADIUS, marker.PICKUP_RANGE, marker.pickupDistance = 5, 250, function() return nil end
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function() return {{50.02, 14, 50.02, 14, 'Street 5', 'Town'}} end)
+  advance(core, 2)
+  core.phoneAction('online')
+  for _ = 1, 40 do
+    advance(core, 2)
+    if core.phoneState().screen == 'incoming' then break end
+  end
+  core.phoneAction('accept')
+  local job = s.job
+  assert(job and job.kind == 'food')
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and boxes[1].currentVolume > 0, 'the meal is in the box')
+  core.cancel()
+  assert(not s.job and boxes[1].currentVolume == 0, 'cancelled: the box is empty again')
+end)
+
+test('cancelling a loaded parcel route empties the van', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if offer.route then i, job = k, offer break end end
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and boxes[1].currentVolume > 0, 'loaded')
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(job.route.at == 2 and boxes[1].currentVolume > 0, 'one stop done, parcels left')
+  core.cancel()
+  assert(not s.job and boxes[1].currentVolume == 0, 'cancelled: the van is empty again')
+end)
+
+local function mealOnBoard()
+  local marker = package.loaded['cargoEarth/marker']
+  marker.PICKUP_RADIUS, marker.PICKUP_RANGE, marker.pickupDistance = 5, 250, function() return nil end
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function() return {{50.02, 14, 50.02, 14, 'Street 5', 'Town'}} end)
+  advance(core, 2)
+  core.phoneAction('online')
+  for _ = 1, 40 do
+    advance(core, 2)
+    if core.phoneState().screen == 'incoming' then break end
+  end
+  core.phoneAction('accept')
+  pose.lat, pose.lon = s.job.from.g[1], s.job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and boxes[1].currentVolume > 0, 'the meal is in the box')
+  return core, s
+end
+
+test('a reset forgets the load in the car: the meal\'s weight goes back in', function()
+  local core, s = mealOnBoard()
+  local kg = boxes[1].currentVolume
+  boxes[1].currentVolume, boxes[1].targetVolume = 0, 0   -- the game rebuilt its containers empty
+  core.onVehicleResetted(1)
+  advance(core, 4)
+  assert(math.abs(boxes[1].currentVolume - kg) < 1e-9, 'put back after the reset')
+  core.cancel()
+  assert(boxes[1].currentVolume == 0, 'and taken out on cancel')
+end)
+
+test('a load the mod lost track of is emptied once nothing is on board', function()
+  local core, s = mealOnBoard()
+  s.storage = nil   -- the bookkeeping is lost (a Lua reload): the box still holds the meal
+  advance(core, 4)
+  assert(boxes[1].currentVolume > 0)
+  core.cancel()
+  advance(core, 6)
+  assert(not s.job and boxes[1].currentVolume == 0, 'the left-over weight is gone')
+  -- an idle car that comes back with something in its boxes is emptied too
+  boxes[1].currentVolume, boxes[1].targetVolume = 12, 12
+  s.sweepWanted, s.sweepAt = true, 0
+  advance(core, 2)
+  assert(boxes[1].currentVolume == 0, 'emptied while idle')
+  boxes[1].cargoTypes = {'passenger'}
+  boxes[1].currentVolume, boxes[1].targetVolume = 3, 3
+  s.sweepWanted, s.sweepAt = true, 0
+  advance(core, 2)
+  assert(boxes[1].currentVolume == 3, 'passenger seats are left alone')
+end)
+
+test('seat occupants: bus seats, a fixed scattered order, and seating the player', function()
+  local occ = require('cargoEarth/occupants')
+  local cfg = occ.fillBusSeats({ parts = { citybus_seats = 'citybus_seats', seat_occupant_1RA = 'occupant_generic' } })
+  local n = 0
+  for k, v in pairs(cfg.parts) do if k:find('^seat_occupant_') then n = n + 1 assert(v == 'occupant_generic') end end
+  assert(n == 34, 'every passenger seat of the city bus: ' .. n)
+  local seats = { { seatId = 'FL', isDriver = true, occupantType = 'player' } }
+  for _, id in ipairs(occ.BUS_SEATS) do seats[#seats + 1] = { seatId = id } end
+  local p = occ.plan(seats, 5, '136')
+  assert(#p.add == 5 and #p.remove == 0 and p.shown == 5)
+  for _, id in ipairs(p.add) do assert(id ~= 'FL', 'never the driver seat') end
+  -- the same five stay seated when two more get on
+  local set = {}
+  for _, id in ipairs(p.add) do set[id] = true end
+  for _, s in ipairs(seats) do if set[s.seatId] then s.occupantType = 'dummy' end end
+  local p2 = occ.plan(seats, 7, '136')
+  assert(#p2.add == 2 and #p2.remove == 0)
+  local p3 = occ.plan(seats, 2, '136')
+  assert(#p3.add == 0 and #p3.remove == 3)
+  assert(occ.plan(seats, 100, '136').shown == 34, 'standing people are not shown')
+  local other = occ.plan(seats, 5, '9')
+  local same = 0
+  for _, id in ipairs(other.add) do if set[id] then same = same + 1 end end
+  assert(same < 5 or #other.add < 5, 'another line seats people elsewhere')
+  assert(occ.needsSeat(true, nil, 5) and occ.needsSeat(true, { vehicleId = 5 }, 5))
+  assert(not occ.needsSeat(true, { vehicleId = 5, seatId = 'FL' }, 5) and not occ.needsSeat(false, nil, 5))
+end)
+
+test('a tow job without your own trailer: borrow it at the workshop, hitch it, fetch the car, bring both back', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  vehicle.slotPartMap = { body = 'pigeon', hitch = 'pigeon_tow_hitch' }
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  withStation(s, 50.1, 14)
+  local saved = {}
+  for _, k in ipairs({ 'existing', 'towModel', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
+    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow', 'ownTowTrailer', 'adopt', 'spawnBorrowed',
+    'hitch', 'coupled' }) do
+    saved[k] = trailers[k]
+  end
+  local trailerOut, hitched, coupled, roadside = false, 0, false, 0
+  local distances = {}
+  trailers.existing = function(list) return { list[1] } end
+  trailers.towModel = function() return 'tiltdeck' end
+  trailers.ownTowTrailer = function() return nil end
+  trailers.adopt = function() return false end
+  trailers.spawnBorrowed = function(kind) trailerOut = kind == 'cartrailer' return trailerOut end
+  trailers.hitch = function() if not trailerOut then return false end hitched = hitched + 1 return true end
+  trailers.coupled = function() return coupled end
+  trailers.id = function() return trailerOut and 7 or nil end
+  local nearTrailer = true
+  trailers.withPlayer = function() return trailerOut and nearTrailer end
+  trailers.towedDistances = function() return distances end
+  trailers.towedDamage = function() return 0 end
+  trailers.towedCount = function() return #distances end
+  trailers.towedAlive = function() return #distances end
+  trailers.remove = function() trailerOut, distances = false, {} end
+  trailers.removeTow = function() trailerOut, distances = false, {} end
+  trailers.spawnRoadside = function(_, cars) roadside = roadside + 1 distances = { 20 } return #cars == 1 end
+  trailers.towedNear = function() return true end
+  trailers.loadTowed = function() distances = { 1 } return true end
+  local ok, err = pcall(function()
+    core.setMode('trucking')
+    advance(core, 2)
+    core.generate()
+    local i, job
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    assert(job and job.tow.borrow and job.tow.stage == 'shop', 'no trailer of your own: it is borrowed')
+    local direct = tow.pay('light', job.km)
+    assert(job.pay > direct and job.borrowKm > job.km, 'the empty-trailer legs are paid')
+    core.take(i)
+    assert(s.job == job)
+    -- the GPS and the phone go to the workshop first
+    local a = core.phoneState().active
+    assert(a.here and a.here.name == job.to.n and a.here.label == 'Get the trailer here')
+    pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+    advance(core, 30)
+    assert(roadside == 0 and job.tow.stage == 'shop', 'the car is not there before the trailer')
+    pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+    advance(core)
+    assert(trailerOut and job.tow.stage == 'hitch' and core.phoneState().active.towHitch, 'the trailer stands behind you')
+    assert(core.towWaiting() and core.stopInfo() == nil, 'no countdown while it waits for Hitch')
+    advance(core, 30)
+    assert(job.tow.stage == 'hitch' and s.phase == 'toPickup', 'nothing happens until Hitch')
+    pose.speed = 10
+    core.phoneAction('towHitch')
+    assert(job.tow.stage == 'hitch' and hitched == 0, 'not while moving')
+    pose.speed = 0
+    nearTrailer = false
+    core.phoneAction('towHitch')
+    assert(job.tow.stage == 'hitch' and hitched == 0, 'not from far away (it would pull the trailer across the map)')
+    nearTrailer = true
+    core.phoneAction('towHitch')
+    assert(hitched == 1 and job.tow.stage == nil and s.phase == 'toPickup')
+    assert(core.phoneState().active.here == nil, 'now the broken-down car')
+    pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+    advance(core)
+    assert(roadside == 1 and job.tow.waiting)
+    core.phoneAction('towLoad')
+    assert(s.phase == 'toDelivery')
+    pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+    advance(core, 30)
+    assert(not s.job and c.history[1].kind == 'tow' and not trailerOut, 'delivered at the same workshop, trailer left there')
+    -- coupling it with the game's own coupling counts too; a save in the middle puts it back at the workshop step
+    s.offers = {}
+    pose.lat, pose.lon = 50, 14
+    core.generate()
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    core.take(i)
+    pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+    advance(core)
+    assert(job.tow.stage == 'hitch')
+    coupled = true
+    advance(core, 2)
+    assert(job.tow.stage == nil and hitched == 1, 'coupled by hand')
+    core.cancel(true)
+    assert(not s.job and not trailerOut, 'cancel takes the borrowed trailer away')
+    -- offered with your own trailer coupled, uncoupled before taking it: borrowed, with the extra legs paid and timed
+    s.offers = {}
+    pose.lat, pose.lon = 50, 14
+    trailers.ownTowTrailer = function() return 9, 'tiltdeck' end
+    core.generate()
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    assert(not job.tow.borrow)
+    local pay, minutes = job.pay, job.minutes
+    core.take(i)
+    assert(job.tow.stage == 'shop' and job.pay > pay and job.minutes > minutes and job.borrowKm, 'the detour is paid')
+  end)
+  for k, f in pairs(saved) do trailers[k] = f end
+  assert(ok, err)
+end)
+
+test('your own coupled car trailer is used and never deleted', function()
+  local trailers = require('cargoEarth/trailers')
+  local deleted = 0
+  local objs = { [9] = { getJBeamFilename = function() return 'tiltdeck' end, delete = function() deleted = deleted + 1 end,
+    getID = function() return 9 end } }
+  local oldScene, oldPlayer, oldCv = scenetree, getPlayerVehicle, core_vehicles
+  scenetree = { findObjectById = function(id) return objs[id] end }
+  getPlayerVehicle = function() return { getID = function() return 1 end } end
+  core_vehicles = { vehsCouplings = { [1] = { [9] = true } } }
+  local ok, err = pcall(function()
+    assert(trailers.ownTowTrailer('cartrailer') == 9)
+    assert(trailers.ownTowTrailer('flatbed') == nil, 'a tilt deck is not a flatbed')
+    assert(trailers.adopt('cartrailer') and trailers.id() == 9 and trailers.adopted())
+    trailers.removeTow()
+    trailers.remove()
+    assert(deleted == 0 and trailers.id() == nil, 'your own trailer stays in the world')
+  end)
+  scenetree, getPlayerVehicle, core_vehicles = oldScene, oldPlayer, oldCv
+  assert(ok, err)
 end)

@@ -50,6 +50,32 @@ function M.size(job)
   return math.ceil((meals + extras) / 2), PACKAGING_KG + meals * MEAL_KG + extras * EXTRA_KG
 end
 
+-- kg of this job still on board once it is picked up: a meal or a basket, the parcels a route has not dropped yet, or a
+-- freight load. A tow job's cars are real vehicles and are not counted here.
+function M.weight(job)
+  if job.kind == 'food' then
+    local _, kg = M.size(job)
+    return kg
+  end
+  local h = job.haul
+  if not h then return 0 end
+  if job.route then
+    local slots = 0
+    for i = job.route.at, #job.route.stops do slots = slots + job.route.stops[i].slots end
+    return slots * h.density
+  end
+  return h.kg or 0
+end
+
+-- kg on board over all orders: those picked up and not yet delivered.
+function M.onBoard(orders)
+  local kg = 0
+  for _, order in ipairs(orders or {}) do
+    if order.phase == 'toDelivery' then kg = kg + M.weight(order.job) end
+  end
+  return kg
+end
+
 function M.boxes(rows)
   local boxes = {}
   for _, row in ipairs(rows) do

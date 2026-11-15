@@ -1,11 +1,16 @@
--- Parcel routes: load a van or box truck at a depot, then drop parcels at several real addresses in turn. The load
+-- Parcel routes: load a van (or a car, a short round) at a depot, then drop parcels at several real addresses in turn. The load
 -- sits in BeamNG's own parcel containers and each stop takes its share out. Pure rules: no game calls here.
 local M = {}
 
-M.TIERS = { van = { stops = { 4, 7 }, each = { 2, 6 }, radiusKm = 5 }, rigid = { stops = { 5, 8 }, each = { 8, 24 }, radiusKm = 8 } }
-M.DENSITY = 2.5        -- kg per parcel slot (mixed consumer goods)
+-- Vans, and short rounds for ordinary cars. A box truck does business shipping between companies, not doorstep drops;
+-- an SUV or a pickup does parts runs (cargoEarth/parts).
+M.TIERS = { van = { stops = { 4, 7 }, each = { 2, 6 }, radiusKm = 5 },
+  car = { stops = { 2, 4 }, each = { 1, 3 }, radiusKm = 3, minSlots = 3 } }
+-- kg per parcel slot. Heavier than a lone small parcel so that a stop takes out weight the van can feel (Jan, 2026-11-15):
+-- a car round carries up to about 100 kg (8-24 kg a stop), a van route up to about 340 kg (16-48 kg a stop).
+M.DENSITY = 8
 M.ROAD_FACTOR = 1.35
-M.BASE, M.PER_STOP, M.PER_KM = { van = 80, rigid = 120 }, { van = 45, rigid = 70 }, { van = 10, rigid = 14 }
+M.BASE, M.PER_STOP, M.PER_KM = { van = 80, car = 40 }, { van = 45, car = 30 }, { van = 10, car = 8 }
 M.SPEED_KMH, M.STOP_MIN, M.SLACK_MIN = 30, 3, 10
 M.MIN_GAP_M = 150      -- two stops of one route are at least this far apart
 M.MIN_SLOTS = 8
@@ -69,7 +74,7 @@ function M.route(depot, addresses, tier, capacity, rnd, n)
     if stops[big].slots <= 1 then return nil end
     stops[big].slots, total = stops[big].slots - 1, total - 1
   end
-  if total < M.MIN_SLOTS then return nil end
+  if total < (t.minSlots or M.MIN_SLOTS) then return nil end
   local road = legs * M.ROAD_FACTOR
   local pay = M.BASE[tier] + M.PER_STOP[tier] * #stops + M.PER_KM[tier] * road
   local job = {
@@ -119,13 +124,16 @@ function M.keep(plan, slots, density)
   return out
 end
 
--- For the phone: { at, count, left = parcels still on board, stops = { { name, slots, done } } }
+-- For the phone: { at, count, left = parcels still on board, kg = their weight, stops = { { name, slots, kg, done } } }
 function M.state(job)
   local r = job.route
   if not r then return nil end
+  local density = job.haul and job.haul.density or M.DENSITY
   local out = { at = r.at, count = #r.stops, left = M.left(job, true), stops = {} }
+  out.kg = math.floor(out.left * density + 0.5)
   for i, s in ipairs(r.stops) do
-    out.stops[i] = { name = s.n, town = s.town, slots = s.slots, done = i < r.at, current = i == r.at }
+    out.stops[i] = { name = s.n, town = s.town, slots = s.slots, kg = math.floor(s.slots * density + 0.5),
+      done = i < r.at, current = i == r.at }
   end
   return out
 end

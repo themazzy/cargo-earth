@@ -2,27 +2,37 @@
 local M = {}
 
 M.tiers = {
-  van = { name = 'Van', minKm = 3, maxKm = 45, base = 80, rate = 11, speed = 40, slack = 12, kg = 500, parcel = 96 },
+  van = { name = 'Van', minKm = 3, maxKm = 45, base = 80, rate = 11, speed = 40, slack = 12, kg = 1000, parcel = 96 },
   rigid = { name = 'Rigid truck', minKm = 12, maxKm = 125, base = 120, rate = 15, speed = 50, slack = 20,
     kg = 8000, parcel = 640, bulk = 4200 },
   semi = { name = 'Articulated truck', minKm = 20, maxKm = 250, base = 300, rate = 22, speed = 55, slack = 30,
     kg = 22000, parcel = 1600, bulk = 16000 },
+  -- Small work for ordinary cars, by body: a car does short parcel routes, an SUV or a pickup parts runs. Their
+  -- distances bound the settings' range filter; the jobs themselves come from cargoEarth/parcel and cargoEarth/parts.
+  car = { name = 'Car', minKm = 2, maxKm = 15, base = 40, rate = 8, speed = 35, slack = 10, kg = 150, parcel = 24 },
+  suv = { name = 'SUV or pickup', minKm = 5, maxKm = 40, base = 70, rate = 10, speed = 40, slack = 12, kg = 400, parcel = 48 },
 }
+M.SEMI_BULK_L = 12800   -- the dry-bulk trailer's 16 aggregate boxes of 800 L
+M.SMALL = { car = true, suv = true }   -- these tiers take no board of company freight
 -- Pay per hour (0.3.5, Jan): courier ~450 CZK, van ~590, rigid ~850, semi ~1,250-1,700. Car prices follow courier pay,
 -- so trucks are the reward for progressing without making cars nearly free.
 -- A loaner runs on the company's fuel card. In your own vehicle you buy the fuel, so the job pays this much
 -- more per road km (about 9, 22 and 32 L/100 km of diesel).
-M.FUEL_ALLOWANCE = { van = 3, rigid = 8, semi = 12 }
+M.FUEL_ALLOWANCE = { car = 1, suv = 2, van = 3, rigid = 8, semi = 12 }
 M.VAN_GOAL, M.RIGID_GOAL = 5, 10
 M.loaners = {
   van = { model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', label = 'van' },
   rigid = { model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', label = 'box truck' },
   semi = { model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', label = 'tractor' },
+  -- a city bus line (cargoEarth/bus): the stock Wentward city bus, its configuration found in the game
+  bus = { model = 'citybus', name = 'city bus', label = 'city bus' },
 }
 
+-- kg per parcel slot of freight. Real loads (Jan, 2026-11-15): a van leaves with about 0.6-1 t, a box truck with 4-8 t and a
+-- semi's box trailer with 10-20 t; the slots the containers hold are fixed, so the weight per slot carries it.
 local parcel = {
-  pallets_general = 4, consumer_goods = 2.5, electronics = 2, furniture = 3, car_parts = 5,
-  glassware = 3, food_dry = 2, beer = 4, bricks = 5,
+  pallets_general = 9, consumer_goods = 7, electronics = 6, furniture = 7, car_parts = 11,
+  glassware = 8, food_dry = 8, beer = 11, bricks = 14,
 }
 local fluid = { milk = 1.03, fuel = 0.83, chemicals = 1.25 }
 local dryBulk = { gravel = 1.8, sand = 1.6, grain = 0.75, wood_chips = 0.35, fertilizer = 0.9,
@@ -38,7 +48,7 @@ end
 
 function M.allowed(career, tier)
   local unlocked = M.state(career).unlocked
-  return tier == 'van' or tier == 'rigid' and unlocked ~= 'van' or tier == 'semi' and unlocked == 'semi'
+  return tier == 'van' or M.SMALL[tier] == true or tier == 'rigid' and unlocked ~= 'van' or tier == 'semi' and unlocked == 'semi'
 end
 
 function M.complete(career, tier)
@@ -50,19 +60,36 @@ function M.complete(career, tier)
   if unlocked ~= previous then return M.tiers[unlocked].name end
 end
 
+-- An ordinary car by its body: BeamNG lists a "Body Style" for every config (Sedan, Hatchback, SUV, Pickup...).
+-- Models known to be SUVs or pickups count even when the game gives no style.
+M.SUV_MODELS = { pickup = true, roamer = true, hopper = true }
+local SUV_WORDS = { 'suv', 'pickup', 'pick-up', 'crossover', 'off-road', 'offroad', '4x4' }
+function M.bodyClass(model, style)
+  local s = type(style) == 'string' and style:lower() or ''
+  for _, w in ipairs(SUV_WORDS) do
+    if s:find(w, 1, true) then return 'suv' end
+  end
+  if s == '' and M.SUV_MODELS[model] then return 'suv' end
+  return 'car'
+end
+
+-- What kind of vehicle this is: 'semi' (a tractor), 'rigid' (a box truck), 'van', 'suv' (an SUV or a pickup) or
+-- 'car'; nil without a vehicle.
 function M.carrier(vehicle)
   if not vehicle then return end
   for _, part in pairs(vehicle.slotPartMap or {}) do
-    local name = part:lower()
+    local name = type(part) == 'string' and part:lower() or ''
     if name:find('fifthwheel_top', 1, true) or name:find('upfit_fifthwheel', 1, true) then return 'semi' end
   end
   if vehicle.model == 'van' then return 'van' end
   if vehicle.model == 'md_series' or vehicle.model == 'us_semi' or vehicle.model == 'midtruck' then return 'rigid' end
+  if type(vehicle.model) ~= 'string' or vehicle.model == 'unicycle' then return end
+  return M.bodyClass(vehicle.model, vehicle.bodyStyle)
 end
 
 local function material(tier, id)
   if parcel[id] then return 'parcel', parcel[id] end
-  if tier == 'van' then return end
+  if tier == 'van' or M.SMALL[tier] then return end
   if fluid[id] then return 'fluid', fluid[id] end
   if dryBulk[id] then return 'dryBulk', dryBulk[id] end
 end
@@ -86,8 +113,8 @@ function M.freight(tier, id, rows)
   if not kind then return end
   local t = M.tiers[tier]
   local nominal = kind == 'parcel' and t.parcel or t.bulk
-  -- The assigned dry-bulk trailer starts with four 800 L aggregate boxes.
-  local capacity = tier == 'semi' and (kind == 'dryBulk' and 3200 or nominal) or M.capacity(rows, kind)
+  -- The assigned dry-bulk trailer has an 800 L aggregate box in each of its 16 box slots (cargoEarth/trailers).
+  local capacity = tier == 'semi' and (kind == 'dryBulk' and M.SEMI_BULK_L or nominal) or M.capacity(rows, kind)
   local amount = math.min(nominal, capacity, math.floor(t.kg / density))
   if amount < (kind == 'parcel' and 8 or 100) then return end
   return { tier = tier, kind = kind, amount = amount, kg = math.floor(amount * density + 0.5), density = density }
