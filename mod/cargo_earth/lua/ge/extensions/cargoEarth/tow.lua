@@ -13,13 +13,13 @@ local M = {}
 M.CLASSES = {
   light = { name = 'Car trailer', trailer = 'cartrailer', cars = 1, base = 220, rate = 14, speed = 45, slack = 15 },
   heavy = { name = 'Flatbed trailer', trailer = 'flatbed', cars = 2, base = 380, rate = 20, speed = 50, slack = 20 },
-  -- Jan: the 22 ft car trailer (2.4 t) is too big and heavy for a small car. The game's small flatbed (TSFB, 470 kg,
-  -- its ramp door left off) takes one, behind any car with a tow hitch.
+  -- Jan: the 22 ft car trailer (2.4 t) is too big and heavy for a small car. The game's Large Box Utility Trailer
+  -- (490 kg, its tailgate left off: cargoEarth/trailers) takes one, behind any car with a tow hitch.
   small = { name = 'Small car trailer', trailer = 'smalltrailer', cars = 1, base = 200, rate = 13, speed = 50, slack = 15 },
 }
 -- stock BeamNG cars that break down (the first ones found in the game are used)
 M.CARS = { 'covet', 'pessima', 'legran', 'midsize', 'fullsize', 'etk800', 'vivace', 'wendover', 'autobello', 'pigeon' }
--- the ones short and light enough for the small car trailer (its deck is 3.5 m)
+-- the ones short, narrow and light enough for the small car trailer (floor 4.2 m x 1.9 m)
 M.SMALL_CARS = { covet = true, autobello = true, pigeon = true }
 M.OFFERS = 2
 M.NEAR_KM = 8              -- broken-down cars this close to the player...
