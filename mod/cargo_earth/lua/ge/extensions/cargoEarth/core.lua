@@ -1781,12 +1781,6 @@ local function tick(dt)
       and not (S.freightLoad.command or ''):match('^stop'))) then
     workFreight(S.job, false)
   end
-  if S.job.bus then
-    S.dist = distToTarget(p)
-    M.busTick(p)
-    S.dist = S.job and distToTarget(p) or nil
-    return -- bus stops advance through doors, never the generic one-second cargo timer
-  end
   -- a borrowed trailer the player coupled with the game's own coupling counts as hitched
   if S.job.tow and S.job.tow.stage == 'hitch' and M.G.playerId and trailers.coupled(M.G.playerId()) then M.towHitch() end
   -- a tow job: the damage the cars came with is not yours; a car that slides off is noticed
@@ -1821,6 +1815,11 @@ local function tick(dt)
     S.roadM, S.etaS = rt.remaining, type(rt.eta) == 'number' and rt.eta or nil
   else
     S.roadM, S.etaS = nil, nil
+  end
+  if S.job.bus then
+    M.busTick(p)
+    S.dist = S.job and distToTarget(p) or nil
+    return -- refresh GPS metrics above, but bus stops advance through doors instead of the cargo timer
   end
   if not S.dist or S.dist > arrivalRadius(S.job) or (p.speed or 0) > M.STOP_SPEED or p.camera
     or ((S.job.kind == 'food' or S.job.taxi) and not garage.inOwnCar(M.G, S.career.garage)) or M.towWaiting() then

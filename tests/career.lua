@@ -2692,6 +2692,41 @@ test('the native bus doors and phone share boarding; closing early cancels witho
     'a bus stop never runs the generic one-second cargo timer')
 end)
 
+test('bus GPS road distance and ETA refresh before bypassing the cargo stop timer', function()
+  local core, s = fresh()
+  core.setMode('bus')
+  s.busIdx = bus.index()
+  bus.set(s.busIdx, busData())
+  s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+  pose.lat, pose.lon = 50.0005, 14.0005
+  core.busSelect(s.busBoard[1].id)
+  core.busDepotTick(pose, 2)
+  advance(core, 2)
+  local j = s.job
+  gpsRoute = {remaining = 1200, eta = 100}
+  advance(core, 2)
+  local active = core.phoneState().active
+  assert(active.distRoad and active.distM == 1200 and active.etaS == 100, 'bus navigation uses GPS distance and ETA')
+  gpsRoute = {remaining = 860, eta = 70}
+  advance(core, 2)
+  active = core.phoneState().active
+  assert(active.distM == 860 and active.etaS == 70, 'bus route metrics keep updating')
+  gpsRoute = {planning = true, remaining = 500, eta = 40}
+  advance(core, 2)
+  active = core.phoneState().active
+  assert(not active.distRoad and active.etaS == nil and s.roadM == nil, 'planning clears stale bus metrics')
+  gpsRoute = {remaining = 700, eta = 60}
+  advance(core, 2)
+  gpsRoute = nil
+  advance(core, 2)
+  assert(s.roadM == nil and s.etaS == nil, 'clearing GPS clears old bus distance and ETA')
+  pose.lat, pose.lon = j.bus.stops[1].g[1], j.bus.stops[1].g[2]
+  gpsRoute = {remaining = 20, eta = 3}
+  advance(core, 40)
+  assert(j.bus.at == 1 and not s.busDwell and s.roadM == 20 and s.etaS == 3,
+    'bus metrics refresh while waiting for doors, without serving the stop automatically')
+end)
+
 test('an active bus shift repairs corrupted saved stop names from fresh OSM coordinates', function()
   local core, s = fresh()
   core.setMode('bus')
