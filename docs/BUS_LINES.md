@@ -30,5 +30,5 @@ OpenStreetMap maps the lines; data (c) OpenStreetMap contributors, ODbL.
 Rules: `lua/ge/extensions/cargoEarth/bus.lua` (pure); the shift runs through `cargoEarth/employment` with one job of
 kind `bus` (saves accept a one-job shift with `tier = 'bus'`).
 
-Not done yet: the bus's real doors do not open (the phone button is the doors for now), coaches between towns, and
+The phone button opens the real doors (citybus controller `bus`, `bus_doorsRequestedOpen`; fallback: the `doors` pneumatics on frontDoors/rearDoors). Not done yet: coaches between towns, and
 buying your own bus. Not tested in game.

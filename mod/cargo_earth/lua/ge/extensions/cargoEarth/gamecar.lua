@@ -213,6 +213,20 @@ function M.busLoanerConfig()
   return config, pick
 end
 
+-- The city bus's real doors (content/vehicles/citybus: controller 'bus' keeps the lever state, the pneumatic 'doors'
+-- controller moves the frontDoors and rearDoors beam groups). open: true opens, false closes.
+function M.busDoors(open)
+  local v = playerVeh()
+  if not v or not v.queueLuaCommand then return false end
+  local want = open and 'true' or 'false'
+  v:queueLuaCommand('local b = controller and controller.getControllerSafe and controller.getControllerSafe("bus") '
+    .. 'if b and b.setState then pcall(b.setState, { bus_doorsRequestedOpen = ' .. want .. ' }) else '
+    .. 'local d = controller and controller.getControllerSafe and controller.getControllerSafe("doors") '
+    .. 'if d and d.setBeamGroupsValveState then pcall(d.setBeamGroupsValveState, { "frontDoors", "rearDoors" }, '
+    .. (open and '-1' or '1') .. ') end end')
+  return true
+end
+
 function M.vehicleData(id) return vehData(id) end
 
 function M.partsTarget()

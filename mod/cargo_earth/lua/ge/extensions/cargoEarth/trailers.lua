@@ -178,9 +178,10 @@ local function spawnCar(model, p, dir, wreck)
   return true
 end
 
--- Move a car that is out (keeping its bent metal when the game allows it; the wreck is done again after a reset).
+-- Move a car that is out. setPositionRotation resets the car (the wreck extension damages it again after the reset);
+-- vehicles face backwards there, so the rotation is turned around as the game's own callers do.
 local function moveCar(o, p, dir)
-  local rot = quatFromDir(dir, vec3(0, 0, 1))
+  local rot = quatFromDir(-dir, vec3(0, 0, 1))
   return pcall(function() o:setPositionRotation(p.x, p.y, p.z, rot.x, rot.y, rot.z, rot.w) end)
 end
 
