@@ -73,6 +73,29 @@ function M.bodyClass(model, style)
   return 'car'
 end
 
+-- The used-car market sorts a config (not yet spawned) by the same kinds, from what the game's vehicle list says: the
+-- model, its "Body Style" and the config's name. A tractor is told by its name here (the fifth wheel is only known once
+-- it has spawned). nil for what the market doesn't sell (buses and the like).
+M.KIND_ORDER = { 'car', 'suv', 'van', 'rigid', 'semi' }
+M.KIND_NAMES = { car = 'Car', suv = 'SUV or pickup', van = 'Van', rigid = 'Box truck', semi = 'Tractor' }
+local RIGID_WORDS = { 'box', 'cargo', 'flatbed', 'dump', 'tipper', 'mixer', 'tank', 'plow', 'ramp', 'crane', 'rollback',
+  'utility', 'stake', 'garbage', 'refuse' }
+local NOT_SOLD = { citybus = true, unicycle = true }
+function M.configClass(model, style, name)
+  if type(model) ~= 'string' or NOT_SOLD[model] then return nil end
+  local s = type(style) == 'string' and style:lower() or ''
+  local n = type(name) == 'string' and name:lower() or ''
+  if s:find('bus', 1, true) then return nil end
+  local function any(words)
+    for _, w in ipairs(words) do if n:find(w, 1, true) then return true end end
+  end
+  if model == 'us_semi' then return any(RIGID_WORDS) and 'rigid' or 'semi' end
+  if s:find('semi', 1, true) or s:find('tractor', 1, true) then return 'semi' end
+  if model == 'md_series' or model == 'midtruck' or s:find('box truck', 1, true) then return 'rigid' end
+  if model == 'van' or (s:find('van', 1, true) and not s:find('minivan', 1, true)) then return 'van' end
+  return M.bodyClass(model, style)
+end
+
 -- What kind of vehicle this is: 'semi' (a tractor), 'rigid' (a box truck), 'van', 'suv' (an SUV or a pickup) or
 -- 'car'; nil without a vehicle.
 function M.carrier(vehicle)

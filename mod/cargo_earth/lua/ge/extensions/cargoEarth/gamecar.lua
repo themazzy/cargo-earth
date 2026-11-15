@@ -424,7 +424,10 @@ local function addConfig(out, c, model, key)
   local name = (c.Name or model) .. (c.Configuration and (' ' .. c.Configuration) or '')
   local typ = c.Type
   if not typ and type(agg.Type) == 'table' then typ = next(agg.Type) end
-  out[#out + 1] = { model = model, key = key, name = name, brand = c.Brand, value = value, type = typ }
+  local style = c['Body Style']
+  if type(style) ~= 'string' and type(agg['Body Style']) == 'table' then style = next(agg['Body Style']) end
+  out[#out + 1] = { model = model, key = key, name = name, brand = c.Brand, value = value, type = typ,
+    bodyStyle = type(style) == 'string' and style or nil }
 end
 
 function M.configs()

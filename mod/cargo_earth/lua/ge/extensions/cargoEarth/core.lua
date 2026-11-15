@@ -3579,7 +3579,41 @@ function M.garageDealer(filter)
   local cars = garage.market(g, filter)
   local inCar = g.car and not g.car.loaner and garage.inOwnCar(M.G, g)
   return { cars = cars, tradeIn = inCar and math.floor(garage.carWorth(M.G, g) * garage.TRADE_IN / 5 + 0.5) * 5 or 0,
-    money = S.career.money or 0, debt = g.debt or 0 }
+    money = S.career.money or 0, debt = g.debt or 0, kinds = M.vehicleKinds() }
+end
+
+-- What each kind of vehicle is and the work it gets (the used-car list's type, cargo and "?"). Follows the job rules:
+-- parcel.TIERS, haul.tiers and the freight unlocks, so it stays right when they change.
+function M.vehicleKinds()
+  local state = haul.state(S.career)
+  local function kg(n) return n >= 1000 and (string.format('%g', math.floor(n / 100 + 0.5) / 10) .. ' t') or (n .. ' kg') end
+  local function fits(tier)
+    local t = haul.tiers[tier]
+    return string.format('Fits about %d parcels · %s', t.parcel, kg(t.kg))
+  end
+  local towJob = 'Tow jobs: one broken-down car on a car trailer (with a tow hitch)'
+  local out, list = {}, {
+    car = { fits('car'), { 'Food delivery', parcel.TIERS.car and 'Short parcel rounds from a depot' or nil, towJob } },
+    suv = { fits('suv'), { 'Food delivery', 'Parts runs from parts suppliers to repair shops', towJob } },
+    van = { fits('van'), { 'Food delivery', 'Parcel routes from a depot to real addresses', 'Freight jobs between companies', towJob } },
+    rigid = { fits('rigid'), { 'Business shipping between companies', towJob } },
+    semi = { string.format('Pulls trailers · up to %s', kg(haul.tiers.semi.kg)),
+      { 'Freight jobs with trailers', 'Fuel tanker runs to real fuel stations',
+        'Tow jobs: two cars on a flatbed trailer' } },
+  }
+  for _, kind in ipairs(haul.KIND_ORDER) do
+    local k = list[kind]
+    local jobsOf = {}
+    for i = 1, 4 do if k[2][i] then jobsOf[#jobsOf + 1] = k[2][i] end end
+    local locked
+    if kind == 'rigid' and state.unlocked == 'van' then
+      locked = string.format('Freight unlocks after %d van freight jobs (%d done).', state.vanGoal, state.van)
+    elseif kind == 'semi' and state.unlocked ~= 'semi' then
+      locked = string.format('Freight unlocks after %d box truck freight jobs (%d done).', state.rigidGoal, state.rigid)
+    end
+    out[#out + 1] = { id = kind, name = haul.KIND_NAMES[kind], fits = k[1], jobs = jobsOf, locked = locked }
+  end
+  return out
 end
 function M.garageBuyListing(id, keepCar)
   if S.job then return false, 'Finish the order first' end
