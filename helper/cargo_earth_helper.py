@@ -16,6 +16,7 @@ API (GET, JSON):
                               "helper", "helperOutdated", "checkedAt", "error"}} (the newest Cargo Earth release on
                               GitHub, checked at start and every 2 hours unless --no-update-check)
   /v1/update/open             opens that release page in the browser: {"opened", "url"}
+  /v1/update/check            asks GitHub again now unless it was asked in the last 5 minutes: {"checking"}
   /v1/cameras?lat=..&lon=..   speed cameras around the point, from OpenStreetMap (Overpass API, one request per
                               0.5 degree cell, kept for 30 days): {"state": "ready" | "loading" | "failed",
                               "cells": [...], "cameras": [[id, lat, lon, limit km/h (0 = unknown), road class], ...]}
@@ -1674,6 +1675,7 @@ UPDATE_REPO = "themazzy/cargo-earth"
 UPDATE_PAGE = f"https://github.com/{UPDATE_REPO}/releases"
 UPDATE_EVERY_S = 2 * 3600          # GitHub allows 60 unauthenticated requests an hour; one in 2 hours is plenty
 UPDATE_RESTART_S = 600            # a restarted helper asks again when its saved answer is older than this
+UPDATE_ON_LOAD_S = 300            # a career loaded in the game asks again (/v1/update/check) when the answer is older
 UPDATE_RETRY_S = 1800              # no answer (offline, rate limit): try again after this long
 
 
@@ -1700,6 +1702,7 @@ class Updates:
         self.lock = threading.Lock()
         self.state = {"latest": None, "url": None, "checkedAt": None, "error": None}
         self.started = True   # until the first check of this run: a saved answer only waits UPDATE_RESTART_S
+        self.busy = False     # a /v1/update/check is asking GitHub
         try:
             with open(self.path, encoding="utf-8") as f:
                 saved = json.load(f)
@@ -1740,6 +1743,24 @@ class Updates:
             with self.lock:
                 self.state.update(checkedAt=self.clock(), error=str(e)[:200])
             log("could not check for Cargo Earth updates:", e)
+
+    def recheck(self):
+        """A career was loaded in the game: ask GitHub again in the background, unless the answer is under
+        UPDATE_ON_LOAD_S old (loading saves over and over never comes near GitHub's 60 requests an hour)."""
+        with self.lock:
+            at = self.state["checkedAt"]
+            go = self.enabled and not self.busy and (not at or self.clock() - at >= UPDATE_ON_LOAD_S)
+            if go:
+                self.busy = True
+        if go:
+            def work():
+                try:
+                    self.check()
+                finally:
+                    with self.lock:
+                        self.busy = False
+            threading.Thread(target=work, daemon=True).start()
+        return {"checking": go}
 
     def info(self):
         with self.lock:
@@ -1907,6 +1928,8 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                                             "update": updates.info() if updates else None})
                 if u.path == "/v1/update/open" and updates:
                     return self._send(200, updates.open())
+                if u.path == "/v1/update/check" and updates:
+                    return self._send(200, updates.recheck())
                 if u.path == "/v1/cameras" and cameras:
                     return self._send(200, cameras.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/buslines" and buslines:

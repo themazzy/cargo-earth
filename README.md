@@ -160,7 +160,7 @@ The helper's default 1 GiB soft cache budget covers replaceable downloaded sourc
 
 ## Update notice
 
-The game itself can't go online, so the helper checks this repository's latest GitHub release when it starts (unless it already asked in the last 10 minutes) and then every 2 hours (one small request each time). The game asks the helper every 15 minutes, so a new release shows on the phone within about 2 hours, or right after you restart BeamNG.Earth. When a newer mod or helper is out, the phone shows **Cargo Earth x.y.z is out** with a **Get it** button that opens the release page; **Later** hides it until the next release. Settings → Help shows your mod and helper versions. Start the helper with `--no-update-check` to turn the check off. Without the helper running, the game can't learn about updates.
+The game itself can't go online, so the helper checks this repository's latest GitHub release when it starts (unless it already asked in the last 10 minutes), each time you load a save (unless it asked in the last 5 minutes) and every 2 hours (one small request each time). So a new release shows on the phone a few seconds after you load your save. When a newer mod or helper is out, the phone shows **Cargo Earth x.y.z is out** with a **Get it** button that opens the release page; **Later** hides it until the next release. Settings → Help shows your mod and helper versions. Start the helper with `--no-update-check` to turn the check off. Without the helper running, the game can't learn about updates.
 
 ## Development
 
