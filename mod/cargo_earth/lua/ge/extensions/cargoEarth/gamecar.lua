@@ -274,6 +274,19 @@ function M.watchBusDoors(id, token)
   return true
 end
 
+-- The lent bus's line number, destination and next stops on its own signs (citybus controller 'bus': the event
+-- bus_onRouteChange draws the destination sign and the next-stop screen without its stop triggers). data: bus.sign().
+function M.busSign(data)
+  local v = playerVeh()
+  if not (v and v.queueLuaCommand and type(data) == 'table') then return false end
+  if v:getID() ~= ownedId or (v.getJBeamFilename and v:getJBeamFilename() ~= M.BUS_MODEL) then return false end
+  local text = rawget(_G, 'serialize') and serialize(data)
+  if not text then return false end
+  v:queueLuaCommand('if controller and controller.onGameplayEvent then pcall(controller.onGameplayEvent, '
+    .. '"bus_onRouteChange", ' .. text .. ') end')
+  return true
+end
+
 ------------------------------------------------------------------------------------------ people in the seats
 local function seatSystem() return rawget(_G, 'gameplay_seatOccupants') or ext('gameplay_seatOccupants') end
 
