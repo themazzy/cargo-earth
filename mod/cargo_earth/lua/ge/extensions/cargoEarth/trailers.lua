@@ -26,6 +26,7 @@ M.NEAR_M = 30        -- a trailer this close to the truck counts as with it
 
 local id = nil       -- the job trailer's vehicle id
 local towed = {}     -- vehicle ids of the cars on a tow job's trailer
+local loaded = {}    -- [vehicle id] = true for the towed cars that were put on the deck (Load, or spawned there)
 
 -- Tow trailers: the first stock model found is used (override with trailerModels.cartrailer / .flatbed).
 -- Each is a model, or { model, configuration }. BeamNG 0.40 has no 'cartrailer': the 22 ft tilt deck is its car
@@ -119,6 +120,7 @@ end
 function M.coupled(vehicleId) return M.coupledIds(vehicleId, id) end
 
 M.TELEPORT_M = 60   -- a trailer that moves this far in one frame was teleported
+M.DECK_NEAR_M = 8    -- a loaded car this close to the trailer still counts as on its deck
 M.TRAILER_LEN = { cartrailer = 9.5, flatbed = 15 }   -- metres behind the vehicle a trailer of this kind takes
 
 -- Other vehicles (parked cars, traffic) standing in a box: centre c, unit direction dir, half length and half width
@@ -182,7 +184,7 @@ local function removeTowed()
     local o = scenetree.findObjectById(tid)
     if o then o:delete() end
   end
-  towed = {}
+  towed, loaded = {}, {}
 end
 
 function M.adopted() return obj() ~= nil and adopted ~= false end
@@ -258,6 +260,7 @@ local function spawnCar(model, p, dir, wreck, onDeckSpot)
     pcall(function() v:setPosition(vec3(p.x, p.y, p.z + lift)) end)
   end
   towed[#towed + 1] = v:getID()
+  if onDeckSpot then loaded[v:getID()] = true end
   v:queueLuaCommand(PARK_CMD .. wreckCmd(wreck, onDeckSpot))
   return true
 end
@@ -373,7 +376,9 @@ local function followTick()
   local on = {}
   for _, tid in ipairs(towed) do
     local o = scenetree.findObjectById(tid)
-    if o and (o:getPosition() - pos):length() <= 8 then on[tid] = true end
+    -- only cars that were loaded and still sit by the deck (a waiting car parked next to it, or one that slid
+    -- off, is not cargo)
+    if o and loaded[tid] and (o:getPosition() - pos):length() <= M.DECK_NEAR_M then on[tid] = true end
   end
   follow = { pos, on }
 end
@@ -618,6 +623,7 @@ function M.loadTowed(cars, wrecks)
   for i, tid in ipairs(moved and towed or {}) do
     local o = scenetree.findObjectById(tid)
     if not (o and moveCar(o, spots[i], dir)) then moved = false break end
+    loaded[tid] = true
   end
   if moved then return true end
   removeTowed()
