@@ -480,10 +480,15 @@ angular.module('beamng.apps')
                 '<div class="cehq-note">{{ fmt.text(v.text) }}</div>' +
                 '<button class="cehq-btn small build" ng-disabled="!v.can || hq.company" ng-click="hdo(\'buyVehicle\', v.id)">Buy · {{ fmt.money(v.price) }}</button></div></div></div>' +
             '<div class="cehq-section"><div class="cehq-label">Trailers · {{ hq.trailers.length }} in the yard</div>' +
-              '<div class="cehq-note">Hired tractor drivers need one. Your own semi jobs pay {{ hq.trailerBonus }} % more on a firm trailer.</div>' +
+              '<div class="cehq-note">Hired tractor drivers need one. Your own semi jobs pay {{ hq.trailerBonus }} % more on a firm trailer. ' +
+                'Tow trailers: take one out here and it goes on your hitch, so tow jobs skip borrowing one at the workshop.</div>' +
               '<div class="cehq-shop">' +
                 '<div class="cehq-item" ng-repeat="t in hq.trailers track by t.id"><b>{{ t.name }}</b>' +
-                  '<div class="cehq-note">{{ t.busy ? "With a driver" : "In the yard" }}</div>' +
+                  '<div class="cehq-note">{{ t.out ? "Out with you" : (t.busy ? "With a driver" : "In the yard") }}' +
+                    '<span ng-if="t.tow && !t.out && !t.canTake && t.needs"> · {{ t.needs }}</span>' +
+                    '<span ng-if="t.tow && !t.out && !t.needs && !hq.atHq"> · Take it out at the headquarters</span></div>' +
+                  '<button class="cehq-btn small build" ng-if="t.tow && !t.out" ng-disabled="!t.canTake || hq.company || hq.busy" ng-click="hdo(\'takeTrailer\', t.id)">Take it out</button>' +
+                  '<button class="cehq-btn small" ng-if="t.out" ng-disabled="!hq.atHq || hq.busy" ng-click="hdo(\'leaveTrailer\', t.id)">Leave it here</button>' +
                   '<button class="cehq-btn small ghost" ng-disabled="hq.company" ng-click="hdo(\'sellTrailer\', t.id)">Sell for half</button></div>' +
                 '<div class="cehq-item" ng-repeat="t in hq.trailerShop track by t.id"><b>New {{ t.name.toLowerCase() }}</b>' +
                   '<div class="cehq-note">{{ fmt.text(t.text) }}</div>' +
@@ -1169,7 +1174,9 @@ angular.module('beamng.apps')
           '<div class="cep-sub" ng-if="s.incoming.tow && s.incoming.tow.wreck"><b>{{ s.incoming.tow.wreck }}</b></div>' +
           '<div class="cep-sub cep-warn" ng-if="s.incoming.tow && s.incoming.tow.weak">Your car may struggle: little power for this load.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.tow">{{ s.incoming.tow.cars > 1 ? s.incoming.tow.cars + " cars go" : "The car goes" }} ' +
-            'on your {{ s.incoming.tow.trailer.toLowerCase() }}, not strapped down. Drive gently: damage costs pay.</div>' +
+            'on {{ s.incoming.tow.borrow ? "a borrowed" : "your" }} {{ s.incoming.tow.trailer.toLowerCase() }}, not strapped down. Drive gently: damage costs pay.</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.tow && s.incoming.tow.borrow">You first pick the trailer up at the workshop. ' +
+            'With your own (your firm buys one at its headquarters, then Take it out there) you skip that.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.trailerBonus">+{{ fmt.money(s.incoming.trailerBonus) }} for your firm\'s trailer</div>' +
           '<div class="cep-sub" ng-if="s.incoming.resupplyBonus">+{{ fmt.money(s.incoming.resupplyBonus) }} from the station for {{ s.incoming.litres }} L</div>' +
           '<div class="cep-sub" ng-if="s.incoming.special"><b>{{ s.incoming.special.name }}:</b> +{{ fmt.money(s.incoming.special.bonus) }}. ' +
