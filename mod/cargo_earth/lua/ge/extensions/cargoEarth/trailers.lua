@@ -118,6 +118,7 @@ end
 
 function M.coupled(vehicleId) return M.coupledIds(vehicleId, id) end
 
+M.TELEPORT_M = 60   -- a trailer that moves this far in one frame was teleported
 M.TRAILER_LEN = { cartrailer = 9.5, flatbed = 15 }   -- metres behind the vehicle a trailer of this kind takes
 
 -- Other vehicles (parked cars, traffic) standing in a box: centre c, unit direction dir, half length and half width
@@ -353,8 +354,33 @@ end
 function M.latching() return latch ~= nil end
 
 -- Every frame (core onUpdate): couples the trailer that was just spawned once the game knows its couplers.
+local follow = nil   -- { trailer position, { car on the deck = true } } of the last frame
+
+-- A teleport (BeamNG.Earth's map, the game's own) takes the player and the coupled trailer but not the cars on the
+-- deck: when the trailer jumps, the cars that were on it are put back on its deck.
+local function followTick()
+  local trailer = obj()
+  if not trailer or #towed == 0 then follow = nil return end
+  local pos = trailer:getPosition()
+  if follow and (pos - follow[1]):length() > M.TELEPORT_M then
+    local spots, dir = M.deckSpotsFor(trailer, #towed)
+    for i, tid in ipairs(towed) do
+      local o = scenetree.findObjectById(tid)
+      if o and follow[2][tid] then M.moveCarTo(o, spots[i], dir) end
+    end
+    log('I', 'cargoEarth', 'trailer teleported: the cars on its deck went along')
+  end
+  local on = {}
+  for _, tid in ipairs(towed) do
+    local o = scenetree.findObjectById(tid)
+    if o and (o:getPosition() - pos):length() <= 8 then on[tid] = true end
+  end
+  follow = { pos, on }
+end
+
 function M.update(dt)
   latchTick(dt or 0)
+  followTick()
   local h = hitchWanted
   if not h then return end
   if not scenetree.findObjectById(h[1]) or not scenetree.findObjectById(h[2]) then hitchWanted = nil return end
@@ -416,6 +442,9 @@ local function deckSpots(trailer, n)
   end
   return spots, dir
 end
+
+M.deckSpotsFor = function(trailer, n) return deckSpots(trailer, n) end
+M.moveCarTo = function(o, p, dir) return moveCar(o, p, dir) end
 
 -- New cars on the deck of the trailer that is out. How many were placed.
 local function onDeck(trailer, cars, wrecks)
