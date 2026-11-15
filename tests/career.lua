@@ -1379,10 +1379,32 @@ test('a parcel route loads the van, empties the containers stop by stop and pays
     if n < stops then
       assert(job.route.at == n + 1 and c.money == money, 'paid only at the end')
       assert(math.abs(boxes[1].currentVolume - parcel.left(job, true) * parcel.DENSITY) < 0.01, 'this stop took its parcels')
+      -- the phone tells what came out and what is still on board
+      local ps = core.phoneState()
+      assert(ps.dropped and ps.dropped.kg == math.floor(stop.slots * parcel.DENSITY + 0.5), 'the phone shows the kg dropped')
+      assert(math.abs(ps.dropped.left - parcel.left(job, true) * parcel.DENSITY) < 1, 'and the kg left')
+      assert(math.abs(ps.active.loadKg - parcel.left(job, true) * parcel.DENSITY) < 0.1, 'the active screen shows the load')
+      assert(ps.active.route.kg == math.floor(parcel.left(job, true) * parcel.DENSITY + 0.5), 'the route card too')
     end
   end
+  local last = job.route.stops[stops]
+  local ps = core.phoneState()
+  assert(ps.dropped and ps.dropped.kg == last.slots * parcel.DENSITY and ps.dropped.left == 0, 'the last stop empties it')
   assert(not s.job and c.money > money and boxes[1].currentVolume == 0, 'emptied and paid')
   assert(core.careerState().reputation.freight.rated == 1)
+end)
+
+test('cargo weight: meals, parcel routes and freight count only once picked up', function()
+  local meal = { kind = 'food', items = { { name = 'Pizza', qty = 2 }, { name = 'Cola', qty = 1 } } }
+  assert(math.abs(cargo.weight(meal) - (0.2 + 2 * 0.55 + 0.25)) < 1e-9, 'a meal')
+  local route = { kind = 'cargo', haul = { kind = 'parcel', density = parcel.DENSITY, kg = 80 },
+    route = { at = 2, stops = { { slots = 4 }, { slots = 3 }, { slots = 3 } } } }
+  assert(cargo.weight(route) == 6 * parcel.DENSITY, 'a route counts the parcels it has not dropped')
+  local freight = { kind = 'cargo', haul = { kind = 'fluid', density = 0.83, kg = 3486 } }
+  assert(cargo.weight(freight) == 3486 and cargo.weight({ kind = 'tow' }) == 0, 'freight and tow')
+  assert(math.abs(cargo.onBoard({ { job = meal, phase = 'toDelivery' }, { job = freight, phase = 'toPickup' },
+    { job = route, phase = 'toDelivery' } }) - (cargo.weight(meal) + 6 * parcel.DENSITY)) < 1e-9, 'only what is picked up')
+  assert(parcel.DENSITY >= 8, 'parcels weigh enough to feel a stop')
 end)
 
 test('a parcel route shows all its addresses on the GPS and keeps the route Earth is already following', function()

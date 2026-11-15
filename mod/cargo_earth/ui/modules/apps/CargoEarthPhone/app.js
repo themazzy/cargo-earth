@@ -1140,6 +1140,9 @@ angular.module('beamng.apps')
           '<div class="cep-keyval cep-sub" ng-if="s.active.handling"><span>{{ s.active.handling }} cargo</span>' +
             '<strong ng-if="s.active.phase === \'toDelivery\'" ng-style="{color: s.active.cargoCondition < 100 ? \'var(--tomato)\' : \'var(--ok)\'}">' +
               '{{ s.active.cargoCondition }}% intact</strong></div>' +
+          '<div class="cep-keyval cep-sub" ng-if="s.active.loadKg > 0"><span>On board</span><strong>{{ fmt.kg(s.active.loadKg) }}</strong></div>' +
+          '<div class="cep-receipt-note" ng-if="s.dropped">Dropped {{ fmt.kg(s.dropped.kg) }}' +
+            '<span ng-if="s.dropped.left > 0"> · {{ fmt.kg(s.dropped.left) }} still on board</span></div>' +
           '<div class="cep-impact-note" ng-if="s.failure">{{ s.failure.count }} order{{ s.failure.count > 1 ? "s" : "" }} ruined' +
             '<span ng-if="s.failure.g"> · {{ fmt.num(s.failure.g) }} g impact</span></div>' +
           '<div class="cep-batch-list" ng-if="s.active.count > 1">' +
@@ -1163,7 +1166,7 @@ angular.module('beamng.apps')
           '<div class="cep-sub" ng-if="!s.active.items.length && s.active.count === 1">{{ s.active.cargo }}</div>' +
           '<div class="cep-card" ng-if="s.active.route"><div class="cep-label">Parcel route · stop {{ s.active.route.at }} of {{ s.active.route.count }} · {{ s.active.route.left }} parcels on board</div>' +
             '<ul class="cep-order-items"><li ng-repeat="st in s.active.route.stops track by $index" ng-style="{opacity: st.done ? 0.45 : 1, fontWeight: st.current ? 700 : 400}">' +
-              '<b>{{ st.done ? "✓" : st.slots + "×" }}</b>{{ st.name }}</li></ul></div>' +
+              '<b>{{ st.done ? "✓" : st.slots + "×" }}</b>{{ st.name }}<small ng-if="!st.done"> · {{ fmt.kg(st.kg) }}</small></li></ul></div>' +
           '<div class="cep-sub" ng-if="s.active.freight && !s.active.route">{{ fmt.freight(s.active.freight) }}</div>' +
           '<div class="cep-sub" ng-if="s.active.freightStatus">{{ s.active.freightStatus }}</div>' +
           '<div class="cep-keyval cep-sub" ng-if="s.active.tow && s.active.phase === \'toDelivery\'"><span>{{ s.active.tow.trailer }}</span>' +
@@ -1191,6 +1194,7 @@ angular.module('beamng.apps')
         '<div class="cep-label">{{ s.done.held ? "Delivered · pay held" : "Delivered" }}</div><div class="cep-pay">{{ s.done.held ? "" : "+" }}{{ fmt.money(s.done.net) }}</div>' +
         '<div class="cep-sub" ng-if="s.done.held">Paid when the contract ends: {{ s.done.ownerOperator ? "all of it with your own van" : "80 % with the company van" }}.</div>' +
         '<div class="cep-sub">{{ s.done.to }}</div>' +
+        '<div class="cep-sub" ng-if="s.dropped">Dropped {{ fmt.kg(s.dropped.kg) }}<span ng-if="s.dropped.left > 0"> · {{ fmt.kg(s.dropped.left) }} still on board</span></div>' +
         '<div ng-if="s.done.stars"><div class="cep-stars big" role="img" ng-attr-aria-label="{{ s.done.stars }} of 5 stars">{{ fmt.stars(s.done.stars) }}<i>{{ fmt.noStars(s.done.stars) }}</i></div>' +
           '<div class="cep-sub">“{{ s.done.note }}”</div></div>' +
         '<div class="cep-step" ng-if="s.done.records" style="background:var(--ok)">New personal record</div>' +
@@ -1378,6 +1382,12 @@ angular.module('beamng.apps')
       scope.cf = { text: '' }
       scope.purchase = { keep: true }
       scope.fmt.int = function (v) { return Math.round(v || 0).toLocaleString('cs-CZ') }
+      // weight for the phone: one decimal under 10 kg (a meal), whole kg up to a tonne, then tonnes
+      scope.fmt.kg = function (kg) {
+        kg = kg || 0
+        if (kg >= 1000) return (Math.round(kg / 100) / 10).toLocaleString('cs-CZ') + ' t'
+        return (kg < 10 ? Math.round(kg * 10) / 10 : Math.round(kg)).toLocaleString('cs-CZ') + ' kg'
+      }
       scope.fmt.freight = function (load) {
         return scope.fmt.int(load.amount) + (load.kind === 'parcel' ? ' slots' : ' L') + ' · ' + scope.fmt.int(load.kg) + ' kg'
       }

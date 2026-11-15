@@ -1099,8 +1099,11 @@ local function finishDelivery(force)
     -- a parcel route goes on to its next address; it is paid and rated at the last one
     if j.route and not parcel.last(j) then
       local served = parcel.advance(j)
-      say(string.format('%d parcels left at %s. Next stop %d of %d: %s.', served.slots, served.n, j.route.at,
-        #j.route.stops, j.to.n), 6)
+      local droppedKg = math.floor(served.slots * j.haul.density + 0.5)
+      S.phone.dropped = { kg = droppedKg, left = math.floor(cargo.onBoard(S.orders) + 0.5),
+        untilT = S.clock + M.PHONE.doneShowS }
+      say(string.format('%d parcels (%d kg) left at %s. Next stop %d of %d: %s.', served.slots, droppedKg, served.n,
+        j.route.at, #j.route.stops, j.to.n), 6)
       S.stopT, S.dist, S.roadM, S.etaS = 0, nil, nil, nil
       gpsToTarget(true)
       saveCareer()
@@ -1165,6 +1168,9 @@ local function finishDelivery(force)
   local note = rating.note(track, stars, late > 0, condition < 100, c.delivered)
   local newRecords = records.record(c, j, { pay = pay, tip = tip, minutes = minutes, stars = stars, date = today,
     earnedToday = c.today.earned })
+  local droppedKg = cargo.weight(j)
+  S.phone.dropped = droppedKg > 0 and { kg = math.floor(droppedKg * 10 + 0.5) / 10,
+    left = math.floor((cargo.onBoard(S.orders) - droppedKg) * 10 + 0.5) / 10, untilT = S.clock + M.PHONE.doneShowS } or nil
   S.phone.lastDone = { pay = pay, tip = tip, late = math.floor(late + 0.5), to = j.to.n, untilT = S.clock + M.PHONE.doneShowS,
     toDebt = toDebt, net = pay + tip - toDebt, rankUp = rankUp, truckUnlock = truckUnlock,
     cargoCondition = condition < 100 and condition or nil, held = j.companyShift ~= nil,
@@ -1890,6 +1896,11 @@ function M.phoneState()
       stars = receipt.stars, note = receipt.note, track = receipt.track, records = receipt.records, premium = receipt.premium,
       tipWhy = receipt.tipWhy, special = receipt.special }
   end
+  if ph.dropped and S.clock < ph.dropped.untilT then
+    out.dropped = { kg = ph.dropped.kg, left = math.max(0, ph.dropped.left) }
+  else
+    ph.dropped = nil
+  end
   if ph.lastFailure and S.clock < ph.lastFailure.untilT then
     out.failure = { count = ph.lastFailure.count, g = ph.lastFailure.g }
   end
@@ -1918,7 +1929,8 @@ function M.phoneState()
         and math.floor(food.pickupMinutes(j) * 60 - M.elapsed(j) + 0.5) or nil,
       cancelAsk = S.phone.cancelAskUntil ~= nil and S.clock <= S.phone.cancelAskUntil, trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or S.idx and S.idx.trailers[j.trailer] or j.trailer) or nil,
       trailerM = j.trailerSpawned and trailers.distanceToPlayer() and math.floor(trailers.distanceToPlayer()) or nil,
-      cancelFee = rules(j).cancelFee, count = #S.orders, carrying = carrying, orders = {} }
+      cancelFee = rules(j).cancelFee, count = #S.orders, carrying = carrying, orders = {},
+      loadKg = r1(cargo.onBoard(S.orders)) }
     -- List the current stop first, then the remaining orders.
     for _, o in ipairs(S.orders) do
       local oj = o.job

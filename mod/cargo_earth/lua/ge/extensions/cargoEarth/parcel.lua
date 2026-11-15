@@ -6,7 +6,9 @@ local M = {}
 -- an SUV or a pickup does parts runs (cargoEarth/parts).
 M.TIERS = { van = { stops = { 4, 7 }, each = { 2, 6 }, radiusKm = 5 },
   car = { stops = { 2, 4 }, each = { 1, 3 }, radiusKm = 3, minSlots = 3 } }
-M.DENSITY = 2.5        -- kg per parcel slot (mixed consumer goods)
+-- kg per parcel slot. Heavier than a lone small parcel so that a stop takes out weight the van can feel (Jan, 2026-11-15):
+-- a car round carries up to about 100 kg (8-24 kg a stop), a van route up to about 340 kg (16-48 kg a stop).
+M.DENSITY = 8
 M.ROAD_FACTOR = 1.35
 M.BASE, M.PER_STOP, M.PER_KM = { van = 80, car = 40 }, { van = 45, car = 30 }, { van = 10, car = 8 }
 M.SPEED_KMH, M.STOP_MIN, M.SLACK_MIN = 30, 3, 10
@@ -122,13 +124,16 @@ function M.keep(plan, slots, density)
   return out
 end
 
--- For the phone: { at, count, left = parcels still on board, stops = { { name, slots, done } } }
+-- For the phone: { at, count, left = parcels still on board, kg = their weight, stops = { { name, slots, kg, done } } }
 function M.state(job)
   local r = job.route
   if not r then return nil end
+  local density = job.haul and job.haul.density or M.DENSITY
   local out = { at = r.at, count = #r.stops, left = M.left(job, true), stops = {} }
+  out.kg = math.floor(out.left * density + 0.5)
   for i, s in ipairs(r.stops) do
-    out.stops[i] = { name = s.n, town = s.town, slots = s.slots, done = i < r.at, current = i == r.at }
+    out.stops[i] = { name = s.n, town = s.town, slots = s.slots, kg = math.floor(s.slots * density + 0.5),
+      done = i < r.at, current = i == r.at }
   end
   return out
 end
