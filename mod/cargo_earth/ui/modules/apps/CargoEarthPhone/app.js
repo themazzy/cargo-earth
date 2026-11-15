@@ -12,6 +12,25 @@ var cargoEarthRadioPlayer = null
 // The Menu window, one per page: the app whose window is open. Opening one closes any other, so two never lie over
 // each other, however many copies of an app the page holds (a layout reload can leave an old one listening).
 var cargoEarthMenu = {open: null, last: null} // last: the section shown last, where the Menu button reopens
+// How the phone looked last (folded, dark), kept by the page and its storage. The game rebuilds the UI apps when the
+// camera changes (cockpit and back): a rebuilt phone draws its first frame from this, not open and light until the
+// game answers. With nothing kept yet (the very first start) the phone stays invisible until the game's first answer.
+var cargoEarthLook = (function () {
+  var look = {known: false, min: false, dark: false}
+  try {
+    var kept = JSON.parse(localStorage.getItem('cargoEarth.look') || 'null')
+    if (kept && typeof kept === 'object') { look.known = true; look.min = !!kept.min; look.dark = !!kept.dark }
+  } catch (e) { /* private storage */ }
+  return look
+})()
+function keepLook(min, dark) {
+  var look = cargoEarthLook
+  if (min !== undefined && min !== null) look.min = !!min
+  if (dark !== undefined && dark !== null) look.dark = !!dark
+  if (look.known && look.saved === look.min + '/' + look.dark) return
+  look.known = true; look.saved = look.min + '/' + look.dark
+  try { localStorage.setItem('cargoEarth.look', JSON.stringify({min: look.min, dark: look.dark})) } catch (e) { /* private storage */ }
+}
 function pagePlayer() {
   if (cargoEarthRadioPlayer || typeof Audio === 'undefined' || typeof bngApi === 'undefined') return cargoEarthRadioPlayer
   var audio = new Audio(), me = {seq: -1, status: 'idle', why: '', busy: false, on: false, at: 0, retries: 0, retry: null}
@@ -956,10 +975,10 @@ angular.module('beamng.apps')
           '<button class="cep-sm ghost" ng-click="closeReport()">Close</button></div>' +
       '</div></div>' +
       '</div></div></div>' +
-      '<div class="cep-pill" ng-if="min && !menuOnly" ng-click="fold(false)"><span>Cargo<b>Earth</b><span ng-if="radio.status === \'playing\'" style="font-weight:500"> ♪ {{ radio.station.name | limitTo: 18 }}</span></span>' +
+      '<div class="cep-pill" ng-if="ready && min && !menuOnly" ng-click="fold(false)"><span>Cargo<b>Earth</b><span ng-if="radio.status === \'playing\'" style="font-weight:500"> ♪ {{ radio.station.name | limitTo: 18 }}</span></span>' +
         '<span><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}">{{ s.limit.sign }}</span>' +
         '{{ s.online ? "● online" : "" }} {{ fmt.money(s.money) }} ▴</span></div>' +
-      '<div class="cep" ng-class="{dark: dark}" ng-if="!min && !menuOnly"><div class="cep-screen">' +
+      '<div class="cep" ng-class="{dark: dark}" ng-if="ready && !min && !menuOnly"><div class="cep-screen">' +
       // one slim status row for everything around the content: clock and the job's settings on the left,
       // the speed limit, the balance and online on the right (the tabs at the bottom say whether this is Work or Radio)
       '<div class="cep-bar"><span class="cep-bar-l">{{ s.clock }}' +
@@ -1332,6 +1351,8 @@ angular.module('beamng.apps')
           // The game rebuilds the UI apps when the camera changes (cockpit and back) or the pause menu opens: the
           // phone comes back folded if it was folded (the game keeps it, like the tab).
           if (r && !foldKnown) { foldKnown = true; if (!scope.dash && !scope.menuOnly) scope.min = !!r.fold }
+          scope.ready = true // any answer, even none (the game without the mod) shows the phone
+          if (r) keepLook(scope.dash || scope.menuOnly ? null : scope.min, r.dark)
           // the other phone chose Work or Radio (a choice made here a moment ago wins while the game hears of it)
           if (r && (r.tab === 'orders' || r.tab === 'radio') && r.tab !== scope.tab && !scope.menuOnly &&
             Date.now() - tabAt > 1500) showTab(r.tab, true)
@@ -1369,12 +1390,14 @@ angular.module('beamng.apps')
       }
       // tabs, folding, garage and settings
       scope.tab = 'orders'
-      scope.min = false
-      scope.dark = false
       scope.dash = !!(typeof window !== 'undefined' && window.cargoEarthDash && window.cargoEarthDash.page) // on a car screen
       // The "Cargo Earth: Menu" app (<cargo-earth-phone mode="menu">): no phone, only the Menu window, opened from either
       // phone. It is its own UI app so the Menu works with the floating phone, the dash phone, or both.
       scope.menuOnly = !!(element && element.attr && element.attr('mode') === 'menu')
+      // first frame as it looked last (cargoEarthLook); the dash phone never folds
+      scope.min = !scope.dash && !scope.menuOnly && cargoEarthLook.min
+      scope.dark = cargoEarthLook.dark
+      scope.ready = cargoEarthLook.known || scope.dash || scope.menuOnly
       scope.career = null
       scope.places = null
       scope.placeSearch = { text: '' }
@@ -1518,6 +1541,7 @@ angular.module('beamng.apps')
         v = !!v
         var was = scope.min
         scope.min = v
+        if (!scope.dash && !scope.menuOnly) keepLook(v)
         if (scope.dash || scope.menuOnly || (was === v && !v)) return
         bngApi.engineLua('cargoEarth_core and cargoEarth_core.phoneFold(' + (v ? 'true' : 'false') + ', ' +
           bngApi.serializeToLua((scope.s && scope.s.screen) || '') + ') and nil', function () {})
@@ -1753,7 +1777,10 @@ angular.module('beamng.apps')
         var args = [name]
         if (a !== undefined) args.push(a)
         if (b !== undefined) args.push(b)
-        lua('settingsDo', args, function (r) { scope.st = r; if (r && r.dark !== undefined) scope.dark = !!r.dark })
+        lua('settingsDo', args, function (r) {
+          scope.st = r
+          if (r && r.dark !== undefined) { scope.dark = !!r.dark; keepLook(null, r.dark) }
+        })
       }
       // The radio. One radio for both phones, kept by the game (cargoEarth_core.radioDo): what plays, the volume, the
       // saved stations. The sound comes from the page player below (on the game's UI page, kept while this app is

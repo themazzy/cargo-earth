@@ -5,6 +5,7 @@ let directive
 const audios = []
 const commands = []
 const timers = [], destroy = [], pending = [], watches = {}, later = []
+let localStorage
 let now = 0, hold = false, answer = {screen: 'offline'}, digests = 0
 vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPhone/app.js', 'utf8'), {
   angular: { module: () => ({ directive: (name, factory) => { directive = factory[factory.length - 1]() } }) },
@@ -16,7 +17,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
   Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {}; audios.push(this) } addEventListener (n, f) { this.on[n] = f }
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
     getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
-  localStorage: { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
+  localStorage: localStorage = { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
   setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: fn => { later.push(fn); return later.length }, clearTimeout: id => { if (later[id - 1]) later[id - 1] = () => {} }
 })
 assert(directive.template.includes('placeSearch.text'))
@@ -298,7 +299,18 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   rebuilt.fold(true)
   assert(commands.at(-1).includes('cargoEarth_core.phoneFold(true, "incoming")'), 'folding tells the game with the screen')
   assert(directive.template.includes("sdo(\\'dark\\', !st.dark)") || directive.template.includes("sdo('dark', !st.dark)"), 'Settings has Dark mode')
-  console.log('Phone: fold kept across rebuilds, dark mode')
+  // the next rebuild draws its first frame folded and dark, before the game answers (no open, light blip)
+  hold = true
+  const next = {$evalAsync: fn => fn(), $watch: () => {}, $on: () => {}}
+  directive.link(next)
+  assert.equal(next.ready, true, 'a rebuilt phone knows how it looked')
+  assert.equal(next.min, true, 'first frame folded, as it was folded')
+  assert.equal(next.dark, true, 'first frame dark, as it was dark')
+  assert.equal(JSON.parse(localStorage.data['cargoEarth.look']).min, true, 'the page storage keeps it too')
+  assert(directive.template.includes('ng-if="ready && !min && !menuOnly"'), 'the open phone waits until the look is known')
+  pending.length = 0
+  hold = false
+  console.log('Phone: fold kept across rebuilds, dark mode, first frame as it looked')
 }
 // The holder page's own styles must not reuse a class of the phone app's (a fixed .cep-dot squeezed the stop names)
 {
