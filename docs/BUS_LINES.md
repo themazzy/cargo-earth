@@ -37,3 +37,16 @@ kind `bus` (saves accept a one-job shift with `tier = 'bus'`).
 
 The phone button opens the real doors (citybus controller `bus`, `bus_doorsRequestedOpen`; fallback: the `doors` pneumatics on frontDoors/rearDoors). Not done yet: coaches between towns, and
 buying your own bus. Not tested in game.
+
+## People in the seats
+
+BeamNG 0.40 has a seat system (`gameplay_seatOccupants`): every stock car whose seats have an `occupant_generic` part
+shows the player in the driver's seat, and the game can seat dummy people in the other seats.
+
+- **Passengers.** The lent city bus gets an `occupant_generic` part in all 34 passenger seats (`occupants.BUS_SEATS`).
+  The people on board sit in them as BeamNG dummy occupants, 75 kg each (real weight, Jan's pick), in a scattered
+  order fixed per line, so people stay where they sat. At a stop, those getting off leave their seats when the doors
+  open; those getting on sit down when the doors close. Over 34 on board, the rest stand and are not shown.
+- **Driver.** After the mod spawns, swaps or respawns the player's car, it checks once (1 to 8 s later) that the
+  player sits in a seat and asks the game to seat them if not. Mod cars without seat occupant slots show no driver;
+  that is up to the car's author.

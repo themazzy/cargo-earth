@@ -222,8 +222,10 @@ package.loaded['cargoEarth/earth'] = {
   teleport = function(lat, lon) pose.lat, pose.lon = lat, lon return true end,
   worldXY = function(p, pt) return p.x + (pt[2] - p.lon) * 71700, p.y + (pt[1] - p.lat) * 111320 end,
 }
+local seated   -- bus passengers the game was asked to seat
 local function adapter()
   return {
+    busPassengers = function(n) seated = n return n end,
     vehicle = function() return vehicle end, ownedVehicle = function() return vehicle end,
     isOwned = function() return true end, damage = function() return damageValue end, configs = function() return {} end,
     playerId = function() return vehicle and vehicle.id end, ownsVehicleId = function(id) return vehicle and vehicle.id == id end,
@@ -245,7 +247,13 @@ local function adapter()
       end
       return true
     end,
-    setCargoLoad = function() return true end,
+    setCargoLoad = function(_, weights)
+      for _, row in ipairs(boxes) do
+        local kg = weights[row.id]
+        if kg then row.currentVolume, row.targetVolume, row.currentDensity = kg, kg, 1 end
+      end
+      return true
+    end,
   }
 end
 local function fresh()
@@ -2503,6 +2511,7 @@ test('a bus shift: the lent bus, doors at every stop, the line paid and your car
   end
   atStop(1)
   assert(s.phase == 'toDelivery' and j.bus.at == 2 and j.bus.onBoard > 0)
+  assert(seated == j.bus.onBoard, 'the people on board sit in the bus')
   -- driving off with the doors open: nobody moves, open them again
   local st = j.bus.stops[2]
   pose.lat, pose.lon = st.g[1], st.g[2]
@@ -2522,6 +2531,7 @@ test('a bus shift: the lent bus, doors at every stop, the line paid and your car
   atStop(5)
   assert(not s.job, 'the line is done')
   assert(j.pay == math.floor(quote * 4 / 5 / 5 + 0.5) * 5 + bus.fares(j), 'the skipped stop is not paid')
+  assert(seated == 0, 'everyone got off at the last stop')
   -- the bus is handed over at the last stop and you are taken back to the depot, to your own car
   advance(core, 4)
   assert(math.abs(pose.lat - 50.0005) < 1e-9 and math.abs(pose.lon - 14.0005) < 1e-9, 'back at the depot')
@@ -3344,4 +3354,130 @@ test('Restart career says so when the old save cannot be replaced', function()
   out = core.settingsDo('restart', 'DELETE')
   failPath = nil
   assert(out.restarted and out.restartWarning, 'a failed new save is reported too')
+end)
+
+test('cancelling a picked-up meal takes its weight out of the car', function()
+  local marker = package.loaded['cargoEarth/marker']
+  marker.PICKUP_RADIUS, marker.PICKUP_RANGE, marker.pickupDistance = 5, 250, function() return nil end
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function() return {{50.02, 14, 50.02, 14, 'Street 5', 'Town'}} end)
+  advance(core, 2)
+  core.phoneAction('online')
+  for _ = 1, 40 do
+    advance(core, 2)
+    if core.phoneState().screen == 'incoming' then break end
+  end
+  core.phoneAction('accept')
+  local job = s.job
+  assert(job and job.kind == 'food')
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and boxes[1].currentVolume > 0, 'the meal is in the box')
+  core.cancel()
+  assert(not s.job and boxes[1].currentVolume == 0, 'cancelled: the box is empty again')
+end)
+
+test('cancelling a loaded parcel route empties the van', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  core.setMode('trucking')
+  advance(core, 2)
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if offer.route then i, job = k, offer break end end
+  core.take(i)
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and boxes[1].currentVolume > 0, 'loaded')
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(job.route.at == 2 and boxes[1].currentVolume > 0, 'one stop done, parcels left')
+  core.cancel()
+  assert(not s.job and boxes[1].currentVolume == 0, 'cancelled: the van is empty again')
+end)
+
+local function mealOnBoard()
+  local marker = package.loaded['cargoEarth/marker']
+  marker.PICKUP_RADIUS, marker.PICKUP_RANGE, marker.pickupDistance = 5, 250, function() return nil end
+  local core, s = fresh()
+  s.career.garage.debt = 0
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function() return {{50.02, 14, 50.02, 14, 'Street 5', 'Town'}} end)
+  advance(core, 2)
+  core.phoneAction('online')
+  for _ = 1, 40 do
+    advance(core, 2)
+    if core.phoneState().screen == 'incoming' then break end
+  end
+  core.phoneAction('accept')
+  pose.lat, pose.lon = s.job.from.g[1], s.job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and boxes[1].currentVolume > 0, 'the meal is in the box')
+  return core, s
+end
+
+test('a reset forgets the load in the car: the meal\'s weight goes back in', function()
+  local core, s = mealOnBoard()
+  local kg = boxes[1].currentVolume
+  boxes[1].currentVolume, boxes[1].targetVolume = 0, 0   -- the game rebuilt its containers empty
+  core.onVehicleResetted(1)
+  advance(core, 4)
+  assert(math.abs(boxes[1].currentVolume - kg) < 1e-9, 'put back after the reset')
+  core.cancel()
+  assert(boxes[1].currentVolume == 0, 'and taken out on cancel')
+end)
+
+test('a load the mod lost track of is emptied once nothing is on board', function()
+  local core, s = mealOnBoard()
+  s.storage = nil   -- the bookkeeping is lost (a Lua reload): the box still holds the meal
+  advance(core, 4)
+  assert(boxes[1].currentVolume > 0)
+  core.cancel()
+  advance(core, 6)
+  assert(not s.job and boxes[1].currentVolume == 0, 'the left-over weight is gone')
+  -- an idle car that comes back with something in its boxes is emptied too
+  boxes[1].currentVolume, boxes[1].targetVolume = 12, 12
+  s.sweepWanted, s.sweepAt = true, 0
+  advance(core, 2)
+  assert(boxes[1].currentVolume == 0, 'emptied while idle')
+  boxes[1].cargoTypes = {'passenger'}
+  boxes[1].currentVolume, boxes[1].targetVolume = 3, 3
+  s.sweepWanted, s.sweepAt = true, 0
+  advance(core, 2)
+  assert(boxes[1].currentVolume == 3, 'passenger seats are left alone')
+end)
+
+test('seat occupants: bus seats, a fixed scattered order, and seating the player', function()
+  local occ = require('cargoEarth/occupants')
+  local cfg = occ.fillBusSeats({ parts = { citybus_seats = 'citybus_seats', seat_occupant_1RA = 'occupant_generic' } })
+  local n = 0
+  for k, v in pairs(cfg.parts) do if k:find('^seat_occupant_') then n = n + 1 assert(v == 'occupant_generic') end end
+  assert(n == 34, 'every passenger seat of the city bus: ' .. n)
+  local seats = { { seatId = 'FL', isDriver = true, occupantType = 'player' } }
+  for _, id in ipairs(occ.BUS_SEATS) do seats[#seats + 1] = { seatId = id } end
+  local p = occ.plan(seats, 5, '136')
+  assert(#p.add == 5 and #p.remove == 0 and p.shown == 5)
+  for _, id in ipairs(p.add) do assert(id ~= 'FL', 'never the driver seat') end
+  -- the same five stay seated when two more get on
+  local set = {}
+  for _, id in ipairs(p.add) do set[id] = true end
+  for _, s in ipairs(seats) do if set[s.seatId] then s.occupantType = 'dummy' end end
+  local p2 = occ.plan(seats, 7, '136')
+  assert(#p2.add == 2 and #p2.remove == 0)
+  local p3 = occ.plan(seats, 2, '136')
+  assert(#p3.add == 0 and #p3.remove == 3)
+  assert(occ.plan(seats, 100, '136').shown == 34, 'standing people are not shown')
+  local other = occ.plan(seats, 5, '9')
+  local same = 0
+  for _, id in ipairs(other.add) do if set[id] then same = same + 1 end end
+  assert(same < 5 or #other.add < 5, 'another line seats people elsewhere')
+  assert(occ.needsSeat(true, nil, 5) and occ.needsSeat(true, { vehicleId = 5 }, 5))
+  assert(not occ.needsSeat(true, { vehicleId = 5, seatId = 'FL' }, 5) and not occ.needsSeat(false, nil, 5))
 end)

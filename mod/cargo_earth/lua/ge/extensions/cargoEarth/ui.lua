@@ -125,8 +125,11 @@ local function offers(core, S)
     if j.kind == 'food' then
       txt(string.format('%d. %s  |  %s  |  %d CZK  |  %d min', i, j.cargoName, km(j.km), j.pay, j.minutes))
     else
-      txt(string.format('%d. %s%s  |  %s  |  %d t  |  %s  |  %d CZK  |  %d min', i, j.cargoName, j.adr and ' [ADR]' or '',
-        S.idx.trailers[j.trailer] or j.trailer, j.tonnes, km(j.km), j.pay, j.minutes))
+      -- tow jobs, parcel routes and parts runs have no trailer or tonnes (a nil here broke the window every frame)
+      local trailer = j.trailer and ((S.idx and S.idx.trailers[j.trailer]) or j.trailer) or j.kind or 'job'
+      local weight = j.tonnes and string.format('%s t', j.tonnes) or (j.haul and j.haul.kg and string.format('%d kg', j.haul.kg)) or '-'
+      txt(string.format('%d. %s%s  |  %s  |  %s  |  %s  |  %d CZK  |  %d min', i, j.cargoName or '?', j.adr and ' [ADR]' or '',
+        trailer, weight, km(j.km or 0), j.pay or 0, j.minutes or 0))
     end
     txt('   from ' .. placeLine(j.from, S) .. ', ' .. km(j.pickupKm) .. ' away' ..
       ((j.farPickup or 0) > 0 and string.format(' (+%d CZK for the ride)', j.farPickup) or ''))
