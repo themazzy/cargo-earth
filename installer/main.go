@@ -667,24 +667,31 @@ func installHelper(py, tag string) error {
 // its Add-ons page, so a new installer run would leave the old helper running.
 func earthCopyDir() string { return filepath.Join(earthDataDir(), "addons", addonID) }
 
-// updateEarthCopy puts the new helper into BeamNG.Earth's installed copy when Earth has one: the file beside the old
-// one, installed.json pointing at it (its other settings, such as autostart, kept), older helper files removed.
+// updateEarthCopy puts the new helper into BeamNG.Earth's installed copy (addonrun.Runner reads only installed.json
+// and the file it names; Earth's own consent dialog guards its Install button, and running this installer is the
+// player's agreement): the file beside the old one, installed.json pointing at it, older helper files removed. Earth
+// starts companions whose installed.json says autostart: true, and its own Install never writes that key, so the
+// helper used to wait for the player to find "Start with BeamNG.Earth" (players complained, 2026-11-16). A missing key
+// is set to true; a player's own false (they turned it off on the Add-ons page) is kept.
 func updateEarthCopy(target, tag string) error {
 	dir := earthCopyDir()
 	statePath := filepath.Join(dir, "installed.json")
+	state := map[string]any{}
 	raw, err := os.ReadFile(statePath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil // Earth has not installed it yet: its Install button takes the new file
-	} else if err != nil {
+	if err == nil {
+		if err := json.Unmarshal(raw, &state); err != nil {
+			return fmt.Errorf("installed.json: %v", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	state := map[string]any{}
-	if err := json.Unmarshal(raw, &state); err != nil {
-		return fmt.Errorf("installed.json: %v", err)
-	}
+	_, chose := state["autostart"]
 	name := filepath.Base(target)
-	if state["file"] == name && state["tag"] == tag {
+	if state["file"] == name && state["tag"] == tag && chose && fileExists(filepath.Join(dir, name)) {
 		return nil
+	}
+	if !chose {
+		state["autostart"] = true
 	}
 	data, err := os.ReadFile(target)
 	if err != nil {
@@ -692,6 +699,9 @@ func updateEarthCopy(target, tag string) error {
 	}
 	sum := sha256.Sum256(data)
 	return doIt("update BeamNG.Earth's copy in "+dir, func() error {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 		if err := copyFile(target, filepath.Join(dir, name)); err != nil {
 			return err
 		}
@@ -712,7 +722,12 @@ func updateEarthCopy(target, tag string) error {
 				os.Remove(f)
 			}
 		}
-		say("BeamNG.Earth's copy now runs %s (restart BeamNG.Earth if the old helper is still running).", name)
+		say("BeamNG.Earth's copy now runs %s (restart BeamNG.Earth if an old helper is still running).", name)
+		if state["autostart"] == true {
+			say("BeamNG.Earth starts the helper whenever it starts (Add-ons page: Start with BeamNG.Earth).")
+		} else {
+			say("You set the helper to start only by hand: press Start on BeamNG.Earth's Add-ons page, or turn on Start with BeamNG.Earth there.")
+		}
 		return nil
 	})
 }
