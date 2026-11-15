@@ -187,6 +187,15 @@ local function wreckCmd(wreck)
     .. 'extensions.cargoEarth_wreck.start(%q, %d) end', wreck[1], math.floor(tonumber(wreck[2]) or 1))
 end
 
+-- How far a car's position is above its lowest point (its box bottom), so its wheels, not its middle, go on the deck.
+local function lowestBelow(o)
+  local ok, lift = pcall(function()
+    local box = o:getSpawnWorldOOBB()
+    return o:getPosition().z - (box:getCenter().z - box:getHalfExtents().z)
+  end)
+  return ok and type(lift) == 'number' and math.max(0, math.min(lift, 2)) or 0.5
+end
+
 local function spawnCar(model, p, dir, wreck, onDeckSpot)
   local ok, v = pcall(core_vehicles.spawnNewVehicle, model, { pos = p, rot = quatFromDir(dir, vec3(0, 0, 1)),
     autoEnterVehicle = false })
@@ -244,9 +253,22 @@ function M.update()
   local h = hitchWanted
   if not h then return end
   if not scenetree.findObjectById(h[1]) or not scenetree.findObjectById(h[2]) then hitchWanted = nil return end
+  local trailer = scenetree.findObjectById(h[2])
+  local before = trailer:getPosition()
   local done = hitchNow(h[1], h[2])
   h[3] = h[3] - 1
   if done ~= false or h[3] <= 0 then hitchWanted = nil end
+  -- cars already on the deck (a restored load) move along with the trailer to the hitch
+  if done and h[4] and #towed > 0 then
+    local shift = trailer:getPosition() - before
+    for _, tid in ipairs(towed) do
+      local o = scenetree.findObjectById(tid)
+      if o then
+        local p = o:getPosition() + shift
+        pcall(function() o:setPosition(p) end)
+      end
+    end
+  end
 end
 
 -- Couple the trailer that is out to the player's vehicle (in the next frames). False when there is no trailer or car.
@@ -290,15 +312,6 @@ local function deckSpots(trailer, n)
   return spots, dir
 end
 
--- How far a car's position is above its lowest point (its box bottom), so its wheels, not its middle, go on the deck.
-local function lowestBelow(o)
-  local ok, lift = pcall(function()
-    local box = o:getSpawnWorldOOBB()
-    return o:getPosition().z - (box:getCenter().z - box:getHalfExtents().z)
-  end)
-  return ok and type(lift) == 'number' and math.max(0, math.min(lift, 2)) or 0.5
-end
-
 -- New cars on the deck of the trailer that is out. How many were placed.
 local function onDeck(trailer, cars, wrecks)
   local spots, dir = deckSpots(trailer, #cars)
@@ -330,6 +343,7 @@ function M.spawnTow(kind, cars, wrecks)
   if not ok then return false, why end
   local veh = getPlayerVehicle and getPlayerVehicle(0)
   local placed = onDeck(obj(), cars, wrecks)
+  if hitchWanted then hitchWanted[4] = true end   -- these cars go along when the trailer is put on the hitch
   backToPlayer(veh)
   if placed < #cars then M.remove() return false, 'a broken-down car could not be spawned' end
   return true
