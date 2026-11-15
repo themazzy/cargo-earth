@@ -48,6 +48,9 @@ function M.exists() return obj() ~= nil end
 
 function M.id() return obj() and id or nil end
 
+M.AGGREGATE_SLOTS = { 'FA', 'FB', 'FC', 'FD', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'RA', 'RB', 'RC', 'RD' }
+M.AGGREGATE_L = 800 * #M.AGGREGATE_SLOTS
+
 local function freightConfig(kind)
   if kind == 'fluid' then
     return 'tanker', 'vehicles/tanker/career_shuffleboard_empty_long.pc'
@@ -56,13 +59,14 @@ local function freightConfig(kind)
   if type(config) ~= 'table' or type(config.parts) ~= 'table' then return end
   local parts = config.parts
   parts.dryvan_load_F = 'dryvan_load_F_cargo_load_box_4XL'
+  parts.dryvan_load_M = 'dryvan_load_M_cargo_load_box_8xl'
+  parts.dryvan_load_R = 'dryvan_load_R_cargo_load_box_4XL'
   if kind == 'dryBulk' then
-    for _, suffix in ipairs({ 'FA', 'FB', 'FC', 'FD' }) do
+    -- every box slot of the trailer takes the game's 800 L aggregate box in place of the parcel box (same slot type,
+    -- checked in common.zip vehicles/common/cargo/loads_XL): 16 boxes, 12,800 L
+    for _, suffix in ipairs(M.AGGREGATE_SLOTS) do
       parts['cargo_load_box_XL_' .. suffix .. '_90deg'] = 'cargo_load_aggregate_box_XL_' .. suffix .. '_90deg'
     end
-  else
-    parts.dryvan_load_M = 'dryvan_load_M_cargo_load_box_8xl'
-    parts.dryvan_load_R = 'dryvan_load_R_cargo_load_box_4XL'
   end
   return 'dryvan', config
 end
