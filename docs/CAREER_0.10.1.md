@@ -1,8 +1,8 @@
 # Cargo Earth 0.10.1
 
-Phone usability, bus pickup and door controls, readable stop names, and more useful bus-loading status.
+Phone usability, bus pickup and door controls, readable stop names, more useful bus-loading status, and a native Linux installer.
 
-**Update both the mod and helper.** Run CargoEarthSetup.exe and choose 1, or replace the mod with cargo_earth_career_0.10.1.zip and update the registered helper to cargo_earth_helper_0.10.1.py. Close BeamNG and stop the helper first, then restart both. Keep only one Cargo Earth ZIP installed. Existing career saves are retained.
+**Update both the mod and helper.** Run CargoEarthSetup.exe on Windows or CargoEarthSetup-linux-x86_64 on Linux and choose 1, or replace the mod with cargo_earth_career_0.10.1.zip and update the registered helper to cargo_earth_helper_0.10.1.py. Close BeamNG and stop the helper first, then restart both. Keep only one Cargo Earth ZIP installed. Existing career saves are retained.
 
 Requires BeamNG.Earth 1.9.0-beta or newer. Earth 1.10 adds posted speed-limit support.
 
@@ -39,3 +39,10 @@ Speed-camera downloads, alerts, fines and star deductions are temporarily disabl
 124 career checks, 38 helper checks, Lua syntax, bus-control/overlay tests and the phone checks passed. The phone source audit covers 11 Work states, every menu section and 40 critical action groups.
 
 This remains an early development build. Visual checks at 290 x 560, 240 x 420 and 360 x 640, live bus discovery, depot placement and physical door behaviour still need in-game verification. One existing radio-relay test could not run because the execution environment blocked its local socket.
+
+## Linux installer
+
+- Native x86_64 installer, including Steam Deck Desktop Mode, with BeamNG profile detection and an explicit -user-folder option.
+- Registers the helper with BeamNG.Earth and provides a manual shell launcher with a private Python environment.
+- Windows and Linux workflows test and build from the release tag, then attach both installers when the release is published.
+- Linux installer tests and smoke test pass on GitHub Actions. In-game Linux verification remains pending.

@@ -80,7 +80,7 @@ Career Overhaul project.
 
 ## Install
 
-You need **BeamNG.drive** (Windows) and **[BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) 1.9.0-beta or newer** installed and working first (1.10 adds posted speed limits). Cargo Earth has two parts:
+You need **BeamNG.drive** (Windows or Linux) and **[BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) 1.9.0-beta or newer** installed and working first (1.10 adds posted speed limits). Cargo Earth has two parts:
 
 - **the mod** (a ZIP in BeamNG's `mods` folder): the career and the phone, in the game;
 - **the helper** (a small Python program): it downloads restaurants, shops, workplaces, addresses, fuel stations, speed cameras, bus lines, repair shops and radio stations around you, and plays the radio. The game cannot go online itself, so the helper does it. BeamNG.Earth starts it for you.
@@ -108,6 +108,26 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 
 In the game you can do the same from the phone: Menu → Settings → Restart career (type DELETE to confirm). It also works on the screen that offers to load a saved career.
 
+### Quick install (Linux x86_64 / Steam Deck Desktop Mode)
+
+1. Download **[CargoEarthSetup-linux-x86_64](https://github.com/themazzy/cargo-earth/releases/latest/download/CargoEarthSetup-linux-x86_64)** from a release that includes the Linux installer.
+2. Open a terminal in the download folder and run:
+
+   ```sh
+   chmod +x CargoEarthSetup-linux-x86_64
+   ./CargoEarthSetup-linux-x86_64
+   ```
+
+3. Choose **1** (install or update), then follow **First start** below. Run as your normal user, without `sudo`. Python 3.9+ with `venv` support is required (some distributions package this as `python3-venv`). The installer creates a private Python environment for the manual helper launcher and installs `duckdb` and `fsspec` there.
+
+The installer uses the active profile remembered by BeamNG.Earth, or detects native, Flatpak and Snap BeamNG user folders. If several profiles exist, or you use Proton or a custom location, specify the active profile explicitly:
+
+```sh
+./CargoEarthSetup-linux-x86_64 -user-folder "/path/to/BeamNG/BeamNG.drive/current"
+```
+
+The same command-line options listed for Windows work on Linux. The helper is installed in `${XDG_DATA_HOME:-$HOME/.local/share}/CargoEarth/helper`; run `start_helper.sh` there to start it manually. Registration goes in `~/.cache/beamng-earth/addons/local.json`, matching BeamNG.Earth's Linux app directory. For helper radio playback, install `ffplay`, `mpv`, or `cvlc`. `-skip-python` skips environment and dependency installation; the manual helper launcher then uses your system Python, whose dependencies you must provide yourself.
+
 ### Manual install
 
 1. Download `cargo_earth_career_<version>.zip` and `cargo_earth_helper_<version>.py` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest).
@@ -124,7 +144,7 @@ In the game you can do the same from the phone: Menu → Settings → Restart ca
 4. **Choose Career or Free play** on the phone, pick Food delivery, Freight or Bus and go online on **Work**.
 5. Optional: turn **traffic on in BeamNG.Earth** for the speed-limit sign on the phone (it reads Earth's road graph).
 
-If the phone says the helper is not running: check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras, bus lines, parts runs, repair shops and grocery runs still need it.
+If the phone says the helper is not running: check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` on Windows or `start_helper.sh` from `${XDG_DATA_HOME:-$HOME/.local/share}/CargoEarth/helper` on Linux and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras, bus lines, parts runs, repair shops and grocery runs still need it.
 
 The phone keeps what you need while driving: **Work** (deliveries), **Radio**, and a fuel line at the bottom. **Menu** opens a big window over the game with **Garage**, **Home**, **Companies**, **Progress**, **Finances**, **Delivery map**, **Firm** and **Settings**. The firm's headquarters opens from Firm as a full-screen plan of the building.
 
@@ -155,9 +175,9 @@ node tools/payout-stats.cjs
 
 `earth-addons/cz-terrain/` is a separate BeamNG.Earth add-on: Czech DMR 5G lidar terrain in place of Mapterhorn's 5 m grid (see its README).
 
-The Windows installer is a small Go program in `installer/` (`cd installer && GOOS=windows go build -o CargoEarthSetup.exe .`).
+Both installers share the Go program in `installer/`. From that folder, build with `GOOS=windows GOARCH=amd64 go build -o CargoEarthSetup.exe .` or `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o CargoEarthSetup-linux-x86_64 .`. Run installer checks with `go test ./...` and `go vet ./...`.
 
-To publish a release, create a GitHub release with a tag such as `v0.10.1` and attach the mod ZIP and `cargo_earth_helper_*.py`. A workflow then builds `CargoEarthSetup.exe` and adds it to the same release.
+To publish a release, create a GitHub release with a tag such as `v0.10.1` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
 
 `npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
@@ -176,4 +196,3 @@ Report bugs through [GitHub Issues](https://github.com/themazzy/cargo-earth/issu
 ## Licence
 
 Code: [MIT](LICENSE). Bundled geographic data: ODbL 1.0, © OpenStreetMap contributors and Overture Maps Foundation (see [LICENSE](LICENSE)).
-
