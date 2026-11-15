@@ -1073,6 +1073,14 @@ local function finishPickup()
   phoneSound('pickup')
 end
 
+-- Tow job, at the pickup: the car(s) and the trailer are out and wait for Load on the phone (no stop countdown then;
+-- if they are gone, stopping there again brings them back).
+function M.towWaiting()
+  local j = S.job
+  return j ~= nil and j.tow ~= nil and j.tow.waiting == true and S.phase == 'toPickup'
+    and trailers.id() ~= nil and trailers.towedAlive() >= #j.tow.cars
+end
+
 -- Tow job, at the pickup: put the waiting car(s) on the trailer parked next to them.
 function M.towLoad()
   local j = S.job
@@ -1086,7 +1094,7 @@ function M.towLoad()
   j.tow.waiting, j.tow.spawnedAt, j.tow.damage0, j.tow.onBoard = nil, S.clock, nil, #j.tow.cars
   local _, o = orderOf(j)
   if o then o.phase = 'toDelivery' end
-  say(string.format('Loaded. Couple the trailer and drive gently to %s: %s not strapped down.', j.to.n,
+  say(string.format('Loaded. Drive gently to %s: %s not strapped down.', j.to.n,
     #j.tow.cars > 1 and 'they are' or 'it is'), 8)
   nextStop()
   saveCareer()
@@ -1097,6 +1105,8 @@ end
 -- An order leaves the list; the next stop takes over, or the courier is free again.
 local function dropOrder(j)
   if j.haul then clearFreight() end
+  -- a tow job's trailer and the car(s) on it or waiting by the road go with it
+  if j.tow then trailers.removeTow() end
   local i = orderOf(j)
   if i then table.remove(S.orders, i) end
   if #S.orders == 0 then
@@ -1419,7 +1429,7 @@ local function tick(dt)
     if not S.dist or S.dist > M.ROUTE_PASS_M then gpsToTarget(true) end
   end
   if not S.dist or S.dist > arrivalRadius(S.job) or (p.speed or 0) > M.STOP_SPEED or p.camera
-    or (S.job.kind == 'food' and not garage.inOwnCar(M.G, S.career.garage)) then
+    or (S.job.kind == 'food' and not garage.inOwnCar(M.G, S.career.garage)) or M.towWaiting() then
     S.stopT = 0
     return
   end
@@ -1431,7 +1441,7 @@ end
 -- The stop at the current target: { inZone, stopping, frac (0..1 of the wait), leftS, stopS, moving } or nil.
 -- frac moves smoothly between ticks so the bar doesn't jump.
 local function stopInfo()
-  if not S.job or not S.dist then return nil end
+  if not S.job or not S.dist or M.towWaiting() then return nil end
   local r = rules(S.job)
   local inZone = S.dist <= arrivalRadius(S.job)
   local t = S.stopT > 0 and math.min(r.stopS, S.stopT + S.tick) or 0
@@ -4094,6 +4104,7 @@ function M.onUpdate(dtReal, dtSim)
   end
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
+  trailers.update()                                         -- couples a tow trailer once the game knows its hitch
   if helper.commanding() then helper.pump(S.clock) end     -- radio presses: answered within frames, not ticks
   if S.clock >= (S.radioSyncAt or 0) then S.radioSyncAt = S.clock + 0.5 M.radioSync() end -- the UI page went away: the helper plays
   local worldReady = earth.status() == 'ok'

@@ -28,8 +28,17 @@ local id = nil       -- the job trailer's vehicle id
 local towed = {}     -- vehicle ids of the cars on a tow job's trailer
 
 -- Tow trailers: the first stock model found is used (override with trailerModels.cartrailer / .flatbed).
-M.TOW_MODELS = { cartrailer = { 'cartrailer', 'tsfb', 'boxutility_large' }, flatbed = { 'flatbed' } }
-M.DECK_LIFT = 0.4    -- metres above the trailer's top a towed car is let down from
+-- Each is a model, or { model, configuration }. BeamNG 0.40 has no 'cartrailer': the 22 ft tilt deck is its car
+-- trailer, the small TSFB flatbed the fallback (its configuration given: spawned without one it failed to load).
+M.TOW_MODELS = { cartrailer = { { 'tiltdeck', '22ft_standard' }, { 'tsfb', 'unloaded' }, 'cartrailer' }, flatbed = { 'flatbed' } }
+M.DECK_LIFT = 0.15   -- metres above the deck a towed car's lowest point is let down from
+-- the deck of each tow trailer model: its height above the ground under the trailer, and how far its middle is behind
+-- the middle of the trailer's box (the drawbar makes the box longer at the front). From the models' jbeam nodes.
+M.DECK = { tiltdeck = { h = 0.9, back = 0.9 }, tsfb = { h = 0.75, back = 0.7 }, flatbed = { h = 1.45, back = 0 } }
+M.DECK_DEFAULT = { h = 0.9, back = 0.4 }
+M.HITCH_TRIES = 120  -- frames to wait for the game to know a new trailer's couplers
+local kindOut = nil  -- the tow trailer kind that is out (for its deck)
+local hitchWanted = nil  -- { vehicle id, trailer id, frames left }: couple the trailer that was just spawned
 
 function M.configure(cfg)
   for k, v in pairs((cfg and cfg.trailerModels) or {}) do
@@ -129,9 +138,16 @@ end
 
 function M.remove()
   removeTowed()
+  hitchWanted, kindOut = nil, nil
   local o = obj()
   if o then o:delete() end
   id = nil
+end
+
+-- A tow job ends: its cars go, and its trailer when it is a tow trailer (a freight trailer that is out stays).
+function M.removeTow()
+  removeTowed()
+  if kindOut then M.remove() end
 end
 
 -- Is this stock model in the game?
@@ -153,7 +169,9 @@ function M.towModel(kind)
   local custom = M.models[kind]
   if custom and custom.model and M.modelExists(custom.model) then return custom.model, custom.config end
   for _, m in ipairs(M.TOW_MODELS[kind] or {}) do
-    if M.modelExists(m) then return m end
+    local model, config = m, nil
+    if type(m) == 'table' then model, config = m[1], m[2] end
+    if M.modelExists(model) then return model, config end
   end
 end
 
@@ -169,42 +187,116 @@ local function wreckCmd(wreck)
     .. 'extensions.cargoEarth_wreck.start(%q, %d) end', wreck[1], math.floor(tonumber(wreck[2]) or 1))
 end
 
-local function spawnCar(model, p, dir, wreck)
+local function spawnCar(model, p, dir, wreck, onDeckSpot)
   local ok, v = pcall(core_vehicles.spawnNewVehicle, model, { pos = p, rot = quatFromDir(dir, vec3(0, 0, 1)),
     autoEnterVehicle = false })
   if not ok or not v then return false end
+  -- spawned on a deck: lifted so its lowest point, not its middle, is at the spot
+  if onDeckSpot then
+    local lift = lowestBelow(v)
+    pcall(function() v:setPosition(vec3(p.x, p.y, p.z + lift)) end)
+  end
   towed[#towed + 1] = v:getID()
   v:queueLuaCommand(PARK_CMD .. wreckCmd(wreck))
   return true
 end
 
--- Move a car that is out (keeping its bent metal when the game allows it; the wreck is done again after a reset).
+-- Move a car that is out. setPositionRotation resets the car (the wreck extension damages it again after the reset);
+-- vehicles face backwards there, so the rotation is turned around as the game's own callers do.
 local function moveCar(o, p, dir)
-  local rot = quatFromDir(dir, vec3(0, 0, 1))
-  return pcall(function() o:setPositionRotation(p.x, p.y, p.z, rot.x, rot.y, rot.z, rot.w) end)
+  local rot = quatFromDir(-dir, vec3(0, 0, 1))
+  local z = p.z + lowestBelow(o)
+  return pcall(function() o:setPositionRotation(p.x, p.y, z, rot.x, rot.y, rot.z, rot.w) end)
 end
+
+-- The first coupler node of a vehicle with this tag (as the game lists them in core_vehicles), checking `first`
+-- (couplerTag or tag) before the other name.
+local function couplerNode(vid, tag, first)
+  local cache = core_vehicles and core_vehicles.vehsCouplerCache and core_vehicles.vehsCouplerCache[vid]
+  if type(cache) ~= 'table' then return nil end
+  local second = first == 'couplerTag' and 'tag' or 'couplerTag'
+  for _, key in ipairs({ first, second }) do
+    for cid, n in pairs(cache) do
+      if type(n) == 'table' and n[key] == tag then return cid end
+    end
+  end
+end
+
+-- Put the trailer on the vehicle's hitch the way the game itself does after a reset (spawn.placeTrailer: moved to
+-- the hitch, then the game's auto coupling latches it). True when done, false while the couplers are not known yet,
+-- nil when the two have no hitch in common.
+local function hitchNow(vid, tid)
+  if not (spawn and spawn.placeTrailer and core_vehicles and core_vehicles.couplerTagsOptions) then return nil end
+  local offsets = core_vehicles.vehsCouplerOffset or {}
+  if not offsets[vid] or not offsets[tid] then return false end
+  for _, tag in ipairs({ 'tow_hitch', 'fifthwheel', 'gooseneck_hitch', 'pintle', 'fifthwheel_v2' }) do
+    local vc, tc = couplerNode(vid, tag, 'couplerTag'), couplerNode(tid, tag, 'tag')
+    if vc and tc and vc ~= nil and offsets[vid][vc] and offsets[tid][tc] then
+      local ok = pcall(spawn.placeTrailer, vid, offsets[vid][vc], tid, offsets[tid][tc], tag)
+      return ok
+    end
+  end
+  return nil
+end
+
+-- Every frame (core onUpdate): couples the trailer that was just spawned once the game knows its couplers.
+function M.update()
+  local h = hitchWanted
+  if not h then return end
+  if not scenetree.findObjectById(h[1]) or not scenetree.findObjectById(h[2]) then hitchWanted = nil return end
+  local done = hitchNow(h[1], h[2])
+  h[3] = h[3] - 1
+  if done ~= false or h[3] <= 0 then hitchWanted = nil end
+end
+
+-- Couple the trailer that is out to the player's vehicle (in the next frames). False when there is no trailer or car.
+function M.hitch()
+  local veh = getPlayerVehicle and getPlayerVehicle(0)
+  local o = obj()
+  if not veh or not o then return false end
+  hitchWanted = { veh:getID(), o:getID(), M.HITCH_TRIES }
+  return true
+end
+function M.hitching() return hitchWanted ~= nil end
 
 local function backToPlayer(veh)
   if be and be.enterVehicle and veh then pcall(be.enterVehicle, be, 0, veh) end
 end
 
--- The deck spots of the trailer that is out (DECK_LIFT above its top), one per car, and its direction.
+-- The deck spots of the trailer that is out, one per car, and its direction. A spot is the middle of the deck at its
+-- height: the trailer's box middle (not its position, which is at the drawbar end), moved back by the deck's offset,
+-- and the deck height above the ground found under it. (The box top would be the raised ramps: cars fell from there.)
 local function deckSpots(trailer, n)
   local pos, dir = trailer:getPosition(), trailer:getDirectionVector()
   dir.z = 0
   dir = dir:length() > 1e-3 and dir:normalized() or vec3(0, 1, 0)
-  local top = pos.z + 1.2
+  local m = kindOut and M.models[kindOut]
+  local deck = M.DECK[m and m.model or ''] or M.DECK_DEFAULT
+  local mid = vec3(pos.x, pos.y, pos.z)
   local okBox, box = pcall(function() return trailer:getSpawnWorldOOBB() end)
   if okBox and box then
-    local okTop, z = pcall(function() return box:getCenter().z + box:getHalfExtents().z end)
-    if okTop and type(z) == 'number' then top = z end
+    local okC, c = pcall(function() return box:getCenter() end)
+    if okC and c then mid = vec3(c.x, c.y, c.z) end
   end
+  mid = mid - dir * deck.back
+  local floor = pos.z
+  local d = castRayStatic(vec3(mid.x, mid.y, mid.z + 3), vec3(0, 0, -1), 20)
+  if d and d < 20 then floor = mid.z + 3 - d end
   local spots = {}
   for i = 1, n do
     local along = n > 1 and (i == 1 and 3.2 or -3.2) or 0
-    spots[i] = vec3(pos.x, pos.y, top + M.DECK_LIFT) + dir * along
+    spots[i] = vec3(mid.x, mid.y, floor + deck.h + M.DECK_LIFT) + dir * along
   end
   return spots, dir
+end
+
+-- How far a car's position is above its lowest point (its box bottom), so its wheels, not its middle, go on the deck.
+local function lowestBelow(o)
+  local ok, lift = pcall(function()
+    local box = o:getSpawnWorldOOBB()
+    return o:getPosition().z - (box:getCenter().z - box:getHalfExtents().z)
+  end)
+  return ok and type(lift) == 'number' and math.max(0, math.min(lift, 2)) or 0.5
 end
 
 -- New cars on the deck of the trailer that is out. How many were placed.
@@ -212,7 +304,7 @@ local function onDeck(trailer, cars, wrecks)
   local spots, dir = deckSpots(trailer, #cars)
   local placed = 0
   for i, carModel in ipairs(cars) do
-    if spawnCar(carModel, spots[i], dir, wrecks and wrecks[i]) then placed = placed + 1 end
+    if spawnCar(carModel, spots[i], dir, wrecks and wrecks[i], true) then placed = placed + 1 end
   end
   return placed
 end
@@ -223,7 +315,12 @@ local function towTrailer(kind, fresh)
   local model, config = M.towModel(kind)
   if not model then return false, 'this game has no ' .. tostring(kind) .. ' trailer' end
   M.models[kind] = { model = model, config = config }
-  return M.spawn(kind)
+  local ok, why = M.spawn(kind)
+  if ok then
+    kindOut = kind
+    M.hitch()
+  end
+  return ok, why
 end
 
 -- Spawn a tow trailer behind the player's vehicle with the broken-down cars on its deck (brakes on, engine off).
