@@ -16,3 +16,5 @@ settings/
 dist/
 .openai/
 *.exe
+/CargoEarthSetup-linux-x86_64
+/installer/CargoEarthSetup-linux-x86_64

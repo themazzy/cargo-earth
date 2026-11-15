@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to attach the installer to, e.g. v0.10.0
+        description: Release tag to attach the installer to, e.g. v0.9.1
         required: true
   pull_request:
     paths: ['installer/**', '.github/workflows/installer.yml']
@@ -22,12 +22,16 @@ jobs:
       TAG: ${{ github.event.release.tag_name || inputs.tag || 'dev' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name != 'pull_request' && (github.event.release.tag_name || inputs.tag) || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: installer/go.mod
-      - name: Vet
+      - name: Test and vet
         working-directory: installer
-        run: go vet ./...
+        run: |
+          go test ./...
+          go vet ./...
       - name: Build CargoEarthSetup.exe
         working-directory: installer
         env:
