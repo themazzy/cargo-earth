@@ -1,6 +1,8 @@
 -- A broken-down car for a tow job, damaged by the game's own soft-body physics right after it spawns:
 --   front / rear / side / rolled: the nodes at one end (or the roof) are pushed into the car for a moment, so the body
---     really bends; the rest of the car is pushed back just as hard, so it does not move off;
+--     really bends; the rest of the car is pushed back just as hard (a rolled roof: the ground holds it), every node
+--     by its own mass so light panels are not flung; while it bends and a moment after, the car is held in place
+--     (a brake on its whole-body speed: the game's own freeze only locks the gearbox, Jan saw the car fly);
 --   a few break groups (bumpers, mirrors, lights) are broken off, all of them for 'stripped', with the doors too;
 --   one or two tyres go flat.
 -- It is done again after a reset (moving the car onto the trailer with setPositionRotation resets it: the game's
@@ -9,11 +11,14 @@ local M = {}
 
 M.DELAY_S = 1.0          -- let the car settle on its wheels first
 M.PUSH_S = 0.3           -- how long the push lasts
-M.NODE_N = 4000          -- newtons on each pushed node
+M.HIT_ACCEL = 1200       -- m/s² on each pushed node (newtons = this x the node's mass)
+M.HOLD_S = 1.5           -- the car is held in place this long from the start of the push
+M.HOLD_K = 6             -- 1/s: how hard the hold brakes the car's speed (force = mass x speed x this)
 M.SHARE = 0.12           -- share of the nodes at the hit end that are pushed
 M.BREAK_SHARE = 0.35     -- share of the break groups broken off (all of them when stripped)
 
-local kind, seed, seed0, timer, push
+local kind, seed, seed0, timer, push, hold
+local calm = false   -- on a trailer deck: no push (Jan's test: the push crushed the car and threw it off the deck)
 
 local function call(f, ...)
   if type(f) ~= 'function' then return false end
@@ -46,6 +51,12 @@ local function hitAxis()
   if kind == 'rolled' then return up end
 end
 
+local function massOf(cid)
+  local ok, m = pcall(function() return obj:getNodeMass(cid) end)
+  m = ok and tonumber(m) or nil
+  return (m and m > 0) and m or 1
+end
+
 local function startPush()
   local axis = hitAxis()
   if not axis or not v or not v.data or type(v.data.nodes) ~= 'table' then return end
@@ -53,17 +64,40 @@ local function startPush()
   for _, n in pairs(v.data.nodes) do
     local cid = type(n) == 'table' and n.cid
     local p = cid and nodePos(cid)
-    if p then list[#list + 1] = { cid = cid, k = vec3(p):dot(axis) } end
+    if p then list[#list + 1] = { cid = cid, k = vec3(p):dot(axis), m = massOf(cid) } end
   end
   if #list < 10 then return end
   table.sort(list, function(a, b) return a.k > b.k end)
   local cut = math.max(1, math.floor(#list * M.SHARE))
-  local hit, rest = {}, {}
-  for i, n in ipairs(list) do if i <= cut then hit[#hit + 1] = n.cid else rest[#rest + 1] = n.cid end end
-  local back = M.NODE_N * #hit / math.max(1, #rest)
-  push = { t = M.PUSH_S, hit = hit, rest = rest,
-    force = vecOf(-axis.x * M.NODE_N, -axis.y * M.NODE_N, -axis.z * M.NODE_N),
-    counter = vecOf(axis.x * back, axis.y * back, axis.z * back) }
+  local hitMass, restMass = 0, 0
+  for i, n in ipairs(list) do
+    if i <= cut then hitMass = hitMass + n.m else restMass = restMass + n.m end
+  end
+  -- the rest of the car gets the same total force back (a rolled car: none, the ground takes the roof's push)
+  local back = kind == 'rolled' and 0 or M.HIT_ACCEL * hitMass / math.max(1e-6, restMass)
+  local forces = {}
+  for i, n in ipairs(list) do
+    local a = i <= cut and -M.HIT_ACCEL or back
+    if a ~= 0 then forces[#forces + 1] = { n.cid, vecOf(axis.x * a * n.m, axis.y * a * n.m, axis.z * a * n.m) } end
+  end
+  push = { t = M.PUSH_S, forces = forces }
+  hold = { t = M.HOLD_S, nodes = list }
+end
+
+-- Hold the car in place: every node braked by the car's whole-body speed. Skipped when the game gives no speed.
+local function holdTick(dt)
+  hold.t = hold.t - dt
+  local ok, vel = pcall(function() return obj:getVelocity() end)
+  if ok and vel and type(obj.applyForceVector) == 'function' then
+    local vx, vy, vz = vel.x or 0, vel.y or 0, vel.z or 0
+    if vx * vx + vy * vy + vz * vz > 0.0025 then
+      for _, n in ipairs(hold.nodes) do
+        local k = -n.m * M.HOLD_K
+        pcall(obj.applyForceVector, obj, n.cid, vecOf(vx * k, vy * k, vz * k))
+      end
+    end
+  end
+  if hold.t <= 0 then hold = nil end
 end
 
 local function breakParts()
@@ -101,9 +135,15 @@ local function flatTyres()
 end
 
 -- Damage this car as `newKind` (see tow.WRECKS), the same way every time for the same seed.
-function M.start(newKind, newSeed)
+-- onDeck: the car stands on a trailer: only parts broken off and flat tyres, no push.
+function M.start(newKind, newSeed, onDeck)
   kind, seed0 = newKind, math.floor(tonumber(newSeed) or 1) % 2147483648
-  seed, timer, push = seed0, M.DELAY_S, nil
+  seed, timer, push, hold, calm = seed0, M.DELAY_S, nil, nil, onDeck == true
+end
+
+-- The car is being put on a trailer deck: from now on no push (also after the reset the move causes).
+function M.calm()
+  calm, push, hold = true, nil, nil
 end
 
 function M.updateGFX(dt)
@@ -113,19 +153,18 @@ function M.updateGFX(dt)
     timer = nil
     breakParts()
     flatTyres()
-    startPush()
+    if not calm then startPush() end
   end
+  if hold then holdTick(dt) end
   if push then
     -- applyForceVectorTime holds the force for the whole push (the game's container locks use it); without it the
     -- force is given again every frame
     if not push.timed and type(obj.applyForceVectorTime) == 'function' then
-      for _, cid in ipairs(push.hit) do pcall(obj.applyForceVectorTime, obj, cid, push.force, M.PUSH_S) end
-      for _, cid in ipairs(push.rest) do pcall(obj.applyForceVectorTime, obj, cid, push.counter, M.PUSH_S) end
+      for _, f in ipairs(push.forces) do pcall(obj.applyForceVectorTime, obj, f[1], f[2], M.PUSH_S) end
       push = nil
       return
     end
-    for _, cid in ipairs(push.hit) do pcall(obj.applyForceVector, obj, cid, push.force) end
-    for _, cid in ipairs(push.rest) do pcall(obj.applyForceVector, obj, cid, push.counter) end
+    for _, f in ipairs(push.forces) do pcall(obj.applyForceVector, obj, f[1], f[2]) end
     push.t = push.t - dt
     if push.t <= 0 then push = nil end
   end
@@ -133,7 +172,7 @@ end
 
 -- a reset repairs the car: damage it again
 function M.onReset()
-  if kind then seed, timer, push = seed0, M.DELAY_S, nil end
+  if kind then seed, timer, push, hold = seed0, M.DELAY_S, nil, nil end
 end
 
 return M

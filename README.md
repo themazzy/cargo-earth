@@ -24,7 +24,7 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
   *Deliver in* targets.
 
 **Freight** (the work depends on what you drive, see [vehicle types](docs/VEHICLE_TYPES.md))
-- **Car:** short parcel rounds to 2-4 real addresses.
+- **Car:** taxi rides: a passenger from a real address near you to an airport, a station, a museum, a sight or a hotel, seated in the car; drive smoothly (needs the latest helper).
 - **SUV or pickup:** parts runs from parts shops and car plants to repair workshops.
 - **Van:** parcel routes from a depot to 4-7 addresses, emptying the cargo containers stop by stop; van freight.
 - **Box truck:** business shipping between real companies.
@@ -46,7 +46,7 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
 ### Career
 
 - Start with a beat-up car and a little money, or pick **Free play** to just drive without a save.
-- Buy used cars with real wear, trade in, and buy real BeamNG parts. Repairs cost money; repairing for free through the
+- Buy used cars with real wear (filter by kind, see cargo space and the jobs each can do), trade in, and buy real BeamNG parts. Repairs cost money; repairing for free through the
   game's menu puts the bill on your debt, and Finances shows where every charge came from.
 - Choose a home garage at a real address, store and switch cars there.
 - Earn 1 to 5 stars on every order. They build two reputations, courier and freight, that bring premium work and better

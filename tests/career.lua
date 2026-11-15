@@ -223,9 +223,11 @@ package.loaded['cargoEarth/earth'] = {
   worldXY = function(p, pt) return p.x + (pt[2] - p.lon) * 71700, p.y + (pt[1] - p.lat) * 111320 end,
 }
 local seated   -- bus passengers the game was asked to seat
+local riders   -- taxi passengers the game was asked to seat
 local function adapter()
   return {
     busPassengers = function(n) seated = n return n end,
+    carPassengers = function(n) riders = n return n end,
     vehicle = function() return vehicle end, ownedVehicle = function() return vehicle end,
     isOwned = function() return true end, damage = function() return damageValue end, configs = function() return {} end,
     playerId = function() return vehicle and vehicle.id end, ownsVehicleId = function(id) return vehicle and vehicle.id == id end,
@@ -1502,13 +1504,11 @@ test('the kind of vehicle comes from its body: car, SUV or pickup, van, box truc
   assert(haul.freight('suv', 'milk', rows) == nil and haul.freight('suv', 'car_parts', rows))
 end)
 
-test('a car gets short parcel rounds; an SUV parts runs from a supplier to a workshop', function()
+test('a car gets no parcel rounds; an SUV parts runs from a supplier to a workshop', function()
   local seq = 0
   local function rnd(n) seq = seq % n + 1 return seq end
   local depot = {id = 'yard', n = 'Warehouse', g = {50, 14}}
-  local job = parcel.route(depot, streets(50, 14), 'car', 24, rnd, 1)
-  assert(job and #job.route.stops >= 2 and #job.route.stops <= 4 and job.haul.tier == 'car' and job.haul.amount <= 24)
-  assert(not parcel.route(depot, streets(50, 14), 'car', 2, rnd, 2), 'no room in the boot: no round')
+  assert(not parcel.route(depot, streets(50, 14), 'car', 24, rnd, 1), 'parcel routes are for vans')
   local parts = require('cargoEarth/parts')
   local suppliers = {{id = 'p1', n = 'Parts Plus', g = {50.01, 14}, town = 'Town'}, {id = 'far', n = 'Far', g = {51, 14}}}
   local function workshops(lat, lon, a, b)
@@ -1564,7 +1564,7 @@ test('a pickup in freight mode is offered parts runs only, loads the parts into 
   assert(not s.job and c.money > money and boxes[1].currentVolume == 0, 'unloaded and paid')
 end)
 
-test('a small car in freight mode gets short parcel rounds and still sees company contracts', function()
+test('a small car in freight mode gets no parcel rounds and still sees company contracts', function()
   local core, s = fresh()
   s.career.garage.debt = 0
   vehicle.bodyStyle = 'Hatchback'
@@ -1574,18 +1574,111 @@ test('a small car in freight mode gets short parcel rounds and still sees compan
   core.setMode('trucking')
   advance(core, 2)
   core.generate()
-  local route
   for _, offer in ipairs(s.offers) do
-    assert(offer.route or offer.tow, 'no company freight board in a car')
-    if offer.route then route = offer end
+    assert(offer.tow or offer.taxi, 'no parcel rounds and no company freight board in a car')
   end
-  assert(route and route.haul.tier == 'car' and #route.route.stops <= 4, 'a short round')
-  core.setOption('maxKm', 0.5)
-  core.generate()
-  for _, offer in ipairs(s.offers) do assert(not offer.route, 'the longest-job setting holds for rounds') end
-  s.opts.freightRanges = nil
   local t = core.phoneState().trucking
   assert(t.carrier == 'Car' and #t.contracts == 1, 'company contracts are still listed')
+  assert(t.hint and not t.hint:find('parcel'), 'the hint does not offer parcel rounds')
+end)
+
+-- addresses everywhere: a 5 x 5 grid in every 0.05 degree tile
+local function everywhere(row, col)
+  local rows = {}
+  for a = 0, 4 do
+    for b = 0, 4 do
+      local lat, lon = row * 0.05 + 0.005 + a * 0.01, col * 0.05 + 0.005 + b * 0.01
+      rows[#rows + 1] = {lat, lon, lat, lon, string.format('Street %d-%d %d%d', row, col, a, b), 'Town'}
+    end
+  end
+  return rows
+end
+
+-- places people take a taxi to (the helper's 't' rows): a ring of sights 3-9 km around 50.02, 14.02
+local function sightRows()
+  local rows = {}
+  for i = 1, 12 do
+    local a, d = i * math.pi / 6, 0.03 + (i % 4) * 0.015
+    rows[#rows + 1] = {'s' .. i, 50.02 + d * math.sin(a), 14.02 + d * 1.5 * math.cos(a), 'Sight ' .. i, 't', 'Town'}
+  end
+  rows[#rows + 1] = {'f1', 50.05, 14.05, 'A fuel station', 'f', 'Town'}
+  return rows
+end
+
+test('taxi rules: a passenger near you, a sight at the ride length, paid by the km', function()
+  local taxi = require('cargoEarth/taxi')
+  local idx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  local places = fuel.index()
+  fuel.addArea(places, 'k', sightRows())
+  local function near(lat, lon, k) return food.addressesNear(idx, lat, lon, k) end
+  local function sights(lat, lon, a, b)
+    local out = {}
+    for _, row in ipairs(fuel.within(places, lat, lon, 'sight', a, b)) do
+      local d = row.station
+      out[#out + 1] = { id = 'sight:' .. d.id, n = d.n, town = d.town, g = d.g }
+    end
+    return out
+  end
+  local seq = 0
+  local function rnd(n) seq = seq % n + 1 return seq end
+  local offers = taxi.offers(near, sights, 50.02, 14.02, rnd)
+  assert(#offers == taxi.OFFERS, 'three rides: ' .. #offers)
+  local seen = {}
+  for _, o in ipairs(offers) do
+    assert(o.taxi and o.kind == 'taxi' and o.taxi.people >= 1 and o.taxi.people <= 3)
+    assert(o.pickupKm <= taxi.NEAR_KM + 1e-9, 'the passenger waits near you')
+    assert(o.to.id:sub(1, 6) == 'sight:' and o.to.n:find('^Sight'), 'rides end at a sight, not an address')
+    assert(not seen[o.to.id], 'three different places') seen[o.to.id] = true
+    assert(o.km >= taxi.KM[1] * taxi.ROAD_FACTOR - 1e-9 and o.km <= taxi.KM[2] * taxi.ROAD_FACTOR + 1e-9)
+    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) / 5 + 0.5) * 5 and o.minutes > 0)
+    assert(cargo.supports(o) and cargo.handling(o) == 'Fragile', 'a rough ride is felt')
+  end
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, {maxKm = 1}) == 0, 'the longest-job setting holds')
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, function() return false end) == 0, 'a long detour is out')
+  assert(#taxi.offers(function() return {} end, sights, 50.02, 14.02, rnd) == 0, 'no addresses, no rides')
+  assert(#taxi.offers(near, function() return {} end, 50.02, 14.02, rnd) == 0, 'no sights, no rides')
+end)
+
+test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and gets out', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  vehicle.bodyStyle = 'Hatchback'
+  riders = nil
+  s.config.spawnTrailer, s.config.requireTrailer = true, true   -- the game's defaults: a taxi needs no trailer
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    everywhere)
+  core.setMode('trucking')
+  advance(core, 2)
+  s.autoIdx = fuel.index()
+  core.generate()
+  for _, offer in ipairs(s.offers) do assert(not offer.taxi, 'no sights known, no taxi rides') end
+  fuel.addArea(s.autoIdx, 'k', sightRows())
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if offer.taxi then i, job = k, offer end end
+  assert(job, 'a car is offered taxi rides')
+  assert(job.to.n:find('^Sight'), 'to a sight')
+  core.take(i)
+  assert(s.job == job and s.phase == 'toPickup')
+  assert(core.phoneState().active.taxi.people == job.taxi.people)
+  pose.lat, pose.lon, pose.speed = job.from.g[1], job.from.g[2], 0
+  local ownModel = vehicle.model
+  vehicle.model = 'someone_elses'
+  advance(core, 10)
+  assert(s.phase == 'toPickup', 'nobody gets into another car')
+  vehicle.model = ownModel
+  advance(core)
+  assert(s.phase == 'toDelivery' and riders == job.taxi.people, 'the passengers sit in the car')
+  s.taxiSeated, riders = nil, 0   -- as a loaded save: the ride is on, nobody seated yet
+  advance(core)
+  assert(riders == job.taxi.people, 'a resumed ride seats its passengers again')
+  local money = c.money
+  pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+  advance(core)
+  assert(not s.job and c.money > money, 'paid at the sight')
+  advance(core, 4)
+  assert(riders == 0, 'and they get out')
 end)
 
 local cameras = require('cargoEarth/cameras')
@@ -2265,6 +2358,10 @@ test('tow rules: who can tow, offers to a workshop, cars on board, damage costs 
   assert(tow.class('semi', false) == 'heavy' and tow.class(nil, true) == 'light' and tow.class('van', false) == nil)
   assert(tow.hasHitch({ slotPartMap = { a = 'pickup_tow_hitch' } }))
   assert(not tow.hasHitch({ slotPartMap = { a = 'pickup_hitch_delete' } }) and not tow.hasHitch({ slotPartMap = { a = 'engine' } }))
+  -- power check (warn only): a 30 hp, 600 kg car is weak for a car trailer, a 200 hp, 1500 kg one is not; unknown = no warning
+  assert(tow.weak('light', { power = 30, weight = 600 }) and not tow.weak('light', { power = 200, weight = 1500 }))
+  assert(not tow.weak('light', nil) and not tow.weak('light', { power = 30 }))
+  assert(tow.info({ tow = { class = 'light', cars = { 'covet' }, weak = true } }).weak == true)
   local addresses = { { 50.01, 14, 50.0101, 14, 'Main Street 1', 'Town' }, { 50.5, 14, 50.5, 14, 'Far Away 2', 'Far' } }
   local workshop = function(lat, lon) return { id = 'w', n = 'Workshop', g = { lat + 0.1, lon } } end
   local offers = tow.offers('light', 50, 14, addresses, workshop, { 'covet' }, function() return 1 end)
@@ -3552,7 +3649,11 @@ test('a tow job without your own trailer: borrow it at the workshop, hitch it, f
     assert(job.tow.stage == 'hitch' and hitched == 0, 'not from far away (it would pull the trailer across the map)')
     nearTrailer = true
     core.phoneAction('towHitch')
-    assert(hitched == 1 and job.tow.stage == nil and s.phase == 'toPickup')
+    assert(hitched == 1 and job.tow.stage == 'hitch', 'hitched again, but not done before the game reports it coupled')
+    coupled = true
+    advance(core, 2)
+    assert(job.tow.stage == nil and s.phase == 'toPickup', 'coupled: on to the car')
+    coupled = false
     assert(core.phoneState().active.here == nil, 'now the broken-down car')
     pose.lat, pose.lon = job.from.g[1], job.from.g[2]
     advance(core)
@@ -3610,4 +3711,63 @@ test('your own coupled car trailer is used and never deleted', function()
   end)
   scenetree, getPlayerVehicle, core_vehicles = oldScene, oldPlayer, oldCv
   assert(ok, err)
+end)
+
+test('used-car market: every vehicle kind has at least 6 listings at cheap, middle and dear prices', function()
+  local garage, haul = require('cargoEarth/garage'), require('cargoEarth/haul')
+  assert(haul.configClass('van', 'Van', 'H-Series Vanster') == 'van')
+  assert(haul.configClass('us_semi', nil, 'T-Series T75 Box Truck') == 'rigid')
+  assert(haul.configClass('us_semi', nil, 'T-Series TC82 Sleeper') == 'semi')
+  assert(haul.configClass('md_series', nil, 'MD-Series Flatbed') == 'rigid')
+  assert(haul.configClass('pickup', 'Pickup', 'D15') == 'suv')
+  assert(haul.configClass('covet', 'Hatchback', 'Covet') == 'car')
+  assert(haul.configClass('citybus', 'Bus', 'City bus') == nil)
+  -- a spawned vehicle gets the same kind as its listing (a modded van or box truck too)
+  assert(haul.carrier({ model = 'modvan', bodyStyle = 'Van' }) == 'van')
+  assert(haul.carrier({ model = 'modtruck', bodyStyle = 'Box Truck' }) == 'rigid')
+  assert(haul.carrier({ model = 'covet', bodyStyle = 'Minivan' }) == 'car')
+  local configs = {}
+  local function add(model, style, n, typ)
+    for i = 1, n do
+      configs[#configs + 1] = { model = model, key = model .. i, name = model .. ' ' .. i, value = 1000 * i,
+        type = typ or 'Car', bodyStyle = style }
+    end
+  end
+  add('covet', 'Hatchback', 20) add('pickup', 'Pickup', 9, 'Truck') add('van', 'Van', 4, 'Truck')
+  add('md_series', 'Box Truck', 2, 'Truck') add('us_semi', 'Semi Truck', 7, 'Truck') add('citybus', 'Bus', 3, 'Truck')
+  local G = { configs = function() return configs end }
+  local seed = 7
+  local rnd = function() seed = (seed * 16807) % 2147483647 return seed / 2147483647 end
+  local g = {}
+  garage.marketTick(G, g, 0, rnd)
+  local function counts()
+    local n, bands = {}, {}
+    for _, l in ipairs(g.market.list) do
+      assert(l.kind, 'every listing has its kind')
+      assert(l.model ~= 'citybus', 'no buses for sale')
+      n[l.kind] = (n[l.kind] or 0) + 1
+      bands[l.kind] = bands[l.kind] or {}
+      bands[l.kind][l.band] = true
+    end
+    return n, bands
+  end
+  local n, bands = counts()
+  for _, kind in ipairs(haul.KIND_ORDER) do
+    assert((n[kind] or 0) >= garage.MIN_PER_KIND, kind .. ' has ' .. tostring(n[kind]))
+  end
+  assert(bands.car[1] and bands.car[2] and bands.car[3], 'cars at varied prices')
+  assert(bands.semi[1] and bands.semi[3], 'tractors at varied prices')
+  -- a sold listing is replaced by one of its kind; the list says each listing's kind
+  local vanId
+  for _, l in ipairs(g.market.list) do if l.kind == 'van' then vanId = l.id break end end
+  for i, l in ipairs(g.market.list) do if l.id == vanId then table.remove(g.market.list, i) break end end
+  garage.marketTick(G, g, 0, rnd)
+  n = counts()
+  assert(n.van >= garage.MIN_PER_KIND)
+  for _, c in ipairs(garage.market(g)) do assert(c.kind and c.hours == nil) end
+  -- an older save's market keeps its listings and learns their kinds
+  local old = { market = { v = 3, t = 5, seq = 1, nextAt = 100,
+    list = { { id = 1, model = 'van', key = 'van2', name = 'van 2', km = 0, condition = 1, price = 10, listedAt = 0, gone = 90 } } } }
+  garage.marketTick(G, old, 0, rnd)
+  assert(old.market.v == garage.MARKET_V and old.market.list[1].id == 1 and old.market.list[1].kind == 'van')
 end)

@@ -61,11 +61,48 @@ local ok, err = pcall(function()
   wreck.onReset()
   wreck.updateGFX(1.1)
   assert(#broken == 2 and broken[2] == first, 'the same damage again after a reset')
+  -- put on a trailer deck: the reset of the move breaks parts again but never pushes (it threw the car off the deck)
+  local pushes = #forces
+  wreck.calm()
+  wreck.onReset()
+  wreck.updateGFX(1.1)
+  for _ = 1, 10 do wreck.updateGFX(0.05) end
+  assert(#broken == 3 and #forces == pushes, 'no push on the deck')
+  wreck.start('front', 42, true)
+  wreck.updateGFX(1.1)
+  assert(#forces == pushes, 'spawned on the deck: no push either')
   -- stripped: everything breaks off, the doors too, two flat tyres, no push
   forces, flat = {}, {}
   wreck.start('stripped', 7)
   wreck.updateGFX(1.1)
   assert(all == 1 and hinges == 1 and #flat == 2 and #forces == 0)
+  -- a rolled car: the roof is pushed down and nothing pushes the rest up (that lifted the car off the ground)
+  forces = {}
+  wreck.start('rolled', 5)
+  wreck.updateGFX(1.1)
+  for _, f in ipairs(forces) do assert(f.f.z <= 0, 'nothing is pushed up') end
+  -- heavier nodes get more force (light panels are not flung), and the car is held in place while it bends
+  forces = {}
+  obj.getNodeMass = function(_, cid) return cid < 50 and 1 or 3 end
+  wreck.start('front', 42)
+  wreck.updateGFX(1.1)
+  local light, heavy
+  for _, f in ipairs(forces) do
+    if f.f.y > 0 and f.cid < 50 then light = f.f.y end
+    if f.f.y > 0 and f.cid >= 50 and positions[f.cid].y < 1.8 then heavy = f.f.y end
+  end
+  assert(light and heavy and math.abs(heavy - 3 * light) < 1e-6, 'counter-force by mass')
+  forces = {}
+  obj.getVelocity = function() return vec(2, 0, 0) end
+  wreck.updateGFX(0.05)
+  local braked = 0
+  for _, f in ipairs(forces) do if f.f.x < 0 then braked = braked + 1 end end
+  assert(braked == 100, 'every node is braked against the drift: ' .. braked)
+  for _ = 1, 40 do wreck.updateGFX(0.05) end
+  forces = {}
+  wreck.updateGFX(0.05)
+  assert(#forces == 0, 'the hold ends')
+  obj.getNodeMass, obj.getVelocity = nil, nil
   -- a game without these calls: nothing fails
   beamstate, obj.applyForceVector = {}, nil
   wreck.start('side', 3)

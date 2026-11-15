@@ -55,6 +55,7 @@ M.RULES = {
 }
 M.COUNTRY_S = 5   -- seconds between border checks
 M.TOW_RULES = { arriveM = 30, stopS = 3, cancelFee = 200 }
+M.TAXI_RULES = { arriveM = 25, stopS = 3, cancelFee = 100 }   -- taxi rides (cargoEarth/taxi)
 M.TOW_RELOAD_FEE = 150  -- putting a car that slid off back on the trailer
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
 M.random = function(...) return math.random(...) end   -- (tests replace it)
@@ -339,6 +340,7 @@ end
 
 local function rules(job)
   if job and job.kind == 'tow' then return M.TOW_RULES end
+  if job and job.kind == 'taxi' then return M.TAXI_RULES end
   if job and job.kind == 'bus' then return M.RULES.bus end
   return M.RULES[(job and job.kind == 'food') and 'courier' or (job and 'trucking') or S.mode]
 end
@@ -754,7 +756,7 @@ function M.partsOffers(p, room, range)
   return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p), range)
 end
 
-local function towOffers(class, p)
+local function towOffers(class, p, weak)
   local c = S.career
   local kind = tow.CLASSES[class].trailer
   S.towCars = S.towCars or trailers.existing(tow.CARS)
@@ -787,6 +789,7 @@ local function towOffers(class, p)
   local factor = rating.freightPay(c)
   for _, offer in ipairs(out) do
     if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
+    if weak and offer.tow then offer.tow.weak = true end
     if firm.ownsTrailer(c, kind) then
       offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
       offer.pay = offer.pay + offer.trailerBonus
@@ -807,7 +810,7 @@ function M.generate()
     local store = v and refreshStorage()
     local rows = store and store.rows
     S.offers, S.offerStats = {}, nil
-    if tier and haul.allowed(S.career, tier) and (tier == 'semi' or rows) then
+    if tier and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or rows) then
       -- an ordinary car or an SUV takes no company freight board: its own small work comes below
       local offers, stats = {}, nil
       if not haul.SMALL[tier] then offers, stats = jobs.generate(S.idx, haul.options(tier, freightOptions(tier), rows), p.lat, p.lon) end
@@ -825,8 +828,23 @@ function M.generate()
       if tier == 'suv' and rows then
         for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'), freightOptions(tier))) do offers[#offers + 1] = offer end
       end
-      -- parcel routes from the nearest depots to real addresses: vans, and short rounds in cars (box trucks do business
-      -- shipping)
+      -- taxi rides in an ordinary car: a passenger from a real address near you to an airport, a station, a sight
+      -- (the helper's 't' places; cargoEarth/taxi)
+      if tier == 'car' and S.fidx then
+        local function near(lat, lon, k) return food.addressesNear(S.fidx, lat, lon, k) end
+        local function sights(lat, lon, a, b)
+          local out = {}
+          for _, row in ipairs(S.autoIdx and fuel.within(S.autoIdx, lat, lon, 'sight', a, b) or {}) do
+            local d = row.station
+            out[#out + 1] = { id = 'sight:' .. d.id, n = d.n, town = d.town, g = d.g }
+          end
+          return out
+        end
+        for _, offer in ipairs(require('cargoEarth/taxi').offers(near, sights, p.lat, p.lon, M.random, roadKmFn(p), freightOptions(tier))) do
+          offers[#offers + 1] = offer
+        end
+      end
+      -- parcel routes from the nearest depots to real addresses: vans only (box trucks do business shipping)
       if parcel.TIERS[tier] and rows and S.fidx then
         local room = haul.capacity(rows, 'parcel')
         local near = {}
@@ -850,9 +868,9 @@ function M.generate()
         end
       end
       for _, offer in ipairs(offers) do
-        if offer.route or offer.partsRun or haul.prepare(offer, tier, rows, S.idx) then
+        if offer.route or offer.partsRun or offer.taxi or haul.prepare(offer, tier, rows, S.idx) then
           if offer.resupply then resupply.bonus(offer)
-          elseif not offer.route then special.roll(offer, tier, M.random) end
+          elseif not offer.route and not offer.taxi then special.roll(offer, tier, M.random) end
           if ownTruck then
             offer.fuelAllowance = math.floor(offer.km * haul.FUEL_ALLOWANCE[tier] / 5 + 0.5) * 5
             offer.pay = offer.pay + offer.fuelAllowance
@@ -873,7 +891,7 @@ function M.generate()
     -- tow jobs: broken-down cars at real addresses, for a vehicle with a tow hitch or a tractor
     local class = v and tow.class(tier, tow.hasHitch(v))
     if class and S.fidx and garage.inOwnCar(M.G, S.career.garage) then
-      for _, offer in ipairs(towOffers(class, p)) do S.offers[#S.offers + 1] = offer end
+      for _, offer in ipairs(towOffers(class, p, tow.weak(class, v.specs))) do S.offers[#S.offers + 1] = offer end
     end
   end
   S.offeredAt = { lat = p.lat, lon = p.lon }
@@ -1006,6 +1024,9 @@ local function takeJob(j)
     local box = cargo.fit(plan, j)
     if not box then say('This order needs more cargo space.', 4) return end
     j.cargoBox = box.key
+  elseif j.taxi then
+    local _, tier = freightCarrier()
+    if tier ~= 'car' then say('Taxi rides are for cars: get in your car to take this ride.', 4) return end
   elseif j.tow then
     local v, tier = freightCarrier()
     if not v or tow.class(tier, tow.hasHitch(v)) ~= j.tow.class then
@@ -1087,14 +1108,21 @@ local function finishPickup()
     end
     say(n > 1 and string.format('Collected %d orders from %s.', n, j.from.n)
       or string.format('Collected %s from %s.', j.cargoName, j.from.n))
+  elseif j.taxi then
+    -- the passengers get in: they sit in the car and feel how it is driven from here
+    local _, o = orderOf(j)
+    if o then o.phase = 'toDelivery' end
+    M.taxiSeats(j.taxi.people, j.id)
+    say(string.format('%s in. Drive to %s, and drive smoothly: a rough ride costs pay.',
+      j.taxi.people == 1 and 'Your passenger is' or (j.taxi.people .. ' passengers are'), j.to.n), 6)
   elseif j.tow and j.tow.stage then
     -- at the workshop: the borrowed trailer stands behind you until Hitch on the phone (M.towHitch)
     S.stopT = -10
     if j.tow.stage == 'hitch' and trailers.id() then return end
     local ok, why = trailers.spawnBorrowed(tow.CLASSES[j.tow.class].trailer)
-    if not ok then say('The trailer could not be put out: ' .. tostring(why), 6) return end
+    if not ok then say('No room for the trailer here (' .. tostring(why) .. '). Stop where it is free behind you.', 6) return end
     j.tow.stage, j.trailerSpawned = 'hitch', true
-    say(string.format('The %s is behind you. Press Hitch on the phone.', tow.CLASSES[j.tow.class].name:lower()), 8)
+    say(string.format('Putting the %s on your hitch…', tow.CLASSES[j.tow.class].name:lower()), 5)
     saveCareer()
     return
   elseif j.tow then
@@ -1158,9 +1186,14 @@ function M.towHitch()
     say('Back up to the trailer first: it stands at the workshop.', 5)
     return
   end
-  if not coupled and not trailers.hitch() then
-    j.tow.stage = 'shop'
-    say('The trailer is gone. Stop at the workshop again to get it.', 5)
+  if not coupled then
+    -- put on the hitch again; it counts once the game reports it coupled (tick)
+    if not trailers.hitch() then
+      j.tow.stage = 'shop'
+      say('The trailer is gone. Stop at the workshop again to get it.', 5)
+    else
+      say('Hitching the trailer…', 3)
+    end
     return
   end
   j.tow.stage = nil
@@ -1264,7 +1297,7 @@ local function finishDelivery(force)
     end
     j.cargoCondition = tow.condition((j.tow.damageDone or 0)
       + math.max(0, trailers.towedDamage() - (j.tow.damage0 or trailers.towedDamage())))
-  elseif not force and j.kind ~= 'food' and S.config.requireTrailer and S.config.spawnTrailer and not trailers.withPlayer() then
+  elseif not force and j.kind ~= 'food' and not j.taxi and S.config.requireTrailer and S.config.spawnTrailer and not trailers.withPlayer() then
     say('Bring the trailer: it is not with your truck.', 3)
     S.stopT = -10   -- don't repeat the message every tick
     return
@@ -1278,13 +1311,14 @@ local function finishDelivery(force)
   -- Tips from private customers (meals and parcel routes) go only by what they can see: how soon the order came and
   -- the state it arrived in. How it was driven on the way is not theirs to know.
   local tip, tipWhy = 0, nil
-  if j.kind == 'food' or j.route then
+  if j.kind == 'food' or j.route or j.taxi then
     local fast = food.tip(j.kind == 'food' and j.pay or math.floor(j.pay * M.PARCEL_TIP_SHARE), minutes, j.minutes)
     local intact = condition >= 100 and math.floor(j.pay * M.INTACT_TIP / 5 + 0.5) * 5 or 0
     tip = fast + intact
     tipWhy = { fast = fast > 0 or nil, intact = intact > 0 or nil, damaged = condition < 100 and condition or nil }
   end
-  local conditionFactor = j.kind == 'food' and (0.6 + 0.004 * condition) or condition / 100
+  -- a meal or a taxi ride still arrives after a rough trip: the pay drops, but not to nothing
+  local conditionFactor = (j.kind == 'food' or j.taxi) and (0.6 + 0.004 * condition) or condition / 100
   pay = math.floor(pay * conditionFactor * (1 - special.penalty(j) / 100) + 0.5)
   tip = math.floor(tip * condition / 100 + 0.5)
   local c = S.career
@@ -1395,6 +1429,24 @@ function M.busDoors()
   if M.G.busDoors then M.G.busDoors(true) end
   M.busSeats(j, j.bus.onBoard - off)   -- those getting off leave their seats first
   say(string.format('Doors open at %s: %d off, %d on.', j.bus.stops[j.bus.at].n, off, on), math.ceil(dwell))
+end
+
+-- A taxi's passengers, seated in the car (BeamNG's seat occupants, real weight); 0 empties the seats again.
+function M.taxiSeats(n, seed)
+  S.taxiSeated = n > 0 and { n = n, seed = seed, at = S.clock + 5 } or nil
+  if M.G.carPassengers then pcall(M.G.carPassengers, n, seed or 'taxi') end
+end
+
+-- Once a second: the passengers sit while they ride (again after a reset or a loaded save), and leave the seats when
+-- the ride is over.
+function M.taxiTick()
+  local t, j = S.taxiSeated, S.job
+  if not t then
+    if j and j.taxi and S.phase == 'toDelivery' then M.taxiSeats(j.taxi.people, j.id) end
+    return
+  end
+  if not (j and j.taxi and S.phase == 'toDelivery' and j.id == t.seed) then M.taxiSeats(0) return end
+  if S.clock >= t.at then M.taxiSeats(t.n, t.seed) end
 end
 
 -- The people on board, seated in the bus (BeamNG's seat occupants, real weight; standing ones are not shown).
@@ -1650,7 +1702,7 @@ local function tick(dt)
     S.roadM, S.etaS = nil, nil
   end
   if not S.dist or S.dist > arrivalRadius(S.job) or (p.speed or 0) > M.STOP_SPEED or p.camera
-    or (S.job.kind == 'food' and not garage.inOwnCar(M.G, S.career.garage)) or M.towWaiting() then
+    or ((S.job.kind == 'food' or S.job.taxi) and not garage.inOwnCar(M.G, S.career.garage)) or M.towWaiting() then
     S.stopT = 0
     return
   end
@@ -1753,6 +1805,7 @@ local function incomingInfo(inc)
     slots = j.kind == 'food' and cargo.size(j) or nil,
     pickupKm = r1(j.pickupKm), km = r1(j.km), pay = j.pay, minutes = j.minutes, adr = j.adr or false,
     special = special.info(j), resupplyBonus = j.resupplyBonus, litres = j.litres, tow = tow.info(j),
+    taxi = require('cargoEarth/taxi').info(j),
     trailerBonus = j.trailerBonus,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
@@ -1811,9 +1864,10 @@ local function truckingState()
   end
   if not v or not tier then
     out.hint = 'Take a contract: park at its yard and the company gives you its vehicle.'
-  elseif haul.SMALL[tier] and rows and haul.capacity(rows, 'parcel') < (tier == 'suv' and 4 or 3) then
-    out.hint = tier == 'suv' and 'Fit cargo boxes in the bed or boot for parts runs, or take a contract.'
-      or 'Fit cargo boxes for short parcel rounds, or take a contract.'
+  elseif tier == 'car' then
+    out.hint = 'In a car: taxi rides near you, or a company contract below.'
+  elseif tier == 'suv' and rows and haul.capacity(rows, 'parcel') < 4 then
+    out.hint = 'Fit cargo boxes in the bed or boot for parts runs, or take a contract.'
   elseif not haul.allowed(S.career, tier) then
     out.hint = 'This truck unlocks after completing the earlier stage.'
   elseif tier ~= 'semi' and not rows then
@@ -2254,7 +2308,7 @@ function M.phoneState()
       canRestoreTrailer = j.trailer and ((not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested))
         or (j.tow and S.phase == 'toDelivery' and (j.tow.onBoard or #j.tow.cars) < #j.tow.cars)) or nil,
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
-      special = special.info(j), tow = tow.info(j), reloadFee = j.tow and M.TOW_RELOAD_FEE or nil,
+      special = special.info(j), tow = tow.info(j), taxi = require('cargoEarth/taxi').info(j), reloadFee = j.tow and M.TOW_RELOAD_FEE or nil,
       towWaiting = j.tow and j.tow.waiting and S.phase == 'toPickup' or nil,
       towHitch = j.tow and j.tow.stage == 'hitch' and S.phase == 'toPickup' or nil,
       here = j.tow and j.tow.stage and S.phase == 'toPickup' and { name = j.to.n, label = 'Get the trailer here', town = j.to.town or '' } or nil,
@@ -3579,7 +3633,41 @@ function M.garageDealer(filter)
   local cars = garage.market(g, filter)
   local inCar = g.car and not g.car.loaner and garage.inOwnCar(M.G, g)
   return { cars = cars, tradeIn = inCar and math.floor(garage.carWorth(M.G, g) * garage.TRADE_IN / 5 + 0.5) * 5 or 0,
-    money = S.career.money or 0, debt = g.debt or 0 }
+    money = S.career.money or 0, debt = g.debt or 0, kinds = M.vehicleKinds() }
+end
+
+-- What each kind of vehicle is and the work it gets (the used-car list's type, cargo and "?"). Follows the job rules:
+-- parcel.TIERS, haul.tiers and the freight unlocks, so it stays right when they change.
+function M.vehicleKinds()
+  local state = haul.state(S.career)
+  local function kg(n) return n >= 1000 and (string.format('%g', math.floor(n / 100 + 0.5) / 10) .. ' t') or (n .. ' kg') end
+  local function fits(tier)
+    local t = haul.tiers[tier]
+    return string.format('Fits about %d parcels · %s', t.parcel, kg(t.kg))
+  end
+  local towJob = 'Tow jobs: one broken-down car on a car trailer (with a tow hitch)'
+  local out, list = {}, {
+    car = { fits('car'), { 'Food delivery', parcel.TIERS.car and 'Short parcel rounds from a depot' or nil, towJob } },
+    suv = { fits('suv'), { 'Food delivery', 'Parts runs from parts suppliers to repair shops', towJob } },
+    van = { fits('van'), { 'Food delivery', 'Parcel routes from a depot to real addresses', 'Freight jobs between companies', towJob } },
+    rigid = { fits('rigid'), { 'Business shipping between companies', towJob } },
+    semi = { string.format('Pulls trailers · up to %s', kg(haul.tiers.semi.kg)),
+      { 'Freight jobs with trailers', 'Fuel tanker runs to real fuel stations',
+        'Tow jobs: two cars on a flatbed trailer' } },
+  }
+  for _, kind in ipairs(haul.KIND_ORDER) do
+    local k = list[kind]
+    local jobsOf = {}
+    for i = 1, 4 do if k[2][i] then jobsOf[#jobsOf + 1] = k[2][i] end end
+    local locked
+    if kind == 'rigid' and state.unlocked == 'van' then
+      locked = string.format('Freight unlocks after %d van freight jobs (%d done).', state.vanGoal, state.van)
+    elseif kind == 'semi' and state.unlocked ~= 'semi' then
+      locked = string.format('Freight unlocks after %d box truck freight jobs (%d done).', state.rigidGoal, state.rigid)
+    end
+    out[#out + 1] = { id = kind, name = haul.KIND_NAMES[kind], fits = k[1], jobs = jobsOf, locked = locked }
+  end
+  return out
 end
 function M.garageBuyListing(id, keepCar)
   if S.job then return false, 'Finish the order first' end
@@ -4426,7 +4514,10 @@ function M.onUpdate(dtReal, dtSim)
   end
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
-  trailers.update()                                         -- couples a tow trailer once the game knows its hitch
+  trailers.update(dtReal)                                   -- couples a tow trailer once the game knows its hitch
+  if trailers.hitchFailed() and S.job and S.job.tow and S.job.tow.stage == 'hitch' then
+    say('The trailer did not latch on. Stand still and press Hitch on the phone to try again.', 8)
+  end
   if M.G.seatTick then M.G.seatTick() end                   -- the player sits in a car the mod just spawned
   if helper.commanding() then helper.pump(S.clock) end     -- radio presses: answered within frames, not ticks
   if S.clock >= (S.radioSyncAt or 0) then S.radioSyncAt = S.clock + 0.5 M.radioSync() end -- the UI page went away: the helper plays
@@ -4518,6 +4609,7 @@ function M.onUpdate(dtReal, dtSim)
       local pose = earth.pose()
       rememberLocation(pose)
       if S.job and not S.parts and dt > 0 then tick(dt) end
+      if S.taxiSeated or (S.job and S.job.taxi) then M.taxiTick() end
       if S.phone.online and dt > 0 then phoneTick()
       elseif not S.job and not S.offeredAt and not S.career.employment then M.generate() end
     end
@@ -4567,6 +4659,7 @@ end
 -- BeamNG.Earth moved the world's origin (modding API 1.7): positions worked out in the old frame are stale.
 function M.onBeamNGEarthRebased()
   marker.reset()
+  trailers.onRebased()
 end
 
 function M.onBeamNGEarthTeleported(info)

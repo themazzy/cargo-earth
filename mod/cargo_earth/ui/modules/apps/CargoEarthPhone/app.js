@@ -133,7 +133,7 @@ angular.module('beamng.apps')
     '.cep-body.cep-fit{overflow-y:auto}.cep-fit .cep-center{flex:1 0 auto}.cep-fit .cep-pulse{width:56px;height:56px}' +
     '.cep-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px}' +
     '.cep-big{font-size:22px;font-weight:800;line-height:1.15}' +
-    '.cep-sub{font-size:13px;color:var(--muted);line-height:1.35}' +
+    '.cep-sub{font-size:13px;color:var(--muted);line-height:1.35}.cep-sub.cep-warn{color:var(--warn);font-weight:700}' +
     '.cep-label{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}' +
     '.cep-btn{display:block;width:100%;border:0;border-radius:14px;padding:13px 10px;font:inherit;font-size:15px;font-weight:700;' +
     'cursor:pointer;background:var(--ink);color:#fff}' +
@@ -189,6 +189,14 @@ angular.module('beamng.apps')
     '.cep-tabs button{flex:1;min-width:0;border:0;border-radius:10px;background:transparent;font:inherit;font-size:10px;font-weight:700;padding:7px 0;' +
     'color:var(--muted);cursor:pointer}.cep-tabs button.on{color:var(--tomato);background:#fff0ea}' +
     '.cep-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px}' +
+    '.cep-chips{display:flex;flex-wrap:wrap;align-items:center;gap:5px}.cep-chip{border:0;border-radius:999px;padding:5px 10px;font:inherit;font-size:11px;' +
+    'font-weight:700;background:var(--line);color:var(--muted);cursor:pointer}.cep-chip.on{background:var(--ink);color:var(--card)}' +
+    '.cep-kind{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;margin:3px 0 2px;font-size:12px}' +
+    '.cep-kind span{flex-basis:100%;color:var(--muted)}' +
+    '.cep-q{width:18px;height:18px;padding:0;border:0;border-radius:50%;background:var(--line);color:var(--ink);font:inherit;' +
+    'font-size:11px;font-weight:800;line-height:18px;text-align:center;cursor:pointer}.cep-q.on{background:var(--tomato);color:#fff}' +
+    '.cep-jobs{margin:4px 0;padding:7px 9px;border-radius:10px;background:var(--line);font-size:12px}' +
+    '.cep-jobs ul{margin:3px 0 0;padding-left:16px}.cep-jobs .cep-sub{margin-top:4px}' +
     '.cep-order-scroll>*{flex-shrink:0}' +
     '.cep-order-head,.cep-keyval{display:flex;align-items:center;justify-content:space-between;gap:8px}' +
     '.cep-order-head>.cep-ring{flex-shrink:0}' +
@@ -270,7 +278,7 @@ angular.module('beamng.apps')
     '.cem-close{border:0;border-radius:10px;padding:8px 14px;font:inherit;font-size:13px;font-weight:700;background:var(--ink);color:#fff;cursor:pointer}' +
     '.cem .cep-body{padding:8px 24px 20px}.cem .cem-live{margin:4px 24px 0;width:auto}' +
     '.cem .cep-scroll{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));align-content:start;gap:10px}' +
-    '.cem .cep-scroll>.cep-label,.cem .cep-scroll>.cep-sub,.cem .cep-scroll>.cep-msg,.cem .cep-scroll>.cep-search,.cem .cep-scroll>.cep-sm,.cem .cep-scroll>div[ng-if]:not(.cep-card){grid-column:1/-1}' +
+    '.cem .cep-scroll>.cep-label,.cem .cep-scroll>.cep-sub,.cem .cep-scroll>.cep-msg,.cem .cep-scroll>.cep-search,.cem .cep-scroll>.cep-sm,.cem .cep-scroll>.cep-chips,.cem .cep-scroll>div[ng-if]:not(.cep-card){grid-column:1/-1}' +
     '@media (max-width:620px){.cem-panel{flex-direction:column;width:100vw;height:100vh;max-height:none;border-radius:0}' +
     '.cem-side{width:auto;flex-direction:row;flex-wrap:wrap;padding:14px 16px 8px}.cem-brand,.cem-money{display:none}' +
     '.cem-side button{width:auto;padding:6px 8px;font-size:12px}.cem-head{padding:12px 16px 4px}.cem .cep-body{padding:6px 16px 14px}.cem .cem-live{margin:4px 16px 0}' +
@@ -881,11 +889,31 @@ angular.module('beamng.apps')
           '<div class="cep-sub" ng-if="market.tradeIn > 0 && !purchase.keep && !g.preview">Trade-in credit · {{ fmt.money(market.tradeIn) }}</div>' +
           '<div class="cep-sub" ng-if="market.debt > 0" style="color:var(--tomato)">Pay your debt first ({{ fmt.money(market.debt) }}).</div>' +
           '<div class="cep-sub" ng-if="g.preview">Go back to your car to look at another one.</div>' +
+          // filters: tap to pick (no typing needed); counts follow the other filters
+          '<div class="cep-chips" role="group" aria-label="Vehicle type">' +
+            '<button class="cep-chip" ng-class="{on: !cf.kind}" ng-click="cf.kind = null">All {{ carCount(null) }}</button>' +
+            '<button class="cep-chip" ng-repeat="k in market.kinds track by k.id" ng-class="{on: cf.kind === k.id}" ' +
+              'ng-click="cf.kind = (cf.kind === k.id ? null : k.id)">{{ k.name }} {{ carCount(k.id) }}</button></div>' +
+          '<div class="cep-chips" role="group" aria-label="Price and order">' +
+            '<button class="cep-chip" ng-class="{on: cf.afford}" ng-click="cf.afford = !cf.afford">I can afford</button>' +
+            '<button class="cep-chip" ng-class="{on: cf.sort === \'price\'}" ng-click="cf.sort = \'price\'">Cheapest</button>' +
+            '<button class="cep-chip" ng-class="{on: cf.sort === \'dear\'}" ng-click="cf.sort = \'dear\'">Dearest</button>' +
+            '<button class="cep-chip" ng-class="{on: cf.sort === \'km\'}" ng-click="cf.sort = \'km\'">Fewest km</button>' +
+            '<button class="cep-chip" ng-class="{on: cf.sort === \'cond\'}" ng-click="cf.sort = \'cond\'">Best condition</button></div>' +
           '<div class="cep-sub" ng-if="!cars.length">No cars for sale. New ones come every few minutes.</div>' +
-          '<div class="cep-li" ng-repeat="c in cars" style="align-items:flex-start;cursor:default"><div style="flex:1">' +
+          '<div class="cep-sub" ng-if="cars.length && !shownCars().length">No car fits these filters. ' +
+            '<button class="cep-chip" ng-click="cf.kind = null; cf.afford = false">Show all</button></div>' +
+          '<div class="cep-li" ng-repeat="c in shownCars() track by c.id" style="align-items:flex-start;cursor:default"><div style="flex:1;min-width:0">' +
             '<div class="cep-name" style="white-space:normal">{{ c.name }} <span class="cep-adr" ng-if="c.isNew" style="background:var(--ok)">NEW</span></div>' +
+            '<div class="cep-kind" ng-if="kindOf(c)"><b>{{ kindOf(c).name }}</b>' +
+              '<button class="cep-q" ng-class="{on: cf.help === c.id}" ng-click="cf.help = (cf.help === c.id ? null : c.id)" ' +
+                'aria-label="Jobs this vehicle can do" title="Jobs this vehicle can do">?</button>' +
+              '<span>{{ kindOf(c).fits }}</span></div>' +
+            '<div class="cep-jobs" ng-if="cf.help === c.id && kindOf(c)"><div class="cep-label">Jobs it can do</div>' +
+              '<ul><li ng-repeat="j in kindOf(c).jobs">{{ j }}</li></ul>' +
+              '<div class="cep-sub" ng-if="kindOf(c).locked">{{ kindOf(c).locked }}</div></div>' +
             '<small>{{ fmt.int(c.km) }} km · condition {{ fmt.cond(c.condition) }} · gone in {{ fmt.left(c.leftMin) }}' +
-              '<span ng-if="c.missing !== undefined && c.missing !== null"> · {{ c.missing }} parts missing</span><br>about {{ fmt.hrs(c.hours) }} of deliveries</small>' +
+              '<span ng-if="c.missing !== undefined && c.missing !== null"> · {{ c.missing }} parts missing</span></small>' +
             '<div class="cep-time" style="height:4px;margin-top:5px" ng-class="{warn: c.condition < 0.6, late: c.condition < 0.35}"><i ng-style="{width: (c.condition * 100) + \'%\'}"></i></div></div>' +
             // while looking at a car, only that car can be bought (from the card above) and the deal is fixed
             '<div style="display:flex;flex-direction:column;gap:5px;align-items:stretch" ng-if="!g.preview">' +
@@ -1109,7 +1137,7 @@ angular.module('beamng.apps')
       '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'incoming\'">' +
         '<div class="cep-order-head">' +
           '<div><div class="cep-label">{{ s.incoming.orderType === "grocery" ? "Grocery run" : (s.incoming.orderType === "family" ? "Family meal" : ' +
-            '(s.incoming.batch ? "Add to your route" : (s.incoming.kind === "food" ? "New food order" : (s.incoming.tow ? "Tow job" : "New freight job")))) }}</div>' +
+            '(s.incoming.batch ? "Add to your route" : (s.incoming.kind === "food" ? "New food order" : (s.incoming.tow ? "Tow job" : (s.incoming.taxi ? "Taxi ride" : "New freight job"))))) }}</div>' +
           '<div class="cep-pay">{{ fmt.money(s.incoming.pay) }}</div>' +
           '<div class="cep-sub">{{ s.incoming.kind === "food" ? "before tip" : "" }}' +
             '<span class="cep-adr" ng-if="s.incoming.adr">ADR</span>' +
@@ -1137,7 +1165,9 @@ angular.module('beamng.apps')
             '<span ng-if="s.incoming.farPickup > 0 && !s.incoming.batch"> · +{{ fmt.money(s.incoming.farPickup) }} for the far pickup</span></div>' +
           '<div class="cep-sub" ng-if="s.incoming.sizeBonus">+{{ fmt.money(s.incoming.sizeBonus) }} for the larger load</div>' +
           '<div class="cep-sub" ng-if="s.incoming.premium">Premium customer: pays more, wants it sooner.</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.taxi">{{ s.incoming.taxi.people > 1 ? s.incoming.taxi.people + " passengers ride" : "One passenger rides" }} with you. Drive smoothly: a rough ride costs pay.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.tow && s.incoming.tow.wreck"><b>{{ s.incoming.tow.wreck }}</b></div>' +
+          '<div class="cep-sub cep-warn" ng-if="s.incoming.tow && s.incoming.tow.weak">Your car may struggle: little power for this load.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.tow">{{ s.incoming.tow.cars > 1 ? s.incoming.tow.cars + " cars go" : "The car goes" }} ' +
             'on your {{ s.incoming.tow.trailer.toLowerCase() }}, not strapped down. Drive gently: damage costs pay.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.trailerBonus">+{{ fmt.money(s.incoming.trailerBonus) }} for your firm\'s trailer</div>' +
@@ -1161,7 +1191,7 @@ angular.module('beamng.apps')
         '<div class="cep-scroll cep-order-scroll">' +
           '<div class="cep-card cep-next-card">' +
             '<div class="cep-keyval"><span class="cep-step" ng-class="{to: s.active.phase === \'toDelivery\'}">' +
-              '{{ s.active.here ? "Trailer" : (s.active.phase === "toPickup" ? (s.active.kind === "food" ? "Pick up" : (s.active.tow ? "Load the car" : "Load freight")) : "Drop off") }}</span>' +
+              '{{ s.active.here ? "Trailer" : (s.active.phase === "toPickup" ? (s.active.kind === "food" ? "Pick up" : (s.active.tow ? "Load the car" : (s.active.taxi ? "Pick up" : "Load freight"))) : "Drop off") }}</span>' +
               '<strong>{{ fmt.money(s.active.pay) }}</strong></div>' +
             '<div><div class="cep-name">{{ here().name }}</div>' +
               '<div class="cep-meta">{{ here().label }}{{ here().town ? " · " + here().town : "" }}</div></div>' +
@@ -1233,8 +1263,8 @@ angular.module('beamng.apps')
             '<strong ng-style="{color: s.active.tow.onBoard < s.active.tow.cars ? \'var(--tomato)\' : \'var(--ok)\'}">' +
             '{{ s.active.tow.onBoard }} of {{ s.active.tow.cars }} car{{ s.active.tow.cars > 1 ? "s" : "" }} on board</strong></div>' +
           '<div class="cep-sub" ng-if="s.active.here && !s.active.towHitch">Borrow the {{ s.active.tow.trailer.toLowerCase() }} here, then fetch the car and bring both back.</div>' +
-          '<button class="cep-sm" ng-if="s.active.towHitch" ng-click="act(\'towHitch\')">Hitch the trailer</button>' +
-          '<div class="cep-sub" ng-if="s.active.towHitch">Stop, then hitch. The trailer stands behind you.</div>' +
+          '<button class="cep-sm" ng-if="s.active.towHitch" ng-click="act(\'towHitch\')">Hitch again</button>' +
+          '<div class="cep-sub" ng-if="s.active.towHitch">The trailer goes on your hitch. If it does not latch, stand still and press Hitch again.</div>' +
           '<button class="cep-sm" ng-if="s.active.towWaiting" ng-click="act(\'towLoad\')">Load {{ s.active.tow.cars > 1 ? "the cars" : "it" }} on the trailer</button>' +
           '<div class="cep-sub" ng-if="s.active.towWaiting">{{ s.active.tow.wreck ? s.active.tow.wreck + ". " : "" }}Park the trailer next to the car, stop, then load.</div>' +
           '<button class="cep-sm" ng-if="s.active.canRestoreTrailer" ng-click="act(\'restoreTrailer\')">' +
@@ -1448,7 +1478,7 @@ angular.module('beamng.apps')
       scope.careerView = 'progress'
       scope.endCompanyAsk = false
       scope.g = null; scope.gview = 'home'; scope.cars = []; scope.st = null
-      scope.cf = { text: '' }
+      scope.cf = { text: '', kind: null, afford: false, sort: 'price', help: null }
       scope.purchase = { keep: true }
       scope.fmt.int = function (v) { return Math.round(v || 0).toLocaleString('cs-CZ') }
       // weight for the phone: one decimal under 10 kg (a meal), whole kg up to a tonne, then tonnes
@@ -1737,6 +1767,37 @@ angular.module('beamng.apps')
       }
       scope.loadCars = function () { lua('garageDealer', [scope.cf.text || ''], function (r) { scope.market = r || {}; scope.cars = (r && r.cars) || [] }) }
       scope.carPrice = function (car) { return car.price - (scope.purchase.keep ? 0 : (scope.market.tradeIn || 0)) }
+      // the used-car list: vehicle kinds (type, cargo, jobs for the ?) and the tap filters
+      scope.kindOf = function (car) {
+        var kinds = scope.market.kinds || []
+        for (var i = 0; i < kinds.length; i++) if (kinds[i].id === car.kind) return kinds[i]
+        return null
+      }
+      var carFits = function (car, kind) {
+        if (kind && car.kind !== kind) return false
+        return !scope.cf.afford || scope.carPrice(car) <= (scope.market.money || 0)
+      }
+      scope.carCount = function (kind) {
+        var n = 0
+        ;(scope.cars || []).forEach(function (c) { if (carFits(c, kind)) n++ })
+        return n
+      }
+      var shown = { key: null, list: [] }
+      scope.shownCars = function () {
+        var cf = scope.cf
+        var key = [cf.kind, cf.afford, cf.sort, scope.purchase.keep, scope.market.money].join('|')
+        if (shown.src === scope.cars && shown.key === key) return shown.list
+        var list = (scope.cars || []).filter(function (c) { return carFits(c, cf.kind) })
+        var by = {
+          price: function (a, b) { return a.price - b.price },
+          dear: function (a, b) { return b.price - a.price },
+          km: function (a, b) { return a.km - b.km },
+          cond: function (a, b) { return b.condition - a.condition }
+        }[cf.sort] || function (a, b) { return a.price - b.price }
+        list.sort(function (a, b) { return by(a, b) || a.id - b.id })
+        shown.src = scope.cars; shown.key = key; shown.list = list
+        return list
+      }
       scope.buyCar = function (id) { scope.gdo('buyListing', id, scope.purchase.keep || !scope.market.tradeIn) }
       scope.look = function (id) { scope.gdo('preview', id, scope.purchase.keep || !scope.market.tradeIn) } // stays on the car list
       scope.openCars = function () { scope.gview = 'cars'; scope.loadCars() }

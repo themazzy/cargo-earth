@@ -8,7 +8,8 @@ local FRAGILE_WORDS = { 'egg', 'soup', 'stew', 'cola', 'shake', 'iced tea', 'ayr
   'juice', 'lemonade', 'kofola', 'sparkling water' }
 
 function M.supports(job)
-  return job.kind == 'food' or (job.haul ~= nil and (job.haul.kind == 'parcel' or job.special ~= nil))
+  -- a taxi's passengers feel a rough ride as a fragile load would (their comfort is its condition)
+  return job.kind == 'food' or job.taxi ~= nil or (job.haul ~= nil and (job.haul.kind == 'parcel' or job.special ~= nil))
 end
 
 function M.handling(job)

@@ -53,6 +53,13 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(helper.auto_kind("automotive_repair", None, None), "g")
         self.assertEqual(helper.auto_kind(None, "automotive car_dealer", None), "g")
         self.assertIsNone(helper.auto_kind("gas_station", "automotive", None))
+        # taxi destinations
+        self.assertEqual(helper.auto_kind("airport", "travel airport", None), "t")
+        self.assertEqual(helper.auto_kind("train_station", None, None), "t")
+        self.assertEqual(helper.auto_kind("art_museum", "arts_and_entertainment museum art_museum", None), "t")
+        self.assertEqual(helper.auto_kind("hotel", None, None), "t")
+        self.assertIsNone(helper.auto_kind("tour_operator", None, None))
+        self.assertIsNone(helper.auto_kind("airport_shuttles", None, None))
 
     def test_place_query_keeps_workplaces_out_of_food_orders(self):
         rows = [
@@ -348,6 +355,15 @@ class NetworkAndStorageTests(unittest.TestCase):
         self.assertEqual([r for r in rows if r.get("depot")],
                          [{"depot": True, "id": "w7", "name": "Hub", "kind": "station", "lat": 50.001, "lon": 14.001}])
 
+    def test_bus_lines_query_starts_from_the_stops(self):
+        with cache_dir() as cache:
+            q = helper.BusLines(str(cache), lambda box: {"elements": []}).query((50, 14, 50.04, 14.04))
+        self.assertIn('node["highway"="bus_stop"](50,14,50.04,14.04)', q)
+        self.assertIn("rel(bn.s)", q)
+        self.assertIn('node(r.r:"stop")', q)
+        self.assertNotIn("way(r.r);", q)        # not the lines' roads
+        self.assertNotIn("node(r.r);", q)
+
     def test_bus_lines_crossing_cells_come_once(self):
         line = {"id": "r1", "ref": "5", "name": "", "from": "A", "to": "B", "operator": "", "colour": "", "km": 3,
                 "stops": [["A", 50, 14], ["B", 50.01, 14], ["C", 50.02, 14], ["D", 50.03, 14]]}
@@ -355,7 +371,7 @@ class NetworkAndStorageTests(unittest.TestCase):
             lines = helper.BusLines(str(cache), lambda box: {"elements": []})
             lines.rows = lambda data: [line, {"depot": True, "id": "n1", "name": "Hub", "kind": "station", "lat": 50, "lon": 14}]
             for _ in range(200):
-                got = lines.near(50.099, 14.099)
+                got = lines.near(50.039, 14.039)
                 if got["state"] == "ready":
                     break
                 time.sleep(0.01)

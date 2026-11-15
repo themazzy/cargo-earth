@@ -37,7 +37,7 @@ API (GET, JSON):
   /v1/area?key=r_c            one ready area: {"key", "restaurants": [[id, lat, lon, curbLat, curbLon, name, cat, town],
                               ...], "grocers": [rows in the same format],
                               "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...],
-                              "autos": [[id, lat, lon, name, "p" (parts shop) | "g" (repair workshop), town], ...],
+                              "autos": [[id, lat, lon, name, "p" (parts shop) | "g" (repair workshop) | "t" (taxi destination), town], ...],
                               "tiles": {"row_col":
                               [[lat, lon, curbLat, curbLon, label, town], ...]}, "houses": bool,
                               "depots": [{id, n, g: [lat, lon], t: "yard" | "shop", town, source, access}, ...]}
@@ -66,7 +66,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "0.10.0"
-AREA_CACHE_VERSION = "6"  # parts shops and repair workshops (parts runs); retain existing downloaded Parquet blocks
+AREA_CACHE_VERSION = "7"  # taxi destinations (airports, stations, sights); retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
 STAC_ROOT = "https://stac.overturemaps.org"
@@ -103,11 +103,16 @@ DEPOT_RULES = [
     ("shop", r"hardware|home_improvement|building_material|furniture|electronics|appliance|auto_parts|grocery|supermarket|hypermarket|department_store"),
 ]
 DEPOT_RX = [(kind, re.compile(pattern)) for kind, pattern in DEPOT_RULES]
-# Car places for parts runs: "p" sells car parts, "g" repairs cars (a parts run goes from a "p" to a "g").
+# Car places for parts runs: "p" sells car parts, "g" repairs cars (a parts run goes from a "p" to a "g"); and "t",
+# where people take a taxi to: airports, railway and bus stations, museums, sights, hotels (taxi rides in a car).
 AUTO_RULES = [
     ("p", r"auto_parts|automotive_parts|car_parts|tire_dealer|tire_shop|tire_store"),
     ("g", r"auto_repair|automotive_repair|automotive_service|auto_service|car_repair|car_service|auto_body|body_shop"
           r"|collision|mechanic|oil_change|transmission_repair|car_dealer|used_car_dealer|tire_repair"),
+    ("t", r"airport_terminal|(^| )airport( |$)|train_station|railway_station|bus_station|museum|tourist_attraction"
+          r"|landmark_and_historical_building|castle|palace|monument|zoo|aquarium|amusement_park|theme_park|stadium"
+          r"|concert_hall|opera_house|opera_and_ballet|theatre|theater|cathedral|basilica|botanical_garden|observatory|hotel|resort"
+          r"|convention_center|exhibition_center"),
 ]
 AUTO_RX = [(kind, re.compile(pattern)) for kind, pattern in AUTO_RULES]
 AUTO_SQL_RX = "|".join(pattern for _, pattern in AUTO_RULES)
@@ -210,7 +215,7 @@ from concurrent.futures import ThreadPoolExecutor
 POOL = ThreadPoolExecutor(8)
 
 
-def http_get(url, headers=None, tries=4):
+def http_get(url, headers=None, tries=4, timeout=20):
     err = None
     headers = dict(headers or {}, **{"User-Agent": f"cargo-earth-helper/{VERSION}"})
     requested = re.fullmatch(r"bytes=(\d+)-(\d+)", headers.get("Range", ""))
@@ -220,7 +225,7 @@ def http_get(url, headers=None, tries=4):
             with NETWORK_LOCK:
                 NETWORK["requests"] += 1
                 NETWORK["range_requests"] += int(requested is not None)
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 limit = MAX_AREA_BYTES
                 if requested:
                     start, end = map(int, requested.groups())
@@ -689,7 +694,7 @@ def valid_area(data, key, release):
         return False
     for row in autos:
         if not isinstance(row, list) or len(row) < 5 or not isinstance(row[0], str) or not coordinates(row[1:3] * 2, 0) \
-                or not isinstance(row[3], str) or row[4] not in ("p", "g"):
+                or not isinstance(row[3], str) or row[4] not in ("p", "g", "t"):
             return False
     for depot in data["depots"]:
         if not isinstance(depot, dict) or not isinstance(depot.get("id"), str) or not isinstance(depot.get("n"), str) or depot.get("t") not in ("yard", "shop", "fuel"):
@@ -843,6 +848,8 @@ class Areas:
 ######################################################################################## speed cameras (OpenStreetMap)
 
 OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
+OVERPASS_TIMEOUT_S = 90       # the helper waits this long for an answer (a city's bus lines take a while)
+OVERPASS_ONE = threading.Lock()   # one Overpass request at a time: a burst of them is refused (HTTP 429)
 CAMERA_CELL = 0.5          # one Overpass request covers this many degrees
 CAMERA_REACH = 0.15        # cells this close to the player are fetched too, degrees
 CAMERA_DAYS = 30           # a cached cell is asked for again after this long
@@ -932,11 +939,13 @@ class OsmCells:
     def _overpass(self, box):
         q = self.query(box)
         err = None
-        for base in OVERPASS:
-            try:
-                return json.loads(http_get(base + "?data=" + urllib.parse.quote(q), tries=1))
-            except Exception as e2:  # noqa: BLE001 - the next mirror
-                err = e2
+        with OVERPASS_ONE:
+            for base in OVERPASS:
+                try:
+                    return json.loads(http_get(base + "?data=" + urllib.parse.quote(q), tries=1,
+                                               timeout=OVERPASS_TIMEOUT_S))
+                except Exception as e2:  # noqa: BLE001 - the next mirror
+                    err = e2
         raise err
 
     def _load(self, key):
@@ -1010,8 +1019,8 @@ class Cameras(OsmCells):
 
 ######################################################################################## bus lines (OpenStreetMap)
 
-BUS_CELL = 0.1             # one Overpass request covers this many degrees (a city's lines are many)
-BUS_REACH = 0.03           # cells this close to the player are fetched too, degrees
+BUS_CELL = 0.04            # one Overpass request covers this many degrees (about 4 x 3 km: a city's lines are many)
+BUS_REACH = 0.015          # cells this close to the player are fetched too, degrees
 BUS_DAYS = 14              # a cached cell is asked for again after this long
 BUS_MIN_STOPS = 4          # a line with fewer stops is left out
 BUS_MAX_GAP_KM = 4         # stops further apart than this: the relation has gaps, the line is left out
@@ -1109,11 +1118,19 @@ class BusLines(OsmCells):
 
     def query(self, box):
         s, w, n, e = box
-        return (f'[out:json][timeout:60];'
-                f'rel["type"="route"]["route"~"^(bus|trolleybus)$"]({s},{w},{n},{e})->.r;.r out body;'
-                f'node(r.r);out body;way(r.r);out tags center;'
-                f'(nwr["amenity"="bus_station"]({s},{w},{n},{e});'
-                f'nwr["depot"="bus"]({s},{w},{n},{e}););out tags center;')
+        # the bus stops of the cell first, then only the lines that stop there, then only those lines' stops and
+        # platforms (not their roads: a city's lines are thousands of road pieces)
+        b = f"({s},{w},{n},{e})"
+        stops = "".join(f'node(r.r:"{role}");' for role in BUS_STOP_ROLES + BUS_PLATFORM_ROLES)
+        platforms = "".join(f'way(r.r:"{role}");' for role in BUS_PLATFORM_ROLES)
+        return (f'[out:json][timeout:{OVERPASS_TIMEOUT_S - 10}];'
+                f'(node["highway"="bus_stop"]{b};node["public_transport"~"^(stop_position|platform)$"]["bus"="yes"]{b};'
+                f'node["public_transport"~"^(stop_position|platform)$"]["trolleybus"="yes"]{b};)->.s;'
+                f'way["public_transport"="platform"]{b}->.p;'
+                f'(rel(bn.s);rel(bw.p);)->.a;'
+                f'rel.a["type"="route"]["route"~"^(bus|trolleybus)$"]->.r;.r out body;'
+                f'({stops});out body;({platforms});out tags center;'
+                f'(nwr["amenity"="bus_station"]{b};nwr["depot"="bus"]{b};);out tags center;')
 
     def rows(self, data):
         return bus_rows(data)

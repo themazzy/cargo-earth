@@ -109,23 +109,47 @@ local function styleOf(t)
     if type(first) == 'string' then return first end
   end
 end
+local infos = {}
+-- The game's vehicle list entries for this model and config (the config's own, the model's): looked up once.
+local function infoOf(model, config)
+  if type(model) ~= 'string' then return nil end
+  local file = type(config) == 'table' and config.partConfigFilename
+  local key = type(file) == 'string' and file:match('([^/\\]+)%.pc$') or ''
+  local cacheKey = model .. '/' .. key
+  if infos[cacheKey] == nil then
+    infos[cacheKey] = false
+    local cv = ext('core_vehicles')
+    if cv and cv.getModel then
+      local ok, md = pcall(cv.getModel, model)
+      if ok and type(md) == 'table' then
+        infos[cacheKey] = { config = type(md.configs) == 'table' and md.configs[key] or nil, model = md.model }
+      end
+    end
+  end
+  return infos[cacheKey] or nil
+end
+
 local function bodyStyle(model, config)
   if type(model) ~= 'string' then return nil end
   local file = type(config) == 'table' and config.partConfigFilename
   local key = type(file) == 'string' and file:match('([^/\\]+)%.pc$') or ''
   local cacheKey = model .. '/' .. key
   if styles[cacheKey] == nil then
-    local found = false
-    local cv = ext('core_vehicles')
-    if cv and cv.getModel then
-      local ok, md = pcall(cv.getModel, model)
-      if ok and type(md) == 'table' then
-        found = styleOf(type(md.configs) == 'table' and md.configs[key] or nil) or styleOf(md.model) or false
-      end
-    end
-    styles[cacheKey] = found
+    local i = infoOf(model, config)
+    styles[cacheKey] = i and (styleOf(i.config) or styleOf(i.model)) or false
   end
   return styles[cacheKey] or nil
+end
+
+-- Power (the game's info value, hp) and weight (kg) of this config, from the game's vehicle list; nil when unknown
+-- (a mod car without the numbers, or a config the player changed and saved under no listed name).
+local function specsOf(model, config)
+  local i = infoOf(model, config)
+  local c = i and i.config
+  if type(c) ~= 'table' then return nil end
+  local power, weight = tonumber(c.Power), tonumber(c.Weight)
+  if not power or not weight or power <= 0 or weight <= 0 then return nil end
+  return { power = power, weight = weight }
 end
 
 local function describe(v, d)
@@ -134,7 +158,8 @@ local function describe(v, d)
   local model = vdata.model or config.model or (d.model)
   if not model then model = v and v.getJBeamFilename and v:getJBeamFilename() or nil end
   return { model = model, slotPartMap = vdata.slotPartMap, tree = config.partsTree, ioCtx = d.ioCtx,
-    id = v and v:getID(), data = d, config = config, bodyStyle = bodyStyle(model, config) }
+    id = v and v:getID(), data = d, config = config, bodyStyle = bodyStyle(model, config),
+    specs = specsOf(model, config) }
 end
 
 function M.vehicle() return describe(playerVeh(), vehData()) end
@@ -239,6 +264,24 @@ function M.busPassengers(n, seed)
   local id = v:getID()
   -- only the lent bus itself: not a car the player switched to during the line
   if id ~= ownedId or (v.getJBeamFilename and v:getJBeamFilename() ~= M.BUS_MODEL) then return nil end
+  if so.usesSeatSystem and not so.usesSeatSystem(id) then return nil end
+  local okSeats, seats = pcall(so.getSeats, id)
+  if not okSeats or type(seats) ~= 'table' then return nil end
+  local occupants = require('cargoEarth/occupants')
+  local plan = occupants.plan(seats, n, seed)
+  for _, seatId in ipairs(plan.remove) do pcall(so.clearDummyOccupant, id, seatId) end
+  for _, seatId in ipairs(plan.add) do pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG) end
+  return plan.shown
+end
+
+-- A taxi's passengers in the player's own car: n people (0 empties the seats). They board only while the player drives
+-- the career car; emptying always works on the career car, even after the player switched to another one. Returns how
+-- many sit, or nil when the car has no seat system (most mod cars) or is not the career car.
+function M.carPassengers(n, seed)
+  local so, v = seatSystem(), playerVeh()
+  if not (so and so.getSeats and so.setDummyOccupant and ownedId) then return nil end
+  if n > 0 and not (v and v:getID() == ownedId) then return nil end
+  local id = ownedId
   if so.usesSeatSystem and not so.usesSeatSystem(id) then return nil end
   local okSeats, seats = pcall(so.getSeats, id)
   if not okSeats or type(seats) ~= 'table' then return nil end
@@ -424,7 +467,10 @@ local function addConfig(out, c, model, key)
   local name = (c.Name or model) .. (c.Configuration and (' ' .. c.Configuration) or '')
   local typ = c.Type
   if not typ and type(agg.Type) == 'table' then typ = next(agg.Type) end
-  out[#out + 1] = { model = model, key = key, name = name, brand = c.Brand, value = value, type = typ }
+  local style = c['Body Style']
+  if type(style) ~= 'string' and type(agg['Body Style']) == 'table' then style = next(agg['Body Style']) end
+  out[#out + 1] = { model = model, key = key, name = name, brand = c.Brand, value = value, type = typ,
+    bodyStyle = type(style) == 'string' and style or nil }
 end
 
 function M.configs()

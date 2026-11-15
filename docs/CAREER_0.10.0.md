@@ -1,12 +1,13 @@
 # Cargo Earth 0.10.0
 
-Changes since 0.9.1. **Needs the new helper** (bus lines, parts shops and repair shops come from it; its area cache
-moves to format 6 and downloads those areas again). Still runs on BeamNG.Earth 1.9.0-beta; 1.10 adds posted speed
+Changes since 0.9.1. **Needs the new helper** (bus lines, taxi destinations, parts shops and repair shops come from it;
+its area cache moves to format 7 and downloads those areas again). Still runs on BeamNG.Earth 1.9.0-beta; 1.10 adds posted speed
 limits. Little of this has been driven in game yet.
 
 ## New: Bus mode
 - A third work mode beside Food delivery and Freight. The helper reads real city bus and trolleybus lines from
-  OpenStreetMap; the phone lists up to 6 lines near you.
+  OpenStreetMap (stops near you first, then only their lines, so requests stay small); the phone lists up to 6
+  lines near you.
 - Drive to the depot or terminus and press **Start**: the city lends you a bus and keeps your car. Stop at each stop,
   press **Open doors** (the bus's real doors open), wait while passengers get off and on, and drive on. The line pays
   at the last stop, where the bus is handed over and BeamNG.Earth takes you back to the depot and your own car.
@@ -15,12 +16,19 @@ limits. Little of this has been driven in game yet.
 - Passengers sit in the bus's seats as BeamNG's own seated people (75 kg each), getting up and sitting down at the
   stops. See `docs/BUS_LINES.md`.
 
+## New: Taxi rides
+- Cars get taxi rides instead of parcel rounds: pick up 1-3 passengers at an address near you and drive them smoothly
+  to an airport, railway or bus station, museum, sight or hotel. Passengers sit in the car's seats, and a rough ride
+  costs pay and tip. An older helper offers no taxi rides.
+
 ## Each vehicle has its own work
-- Cars are sorted by BeamNG's "Body Style": cars get short parcel rounds, SUVs and pickups get parts runs from parts
+- Cars are sorted by BeamNG's "Body Style": cars get taxi rides to airports, stations, museums, sights and hotels (no parcel rounds: vans only), SUVs and pickups get parts runs from parts
   shops and car plants to repair workshops, vans get parcel routes, box trucks get business shipping (no more parcel
   routes), tractors get trailer freight, tanker runs and heavy tows. Food delivery works in anything.
 - Hired drivers hold licences (car, truck, articulated), know one vehicle kind best (+15 %) and wait when their vehicle
   has no cargo boxes. See `docs/VEHICLE_TYPES.md`.
+- **Used cars:** every listing shows its vehicle type, cargo space and the jobs it can do (tap **?**), with tap filters
+  by kind and at least 6 cars of each kind at varied prices. Modded vans and box trucks are recognised by Body Style.
 
 ## Tow jobs, redone
 - Broken-down cars are real wrecks (crashed front, rear or side, rolled over, stripped, flat tyres) and wait by the
@@ -31,6 +39,10 @@ limits. Little of this has been driven in game yet.
   the car and bring both back to the same shop. The empty-trailer legs pay half the tow rate. A trailer of your own
   that is coupled is used instead and never deleted.
 - Wrecks go to a real auto repair shop (or your headquarters), not a fuel station, when one is known.
+- The borrowed trailer goes straight onto your hitch, only where there's room; the coupling is checked and **Hitch**
+  again retries if it doesn't latch. Wrecks no longer spawn on roofs or inside other cars, are held still while they
+  crumple (no flying), aren't crushed off the deck when loaded, and come along when you teleport.
+- Tow offers warn "Your car may struggle" when your car is short on power (a warning only).
 
 ## Heavier, visible loads
 - Parcels, parts and freight weigh what they would in real life: a van carries up to a tonne, a box truck up to 8 t,
@@ -61,4 +73,4 @@ limits. Little of this has been driven in game yet.
 ## Not tested in game yet
 Bus lines (live Overpass answers, door API, citybus configs, handover trip to the depot, seated passengers), driver
 seating, tow coupling, trailer borrowing and deck placement, cargo clean-up on cancel, wreck forces, Body
-Style detection, parts runs, handling at the new weights.
+Style detection, taxi rides, parts runs, handling at the new weights.
