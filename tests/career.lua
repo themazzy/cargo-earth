@@ -2964,3 +2964,18 @@ test('on the resume screen Restart career drops the saved career instead of load
   assert(not s.pendingCareer and s.career.money == 0 and s.career.currency == 'EUR' and s.mode == 'trucking')
   assert(core.phoneState().screen == 'choose')
 end)
+
+test('Restart career says so when the old save cannot be replaced', function()
+  local core, s = fresh()
+  core.settingsDo('cameras', false)
+  failPath = '/settings/cargoEarth/career.json.backup1'
+  local out = core.settingsDo('restart', 'DELETE')
+  failPath = nil
+  assert(out.restarted and out.restartWarning and out.restartWarning:find('installer'), 'the player hears the old save stayed')
+  assert(not s.career.garage.started)
+  core, s = fresh()
+  failPath = '/settings/cargoEarth/career.json'
+  out = core.settingsDo('restart', 'DELETE')
+  failPath = nil
+  assert(out.restarted and out.restartWarning, 'a failed new save is reported too')
+end)

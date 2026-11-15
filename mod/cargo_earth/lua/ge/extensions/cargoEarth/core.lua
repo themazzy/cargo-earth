@@ -612,8 +612,18 @@ function M.restartCareer(word)
   S.stopT, S.dist, S.roadM, S.etaS, S.inCareerWorld = 0, nil, nil, nil, true
   fuelWatch, fuelPending, gamePump = nil, nil, nil
   loadCareer(fresh)
-  saveCareer()   -- backupAt 0 with no play time: this first save copies nothing into the backups
-  for _, path in ipairs(left) do pcall(jsonWriteFile, path, fresh, false, nil, true) end
+  -- backupAt 0 with no play time: this first save copies nothing into the backups
+  local stored = saveCareer() == true
+  for _, path in ipairs(left) do
+    local ok, written = pcall(jsonWriteFile, path, fresh, false, nil, true)
+    if not ok or not written then stored = false end
+  end
+  if not stored then
+    -- the game runs the new career, but the old one may still be on disk and come back on the next start
+    problem('E', 'Restart career: the old save could not be removed or replaced in settings/cargoEarth.')
+    say('Career restarted, but the old save could not be deleted. Close the game and use the installer\'s Delete the career save.', 12)
+    return true, 'The old save could not be deleted. Close the game and use the installer\'s Delete the career save.'
+  end
   say('Career deleted. Choose how to play on the phone.')
   return true
 end
@@ -3470,6 +3480,7 @@ function M.settingsDo(name, a, b)
     local ok, why = M.restartCareer(a)
     local out = M.settingsState()
     out.restartError = not ok and why or nil
+    out.restartWarning = ok and why or nil
     out.restarted = ok or nil
     return out
   end
