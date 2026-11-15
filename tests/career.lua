@@ -3824,6 +3824,13 @@ test('a save whose car mod is gone: another owned car, else a base Pigeon; the m
   g.car = g.parked[1]
   table.remove(g.parked, 1)
   g.parked[#g.parked + 1] = standIn
+  standIn.driver = { name = 'D' }
+  local busy = g.car
+  garage.fallbackCar(G, g)
+  assert(g.car ~= standIn and g.car.standIn and standIn.driver, 'a stand-in with a driver keeps working')
+  g.car, standIn.driver = busy, nil
+  for i, c in ipairs(g.parked) do if c.standIn and c ~= standIn then table.remove(g.parked, i) break end end
+  for i, c in ipairs(g.parked) do if c == busy then table.remove(g.parked, i) break end end
   garage.fallbackCar(G, g)
   assert(g.car == standIn and #g.parked == 2)
   -- a company loaner is left alone

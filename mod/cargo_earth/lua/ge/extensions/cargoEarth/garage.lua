@@ -640,7 +640,7 @@ function M.fallbackCar(G, g)
   end
   if not pick then
     for i, p in ipairs(g.parked or {}) do
-      if p.standIn and modelThere(G, p.model) then pick, index = p, i break end
+      if p.standIn and not p.driver and modelThere(G, p.model) then pick, index = p, i break end
     end
   end
   if not pick then
