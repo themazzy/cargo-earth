@@ -3645,6 +3645,7 @@ M.SETTINGS = {
     { 'maxKm', 'Longest order', 0.5, 1, 8, 'km' }, { 'maxOrders', 'Orders at once', 1, 1, 3, '' } },
   trucking = { { 'nearKm', 'Pickups within', 5, 5, 200, 'km' }, { 'minKm', 'Shortest job', 10, 10, 600, 'km' },
     { 'maxKm', 'Longest job', 10, 20, 1000, 'km' } },
+  bus = {},   -- the lines near you are offered as they are
 }
 
 function M.settingsState()
@@ -3659,7 +3660,7 @@ function M.settingsState()
   local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil, window = S.window,
     reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
     canRestart = S.pendingCareer ~= nil or S.career.garage.started == true or nil, restartWord = M.RESTART_WORD }
-  for _, d in ipairs(M.SETTINGS[S.mode]) do
+  for _, d in ipairs(M.SETTINGS[S.mode] or {}) do
     local key, step, min, max, default = d[1], d[3], d[4], d[5], defs[d[1]]
     if freightTier and (key == 'minKm' or key == 'maxKm') then
       min, max, default = freightTier.minKm, freightTier.maxKm, freightTier[key]
@@ -3682,7 +3683,7 @@ function M.settingsState()
   return out
 end
 
--- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
+-- name: mode (a = courier | trucking | bus), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
 -- dark (a = true | false), restart (a = the confirm word, see restartCareer), dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
 function M.settingsDo(name, a, b)
   -- the dash phone is the player's own choice, outside the career: it works on the resume screen too

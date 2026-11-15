@@ -2439,6 +2439,9 @@ test('a bus shift: the lent bus, doors at every stop, the line paid and your car
   core.random = function(a, b) if b then return b end return a or 0.5 end   -- the most people every time
   core.setMode('bus')
   assert(s.mode == 'bus' and not s.phone.online)
+  local set = core.settingsState()
+  assert(set.mode == 'bus' and #set.items == 0, 'Settings open in bus mode')
+  assert(core.settingsDo('mode', 'bus').mode == 'bus')
   advance(core, 2)
   local ask
   for _, a in ipairs(helperAsks) do if a.path:find('/v1/buslines', 1, true) then ask = a end end
