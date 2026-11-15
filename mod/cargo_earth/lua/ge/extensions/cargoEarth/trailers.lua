@@ -35,15 +35,18 @@ local placedOut = false   -- the staged cars stand by the road at the pickup
 -- Tow trailers: the first stock model found is used (override with trailerModels.cartrailer / .flatbed).
 -- Each is a model, or { model, configuration }. BeamNG 0.40 has no 'cartrailer': the 22 ft tilt deck is its car
 -- trailer, the small TSFB flatbed the fallback (its configuration given: spawned without one it failed to load).
--- The small car trailer (Jan: the 22 ft one is too big and heavy for a small car) is the TSFB with its ramp door left
--- off, so a car a little longer than its 3.5 m deck can stand on it (the door stands 2 m up at the back).
-M.SMALL_CONFIG = { format = 2, model = 'tsfb', parts = { tsfb_load = '', tsfb_ramp = '' } }
+-- The small car trailer (Jan: the 22 ft one is too big and heavy for a small car) is the Large Box Utility Trailer
+-- (Jan's pick: 490 kg, floor 4.2 m x 1.9 m inside its low sides) with its tailgate left off, so a car a little longer
+-- than the floor can stand on it; the smaller TSFB (3.5 m deck, ramp door off) when the game lacks it.
+M.SMALL_CONFIG = { format = 2, model = 'boxutility_large', parts = { boxutility_large_load = '', boxutility_tailgate = '' } }
+M.SMALL_FALLBACK = { format = 2, model = 'tsfb', parts = { tsfb_load = '', tsfb_ramp = '' } }
 M.TOW_MODELS = { cartrailer = { { 'tiltdeck', '22ft_standard' }, { 'tsfb', 'unloaded' }, 'cartrailer' },
-  smalltrailer = { { 'tsfb', M.SMALL_CONFIG } }, flatbed = { 'flatbed' } }
+  smalltrailer = { { 'boxutility_large', M.SMALL_CONFIG }, { 'tsfb', M.SMALL_FALLBACK } }, flatbed = { 'flatbed' } }
 M.DECK_LIFT = 0.15   -- metres above the deck a towed car's lowest point is let down from
 -- the deck of each tow trailer model: its height above the ground under the trailer, and how far its middle is behind
 -- the middle of the trailer's box (the drawbar makes the box longer at the front). From the models' jbeam nodes.
-M.DECK = { tiltdeck = { h = 0.9, back = 0.9 }, tsfb = { h = 0.75, back = 0.6 }, flatbed = { h = 1.45, back = 0 } }
+M.DECK = { tiltdeck = { h = 0.9, back = 0.9 }, tsfb = { h = 0.75, back = 0.6 }, boxutility_large = { h = 0.63, back = 0.35 },
+  flatbed = { h = 1.45, back = 0 } }
 M.DECK_DEFAULT = { h = 0.9, back = 0.4 }
 M.HITCH_TRIES = 120  -- frames to wait for the game to know a new trailer's couplers
 local kindOut = nil  -- the tow trailer kind that is out (for its deck)

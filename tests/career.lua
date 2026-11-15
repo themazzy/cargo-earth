@@ -4054,8 +4054,8 @@ test('your own coupled car trailer is used and never deleted', function()
     assert(trailers.ownTowTrailer('cartrailer') == 9)
     assert(trailers.ownTowTrailer('flatbed') == nil, 'a tilt deck is not a flatbed')
     assert(trailers.ownTowTrailer('smalltrailer') == nil, 'nor the small car trailer')
-    -- the small TSFB counts as the small car trailer only (the game has the tilt deck for the big one)
-    objs[9].getJBeamFilename = function() return 'tsfb' end
+    -- the large box utility trailer counts as the small car trailer only (the game has the tilt deck for the big one)
+    objs[9].getJBeamFilename = function() return 'boxutility_large' end
     assert(trailers.ownTowTrailer('smalltrailer') == 9 and trailers.ownTowTrailer('cartrailer') == nil)
     objs[9].getJBeamFilename = function() return 'tiltdeck' end
     assert(trailers.adopt('cartrailer') and trailers.id() == 9 and trailers.adopted())
