@@ -8,36 +8,80 @@ A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight,
 
 ## What you can do
 
-- Deliver standard meals, larger family orders and grocery baskets. Fit real cargo boxes and combine compatible orders.
-- Start company contracts at nearby yards, use a supplied cargo van and return for your wages. Independent contracts unlock at 20 reputation per employer.
-- Progress from vans to rigid trucks and articulated freight with native cargo containers and loads.
-- Drive parcel routes: load a van at a depot and drop parcels at several real addresses, emptying its cargo containers stop by stop (a car does short rounds).
-- Each kind of vehicle has its own work (see docs/VEHICLE_TYPES.md): an SUV or a pickup does parts runs from parts shops to repair workshops, a box truck business shipping, a tractor trailer freight.
-- Choose a nearby address as your home garage, then drive there and park to claim it. Store and switch owned cars, buy used vehicles, repair and confirm real parts purchases.
-- In VR, a phone screen sits on the centre of the dashboard with your order, distance, time left and speed limit; move or resize it per car in Menu → Settings.
-- Track money, debt, deliveries, cargo condition, employer reputation and active driving distance through the phone.
-- Earn 1 to 5 stars on every order. They build two reputations, courier and freight, that bring premium orders and better freight pay.
-- Pay for fuel at real stations and chargers. The car keeps its fuel level through resets, and a roadside delivery is always available.
-- Found your own firm, set its headquarters at a real yard, and build parking bays, a workshop, a fuel tank and a dispatch office. The firm hires your drivers.
-- See where you have delivered on a map with your personal records.
-- Mind real speed cameras from OpenStreetMap: a fine and a lost star for passing one too fast.
-- See the speed limit of the road you drive on, the same one BeamNG.Earth's signs and traffic use.
-- Buy new trucks and trailers for your firm, hire drivers with their own speed, care and wage, and keep every vehicle serviced or risk a breakdown.
-- Earn tips for fast deliveries that arrive in perfect condition.
-- Special cargo: fragile, chilled and oversize loads that pay more and need care.
-- Tow broken-down cars to a workshop on a car trailer or a flatbed.
-- Tanker runs that resupply real fuel stations.
-- Get paid in the money of the country you drive in. Crossing a border exchanges it for free.
-- Discover nearby restaurants, stores, workplaces and addresses through the local helper. Bundled Czech geography provides fallback coverage.
+Cargo Earth turns BeamNG.Earth's real-world maps into a working life. Real restaurants, addresses, depots, repair shops,
+fuel stations, bus lines and speed cameras come from Overture Maps and OpenStreetMap, so the same game works in your
+own town and anywhere else on Earth. Everything is done by clicking on an in-game phone; the mod has no key bindings.
 
-Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated with BeamNG or the RLS Career Overhaul project.
+### Three ways to work
+
+Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or in Settings).
+
+**Food delivery**
+- Deliver meals, family orders and grocery baskets from real restaurants and shops to real addresses. Fit real cargo
+  boxes and take compatible orders together.
+- Orders favour nearby customers in your own town, and pay by the real road distance, not a straight line.
+- At most two orders in a row come from one place before others get a turn. The phone shows separate *Pick up in* and
+  *Deliver in* targets.
+
+**Freight** (the work depends on what you drive, see [vehicle types](docs/VEHICLE_TYPES.md))
+- **Car:** short parcel rounds to 2-4 real addresses.
+- **SUV or pickup:** parts runs from parts shops and car plants to repair workshops.
+- **Van:** parcel routes from a depot to 4-7 addresses, emptying the cargo containers stop by stop; van freight.
+- **Box truck:** business shipping between real companies.
+- **Tractor:** trailer freight, fuel tanker runs that resupply real fuel stations, heavy tow jobs.
+- **Anything with a tow hitch:** tow jobs. A wrecked car (crashed front, rear or side, rolled over, stripped or with
+  flat tyres) waits by the road; park your trailer next to it and press **Load** on the phone. It goes to a real auto
+  repair shop or your own headquarters.
+- **Company contracts:** the phone lists the three nearest. Take one and the company lends you its van, box truck or
+  tractor for the job; your own car waits for you. Independent contracts unlock at 20 reputation per employer.
+- Special cargo: fragile, chilled and oversize loads pay more and need care.
+- Loads have realistic weights (a van up to a tonne, a semi trailer up to 22 t), all in BeamNG's own cargo containers,
+  and the phone shows the kg on board and dropped at each stop.
+
+**Bus** (new)
+- Drive real city bus and trolleybus lines from OpenStreetMap. The city lends you a bus at the depot or terminus,
+  you stop at each stop and press **Open doors**, passengers get on and off, and the shift is paid when you bring the
+  bus back. See [bus lines](docs/BUS_LINES.md).
+
+### Career
+
+- Start with a beat-up car and a little money, or pick **Free play** to just drive without a save.
+- Buy used cars with real wear, trade in, and buy real BeamNG parts. Repairs cost money; repairing for free through the
+  game's menu puts the bill on your debt, and Finances shows where every charge came from.
+- Choose a home garage at a real address, store and switch cars there.
+- Earn 1 to 5 stars on every order. They build two reputations, courier and freight, that bring premium work and better
+  pay. Tips come for fast deliveries that arrive in perfect condition.
+- Pay for fuel at real stations: fill up or only to 25 / 50 / 75 % from the phone at the pumps, or call a roadside
+  delivery. Cars need servicing (oil, tyres, brakes) or they break down.
+- Found your own firm: set its headquarters at a real yard, build parking bays, a workshop, a fuel tank and a dispatch
+  office, buy trucks and trailers and hire drivers. Drivers have licences (car, truck, articulated), speed, care, a
+  wage and a vehicle they know best.
+- Get paid in the money of the country you drive in; crossing a border exchanges it for free.
+- Mind real speed cameras: a fine and a lost star for passing one too fast. The phone shows the posted speed limit of
+  the road you are on.
+- A delivery map with your personal records, and a full progress and finance overview.
+- Restart the career any time from Menu → Settings (type DELETE to confirm).
+
+### The phone
+
+- A small phone in the corner with **Work**, **Radio** and **Menu**. It folds away and stays folded through camera
+  changes and the pause menu, and has a dark mode.
+- **Menu** opens a big window with Garage, Home, Companies, Progress, Finances, Delivery map, Firm and Settings. It
+  reopens on the page you left. Settings and Radio work before a saved career is loaded.
+- **Radio:** real internet radio stations of the region you drive in, played through the helper.
+- **Dash phone:** a phone holder on the dashboard of any car with the same app, side buttons for the main actions and a
+  per-car position. Made for VR, also fine on a monitor. See [dash phone](docs/DASH_PHONE.md).
+- When a new version is out, the phone says so with a link to the release.
+
+Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated with BeamNG, BeamNG.Earth or the RLS
+Career Overhaul project.
 
 ## Install
 
-You need **BeamNG.drive** (Windows) and **[BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth)** installed and working first. Cargo Earth has two parts:
+You need **BeamNG.drive** (Windows) and **[BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) 1.9.0-beta or newer** installed and working first (1.10 adds posted speed limits). Cargo Earth has two parts:
 
 - **the mod** (a ZIP in BeamNG's `mods` folder): the career and the phone, in the game;
-- **the helper** (a small Python program): it downloads restaurants, shops, workplaces, addresses, fuel stations, speed cameras and radio stations around you, and plays the radio. The game cannot go online itself, so the helper does it. BeamNG.Earth starts it for you.
+- **the helper** (a small Python program): it downloads restaurants, shops, workplaces, addresses, fuel stations, speed cameras, bus lines, repair shops and radio stations around you, and plays the radio. The game cannot go online itself, so the helper does it. BeamNG.Earth starts it for you.
 
 ### Quick install (Windows)
 
@@ -75,10 +119,10 @@ In the game you can do the same from the phone: Menu → Settings → Restart ca
 1. **Start BeamNG.Earth** and open its **Add-ons** page. Allow **Cargo Earth helper** the first time it asks, and turn on **Start with BeamNG.Earth** so it runs whenever you play. The helper needs internet access.
 2. **Load a BeamNG.Earth map** with the mod enabled (BeamNG's Mods menu shows **cargo_earth_career**).
 3. **The phone:** the first time, the mod adds the **Cargo Earth: Phone** app to BeamNG.Earth's ".Earth" UI layout, above the speedometer. Move or resize it with the UI Apps editor (Escape → **UI Apps**). If you play with another layout, or removed the phone, add **Cargo Earth: Phone** there yourself and save the layout. Everything is done by clicking on the phone; the mod has no key bindings.
-4. **Start your career** on the phone (**Menu → Garage**) and go online for orders on **Work**.
+4. **Choose Career or Free play** on the phone, pick Food delivery, Freight or Bus and go online on **Work**.
 5. Optional: turn **traffic on in BeamNG.Earth** for the speed-limit sign on the phone (it reads Earth's road graph).
 
-If the phone says the helper is not running: check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras and grocery runs still need it.
+If the phone says the helper is not running: check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras, bus lines, parts runs, repair shops and grocery runs still need it.
 
 The phone keeps what you need while driving: **Work** (deliveries), **Radio**, and a fuel line at the bottom. **Menu** opens a big window over the game with **Garage**, **Home**, **Companies**, **Progress**, **Finances**, **Delivery map**, **Firm** and **Settings**. The firm's headquarters opens from Firm as a full-screen plan of the building.
 
@@ -113,11 +157,11 @@ The Windows installer is a small Go program in `installer/` (`cd installer && GO
 
 To publish a release, create a GitHub release with a tag such as `v0.9.1` and attach the mod ZIP and `cargo_earth_helper_*.py`. A workflow then builds `CargoEarthSetup.exe` and adds it to the same release.
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
-This is an early development build. Fuel, the headquarters screen and speed cameras (0.4), the firm's trucks, drivers and upkeep (0.5), special cargo, tow jobs and fuel resupply (0.6), local money (0.7), and the regional radio and VR dashboard screen (0.8) still need in-game verification; the payout report describes 0.3.5, before fuel costs. Native crash/accelerometer behaviour, phone layout and full driving sessions need further verification. Public POIs are candidate stops rather than certified loading bays. Rigid/articulated site access is more restricted than van access. Parcel cargo has condition penalties; bulk/fluid condition is not yet modeled. Company contracts pay for the return trip from 0.3.5; the payout report shows the hourly pay of each kind of work.
+This is an early development build, made by one person with a lot of help and tested in game as time allows. Bus lines, tow jobs (wrecks, coupling and loading), parts runs, vehicle-type detection, heavier loads and the BeamNG.Earth 1.10 speed limits are new in 0.10 and still need more driving; check the [release notes](docs/CAREER_0.10.0.md) for what is untested. Public places are candidate stops rather than certified loading bays, and a truck may not fit every yard a van does. Bulk and fluid loads have no condition yet. Bus passengers are counted, not seated people. The payout report describes 0.3.5, before fuel costs.
 
 The helper fetches public Overture source data; busy areas and first visits may take time to load. Python queries and connections are bounded, but real-world latency and coverage vary.
 
