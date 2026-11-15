@@ -4,9 +4,11 @@ A third work mode beside food delivery and freight: pick **Bus** on the phone's 
 
 ## Where the lines come from
 
-The helper asks OpenStreetMap (Overpass API) for bus and trolleybus route relations (`type=route`,
-`route=bus|trolleybus`) and for bus stations / depots (`amenity=bus_station`, `depot=bus`; a bare `landuse=depot` is left out, it is as often a tram or train depot), one
-request per 0.1 degree cell around the player, kept for 14 days (`/v1/buslines`). Each relation is one direction of a
+The helper asks OpenStreetMap (Overpass API), one request per 0.04 degree cell (about 4 x 3 km) around the player,
+one request at a time (waits up to 90 s), kept for 14 days (`/v1/buslines`). It finds the bus stops and platforms of
+the cell first, then only the bus and trolleybus route relations (`type=route`, `route=bus|trolleybus`) that stop
+there, then only those lines' stops and platforms (not their roads), and the bus stations / depots of the cell
+(`amenity=bus_station`, `depot=bus`; a bare `landuse=depot` is left out, it is as often a tram or train depot). Each relation is one direction of a
 line. Its stops are the stop positions on the road where the relation has them (`stop`, `stop_entry_only`,
 `stop_exit_only`), else its platforms; a stop position without a name takes the nearest platform's. A line with fewer
 than 4 stops, a gap over 4 km between stops (a broken relation) or under 1.2 km in all is left out. Works anywhere

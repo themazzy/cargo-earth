@@ -1502,13 +1502,11 @@ test('the kind of vehicle comes from its body: car, SUV or pickup, van, box truc
   assert(haul.freight('suv', 'milk', rows) == nil and haul.freight('suv', 'car_parts', rows))
 end)
 
-test('a car gets short parcel rounds; an SUV parts runs from a supplier to a workshop', function()
+test('a car gets no parcel rounds; an SUV parts runs from a supplier to a workshop', function()
   local seq = 0
   local function rnd(n) seq = seq % n + 1 return seq end
   local depot = {id = 'yard', n = 'Warehouse', g = {50, 14}}
-  local job = parcel.route(depot, streets(50, 14), 'car', 24, rnd, 1)
-  assert(job and #job.route.stops >= 2 and #job.route.stops <= 4 and job.haul.tier == 'car' and job.haul.amount <= 24)
-  assert(not parcel.route(depot, streets(50, 14), 'car', 2, rnd, 2), 'no room in the boot: no round')
+  assert(not parcel.route(depot, streets(50, 14), 'car', 24, rnd, 1), 'parcel routes are for vans')
   local parts = require('cargoEarth/parts')
   local suppliers = {{id = 'p1', n = 'Parts Plus', g = {50.01, 14}, town = 'Town'}, {id = 'far', n = 'Far', g = {51, 14}}}
   local function workshops(lat, lon, a, b)
@@ -1564,7 +1562,7 @@ test('a pickup in freight mode is offered parts runs only, loads the parts into 
   assert(not s.job and c.money > money and boxes[1].currentVolume == 0, 'unloaded and paid')
 end)
 
-test('a small car in freight mode gets short parcel rounds and still sees company contracts', function()
+test('a small car in freight mode gets no parcel rounds and still sees company contracts', function()
   local core, s = fresh()
   s.career.garage.debt = 0
   vehicle.bodyStyle = 'Hatchback'
@@ -1574,18 +1572,12 @@ test('a small car in freight mode gets short parcel rounds and still sees compan
   core.setMode('trucking')
   advance(core, 2)
   core.generate()
-  local route
   for _, offer in ipairs(s.offers) do
-    assert(offer.route or offer.tow, 'no company freight board in a car')
-    if offer.route then route = offer end
+    assert(offer.tow, 'no parcel rounds and no company freight board in a car')
   end
-  assert(route and route.haul.tier == 'car' and #route.route.stops <= 4, 'a short round')
-  core.setOption('maxKm', 0.5)
-  core.generate()
-  for _, offer in ipairs(s.offers) do assert(not offer.route, 'the longest-job setting holds for rounds') end
-  s.opts.freightRanges = nil
   local t = core.phoneState().trucking
   assert(t.carrier == 'Car' and #t.contracts == 1, 'company contracts are still listed')
+  assert(t.hint and not t.hint:find('parcel'), 'the hint does not offer parcel rounds')
 end)
 
 local cameras = require('cargoEarth/cameras')
