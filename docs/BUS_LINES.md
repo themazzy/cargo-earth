@@ -52,6 +52,11 @@ OpenStreetMap maps the lines; data (c) OpenStreetMap contributors, ODbL.
 Rules: `lua/ge/extensions/cargoEarth/bus.lua` (pure); the shift runs through `cargoEarth/employment` with one job of
 kind `bus` (saves accept a one-job shift with `tier = 'bus'`).
 
+The lent bus shows the line on its own signs: the destination sign gets the line number and the last stop (plain
+letters, 20 at most: its letter atlas has no accents), the next-stop screen inside the stops still ahead (with accents).
+Sent as the citybus controller's `bus_onRouteChange` event (`gamecar.busSign`, `bus.sign`) whenever the bus moves on
+to a new stop, and every 30 s for a reset bus.
+
 The phone button opens the real doors (citybus controller `bus`, `bus_doorsRequestedOpen`; fallback: the `doors` pneumatics on frontDoors/rearDoors). Not done yet: coaches between towns, and
 buying your own bus. Not tested in game.
 

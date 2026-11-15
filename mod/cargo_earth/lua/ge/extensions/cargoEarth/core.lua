@@ -1632,6 +1632,12 @@ end
 function M.busSeats(j, n)
   S.busSeatsAt = S.clock + 5
   if M.G.busPassengers then pcall(M.G.busPassengers, math.max(0, n or 0), j and j.bus and j.bus.line or 'bus') end
+  -- the bus's own signs: line number, destination and the stops ahead (again now and then: a reset bus forgets them)
+  local key = j and j.bus and (j.bus.line .. ':' .. j.bus.at)
+  if key and M.G.busSign and (key ~= S.busSignKey or S.clock >= (S.busSignAt or 0)) then
+    local ok, sent = pcall(M.G.busSign, require('cargoEarth/bus').sign(j))
+    if ok and sent then S.busSignKey, S.busSignAt = key, S.clock + 30 end
+  end
 end
 
 function M.busTick(p)

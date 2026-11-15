@@ -242,6 +242,49 @@ function M.bump(job, peak)
   return before - job.bus.comfort
 end
 
+-- The bus's own signs (the citybus's destination sign and next-stop screen, vehicles/citybus/lua/controller/bus.lua,
+-- event bus_onRouteChange): the line number, where it goes and the stops still ahead. The destination sign draws from
+-- a plain-letter atlas, so its text loses accents (Škola -> Skola); the next-stop screen is a web page and keeps them.
+local FOLD = {
+  ['á'] = 'a', ['Á'] = 'A', ['à'] = 'a', ['À'] = 'A', ['â'] = 'a', ['Â'] = 'A',
+  ['ä'] = 'a', ['Ä'] = 'A', ['ã'] = 'a', ['Ã'] = 'A', ['å'] = 'a', ['Å'] = 'A',
+  ['ą'] = 'a', ['Ą'] = 'A', ['ă'] = 'a', ['Ă'] = 'A', ['ā'] = 'a', ['Ā'] = 'A',
+  ['č'] = 'c', ['Č'] = 'C', ['ć'] = 'c', ['Ć'] = 'C', ['ç'] = 'c', ['Ç'] = 'C',
+  ['ď'] = 'd', ['Ď'] = 'D', ['đ'] = 'd', ['Đ'] = 'D', ['é'] = 'e', ['É'] = 'E',
+  ['è'] = 'e', ['È'] = 'E', ['ê'] = 'e', ['Ê'] = 'E', ['ë'] = 'e', ['Ë'] = 'E',
+  ['ě'] = 'e', ['Ě'] = 'E', ['ę'] = 'e', ['Ę'] = 'E', ['ē'] = 'e', ['Ē'] = 'E',
+  ['í'] = 'i', ['Í'] = 'I', ['ì'] = 'i', ['Ì'] = 'I', ['î'] = 'i', ['Î'] = 'I',
+  ['ï'] = 'i', ['Ï'] = 'I', ['ī'] = 'i', ['Ī'] = 'I', ['ľ'] = 'l', ['Ľ'] = 'L',
+  ['ĺ'] = 'l', ['Ĺ'] = 'L', ['ł'] = 'l', ['Ł'] = 'L', ['ň'] = 'n', ['Ň'] = 'N',
+  ['ń'] = 'n', ['Ń'] = 'N', ['ñ'] = 'n', ['Ñ'] = 'N', ['ó'] = 'o', ['Ó'] = 'O',
+  ['ò'] = 'o', ['Ò'] = 'O', ['ô'] = 'o', ['Ô'] = 'O', ['ö'] = 'o', ['Ö'] = 'O',
+  ['õ'] = 'o', ['Õ'] = 'O', ['ő'] = 'o', ['Ő'] = 'O', ['ø'] = 'o', ['Ø'] = 'O',
+  ['ř'] = 'r', ['Ř'] = 'R', ['ŕ'] = 'r', ['Ŕ'] = 'R', ['š'] = 's', ['Š'] = 'S',
+  ['ś'] = 's', ['Ś'] = 'S', ['ş'] = 's', ['Ş'] = 'S', ['ș'] = 's', ['Ș'] = 'S',
+  ['ß'] = 'ss', ['ẞ'] = 'SS', ['ť'] = 't', ['Ť'] = 'T', ['ţ'] = 't', ['Ţ'] = 'T',
+  ['ț'] = 't', ['Ț'] = 'T', ['ú'] = 'u', ['Ú'] = 'U', ['ù'] = 'u', ['Ù'] = 'U',
+  ['û'] = 'u', ['Û'] = 'U', ['ü'] = 'u', ['Ü'] = 'U', ['ů'] = 'u', ['Ů'] = 'U',
+  ['ű'] = 'u', ['Ű'] = 'U', ['ū'] = 'u', ['Ū'] = 'U', ['ý'] = 'y', ['Ý'] = 'Y',
+  ['ÿ'] = 'y', ['Ÿ'] = 'Y', ['ž'] = 'z', ['Ž'] = 'Z', ['ź'] = 'z', ['Ź'] = 'Z',
+  ['ż'] = 'z', ['Ż'] = 'Z',
+}
+M.SIGN_CHARS = 20         -- the destination sign shows this many letters
+
+function M.plain(s)
+  s = tostring(s or '')
+  return (s:gsub('[\xC0-\xF4][\x80-\xBF]+', function(ch) return FOLD[ch] or '' end))
+end
+
+function M.sign(job)
+  local b = job and job.bus
+  if not b then return nil end
+  local list = {}
+  for i = b.at, #b.stops do list[#list + 1] = { 'cargoEarth:' .. i, b.stops[i].n } end
+  local last = b.stops[#b.stops].n
+  return { routeID = M.plain(b.ref):sub(1, 6), direction = M.plain(last):sub(1, M.SIGN_CHARS),
+    routeColor = type(b.colour) == 'string' and b.colour:match('^#%x%x%x%x?%x?%x?$') or nil, tasklist = list }
+end
+
 function M.last(job) return job.bus.at >= #job.bus.stops end
 
 -- People at the current stop: some get off (everyone at the last stop), some get on (fewer near the end, none at the
