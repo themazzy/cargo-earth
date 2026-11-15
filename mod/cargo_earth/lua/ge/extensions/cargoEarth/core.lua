@@ -825,8 +825,7 @@ function M.generate()
       if tier == 'suv' and rows then
         for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'), freightOptions(tier))) do offers[#offers + 1] = offer end
       end
-      -- parcel routes from the nearest depots to real addresses: vans, and short rounds in cars (box trucks do business
-      -- shipping)
+      -- parcel routes from the nearest depots to real addresses: vans only (box trucks do business shipping)
       if parcel.TIERS[tier] and rows and S.fidx then
         local room = haul.capacity(rows, 'parcel')
         local near = {}
