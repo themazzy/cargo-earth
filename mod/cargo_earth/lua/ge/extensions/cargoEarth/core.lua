@@ -209,6 +209,40 @@ local function syncStorage()
   if next(delta) and M.G.setCargoLoad(storage.id, delta) then storage.applied = plan.weights end
 end
 
+-- With no order on board, any load still in the car's containers is left over (the mod lost track of it: a Lua
+-- reload, a reply that never came). It would weigh the car down and keep the box "taken". Read the containers once and
+-- empty every one that holds something (passenger seats aside). The stock career is never touched (cargoVehicle).
+-- (a module field, not a local: the main chunk of this file is at Lua's 200-local limit)
+function M.sweepCargo()
+  local function passengerOnly(types)
+    if type(types) ~= 'table' or #types == 0 then return false end
+    for _, t in ipairs(types) do if t ~= 'passenger' then return false end end
+    return true
+  end
+  if S.job or S.parts or S.pendingCareer or S.clock < (S.sweepAt or 0) then return end
+  local G = M.G
+  local id
+  if G.cargoVehicle then id = G.cargoVehicle(S.career.garage.started) end
+  if not id or not G.readCargoBoxes or not G.setFreightLoad then S.sweepWanted = nil return end
+  S.sweepAt = S.clock + 5   -- one read at a time; asked again when no answer comes
+  local asked = G.readCargoBoxes(id, function(rows)
+    if S.job or not S.sweepWanted then return end
+    S.sweepWanted = nil
+    local empty, n = {}, 0
+    for _, row in ipairs(type(rows) == 'table' and rows or {}) do
+      if type(row.id) == 'number' and (tonumber(row.targetVolume) or 0) > 0.01 and not passengerOnly(row.cargoTypes) then
+        empty[row.id], n = { volume = 0, density = 1 }, n + 1
+      end
+    end
+    if n > 0 and G.setFreightLoad(id, empty) then
+      problem('I', string.format('emptied %d container%s left loaded with no order on board', n, n > 1 and 's' or ''))
+      -- the boxes are read again, now empty and free for the next order
+      if S.storage and S.storage.id == id then S.storage = nil end
+    end
+  end)
+  if not asked then S.sweepWanted = nil end
+end
+
 local function freightCarrier()
   local g = S.career.garage
   if not g.started or g.pendingUsed or not garage.inOwnCar(M.G, g) then return end
@@ -470,6 +504,8 @@ local function loadCareer(c)
   current = current or S.orders[1]
   S.job, S.phase = current and current.job, current and current.phase or 'idle'
   S.preferredDelivery = S.job and S.phase == 'toDelivery' and S.job.id == c.preferredDelivery and c.preferredDelivery or nil
+  -- nothing is on board: a load the game still holds from before (a Lua reload, a lost reply) goes
+  if not S.job then S.sweepWanted = true end
   c.savedAt = os.time()
 end
 
@@ -1117,6 +1153,7 @@ local function dropOrder(j)
     trailers.remove()
     earth.gpsClear()
     S.job, S.phase, S.stopT, S.preferredDelivery = nil, 'idle', 0, nil
+    S.sweepWanted, S.sweepAt = true, S.clock + 1   -- after the emptying above has reached the car
     return true
   end
   S.job = nil
@@ -1385,6 +1422,7 @@ function M.spoil(peak, ruined)
   if #S.orders == 0 then
     earth.gpsClear()
     S.job, S.phase, S.stopT, S.preferredDelivery = nil, 'idle', 0, nil
+    S.sweepWanted, S.sweepAt = true, S.clock + 1
   else
     S.job = nil
     nextStop()
@@ -1797,6 +1835,7 @@ local function companyReturn(aborted)
     clearFreight()
     releaseStorage()
     S.orders, S.job, S.phase, S.stopT = {}, nil, 'idle', 0
+    S.sweepWanted, S.sweepAt = true, S.clock + 1
     S.busDwell = nil
     trailers.remove()
     earth.gpsClear()
@@ -4337,6 +4376,7 @@ function M.onUpdate(dtReal, dtSim)
       elseif not S.job and not S.offeredAt and not S.career.employment then M.generate() end
     end
     syncStorage()
+    if ready and S.sweepWanted then M.sweepCargo() end
     if S.saveRetryAt and S.clock >= S.saveRetryAt then saveCareer() end
     if dt > 0 and g.started and not S.parts and not g.preview and not g.pendingUsed
       and (S.career.activeSeconds or 0) >= (S.nextAutosaveActive or 60) then
@@ -4419,6 +4459,13 @@ function M.onVehicleSpawned(id)
   -- A respawn recreates the vehicle-side storage, even when BeamNG reuses its object ID.
   if S.storage and S.storage.id == id then S.storage = nil end
   if forceWatch and forceWatch.id == id then forceWatch = nil end
+  if S.freightLoad and S.freightLoad.id == id then S.freightLoad = nil end
+end
+
+-- A reset (R, recover, the game's repair) rebuilds the vehicle-side containers empty, so the load the mod set is
+-- forgotten there: read the boxes again and put the load back (a meal box at once, freight through workFreight).
+function M.onVehicleResetted(id)
+  if S.storage and S.storage.id == id then S.storage = nil end
   if S.freightLoad and S.freightLoad.id == id then S.freightLoad = nil end
 end
 
