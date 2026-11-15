@@ -198,6 +198,7 @@ end)
 local pose, vehicle, boxes, spawnFailure, ready, payWrites = nil, nil, nil, nil, true, 0
 local damageValue, impactToken = 0, nil
 local gps, gpsRoute, routeCapable
+helperAsks = {}
 log = function() end
 ui_imgui = {}
 FS = {findFiles = function() return {} end}
@@ -210,7 +211,7 @@ package.loaded['cargoEarth/ui'] = {drawStop = function() end, drawPartsExit = fu
 package.loaded['cargoEarth/marker'] = {reset = function() end, draw = function() end}
 package.loaded['cargoEarth/helper'] = {configure = function() end, tick = function() end, forget = function() end,
   status = function() return {state = 'off'} end, commanding = function() return false end, pump = function() end,
-  asking = function() return false end}
+  asking = function() return false end, ask = function(path, cb) helperAsks[#helperAsks + 1] = { path = path, cb = cb } end}
 package.loaded['cargoEarth/earth'] = {
   pose = function() return pose end, status = function() return ready and 'ok' or 'World loading' end,
   notify = function() end, route = function() return gpsRoute end,
@@ -229,6 +230,7 @@ local function adapter()
     watchForces = function(_, token) impactToken = token return true end,
     captureConfig = function() return {parts = {body = vehicle.model}} end,
     freightLoanerConfig = function() return {parts = {load = 'box'}} end,
+    busLoanerConfig = function() return {parts = {body = 'citybus'}}, 'city' end,
     spawn = function(model)
       if spawnFailure == model then error('simulated spawn failure') end
       vehicle = {model = model, id = 1, data = {}, slotPartMap = {body = model}}
@@ -2381,6 +2383,144 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   end)
   for k, f in pairs(saved) do trailers[k] = f end
   assert(ok, err)
+end)
+
+local bus = require('cargoEarth/bus')
+
+-- a line of five stops 400 m apart going north from the player, a bus station beside the first stop
+local function busData()
+  local stops = {}
+  for i = 1, 5 do stops[i] = { i == 3 and '' or ('Stop ' .. string.char(64 + i)), 50 + (i - 1) * 0.0036, 14.002 } end
+  return { state = 'ready', lines = {
+    { id = 'r1', ref = '136', name = 'Bus 136', from = 'Stop A', to = 'Stop E', operator = 'City Transit', stops = stops },
+    { id = 'bad', ref = 'X', stops = { { 'A', 50, 14 }, { 'B', 50.01, 14 } } },
+  }, depots = { { id = 'w7', name = 'Bus Garage', kind = 'depot', lat = 50.0005, lon = 14.0005 } } }
+end
+
+test('bus lines: offers at the depot, passengers on and off, fares', function()
+  local idx = bus.index()
+  bus.set(idx, busData())
+  assert(#idx.lines == 1 and #idx.depots == 1, 'a line with two stops is left out')
+  assert(idx.lines[1].stops[3].n == 'Stop 3', 'a stop without a name gets one')
+  local board = bus.board(idx, 50, 14)
+  assert(#board == 1)
+  local o = board[1]
+  assert(o.tier == 'bus' and o.yard.n == 'Bus Garage' and o.jobCount == 1 and #o.jobs == 1 and o.name == 'City Transit')
+  local j = o.jobs[1]
+  assert(j.kind == 'bus' and j.from.n == 'Stop A' and j.to.n == 'Stop B' and j.pay > 0 and j.minutes > 0)
+  assert(j.cargoName == 'Line 136 to Stop E')
+  assert(#bus.board(idx, 50.2, 14) == 0, 'no line near')
+  -- no depot near the first stop: the bus waits at the terminus
+  local far = bus.index()
+  local data = busData()
+  data.depots[1].lat = 50.5
+  bus.set(far, data)
+  assert(bus.board(far, 50, 14)[1].yard.n == 'Terminus Stop A')
+  -- people: none get off at the first stop, everyone at the last, never more than the bus takes
+  local top = function(n) return n end
+  local off, on, dwell = bus.passengers(j, top)
+  assert(off == 0 and on > 0 and dwell > bus.DWELL_S)
+  bus.served(j, off, on)
+  assert(j.bus.at == 2 and j.to.n == 'Stop B' and j.bus.onBoard == on and j.bus.boarded == on)
+  j.bus.onBoard = bus.CAPACITY
+  local fullOff, full = bus.passengers(j, top)
+  assert(full <= fullOff, 'a full bus takes only as many as got off')
+  j.bus.at, j.bus.onBoard = 5, 12
+  local offEnd, onEnd = bus.passengers(j, top)
+  assert(offEnd == 12 and onEnd == 0 and bus.last(j))
+  assert(bus.fares(j) == bus.PER_PASSENGER * j.bus.boarded)
+end)
+
+test('a bus shift: the lent bus, doors at every stop, the line paid and your car back', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  helperAsks = {}
+  core.random = function(a, b) if b then return b end return a or 0.5 end   -- the most people every time
+  core.setMode('bus')
+  assert(s.mode == 'bus' and not s.phone.online)
+  local set = core.settingsState()
+  assert(set.mode == 'bus' and #set.items == 0, 'Settings open in bus mode')
+  assert(core.settingsDo('mode', 'bus').mode == 'bus')
+  advance(core, 2)
+  local ask
+  for _, a in ipairs(helperAsks) do if a.path:find('/v1/buslines', 1, true) then ask = a end end
+  assert(ask, 'the helper is asked for the lines around you')
+  ask.cb(busData())
+  local state = core.phoneState()
+  assert(state.bus and #state.bus.lines == 1, 'the board shows the line')
+  local line = state.bus.lines[1]
+  assert(line.ref == '136' and line.depot == 'Bus Garage' and line.pay > 0 and not line.atDepot)
+  core.phoneAction('busStart', line.id)
+  assert(not c.employment, 'not started away from the depot')
+  pose.lat, pose.lon = 50.0005, 14.0005
+  assert(core.phoneState().bus.lines[1].atDepot)
+  local money = c.money
+  core.phoneAction('busStart', line.id)
+  local shift = c.employment
+  assert(shift and shift.tier == 'bus' and c.garage.car.model == 'citybus' and c.garage.car.loaner, 'the city lends a bus: ' .. tostring(s.placesMsg) .. ' ' .. tostring(shift and shift.tier) .. ' ' .. tostring(c.garage.car.model))
+  advance(core, 2)
+  local j = s.job
+  assert(j and j.bus and s.phase == 'toPickup' and j.from.n == 'Stop A')
+  -- at each stop: stop, open the doors, wait while people get off and on
+  local function atStop(n)
+    local st = j.bus.stops[n]
+    pose.lat, pose.lon, pose.speed = st.g[1], st.g[2], 0
+    advance(core, 4)
+    assert(j.bus.at == n, 'it waits for the doors at stop ' .. n)
+    local bs = core.phoneState().bus
+    assert(bs.canDoors, 'the doors can open at stop ' .. n .. ' dist ' .. tostring(s.dist) .. ' ' .. tostring(bs.line) .. ' ' .. tostring(s.mode))
+    core.phoneAction('busDoors')
+    assert(core.phoneState().bus.line.doors, 'the doors are open')
+    advance(core, 40)
+  end
+  atStop(1)
+  assert(s.phase == 'toDelivery' and j.bus.at == 2 and j.bus.onBoard > 0)
+  -- driving off with the doors open: nobody moves, open them again
+  local st = j.bus.stops[2]
+  pose.lat, pose.lon = st.g[1], st.g[2]
+  advance(core, 4)
+  core.phoneAction('busDoors')
+  pose.speed = 5
+  advance(core, 2)
+  assert(j.bus.at == 2 and not core.phoneState().bus.line.doors, 'the stop is not served')
+  pose.speed = 0
+  for n = 2, 5 do atStop(n) end
+  assert(not s.job, 'the line is done')
+  assert(shift.phase == 'returning' and shift.gross >= j.pay, 'the line and the fares are held as wages')
+  -- back at the depot: paid, and your own car again
+  pose.lat, pose.lon = 50.0005, 14.0005
+  advance(core, 4)
+  assert(not c.employment and c.garage.car.model == 'pigeon', 'your car is back')
+  assert(c.money > money and c.lastContract.completed == 1)
+  assert(s.mode == 'bus', 'still on the bus board')
+end)
+
+test('a bus shift ended with the doors open leaves nothing behind for the next shift', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  helperAsks = {}
+  core.setMode('bus')
+  advance(core, 2)
+  for _, a in ipairs(helperAsks) do if a.path:find('/v1/buslines', 1, true) then a.cb(busData()) end end
+  pose.lat, pose.lon, pose.speed = 50.0005, 14.0005, 0
+  local id = core.phoneState().bus.lines[1].id
+  core.phoneAction('busStart', id)
+  advance(core, 2)
+  local st = s.job.bus.stops[1]
+  pose.lat, pose.lon = st.g[1], st.g[2]
+  advance(core, 4)
+  core.phoneAction('busDoors')
+  assert(s.busDwell, 'the doors are open')
+  core.phoneAction('busEnd')
+  assert(not c.employment and not s.job and not s.busDwell, 'the open doors go with the shift')
+  -- a new shift at the depot: its first stop is not served by the old doors
+  c.garage.pendingUsed = nil   -- your car finished loading its parts
+  pose.lat, pose.lon = 50.0005, 14.0005
+  core.phoneAction('busStart', id)
+  advance(core, 40)
+  assert(s.job and s.job.bus.at == 1 and s.phase == 'toPickup', 'the new line still waits at its first stop')
 end)
 
 test('local money: country borders, exchange rates and free exchange at the border', function()

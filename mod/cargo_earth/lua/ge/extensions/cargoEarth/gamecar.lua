@@ -185,6 +185,48 @@ function M.freightLoanerConfig(model, key)
   return config
 end
 
+-- The city bus the city lends for a bus line: a stock Wentward citybus configuration, a city one when the game has one
+-- (not a coach or highway one). Returns the config and its key, or nil.
+M.BUS_MODEL = 'citybus'
+function M.busLoanerConfig()
+  local ok, info = pcall(function() return core_vehicles.getModel(M.BUS_MODEL) end)
+  local configs = ok and type(info) == 'table' and type(info.configs) == 'table' and info.configs or {}
+  local keys = {}
+  for key in pairs(configs) do keys[#keys + 1] = key end
+  table.sort(keys)
+  local pick
+  for _, key in ipairs(keys) do
+    local k = key:lower()
+    if k:find('city', 1, true) and not k:find('coach', 1, true) and not k:find('highway', 1, true) then pick = key break end
+  end
+  for _, key in ipairs(pick and {} or keys) do
+    local k = key:lower()
+    if not k:find('coach', 1, true) and not k:find('highway', 1, true) then pick = key break end
+  end
+  pick = pick or keys[1]
+  if not pick then return nil end
+  local entry = configs[pick]
+  local file = type(entry) == 'table' and type(entry.pcFilename) == 'string' and entry.pcFilename
+    or ('vehicles/' .. M.BUS_MODEL .. '/' .. pick .. '.pc')
+  local config = jsonReadFile(file)
+  if type(config) ~= 'table' or type(config.parts) ~= 'table' then return nil end
+  return config, pick
+end
+
+-- The city bus's real doors (content/vehicles/citybus: controller 'bus' keeps the lever state, the pneumatic 'doors'
+-- controller moves the frontDoors and rearDoors beam groups). open: true opens, false closes.
+function M.busDoors(open)
+  local v = playerVeh()
+  if not v or not v.queueLuaCommand then return false end
+  local want = open and 'true' or 'false'
+  v:queueLuaCommand('local b = controller and controller.getControllerSafe and controller.getControllerSafe("bus") '
+    .. 'if b and b.setState then pcall(b.setState, { bus_doorsRequestedOpen = ' .. want .. ' }) else '
+    .. 'local d = controller and controller.getControllerSafe and controller.getControllerSafe("doors") '
+    .. 'if d and d.setBeamGroupsValveState then pcall(d.setBeamGroupsValveState, { "frontDoors", "rearDoors" }, '
+    .. (open and '-1' or '1') .. ') end end')
+  return true
+end
+
 function M.vehicleData(id) return vehData(id) end
 
 function M.partsTarget()

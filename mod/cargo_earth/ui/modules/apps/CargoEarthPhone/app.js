@@ -142,6 +142,7 @@ angular.module('beamng.apps')
     '.cep-row{display:flex;gap:8px}.cep-row .cep-btn{flex:1}' +
     '.cep-card{background:var(--card);border-radius:16px;padding:12px 14px;box-shadow:0 1px 0 var(--line),0 4px 14px rgba(29,27,25,.06)}' +
     '.cep-stop{display:grid;grid-template-columns:14px 1fr;gap:2px 10px;align-items:start}' +
+    '.cep-busref{display:inline-block;min-width:22px;padding:0 5px;border-radius:4px;background:var(--ink);color:#fff;text-align:center;font-weight:700}' +
     '.cep-dot{width:12px;height:12px;border-radius:50%;margin-top:3px;background:var(--tomato)}.cep-dot.to{background:var(--ink);border-radius:3px}' +
     '.cep-line{width:2px;height:16px;margin:2px 0 2px 5px;background:var(--line)}' +
     '.cep-name{font-size:14px;font-weight:700;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
@@ -907,7 +908,9 @@ angular.module('beamng.apps')
         '<div class="cep-row"><button class="cep-btn" ng-class="{go: st.mode === \'courier\', ghost: st.mode !== \'courier\'}" ' +
           'ng-disabled="!st.canSwitch" ng-click="sdo(\'mode\', \'courier\')">Food delivery</button>' +
           '<button class="cep-btn" ng-class="{go: st.mode === \'trucking\', ghost: st.mode !== \'trucking\'}" ' +
-          'ng-disabled="!st.canSwitch" ng-click="sdo(\'mode\', \'trucking\')">Freight</button></div>' +
+          'ng-disabled="!st.canSwitch" ng-click="sdo(\'mode\', \'trucking\')">Freight</button>' +
+          '<button class="cep-btn" ng-class="{go: st.mode === \'bus\', ghost: st.mode !== \'bus\'}" ' +
+          'ng-disabled="!st.canSwitch" ng-click="sdo(\'mode\', \'bus\')">Bus</button></div>' +
         '<div class="cep-sub" ng-if="!st.canSwitch">Finish the order to switch.</div>' +
         '<div class="cep-label">Orders</div>' +
         '<div class="cep-li" ng-repeat="it in st.items" style="cursor:default"><div class="cep-name">{{ it.label }}</div>' +
@@ -1029,8 +1032,33 @@ angular.module('beamng.apps')
       '<div class="cep-body cep-fit" ng-if="tab === \'orders\' && s.screen === \'offline\'">' +
       '<div class="cep-subtabs cep-modes" ng-if="s.canSwitch" role="group" aria-label="Job type">' +
         '<button ng-class="{on: s.mode === \'courier\'}" ng-click="act(\'mode\', \'courier\')">Food delivery</button>' +
-        '<button ng-class="{on: s.mode === \'trucking\'}" ng-click="act(\'mode\', \'trucking\')">Freight</button></div>' +
-      '<div class="cep-center" ng-style="s.trucking && !s.trucking.carrier ? {flex: \'0 0 auto\', padding: \'14px 0 4px\'} : {}">' +
+        '<button ng-class="{on: s.mode === \'trucking\'}" ng-click="act(\'mode\', \'trucking\')">Freight</button>' +
+        '<button ng-class="{on: s.mode === \'bus\'}" ng-click="act(\'mode\', \'bus\')">Bus</button></div>' +
+      // city bus lines: the lines near you (the bus is lent at a depot near the first stop), or the shift you are on
+      '<div class="cep-scroll" ng-if="s.bus">' +
+        '<div class="cep-card" ng-if="s.bus.shift"><div class="cep-label">{{ s.bus.shift.name }}</div>' +
+          '<div class="cep-big" style="font-size:15px">Bring the bus back to {{ s.bus.shift.depot }}</div>' +
+          '<div class="cep-sub">Park there to finish the shift and get paid.</div>' +
+          '<div class="cep-sub" ng-if="s.bus.shift.error" style="color:var(--tomato)">{{ s.bus.shift.error }}</div>' +
+          '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'busGps\')">Route</button>' +
+            '<button class="cep-sm ghost" ng-click="act(\'busEnd\')">End shift</button></div></div>' +
+        '<div class="cep-label" ng-if="!s.bus.shift">Bus lines nearby</div>' +
+        '<div class="cep-sub" ng-if="!s.bus.shift && !s.bus.lines.length && s.bus.helper === \'off\'">Start the Cargo Earth helper to load the bus lines around you.</div>' +
+        '<div class="cep-sub" ng-if="!s.bus.shift && !s.bus.lines.length && s.bus.state === \'old\'">Update the Cargo Earth helper to get bus lines.</div>' +
+        '<div class="cep-sub" ng-if="!s.bus.shift && !s.bus.lines.length && s.bus.state === \'failed\'">OpenStreetMap did not answer. Trying again soon.</div>' +
+        '<div class="cep-sub" ng-if="!s.bus.shift && !s.bus.lines.length && s.bus.helper !== \'off\' && (s.bus.state === \'loading\' || !s.bus.state)">Loading bus lines from OpenStreetMap…</div>' +
+        '<div class="cep-sub" ng-if="!s.bus.shift && !s.bus.lines.length && s.bus.state === \'ready\'">No mapped bus line starts near here. Try a town centre.</div>' +
+        '<div class="cep-sub" ng-if="s.bus.message" style="color:var(--tomato)">{{ s.bus.message }}</div>' +
+        '<div class="cep-card" ng-repeat="l in s.bus.lines track by l.id">' +
+          '<div class="cep-keyval"><strong style="white-space:normal"><span class="cep-busref" ng-style="l.colour ? {background: l.colour} : {}">{{ l.ref || "Bus" }}</span> to {{ l.to }}</strong>' +
+            '<strong style="white-space:nowrap">{{ fmt.money(l.pay) }}</strong></div>' +
+          '<div class="cep-sub">From {{ l.from }} · {{ l.stops }} stops · {{ fmt.km(l.km) }} · about {{ l.minutes }} min</div>' +
+          '<div class="cep-sub">Bus at {{ l.depot }}<span ng-if="l.depotM !== undefined"> · {{ fmt.dist(l.depotM).v }}{{ fmt.dist(l.depotM).u }} away</span></div>' +
+          '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'busGps\', l.id)">Route</button>' +
+            '<button class="cep-sm go" ng-disabled="!l.atDepot" ng-click="act(\'busStart\', l.id)">Start</button></div></div>' +
+        '<div class="cep-sub" ng-if="!s.bus.shift && s.bus.lines.length">Drive your own car to the depot, then start. Every passenger adds to the pay.</div>' +
+      '</div>' +
+      '<div class="cep-center" ng-if="!s.bus" ng-style="s.trucking && !s.trucking.carrier ? {flex: \'0 0 auto\', padding: \'14px 0 4px\'} : {}">' +
         '<div class="cep-label" ng-if="!s.canSwitch">{{ s.mode === "courier" ? "Food delivery" : "Freight" }}</div>' +
         '<div class="cep-big">{{ s.trucking && !s.trucking.carrier ? "No van of your own" : "You are offline" }}</div>' +
         '<div class="cep-sub" ng-if="!s.trucking || !s.trucking.hint">Go online to get orders from nearby {{ s.mode === "courier" ? "restaurants and shops" : "depots" }}.</div>' +
@@ -1049,9 +1077,9 @@ angular.module('beamng.apps')
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'contractGps\', c.id)">Route</button>' +
             '<button class="cep-sm go" ng-disabled="!c.atYard" ng-click="act(\'contractStart\', c.id)">Start</button></div></div>' +
         '<button class="cep-sm ghost" ng-click="setTab(\'companies\')">All contracts</button></div>' +
-      '<div class="cep-card cep-stats" ng-if="!s.trucking || s.trucking.carrier"><div>{{ s.todayCount }}<span>orders today</span></div>' +
+      '<div class="cep-card cep-stats" ng-if="!s.bus && (!s.trucking || s.trucking.carrier)"><div>{{ s.todayCount }}<span>orders today</span></div>' +
         '<div>{{ fmt.short(s.todayEarned) }}<span>earned today</span></div></div>' +
-      '<button class="cep-btn go" ng-if="!s.trucking || s.trucking.carrier" ng-click="act(\'online\')">Go online</button>' +
+      '<button class="cep-btn go" ng-if="!s.bus && (!s.trucking || s.trucking.carrier)" ng-click="act(\'online\')">Go online</button>' +
       '<button class="cep-sm ghost" ng-if="s.freePlay" style="margin-top:6px" ng-click="act(\'careerInfo\')">Free play · Start a career</button></div>' +
 
       // waiting
@@ -1189,6 +1217,14 @@ angular.module('beamng.apps')
               '<b>{{ st.done ? "✓" : st.slots + "×" }}</b>{{ st.name }}<small ng-if="!st.done"> · {{ fmt.kg(st.kg) }}</small></li></ul></div>' +
           '<div class="cep-sub" ng-if="s.active.freight && !s.active.route">{{ fmt.freight(s.active.freight) }}</div>' +
           '<div class="cep-sub" ng-if="s.active.freightStatus">{{ s.active.freightStatus }}</div>' +
+          '<div class="cep-card" ng-if="s.bus && s.bus.line"><div class="cep-label"><span class="cep-busref" ng-style="s.bus.line.colour ? {background: s.bus.line.colour} : {}">{{ s.bus.line.ref || "Bus" }}</span> ' +
+            'stop {{ s.bus.line.at }} of {{ s.bus.line.count }} · {{ s.bus.line.onBoard }} of {{ s.bus.line.capacity }} on board</div>' +
+            '<ul class="cep-order-items"><li ng-repeat="st in s.bus.line.next track by $index" ng-style="{fontWeight: st.current ? 700 : 400}">' +
+              '<b>{{ st.current ? "›" : "" }}</b>{{ st.n }}</li></ul>' +
+            '<div class="cep-sub" ng-if="s.bus.line.doors">Doors open: {{ s.bus.line.doors.off }} off, {{ s.bus.line.doors.on }} on · {{ s.bus.line.doors.left }} s</div>' +
+            '<button class="cep-btn go" ng-if="!s.bus.line.doors" ng-disabled="!s.bus.canDoors" ng-click="act(\'busDoors\')">Open doors</button>' +
+            '<div class="cep-sub" ng-if="!s.bus.line.doors && !s.bus.canDoors">Stop at the bus stop to open the doors.</div>' +
+            '<button class="cep-sm ghost" style="margin-top:6px" ng-click="act(\'busEnd\')">End shift</button></div>' +
           '<div class="cep-keyval cep-sub" ng-if="s.active.tow && s.active.phase === \'toDelivery\'"><span>{{ s.active.tow.trailer }}</span>' +
             '<strong ng-style="{color: s.active.tow.onBoard < s.active.tow.cars ? \'var(--tomato)\' : \'var(--ok)\'}">' +
             '{{ s.active.tow.onBoard }} of {{ s.active.tow.cars }} car{{ s.active.tow.cars > 1 ? "s" : "" }} on board</strong></div>' +
