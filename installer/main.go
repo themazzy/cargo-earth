@@ -10,6 +10,8 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -651,10 +653,68 @@ func installHelper(py, tag string) error {
 		return fmt.Errorf("could not register the helper with BeamNG.Earth: %v", err)
 	}
 	say("Registered with BeamNG.Earth in %s (other add-ons kept, old file saved as local.json.bak).", addonsFile())
+	if err := updateEarthCopy(target, tag); err != nil {
+		warn("BeamNG.Earth's own copy of the helper could not be updated (%v). Open BeamNG.Earth's Add-ons page and press Update on Cargo Earth helper.", err)
+	}
 	if !isDir(earthDataDir()) {
 		warn("BeamNG.Earth's app folder was not found. Install BeamNG.Earth first, or run the helper with the manual launcher shown above.")
 	}
 	return nil
+}
+
+// earthCopyDir is where BeamNG.Earth keeps the helper it installed from the local list and runs (addonrun.py:
+// <data>/addons/<id>/ with installed.json naming the file). Earth only replaces that copy when Update is pressed on
+// its Add-ons page, so a new installer run would leave the old helper running.
+func earthCopyDir() string { return filepath.Join(earthDataDir(), "addons", addonID) }
+
+// updateEarthCopy puts the new helper into BeamNG.Earth's installed copy when Earth has one: the file beside the old
+// one, installed.json pointing at it (its other settings, such as autostart, kept), older helper files removed.
+func updateEarthCopy(target, tag string) error {
+	dir := earthCopyDir()
+	statePath := filepath.Join(dir, "installed.json")
+	raw, err := os.ReadFile(statePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // Earth has not installed it yet: its Install button takes the new file
+	} else if err != nil {
+		return err
+	}
+	state := map[string]any{}
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return fmt.Errorf("installed.json: %v", err)
+	}
+	name := filepath.Base(target)
+	if state["file"] == name && state["tag"] == tag {
+		return nil
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	return doIt("update BeamNG.Earth's copy in "+dir, func() error {
+		if err := copyFile(target, filepath.Join(dir, name)); err != nil {
+			return err
+		}
+		state["file"], state["tag"], state["sha256"], state["local"] = name, tag, hex.EncodeToString(sum[:]), true
+		out, err := json.Marshal(state)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(statePath+".tmp", out, 0o644); err != nil {
+			return err
+		}
+		if err := os.Rename(statePath+".tmp", statePath); err != nil {
+			return err
+		}
+		old, _ := filepath.Glob(filepath.Join(dir, "cargo_earth_helper*.py"))
+		for _, f := range old {
+			if filepath.Base(f) != name {
+				os.Remove(f)
+			}
+		}
+		say("BeamNG.Earth's copy now runs %s (restart BeamNG.Earth if the old helper is still running).", name)
+		return nil
+	})
 }
 
 func removeHelper() error {

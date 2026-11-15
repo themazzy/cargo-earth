@@ -1303,6 +1303,7 @@ angular.module('beamng.apps')
             '<div class="cep-sub" ng-if="s.bus.line.doors">Doors open: {{ s.bus.line.doors.off }} off, {{ s.bus.line.doors.on }} on · {{ s.bus.line.doors.left }} s</div>' +
             '<div class="cep-sub" ng-if="!s.bus.line.doors && s.bus.stop">{{ s.bus.stop.inZone ? s.bus.stop.title : ("Drive to the stop: " + s.bus.stop.distM + " m away") }}</div>' +
             '<div class="cep-sub" ng-if="s.bus.line.skipped">{{ s.bus.line.skipped }} skipped (not paid)</div>' +
+            '<div class="cep-sub" ng-if="s.bus.line.comfort < 100" ng-style="s.bus.line.comfort < 70 ? {color: \'var(--tomato)\'} : {}">Passenger comfort {{ s.bus.line.comfort }} % (brake, accelerate and corner gently)</div>' +
             '<div class="cep-sub" ng-if="s.bus.line.late">{{ s.bus.line.late }} min behind the timetable so far (lowers the pay)</div>' +
             '<div class="cep-sub">Skip a stop you cannot reach. Ending early costs {{ fmt.money(s.bus.collectFee) }}.</div></div>' +
           '<div class="cep-keyval cep-sub" ng-if="s.active.tow && s.active.phase === \'toDelivery\'"><span>{{ s.active.tow.trailer }}</span>' +

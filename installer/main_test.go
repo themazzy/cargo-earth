@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,5 +78,42 @@ func TestModUpdateAndRemovalPreserveSave(t *testing.T) {
 	}
 	if !fileExists(unrelated) {
 		t.Fatal("unrelated mod removed")
+	}
+}
+
+func TestEarthCopyFollowsNewHelper(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	local = tmp
+	dir := earthCopyDir()
+	// Earth has not installed the helper: nothing to do
+	if err := updateEarthCopy(filepath.Join(tmp, "x.py"), "v1"); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(dir, "cargo_earth_helper_0.10.0.py"), "old")
+	writeTestFile(t, filepath.Join(dir, "installed.json"),
+		`{"file": "cargo_earth_helper_0.10.0.py", "tag": "v0.10.0", "sha256": "x", "local": true, "autostart": true}`)
+	target := filepath.Join(tmp, "CargoEarth", "helper", "cargo_earth_helper_0.10.1.py")
+	writeTestFile(t, target, "new")
+	if err := updateEarthCopy(target, "v0.10.1"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "installed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := map[string]any{}
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state["file"] != "cargo_earth_helper_0.10.1.py" || state["tag"] != "v0.10.1" || state["autostart"] != true ||
+		state["sha256"] != "11507a0e2f5e69d5dfa40a62a1bd7b6ee57e6bcd85c67c9b8431b36fff21c437" {
+		t.Fatalf("installed.json: %v", state)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "cargo_earth_helper_0.10.1.py")); string(got) != "new" {
+		t.Fatalf("copy: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cargo_earth_helper_0.10.0.py")); !os.IsNotExist(err) {
+		t.Fatal("the old helper should be removed")
 	}
 }

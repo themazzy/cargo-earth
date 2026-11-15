@@ -20,6 +20,12 @@ M.LEG_SLACK = 1.15       -- the time on the road times this
 M.LEG_MIN = 1.5          -- no stop is due sooner than this
 M.BOARD_MIN = 1          -- the first stop: getting the bus out of the depot
 M.CAPACITY = 70          -- people a city bus takes
+-- Comfort (as a taxi's): the people on board feel a rough ride. Each harsh moment (hard braking, accelerating or
+-- cornering) costs HARSH_LOSS points, a bump or crash from BUMP_G[1] g costs BUMP_LOSS[1]..[2] (the most from
+-- BUMP_G[2] g). An empty bus feels nothing. Comfort sets the line's pay (0.6 + 0.004 x comfort, as a taxi ride) and
+-- its stars.
+M.HARSH_LOSS = 4
+M.BUMP_G, M.BUMP_LOSS = { 3.5, 5.5 }, { 10, 40 }
 M.DWELL_S, M.PER_PERSON_S, M.MAX_DWELL_S = 3, 0.6, 15
 M.MAX_STOPS = 40         -- a longer line is cut here (its last stop is the end of this run)
 M.STOP_ARRIVE_M = 30     -- a stop counts as reached this close
@@ -215,6 +221,27 @@ function M.board(idx, lat, lon)
   return out
 end
 
+-- Comfort of the people on board, 0..100.
+function M.comfort(job) return math.max(0, math.min(100, tonumber(job.bus.comfort) or 100)) end
+function M.riding(job) return job ~= nil and job.bus ~= nil and (job.bus.onBoard or 0) > 0 end
+
+-- A harsh moment with people on board: comfort drops. Returns the loss (0: nobody felt it).
+function M.harsh(job)
+  if not M.riding(job) then return 0 end
+  local before = M.comfort(job)
+  job.bus.comfort = math.max(0, before - M.HARSH_LOSS)
+  return before - job.bus.comfort
+end
+
+-- A bump or crash of `peak` g with people on board. Returns the loss.
+function M.bump(job, peak)
+  if not M.riding(job) or type(peak) ~= 'number' or peak ~= peak or peak < M.BUMP_G[1] then return 0 end
+  local share = math.min(1, (peak - M.BUMP_G[1]) / (M.BUMP_G[2] - M.BUMP_G[1]))
+  local before = M.comfort(job)
+  job.bus.comfort = math.max(0, before - math.floor(M.BUMP_LOSS[1] + share * (M.BUMP_LOSS[2] - M.BUMP_LOSS[1]) + 0.5))
+  return before - job.bus.comfort
+end
+
 function M.last(job) return job.bus.at >= #job.bus.stops end
 
 -- People at the current stop: some get off (everyone at the last stop), some get on (fewer near the end, none at the
@@ -276,7 +303,7 @@ function M.state(job, dwell, clock, nowS)
   for i = b.at, math.min(#b.stops, b.at + 3) do next[#next + 1] = { n = b.stops[i].n, current = i == b.at or nil } end
   return { ref = b.ref, name = b.name, colour = b.colour, at = b.at, count = #b.stops, onBoard = b.onBoard,
     boarded = b.boarded, skipped = b.skipped or 0, next = next, dueS = math.floor(dueS + 0.5), dueMin = dueMin,
-    late = math.floor(M.lateMinutes(job) + 0.5), last = M.last(job), capacity = M.CAPACITY,
+    late = math.floor(M.lateMinutes(job) + 0.5), comfort = M.comfort(job), last = M.last(job), capacity = M.CAPACITY,
     doors = dwell and { off = dwell.off, on = dwell.on, left = math.max(0, math.ceil(dwell.untilT - (clock or 0))) } or nil }
 end
 
