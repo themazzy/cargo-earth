@@ -38,6 +38,10 @@ OpenStreetMap maps the lines; data (c) OpenStreetMap contributors, ODbL.
    plus 2 per passenger; each minute behind the timetable (added up over the stops) takes 1 % (never below half).
    As with company work, 80 % is your wage. That is about 500-620 CZK an hour at the timetable's pace with the
    fares, near van freight; the board shows the wage and the fares a line usually brings.
+   **Comfort** (as in a taxi): with people on board, every harsh moment (hard braking, accelerating or cornering,
+   0.55 g for 0.4 s) costs 4 points and a bump or crash from 3.5 g costs 10-40. The phone shows it once it drops.
+   The line's pay is multiplied by 0.6 + 0.004 x comfort (60 % at worst) and comfort counts in the stars and the
+   company reputation like a load's condition. An empty bus feels nothing.
 6. The line runs one way. At the last stop the bus is handed over; 3 s later BeamNG.Earth takes you back to the depot,
    where the shift is paid and your own car comes back. When Earth cannot take you there (2 minutes), the shift is
    settled where you are.

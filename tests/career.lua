@@ -2688,6 +2688,20 @@ test('bus timetable: each stop has its own time from its distance, late minutes 
   assert(bus.arrived(j, due + 99999) == 0 and math.abs(bus.lateMinutes(j) - 2) < 1e-6)
 end)
 
+test('bus comfort: passengers feel harsh moments and bumps, an empty bus does not', function()
+  local idx = bus.index()
+  bus.set(idx, busData())
+  local j = bus.board(idx, 50, 14)[1].jobs[1]
+  assert(bus.harsh(j) == 0 and bus.bump(j, 9) == 0 and bus.comfort(j) == 100, 'nobody on board')
+  bus.served(j, 0, 5, 60)
+  assert(bus.harsh(j) == bus.HARSH_LOSS and bus.comfort(j) == 100 - bus.HARSH_LOSS)
+  assert(bus.bump(j, 3) == 0, 'below a bump')
+  assert(bus.bump(j, 99) == bus.BUMP_LOSS[2])
+  assert(bus.state(j, nil, 0, 60).comfort == bus.comfort(j))
+  for _ = 1, 40 do bus.harsh(j) end
+  assert(bus.comfort(j) == 0)
+end)
+
 test('bus names: escapes that lost their backslash on the way into the game are letters again', function()
   assert(bus.text('Tiu0161ice, Chru00e1st') == 'Tišice, Chrást')
   assert(bus.text('Ku0159u00edu017eek') == 'Křížek')

@@ -962,7 +962,8 @@ end
 
 local function updateForceWatch(p)
   local G, g = M.G, S.career.garage
-  local id = p and not p.camera and G.playerId and carriedOrders() > 0 and G.playerId()
+  local riders = S.job and S.job.bus and (S.job.bus.onBoard or 0) > 0   -- bus passengers feel the ride too
+  local id = p and not p.camera and G.playerId and (carriedOrders() > 0 or riders) and G.playerId()
   if id and g.started and not G.ownsVehicleId(id) then id = nil end
   if forceWatch and id == forceWatch.id and p.anchorLat == forceWatch.lat and p.anchorLon == forceWatch.lon then return end
   stopForceWatch()
@@ -1372,7 +1373,11 @@ local function finishDelivery(force)
     tipWhy = { fast = fast > 0 or nil, intact = intact > 0 or nil, damaged = condition < 100 and condition or nil }
   end
   -- a meal or a taxi ride still arrives after a rough trip: the pay drops, but not to nothing
-  local conditionFactor = (j.kind == 'food' or j.taxi) and (0.6 + 0.004 * condition) or condition / 100
+  if j.bus then
+    condition = require('cargoEarth/bus').comfort(j)   -- the passengers' comfort, as a taxi's
+    j.cargoCondition = condition
+  end
+  local conditionFactor = (j.kind == 'food' or j.taxi or j.bus) and (0.6 + 0.004 * condition) or condition / 100
   pay = math.floor(pay * conditionFactor * (1 - special.penalty(j) / 100) + 0.5)
   tip = math.floor(tip * condition / 100 + 0.5)
   if j.taxi then
@@ -1743,6 +1748,14 @@ function M.onCargoEarthShock(id, token, peak)
   local p = earth.pose()
   if not p or p.camera or p.anchorLat ~= watch.lat or p.anchorLon ~= watch.lon then return end
   stopForceWatch()
+  if S.job and S.job.bus then
+    local bus = require('cargoEarth/bus')
+    if bus.bump(S.job, peak) > 0 then
+      say(string.format('Your passengers were thrown about (%.1f g). Comfort %d %%.', peak, bus.comfort(S.job)), 5)
+      saveCareer()
+    end
+    return
+  end
   local ruined, damaged = {}, 0
   for _, order in ipairs(S.orders) do
     local job = order.job
@@ -1762,6 +1775,11 @@ end
 function M.onCargoEarthHarsh(id, token, g)
   if S.pendingCareer or type(g) ~= 'number' or g ~= g then return end
   if M.G.playerId() ~= id then return end
+  if S.job and S.job.bus then
+    local bus = require('cargoEarth/bus')
+    if bus.harsh(S.job) > 0 then say(string.format('Your passengers felt that. Comfort %d %%.', bus.comfort(S.job)), 4) end
+    return
+  end
   local cracked, ruined = 0, {}
   for _, order in ipairs(S.orders) do
     local job = order.job
