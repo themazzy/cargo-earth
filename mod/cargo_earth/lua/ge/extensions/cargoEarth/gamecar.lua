@@ -274,13 +274,14 @@ function M.busPassengers(n, seed)
   return plan.shown
 end
 
--- A taxi's passengers in the player's own car: n people (0 empties the seats). Returns how many sit, or nil when the
--- car has no seat system (most mod cars) or is not the career car.
+-- A taxi's passengers in the player's own car: n people (0 empties the seats). They board only while the player drives
+-- the career car; emptying always works on the career car, even after the player switched to another one. Returns how
+-- many sit, or nil when the car has no seat system (most mod cars) or is not the career car.
 function M.carPassengers(n, seed)
   local so, v = seatSystem(), playerVeh()
-  if not (so and so.getSeats and so.setDummyOccupant and v) then return nil end
-  local id = v:getID()
-  if id ~= ownedId then return nil end
+  if not (so and so.getSeats and so.setDummyOccupant and ownedId) then return nil end
+  if n > 0 and not (v and v:getID() == ownedId) then return nil end
+  local id = ownedId
   if so.usesSeatSystem and not so.usesSeatSystem(id) then return nil end
   local okSeats, seats = pcall(so.getSeats, id)
   if not okSeats or type(seats) ~= 'table' then return nil end

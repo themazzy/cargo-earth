@@ -1664,6 +1664,9 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   pose.lat, pose.lon, pose.speed = job.from.g[1], job.from.g[2], 0
   advance(core)
   assert(s.phase == 'toDelivery' and riders == job.taxi.people, 'the passengers sit in the car')
+  s.taxiSeated, riders = nil, 0   -- as a loaded save: the ride is on, nobody seated yet
+  advance(core)
+  assert(riders == job.taxi.people, 'a resumed ride seats its passengers again')
   local money = c.money
   pose.lat, pose.lon = job.to.g[1], job.to.g[2]
   advance(core)

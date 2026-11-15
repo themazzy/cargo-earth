@@ -1437,10 +1437,14 @@ function M.taxiSeats(n, seed)
   if M.G.carPassengers then pcall(M.G.carPassengers, n, seed or 'taxi') end
 end
 
--- Once a second: the passengers sit while they ride (again after a reset), and leave the seats when the ride is over.
+-- Once a second: the passengers sit while they ride (again after a reset or a loaded save), and leave the seats when
+-- the ride is over.
 function M.taxiTick()
   local t, j = S.taxiSeated, S.job
-  if not t then return end
+  if not t then
+    if j and j.taxi and S.phase == 'toDelivery' then M.taxiSeats(j.taxi.people, j.id) end
+    return
+  end
   if not (j and j.taxi and S.phase == 'toDelivery' and j.id == t.seed) then M.taxiSeats(0) return end
   if S.clock >= t.at then M.taxiSeats(t.n, t.seed) end
 end
@@ -4605,7 +4609,7 @@ function M.onUpdate(dtReal, dtSim)
       local pose = earth.pose()
       rememberLocation(pose)
       if S.job and not S.parts and dt > 0 then tick(dt) end
-      if S.taxiSeated then M.taxiTick() end
+      if S.taxiSeated or (S.job and S.job.taxi) then M.taxiTick() end
       if S.phone.online and dt > 0 then phoneTick()
       elseif not S.job and not S.offeredAt and not S.career.employment then M.generate() end
     end
