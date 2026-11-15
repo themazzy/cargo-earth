@@ -348,6 +348,7 @@ test('reload in a loaded van restores the contract, cargo and held wages', funct
   resumed.phoneAction('resume')
   assert(state.career.employment and state.phase == 'toDelivery')
   assert(state.career.employment.personalGarage.car.model == 'pigeon')
+  assert(resumed.updateOnLoad, 'a loaded save asks for a newer release')
   advance(resumed)
   assert(boxes[1].currentVolume > 0 and state.career.money == 1000)
   finishOne(resumed)
@@ -3176,6 +3177,15 @@ test('the phone says when a newer release is out (the helper looks it up)', func
     local info
     for _, a in ipairs(asked) do if a[1] == '/v1/info' then info = a end end
     assert(info, 'asked the helper for its info')
+    -- a save was loaded: the helper looks on GitHub, its answer is read a few seconds later
+    core.updateOnLoad = true
+    local n = #asked
+    advance(core, 1)
+    assert(asked[n + 1] and asked[n + 1][1] == '/v1/update/check' and not core.updateOnLoad)
+    advance(core, 2 * core.UPDATE_LOAD_WAIT_S + 2)
+    local reread = false
+    for i = n + 2, #asked do if asked[i][1] == '/v1/info' then reread = true end end
+    assert(reread, 'info read again after the check')
     info[2]({ version = core.VERSION, update = { latest = '99.0.0' } })
     local u = core.phoneState().update
     assert(u and u.available and u.modOld and u.helperOld and u.latest == '99.0.0' and not u.hidden)
@@ -3194,6 +3204,48 @@ test('the phone says when a newer release is out (the helper looks it up)', func
     assert(not core.phoneState().update.available)
   end)
   helper.ask, helper.enabled = ask, enabled
+  assert(ok, why)
+end)
+
+test('the phone starts a helper that is not running through BeamNG.Earth\'s add-on list', function()
+  local helper = require('cargoEarth/helper')
+  local enabled, status = helper.enabled, helper.status
+  local h = { state = 'off' }
+  helper.status = function() return h end
+  local sent, card = {}, { id = 'cargo-earth-helper', author = 'themazzy', installed = false, running = false, canInstall = true }
+  package.loaded['beamngEarth/addons'] = {
+    uiState = function() return { connected = true, addons = { card } } end,
+    install = function(id, agreed) sent[#sent + 1] = 'install:' .. id .. ':' .. tostring(agreed) return true end,
+    manage = function(id, op) sent[#sent + 1] = op return true end,
+  }
+  package.loaded['cargoEarth/earthaddon'] = nil
+  local ok, why = pcall(function()
+    local core, s = fresh()
+    helper.enabled = true
+    assert(core.phoneState().helperStart == nil, 'not before a failed ask')
+    h.msg = 'Cargo Earth helper not running (connection refused)'
+    local hs = core.phoneState().helperStart
+    assert(hs and not hs.installed and hs.author == 'themazzy' and not hs.busy, 'offered')
+    core.phoneAction('helperStart')
+    assert(sent[1] == 'install:cargo-earth-helper:true' and #sent == 1, table.concat(sent, ','))
+    assert(core.phoneState().helperStart.busy, 'starting')
+    card.installed = true
+    core.phoneState()
+    assert(sent[2] == 'start' and sent[3] == 'autostart_on', table.concat(sent, ','))
+    -- already installed: Start only
+    s.clock = s.clock + 60
+    sent = {}
+    core.phoneAction('helperStart')
+    assert(sent[1] == 'start' and sent[2] == 'autostart_on' and #sent == 2)
+    core.phoneAction('helperHide')
+    assert(core.phoneState().helperStart == nil, 'hidden')
+    -- no BeamNG.Earth add-on list: nothing offered
+    package.loaded['beamngEarth/addons'] = nil
+    s.helperStartHidden = nil
+    assert(core.phoneState().helperStart == nil)
+    h.state, h.msg = 'ready', nil
+  end)
+  package.loaded['beamngEarth/addons'], helper.enabled, helper.status = nil, enabled, status
   assert(ok, why)
 end)
 

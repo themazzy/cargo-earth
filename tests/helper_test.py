@@ -731,8 +731,29 @@ class UpdateCheckTests(unittest.TestCase):
             again = helper.Updates(d, fetch=lambda: self.fail("asked again"), clock=lambda: now[0] + 60)
             self.assertEqual(again.info()["latest"], "99.1.0")
             self.assertFalse(again.due())
+            # a release published since: a helper restarted 10 minutes later asks GitHub again
+            later = helper.Updates(d, fetch=lambda: {}, clock=lambda: now[0] + helper.UPDATE_RESTART_S)
+            self.assertTrue(later.due())
+            self.assertFalse(u.due())
             now[0] += helper.UPDATE_EVERY_S
             self.assertTrue(u.due())
+
+    def test_save_load_recheck_is_rate_limited(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = [1000.0]
+            calls = []
+            u = helper.Updates(d, fetch=lambda: calls.append(1) or {"tag_name": "v1.0.0"}, clock=lambda: now[0])
+            with patch.object(helper, "log"):
+                u.check()
+                self.assertEqual(len(calls), 1)
+                self.assertFalse(u.recheck()["checking"])  # asked a moment ago
+                now[0] += helper.UPDATE_ON_LOAD_S
+                with patch.object(helper.threading, "Thread") as T:
+                    T.return_value.start.side_effect = lambda: T.call_args.kwargs["target"]()
+                    self.assertTrue(u.recheck()["checking"])
+            self.assertEqual(len(calls), 2)
+            self.assertFalse(u.busy)
+            self.assertFalse(helper.Updates(d, enabled=False).recheck()["checking"])
 
     def test_foreign_url_is_never_opened_and_failure_retries_sooner(self):
         with tempfile.TemporaryDirectory() as d:

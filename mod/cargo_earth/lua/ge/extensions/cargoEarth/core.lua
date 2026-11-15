@@ -455,6 +455,7 @@ end
 
 local function loadCareer(c)
   S.career = c
+  M.updateOnLoad = true   -- ask the helper to look for a newer release (Jan: every time a save is loaded)
   c.history = c.history or {}
   c.activeSeconds = tonumber(c.activeSeconds) or 0
   if c.employment then
@@ -2496,7 +2497,7 @@ function M.phoneState()
       companyVehicle = c.employment and employment.vehicleLabel(c.employment),
       currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
       fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
-      canSwitch = S.job == nil and not c.employment }
+      canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo() }
   if S.pendingCareer then
     out.screen, out.money = 'resume', S.pendingCareer.money or 0
     local savedGarage = S.pendingCareer.garage
@@ -2633,6 +2634,10 @@ end
 
 -- Buttons on the phone: resume, online, offline, accept, decline, gps, selectDelivery, cancel, dismiss.
 function M.phoneAction(a, orderId)
+  if a == 'helperStart' or a == 'helperHide' then
+    M.helperStartDo(a)
+    return M.phoneState()
+  end
   if S.pendingCareer then
     if a == 'resume' then requestResume() end
     return M.phoneState()
@@ -3165,6 +3170,29 @@ function M.radioDo(name, a, b, c)
 end
 
 -- What the phone and window say about the helper: nil when it isn't needed here.
+-- The helper is not answering and BeamNG.Earth's add-on list has it: the phone offers a Start button that starts it
+-- there (and turns on "Start with BeamNG.Earth"; cargoEarth/earthaddon). nil when there is nothing to offer.
+M.HELPER_STARTING_S = 30   -- after Start: "Starting..." this long while the helper comes up (helper.RETRY_S 15)
+function M.helperStartInfo()
+  local h = helper.status()
+  if not helper.enabled or S.helperStartHidden or h.state ~= 'off' or not h.msg then return nil end
+  local ea = require('cargoEarth/earthaddon')
+  ea.tick(S.clock)
+  local e = ea.state()
+  if not e or not e.connected then return nil end
+  local starting = S.helperStartAt and S.clock - S.helperStartAt < M.HELPER_STARTING_S
+  return { installed = e.installed, running = e.running, busy = e.busy or starting or false,
+    error = not starting and (S.helperStartError or e.error) or nil, author = e.author or 'themazzy' }
+end
+
+function M.helperStartDo(a)
+  if a == 'helperHide' then S.helperStartHidden = true return end
+  local ok, why = require('cargoEarth/earthaddon').start(S.clock)
+  S.helperStartAt, S.helperStartError = ok and S.clock or nil, not ok and tostring(why or 'failed') or nil
+  -- ask the helper again soon instead of after its retry wait
+  if ok and type(helper.retrySoon) == 'function' then helper.retrySoon(S.clock + 5) end
+end
+
 function M.helperInfo()
   if S.mode ~= 'courier' or S.pendingCareer then return nil end
   local groceries = wantsGroceryData()
@@ -4315,8 +4343,9 @@ local helperAbout, helperAboutAt = nil, -math.huge
 local updateAskAt, updateSaid = nil, nil
 M.HELPER_ABOUT_S = 30
 M.UPDATE_FIRST_S = 20      -- the first update question, this long after the mod starts
-M.UPDATE_ASK_S = 1800      -- then this often (the helper itself asks GitHub every 6 hours)
+M.UPDATE_ASK_S = 900       -- then this often (the helper asks GitHub at start and every 2 hours)
 M.UPDATE_RETRY_S = 300     -- the helper did not answer: ask again after this long
+M.UPDATE_LOAD_WAIT_S = 8   -- after a save loads: the helper asks GitHub, its answer is read this long after
 M.RELEASES = 'https://github.com/themazzy/cargo-earth/releases'
 
 -- '0.10.2' newer than '0.9.3'? Plain release numbers only; anything else is never newer.
@@ -4367,6 +4396,13 @@ end
 -- From the helper tick: ask for the newest release now and then.
 askUpdate = function()
   if not helper.enabled then return end
+  if M.updateOnLoad then
+    -- a save was loaded: the helper asks GitHub again (it skips that when it asked in the last 5 minutes)
+    M.updateOnLoad = nil
+    helper.ask('/v1/update/check', function() end)
+    updateAskAt = S.clock + M.UPDATE_LOAD_WAIT_S
+    return
+  end
   updateAskAt = updateAskAt or S.clock + M.UPDATE_FIRST_S
   if S.clock < updateAskAt then return end
   updateAskAt = S.clock + M.UPDATE_ASK_S
