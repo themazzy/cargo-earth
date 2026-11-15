@@ -1632,10 +1632,24 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
     assert(o.to.id:sub(1, 6) == 'sight:' and o.to.n:find('^Sight'), 'rides end at a sight, not an address')
     assert(not seen[o.to.id], 'three different places') seen[o.to.id] = true
     assert(o.km >= taxi.KM[1] * taxi.ROAD_FACTOR - 1e-9 and o.km <= taxi.KM[2] * taxi.ROAD_FACTOR + 1e-9)
-    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) / 5 + 0.5) * 5 and o.minutes > 0)
+    local rules = taxi.MODES[o.taxi.mode]
+    assert(rules, 'every ride has a mode: ' .. tostring(o.taxi.mode))
+    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) * rules.pay / 5 + 0.5) * 5 and o.minutes > 0)
     assert(cargo.supports(o) and cargo.handling(o) == 'Fragile', 'a rough ride is felt')
   end
   assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, {maxKm = 1}) == 0, 'the longest-job setting holds')
+  -- comfort and rush: the same ride, driven fast and rough or slow and smooth
+  local function tipFn(pay, m, limit) return m < limit * 0.5 and 50 or 0 end
+  local comfortRide, rushRide = { taxi = { people = 1, mode = 'comfort' } }, { taxi = { people = 1, mode = 'rush' } }
+  local cp, ct = taxi.settle(comfortRide, 200, 20, 30, 0.02, 0.5, 100, tipFn)
+  assert(cp == 200 and ct == 30, 'comfort, smooth: full fare and a 15 % smooth tip: ' .. cp .. ' ' .. ct)
+  local cpRough, ctRough = taxi.settle(comfortRide, 200, 10, 30, 0.02, 0.5, 50, tipFn)
+  assert(cpRough == 130 and ctRough == 0, 'comfort, rough and fast: speed earns nothing, bumps cost a lot: ' .. cpRough)
+  local rp, rt = taxi.settle(rushRide, 200, 10, 30, 0.02, 0.5, 50, tipFn)
+  assert(rp == 200 and rt == 100, 'rush, rough and fast: comfort is not counted, a double speed tip: ' .. rp .. ' ' .. rt)
+  local rpLate = taxi.settle(rushRide, 200, 40, 30, 0.02, 0.5, 100, tipFn)
+  assert(rpLate == 100, 'rush, ten minutes late: half the fare (floor): ' .. rpLate)
+  assert(taxi.info({ taxi = { people = 2 } }).mode == 'comfort', 'an older ride counts as comfort')
   assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, function() return false end) == 0, 'a long detour is out')
   assert(#taxi.offers(function() return {} end, sights, 50.02, 14.02, rnd) == 0, 'no addresses, no rides')
   assert(#taxi.offers(near, function() return {} end, 50.02, 14.02, rnd) == 0, 'no sights, no rides')

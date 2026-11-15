@@ -1145,7 +1145,9 @@ local function finishPickup()
     local _, o = orderOf(j)
     if o then o.phase = 'toDelivery' end
     M.taxiSeats(j.taxi.people, j.id)
-    say(string.format('%s in. Drive to %s, and drive smoothly: a rough ride costs pay.',
+    local rush = require('cargoEarth/taxi').info(j).mode == 'rush'
+    say(string.format(rush and '%s in, in a hurry. Get to %s fast: arriving early pays a big tip.'
+      or '%s in. Drive to %s smoothly: a rough ride costs a lot of pay.',
       j.taxi.people == 1 and 'Your passenger is' or (j.taxi.people .. ' passengers are'), j.to.n), 6)
   elseif j.tow and j.tow.stage then
     -- at the workshop: the borrowed trailer stands behind you until Hitch on the phone (M.towHitch)
@@ -1373,6 +1375,10 @@ local function finishDelivery(force)
   local conditionFactor = (j.kind == 'food' or j.taxi) and (0.6 + 0.004 * condition) or condition / 100
   pay = math.floor(pay * conditionFactor * (1 - special.penalty(j) / 100) + 0.5)
   tip = math.floor(tip * condition / 100 + 0.5)
+  if j.taxi then
+    -- the passenger's mode decides: comfort pays for a smooth ride, rush for a fast one (cargoEarth/taxi)
+    pay, tip, tipWhy = require('cargoEarth/taxi').settle(j, j.pay, minutes, j.minutes, perMin, M.LATE_FLOOR, condition, food.tip)
+  end
   local c = S.career
   local toDebt = 0
   if j.companyShift then
@@ -1390,8 +1396,10 @@ local function finishDelivery(force)
   c.today.count = c.today.count + 1
   -- The customer's rating feeds the courier or the freight reputation.
   local track = rating.track(j)
-  local stars = rating.add(c, track, rating.stars(minutes, j.minutes, condition, j.starPenalty))
-  local note = rating.note(track, stars, late > 0, condition < 100, c.delivered)
+  -- a passenger in a rush rates only the speed
+  local felt = j.taxi and require('cargoEarth/taxi').mode(j).speedOnly and 100 or condition
+  local stars = rating.add(c, track, rating.stars(minutes, j.minutes, felt, j.starPenalty))
+  local note = rating.note(track, stars, late > 0, felt < 100, c.delivered)
   local newRecords = records.record(c, j, { pay = pay, tip = tip, minutes = minutes, stars = stars, date = today,
     earnedToday = c.today.earned })
   local droppedKg = cargo.weight(j)
@@ -1399,7 +1407,7 @@ local function finishDelivery(force)
     left = math.floor((cargo.onBoard(S.orders) - droppedKg) * 10 + 0.5) / 10, untilT = S.clock + M.PHONE.doneShowS } or nil
   S.phone.lastDone = { pay = pay, tip = tip, late = math.floor(late + 0.5), to = j.to.n, untilT = S.clock + M.PHONE.doneShowS,
     toDebt = toDebt, net = pay + tip - toDebt, rankUp = rankUp, truckUnlock = truckUnlock,
-    cargoCondition = condition < 100 and condition or nil, held = j.companyShift ~= nil,
+    cargoCondition = felt < 100 and condition or nil, held = j.companyShift ~= nil,
     ownerOperator = c.employment and c.employment.ownerOperator, vehicle = employment.vehicleLabel(c.employment),
     stars = stars, note = note, track = track, records = #newRecords > 0 and newRecords or nil, premium = j.premium,
     tipWhy = tip > 0 and tipWhy or (tipWhy and tipWhy.damaged and tipWhy) or nil, special = special.info(j) }
