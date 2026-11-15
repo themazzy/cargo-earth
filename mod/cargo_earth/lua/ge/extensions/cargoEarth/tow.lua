@@ -1,5 +1,6 @@
--- Tow jobs: a broken-down car at a real address waits for recovery. At the pickup it is put on your trailer (a car
--- trailer behind a vehicle with a tow hitch, or a flatbed behind a tractor that takes two cars); you couple the trailer
+-- Tow jobs: a broken-down car at a real address waits for recovery. At the pickup it stands by the road with your
+-- trailer behind you (a car trailer behind a vehicle with a tow hitch, or a flatbed behind a tractor that takes two
+-- cars); you park the trailer next to it and press Load on the phone, which puts it on the deck; you couple the trailer
 -- and bring the car(s) to a workshop: your firm's headquarters, a real auto repair shop near the car, or (where no shop
 -- is known) the workshop at a fuel station. The cars sit on the deck with their brakes on, not strapped down: drive
 -- gently or they slide off. Damage to them costs pay.

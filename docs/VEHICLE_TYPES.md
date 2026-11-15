@@ -18,7 +18,9 @@ Any vehicle with a tow hitch also gets light tow jobs. Every load travels in Bea
 
 A broken-down car at a real address goes on your trailer to a workshop 3-30 km away: your firm's headquarters, else a
 real auto repair shop near the car (the helper's repair garages, one of the nearest three), else the workshop at a
-fuel station where no shop is known.
+fuel station where no shop is known. At the pickup the car stands by the road (ahead of you, else beside you, on
+a spot clear of buildings and trees) with the trailer behind you; park the trailer next to it, stop and press Load
+on the phone to put it on the deck.
 
 ## Parts runs
 

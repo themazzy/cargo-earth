@@ -153,15 +153,26 @@ function M.towModel(kind)
   end
 end
 
--- Spawn a tow trailer behind the player's vehicle with the broken-down cars on its deck (brakes on, engine off).
--- True, or false and why.
-function M.spawnTow(kind, cars)
-  local model, config = M.towModel(kind)
-  if not model then return false, 'this game has no ' .. tostring(kind) .. ' trailer' end
-  M.models[kind] = { model = model, config = config }
-  local ok, why = M.spawn(kind)
-  if not ok then return false, why end
-  local trailer, veh = obj(), getPlayerVehicle and getPlayerVehicle(0)
+-- Parked, engine off, hazard lights on (vehicle-side Lua, each call guarded).
+local PARK_CMD = 'if input and input.event then input.event("parkingbrake", 1, 2) end '
+  .. 'if electrics and electrics.setIgnitionLevel then electrics.setIgnitionLevel(0) end '
+  .. 'if electrics and electrics.set_warn_signal then pcall(electrics.set_warn_signal, true) end'
+
+local function spawnCar(model, p, dir)
+  local ok, v = pcall(core_vehicles.spawnNewVehicle, model, { pos = p, rot = quatFromDir(dir, vec3(0, 0, 1)),
+    autoEnterVehicle = false })
+  if not ok or not v then return false end
+  towed[#towed + 1] = v:getID()
+  v:queueLuaCommand(PARK_CMD)
+  return true
+end
+
+local function backToPlayer(veh)
+  if be and be.enterVehicle and veh then pcall(be.enterVehicle, be, 0, veh) end
+end
+
+-- The cars on the deck of the trailer that is out (let down from DECK_LIFT above its top). How many were placed.
+local function onDeck(trailer, cars)
   local pos, dir = trailer:getPosition(), trailer:getDirectionVector()
   dir.z = 0
   dir = dir:length() > 1e-3 and dir:normalized() or vec3(0, 1, 0)
@@ -171,20 +182,110 @@ function M.spawnTow(kind, cars)
     local okTop, z = pcall(function() return box:getCenter().z + box:getHalfExtents().z end)
     if okTop and type(z) == 'number' then top = z end
   end
-  local n = #cars
+  local n, placed = #cars, 0
   for i, carModel in ipairs(cars) do
     local along = n > 1 and (i == 1 and 3.2 or -3.2) or 0
-    local p = vec3(pos.x, pos.y, top + M.DECK_LIFT) + dir * along
-    local okCar, v = pcall(core_vehicles.spawnNewVehicle, carModel, { pos = p, rot = quatFromDir(dir, vec3(0, 0, 1)),
-      autoEnterVehicle = false })
-    if okCar and v then
-      towed[#towed + 1] = v:getID()
-      v:queueLuaCommand('if input and input.event then input.event("parkingbrake", 1, 2) end '
-        .. 'if electrics and electrics.setIgnitionLevel then electrics.setIgnitionLevel(0) end')
+    if spawnCar(carModel, vec3(pos.x, pos.y, top + M.DECK_LIFT) + dir * along, dir) then placed = placed + 1 end
+  end
+  return placed
+end
+
+-- Make sure the tow trailer for this kind is out (spawned behind the player when it is not). True, or false and why.
+local function towTrailer(kind, fresh)
+  if obj() and not fresh then return true end
+  local model, config = M.towModel(kind)
+  if not model then return false, 'this game has no ' .. tostring(kind) .. ' trailer' end
+  M.models[kind] = { model = model, config = config }
+  return M.spawn(kind)
+end
+
+-- Spawn a tow trailer behind the player's vehicle with the broken-down cars on its deck (brakes on, engine off).
+-- True, or false and why.
+function M.spawnTow(kind, cars)
+  local ok, why = towTrailer(kind, true)
+  if not ok then return false, why end
+  local veh = getPlayerVehicle and getPlayerVehicle(0)
+  local placed = onDeck(obj(), cars)
+  backToPlayer(veh)
+  if placed < #cars then M.remove() return false, 'a broken-down car could not be spawned' end
+  return true
+end
+
+M.ROADSIDE_SPOTS = { { 10, 0 }, { 5, 4 }, { 5, -4 }, { -6, 4 }, { -6, -4 } }   -- metres ahead, right of the player
+M.CAR_GAP_M = 6.5     -- between two broken-down cars, one behind the other
+M.LOAD_M = 30         -- the trailer must be this close to each car to load it
+
+-- Is the line from a to b free of buildings, walls and trees (the static world)?
+local function clear(a, b)
+  local d = b - a
+  local len = d:length()
+  if len < 0.1 then return true end
+  local hit = castRayStatic(a, d / len, len + 2.5)
+  return not hit or hit >= len + 2.5
+end
+
+-- Where a car can stand on the ground at p, or nil when nothing solid is below.
+local function ground(p)
+  local d = castRayStatic(vec3(p.x, p.y, p.z + 20), vec3(0, 0, -1), 60)
+  if d and d < 60 then return vec3(p.x, p.y, p.z + 20 - d + 0.5) end
+end
+
+-- The broken-down cars waiting by the road near the player (the trailer is spawned behind the player when it is not
+-- out yet). Each spot is tried until one is clear of the static world: ahead of the player on the road they came by,
+-- then to either side. True, or false and why.
+function M.spawnRoadside(kind, cars)
+  local veh = getPlayerVehicle and getPlayerVehicle(0)
+  if not veh then return false, 'no player vehicle' end
+  local ok, why = towTrailer(kind)
+  if not ok then return false, why end
+  removeTowed()
+  local pos, dir = veh:getPosition(), veh:getDirectionVector()
+  dir.z = 0
+  dir = dir:length() > 1e-3 and dir:normalized() or vec3(0, 1, 0)
+  local right = vec3(dir.y, -dir.x, 0)
+  local eye = vec3(pos.x, pos.y, pos.z + 1)
+  for _, spot in ipairs(M.ROADSIDE_SPOTS) do
+    local spots = {}
+    for i = 1, #cars do
+      local p = pos + dir * (spot[1] + (i - 1) * M.CAR_GAP_M) + right * spot[2]
+      local g = clear(eye, vec3(p.x, p.y, pos.z + 1)) and ground(p)
+      if not g then spots = nil break end
+      spots[i] = g
+    end
+    if spots then
+      for i, carModel in ipairs(cars) do spawnCar(carModel, spots[i], dir) end
+      backToPlayer(veh)
+      if #towed < #cars then removeTowed() return false, 'a broken-down car could not be spawned' end
+      return true
     end
   end
-  if be and be.enterVehicle and veh then pcall(be.enterVehicle, be, 0, veh) end
-  if #towed < n then M.remove() return false, 'a broken-down car could not be spawned' end
+  return false, 'no free spot by the road here: move on a little and stop again'
+end
+
+-- Are the waiting cars near the trailer (within maxM)? True, or false and why.
+function M.towedNear(maxM)
+  local trailer = obj()
+  if not trailer then return false, 'The trailer is gone. Stop again here to bring it back.' end
+  if #towed == 0 then return false, 'The broken-down car is gone. Stop again here to bring it back.' end
+  for _, tid in ipairs(towed) do
+    local o = scenetree.findObjectById(tid)
+    if not o then return false, 'The broken-down car is gone. Stop again here to bring it back.' end
+    if (o:getPosition() - trailer:getPosition()):length() > maxM then
+      return false, 'Park the trailer next to the broken-down car first.'
+    end
+  end
+  return true
+end
+
+-- Put the waiting cars on the trailer's deck. True, or false and why.
+function M.loadTowed(cars)
+  local trailer = obj()
+  if not trailer then return false, 'the trailer is gone' end
+  local veh = getPlayerVehicle and getPlayerVehicle(0)
+  removeTowed()
+  local placed = onDeck(trailer, cars)
+  backToPlayer(veh)
+  if placed < #cars then removeTowed() return false, 'a broken-down car could not be put on the trailer' end
   return true
 end
 

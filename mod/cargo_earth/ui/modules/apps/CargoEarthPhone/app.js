@@ -1172,6 +1172,8 @@ angular.module('beamng.apps')
           '<div class="cep-keyval cep-sub" ng-if="s.active.tow && s.active.phase === \'toDelivery\'"><span>{{ s.active.tow.trailer }}</span>' +
             '<strong ng-style="{color: s.active.tow.onBoard < s.active.tow.cars ? \'var(--tomato)\' : \'var(--ok)\'}">' +
             '{{ s.active.tow.onBoard }} of {{ s.active.tow.cars }} car{{ s.active.tow.cars > 1 ? "s" : "" }} on board</strong></div>' +
+          '<button class="cep-sm" ng-if="s.active.towWaiting" ng-click="act(\'towLoad\')">Load {{ s.active.tow.cars > 1 ? "the cars" : "it" }} on the trailer</button>' +
+          '<div class="cep-sub" ng-if="s.active.towWaiting">Park the trailer next to the car, stop, then load.</div>' +
           '<button class="cep-sm" ng-if="s.active.canRestoreTrailer" ng-click="act(\'restoreTrailer\')">' +
             '{{ s.active.tow ? "Load the cars again · " + fmt.money(s.active.reloadFee) : "Restore assigned trailer" }}</button>' +
           '<div class="cep-sub" ng-if="s.active.trailerM !== null && s.active.trailerM !== undefined">Trailer: {{ fmt.dist(s.active.trailerM).v }}{{ fmt.dist(s.active.trailerM).u }} behind</div>' +
