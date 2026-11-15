@@ -1,7 +1,7 @@
 # Cargo Earth 0.10.0
 
-Changes since 0.9.1. **Needs the new helper** (bus lines, parts shops and repair shops come from it; its area cache
-moves to format 6 and downloads those areas again). Still runs on BeamNG.Earth 1.9.0-beta; 1.10 adds posted speed
+Changes since 0.9.1. **Needs the new helper** (bus lines, taxi destinations, parts shops and repair shops come from it;
+its area cache moves to format 7 and downloads those areas again). Still runs on BeamNG.Earth 1.9.0-beta; 1.10 adds posted speed
 limits. Little of this has been driven in game yet.
 
 ## New: Bus mode
@@ -15,6 +15,11 @@ limits. Little of this has been driven in game yet.
   stop pays nothing for the line; away from the depot the company collects the bus for 150 CZK.
 - Passengers sit in the bus's seats as BeamNG's own seated people (75 kg each), getting up and sitting down at the
   stops. See `docs/BUS_LINES.md`.
+
+## New: Taxi rides
+- Cars get taxi rides instead of parcel rounds: pick up 1-3 passengers at an address near you and drive them smoothly
+  to an airport, railway or bus station, museum, sight or hotel. Passengers sit in the car's seats, and a rough ride
+  costs pay and tip. An older helper offers no taxi rides.
 
 ## Each vehicle has its own work
 - Cars are sorted by BeamNG's "Body Style": cars get taxi rides to airports, stations, museums, sights and hotels (no parcel rounds: vans only), SUVs and pickups get parts runs from parts
@@ -68,4 +73,4 @@ limits. Little of this has been driven in game yet.
 ## Not tested in game yet
 Bus lines (live Overpass answers, door API, citybus configs, handover trip to the depot, seated passengers), driver
 seating, tow coupling, trailer borrowing and deck placement, cargo clean-up on cancel, wreck forces, Body
-Style detection, parts runs, handling at the new weights.
+Style detection, taxi rides, parts runs, handling at the new weights.
