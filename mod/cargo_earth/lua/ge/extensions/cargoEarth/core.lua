@@ -4315,7 +4315,7 @@ local helperAbout, helperAboutAt = nil, -math.huge
 local updateAskAt, updateSaid = nil, nil
 M.HELPER_ABOUT_S = 30
 M.UPDATE_FIRST_S = 20      -- the first update question, this long after the mod starts
-M.UPDATE_ASK_S = 1800      -- then this often (the helper itself asks GitHub every 6 hours)
+M.UPDATE_ASK_S = 900       -- then this often (the helper asks GitHub at start and every 2 hours)
 M.UPDATE_RETRY_S = 300     -- the helper did not answer: ask again after this long
 M.RELEASES = 'https://github.com/themazzy/cargo-earth/releases'
 

@@ -14,7 +14,7 @@ API (GET, JSON):
   /                           a small status page for people (is it running, libraries, areas, network)
   /v1/info                    {"app": "cargo-earth-helper", "version", "release", "update": {"latest", "url", "page",
                               "helper", "helperOutdated", "checkedAt", "error"}} (the newest Cargo Earth release on
-                              GitHub, checked every 6 hours unless --no-update-check)
+                              GitHub, checked at start and every 2 hours unless --no-update-check)
   /v1/update/open             opens that release page in the browser: {"opened", "url"}
   /v1/cameras?lat=..&lon=..   speed cameras around the point, from OpenStreetMap (Overpass API, one request per
                               0.5 degree cell, kept for 30 days): {"state": "ready" | "loading" | "failed",
@@ -1672,7 +1672,8 @@ class Player:
 
 UPDATE_REPO = "themazzy/cargo-earth"
 UPDATE_PAGE = f"https://github.com/{UPDATE_REPO}/releases"
-UPDATE_EVERY_S = 6 * 3600          # GitHub allows 60 unauthenticated requests an hour; one in 6 hours is plenty
+UPDATE_EVERY_S = 2 * 3600          # GitHub allows 60 unauthenticated requests an hour; one in 2 hours is plenty
+UPDATE_RESTART_S = 600            # a restarted helper asks again when its saved answer is older than this
 UPDATE_RETRY_S = 1800              # no answer (offline, rate limit): try again after this long
 
 
@@ -1698,6 +1699,7 @@ class Updates:
                                                            {"Accept": "application/vnd.github+json"}, tries=1)))
         self.lock = threading.Lock()
         self.state = {"latest": None, "url": None, "checkedAt": None, "error": None}
+        self.started = True   # until the first check of this run: a saved answer only waits UPDATE_RESTART_S
         try:
             with open(self.path, encoding="utf-8") as f:
                 saved = json.load(f)
@@ -1709,10 +1711,11 @@ class Updates:
     def due(self):
         with self.lock:
             at = self.state["checkedAt"]
-            wait = UPDATE_RETRY_S if self.state["error"] else UPDATE_EVERY_S
+            wait = UPDATE_RETRY_S if self.state["error"] else UPDATE_RESTART_S if self.started else UPDATE_EVERY_S
         return self.enabled and (not at or self.clock() - at >= wait)
 
     def check(self):
+        self.started = False
         try:
             rel = self.fetch()
             tag, url = rel.get("tag_name"), str(rel.get("html_url") or "")

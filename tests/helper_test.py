@@ -731,6 +731,10 @@ class UpdateCheckTests(unittest.TestCase):
             again = helper.Updates(d, fetch=lambda: self.fail("asked again"), clock=lambda: now[0] + 60)
             self.assertEqual(again.info()["latest"], "99.1.0")
             self.assertFalse(again.due())
+            # a release published since: a helper restarted 10 minutes later asks GitHub again
+            later = helper.Updates(d, fetch=lambda: {}, clock=lambda: now[0] + helper.UPDATE_RESTART_S)
+            self.assertTrue(later.due())
+            self.assertFalse(u.due())
             now[0] += helper.UPDATE_EVERY_S
             self.assertTrue(u.due())
 
