@@ -311,4 +311,11 @@ end
 
 function M.towedCount() return #towed end
 
+-- How many of the towed cars still exist in the world (a deleted one keeps its id in the list).
+function M.towedAlive()
+  local n = 0
+  for _, tid in ipairs(towed) do if scenetree.findObjectById(tid) then n = n + 1 end end
+  return n
+end
+
 return M

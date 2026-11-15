@@ -2261,7 +2261,7 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   -- the game side, stubbed: what trailers.lua would do in BeamNG
   local saved = {}
   for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
-    'spawnRoadside', 'towedNear', 'loadTowed' }) do
+    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive' }) do
     saved[k] = trailers[k]
   end
   local spawned, distances, damage = 0, {}, 0
@@ -2275,6 +2275,8 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   trailers.remove = function() distances = {} end
   trailers.id = function() return #distances > 0 and 7 or nil end
   local roadside, nearTrailer, loaded = 0, false, 0
+  local alive = true
+  trailers.towedAlive = function() return alive and #distances or 0 end
   trailers.spawnRoadside = function(kind, cars) roadside = roadside + 1 distances = { 20 } return kind == 'cartrailer' and #cars == 1 end
   trailers.towedNear = function() if nearTrailer then return true end return false, 'Park the trailer next to the broken-down car first.' end
   trailers.loadTowed = function(cars) loaded = loaded + 1 distances = { 1 } return #cars == 1 end
@@ -2318,8 +2320,12 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     -- the car waits by the road; Load puts it on once the trailer is next to it
     assert(roadside == 1 and spawned == 0 and s.phase == 'toPickup' and job.tow.waiting and job.tow.onBoard == 0)
     assert(core.phoneState().active.towWaiting, 'the phone offers Load')
-    advance(core, 12)
+    advance(core, 40)
     assert(roadside == 1, 'stopping again does not spawn the car twice')
+    alive = false                   -- the waiting car was deleted: stopping again brings it back
+    advance(core, 40)
+    assert(roadside == 2 and job.tow.waiting, 'a lost car is placed again')
+    alive = true
     core.phoneAction('towLoad')
     assert(loaded == 0 and s.phase == 'toPickup', 'not loaded while the trailer is away')
     nearTrailer = true

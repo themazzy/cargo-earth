@@ -1035,7 +1035,7 @@ local function finishPickup()
   elseif j.tow then
     -- the car waits by the road with the trailer behind you; Load it on the phone puts it on (M.towLoad)
     S.stopT = -10
-    if j.tow.waiting and trailers.towedCount() > 0 and trailers.id() then return end
+    if j.tow.waiting and trailers.id() and trailers.towedAlive() >= #j.tow.cars then return end
     local ok, why = trailers.spawnRoadside(tow.CLASSES[j.tow.class].trailer, j.tow.cars)
     if not ok then
       say('The broken-down car could not be placed: ' .. tostring(why), 6)
