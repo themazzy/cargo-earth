@@ -58,8 +58,6 @@ M.TOW_RELOAD_FEE = 150  -- putting a car that slid off back on the trailer
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
 M.random = function(...) return math.random(...) end   -- (tests replace it)
 M.INTACT_TIP = 0.06      -- a customer tips this share of the pay when the order arrives in perfect condition
-M.ROUTE_CHECK_S = 3      -- how often a parcel route's GPS stops are compared with the route
-M.ROUTE_PASS_M = 80      -- ... only this far from the current address (Earth drops a waypoint within 40 m)
 M.PARCEL_TIP_SHARE = 0.5 -- a parcel route's tip for speed is figured on this share of its pay
 M.ROAD_M = 20          -- the car is on the road edge this close (else: a car park, a field; no limit shown)
 M.LIMIT_S = 0.5        -- the limit under the car is read this often
@@ -496,27 +494,14 @@ local function target()
   return S.phase == 'toPickup' and S.job.from or S.job.to
 end
 
--- The GPS to the current target. A parcel route on the way to its addresses goes through all the stops still ahead
--- in one route where BeamNG.Earth can (modding API 1.2), so the whole round shows on the map. keep (such a route
--- only): leave a route that already has the right stops ahead as it is (Earth drops a waypoint within 40 m of it),
--- and a GPS the player cleared alone.
-local function gpsToTarget(keep)
+-- The GPS to the current target: the depot, then a parcel route's next undelivered address. Only that one address
+-- (Jan, 2026-11-15): BeamNG.Earth puts its destination, and the map's teleport to it, at the last point of a route
+-- through several stops, so a whole round on the GPS sent a teleport to the final address and Navigate to the same
+-- place. The phone lists the stops still ahead.
+local function gpsToTarget()
   local d = target()
   if not d then return end
-  local j, stops = S.job, nil
-  if j.route and S.phase ~= 'toPickup' and earth.canRoute() then
-    stops = {}
-    for i = j.route.at, #j.route.stops do
-      local st = j.route.stops[i]
-      stops[#stops + 1] = { st.g[1], st.g[2], st.n }
-    end
-  end
-  if keep and stops then
-    local rt = earth.route()
-    if not rt or rt.stops == math.min(#stops, earth.ROUTE_MAX) then return end
-  end
-  local ok, why
-  if stops then ok, why = earth.gpsStops(stops) else ok, why = earth.gps(d.g[1], d.g[2], d.n) end
+  local ok, why = earth.gps(d.g[1], d.g[2], d.n)
   if not ok then say('GPS not set: ' .. tostring(why)) end
 end
 
@@ -1128,7 +1113,7 @@ local function finishDelivery(force)
       say(string.format('%d parcels (%d kg) left at %s. Next stop %d of %d: %s.', served.slots, droppedKg, served.n,
         j.route.at, #j.route.stops, j.to.n), 6)
       S.stopT, S.dist, S.roadM, S.etaS = 0, nil, nil, nil
-      gpsToTarget(true)
+      gpsToTarget()
       saveCareer()
       phoneSound('pickup')
       return
@@ -1411,12 +1396,6 @@ local function tick(dt)
     S.roadM, S.etaS = rt.remaining, type(rt.eta) == 'number' and rt.eta or nil
   else
     S.roadM, S.etaS = nil, nil
-  end
-  -- a parcel route's GPS that passed an address without the stop being served (or the other way round) gets its
-  -- stops again, once the car is clear of the address
-  if S.job.route and rt and S.phase ~= 'toPickup' and S.clock >= (S.routeCheckAt or 0) and earth.canRoute() then
-    S.routeCheckAt = S.clock + M.ROUTE_CHECK_S
-    if not S.dist or S.dist > M.ROUTE_PASS_M then gpsToTarget(true) end
   end
   if not S.dist or S.dist > arrivalRadius(S.job) or (p.speed or 0) > M.STOP_SPEED or p.camera
     or (S.job.kind == 'food' and not garage.inOwnCar(M.G, S.career.garage)) then
