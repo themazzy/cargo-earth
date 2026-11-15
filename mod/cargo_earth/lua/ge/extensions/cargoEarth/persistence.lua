@@ -16,6 +16,7 @@ local function garage(g)
   for _, parked in ipairs(g.parked or {}) do if not car(parked) then return false end end
   return g.debt == nil or (finite(g.debt) and g.debt >= 0)
 end
+local tiers = {van = true, rigid = true, semi = true, car = true, suv = true}   -- (cargoEarth/haul tiers)
 local function job(j)
   if not (type(j) == 'table' and type(j.id) == 'string'
     and type(j.from) == 'table' and point(j.from.g) and type(j.to) == 'table' and point(j.to.g)
@@ -30,7 +31,7 @@ local function job(j)
   end
   if j.haul ~= nil then
     local h = j.haul
-    if type(h) ~= 'table' or (h.tier ~= 'van' and h.tier ~= 'rigid' and h.tier ~= 'semi')
+    if type(h) ~= 'table' or not tiers[h.tier]
       or not finite(h.amount) or h.amount <= 0 or not finite(h.density) or h.density <= 0 then return false end
   end
   return true

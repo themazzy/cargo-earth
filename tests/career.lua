@@ -1425,7 +1425,7 @@ test('cargo weight: meals, parcel routes and freight count only once picked up',
   assert(parcel.DENSITY >= 8, 'parcels weigh enough to feel a stop')
 end)
 
-test('a parcel route shows all its addresses on the GPS and keeps the route Earth is already following', function()
+test('a parcel route GPS goes to the next undelivered address only, also after a teleport', function()
   local core, s = fresh()
   local c = s.career
   c.garage.debt = 0
@@ -1435,35 +1435,46 @@ test('a parcel route shows all its addresses on the GPS and keeps the route Eart
     function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
   core.setMode('trucking')
   advance(core, 2)
-  routeCapable = true
+  routeCapable = true   -- even where Earth could route through every stop
   core.generate()
   local i, job
   for k, offer in ipairs(s.offers) do if offer.route then i, job = k, offer break end end
   assert(job, 'a parcel route is offered in a van')
-  local stops = #job.route.stops
   core.take(i)
-  assert(gps and not gps.stops, 'to the depot: an ordinary destination')
+  assert(gps and not gps.stops and gps.lat == job.from.g[1], 'to the depot')
   pose.lat, pose.lon = job.from.g[1], job.from.g[2]
   advance(core)
-  assert(s.phase == 'toDelivery' and gps.stops == stops, 'loaded: every address in one route')
-  -- Earth drops the first address as the car drives past it without stopping: it is put back once clear of it
-  gpsRoute, gps = {remaining = 2000, stops = stops - 1}, nil
-  advance(core, 8)
-  assert(gps and gps.stops == stops, 'a passed but unserved address goes back on the route')
-  -- the first address served where Earth dropped it too: the route is left as it is
-  local first = job.route.stops[1]
-  pose.lat, pose.lon = first.g[1], first.g[2]
-  gpsRoute, gps = {remaining = 0, stops = stops}, nil
+  local first, last = job.route.stops[1], job.route.stops[#job.route.stops]
+  assert(s.phase == 'toDelivery' and gps and not gps.stops and gps.lat == first.g[1], 'loaded: the first address alone')
+  -- the map's teleport lands at the round's last address: the current stop is still the first, and the GPS goes back
+  -- to it once the world is loaded there
+  pose.lat, pose.lon = last.g[1], last.g[2]
+  gps = nil
+  core.onBeamNGEarthTeleported({lat = last.g[1], lon = last.g[2]})
+  core.onBeamNGEarthWorldReady()
   advance(core, 4)
-  gpsRoute.stops = stops - 1
+  assert(job.route.at == 1 and gps and gps.lat == first.g[1] and gps.lon == first.g[2], 'back to the first address')
+  -- Navigate on the phone: the next address again
+  gps = nil
+  core.phoneAction('gps')
+  assert(gps and gps.lat == first.g[1], 'Navigate: the next undelivered address')
+  -- served: on to the second address
+  pose.lat, pose.lon = first.g[1], first.g[2]
+  advance(core, 4)
   advance(core)
-  assert(job.route.at == 2 and gps == nil, 'the route Earth follows stays')
-  -- an Earth without multi-stop routes: the next address alone, as before
-  routeCapable, gpsRoute = false, nil
   local second = job.route.stops[2]
-  pose.lat, pose.lon = second.g[1], second.g[2]
-  advance(core)
-  assert(job.route.at == 3 and gps and not gps.stops and gps.lat == job.to.g[1])
+  assert(job.route.at == 2 and gps and not gps.stops and gps.lat == second.g[1], 'then the second address alone')
+end)
+
+test('a car parcel round and an SUV parts run can be saved', function()
+  local persistence = require('cargoEarth/persistence')
+  local function career(tier)
+    return { money = 100, orders = { { phase = 'toDelivery', data = { id = 'route:x', from = { g = { 50, 14 } },
+      to = { g = { 50.01, 14.01 } }, pay = 100, minutes = 30,
+      haul = { tier = tier, kind = 'parcel', amount = 10, kg = 80, density = 8 } } } } }
+  end
+  assert(persistence.valid(career('car')) and persistence.valid(career('suv')) and persistence.valid(career('van')))
+  assert(not persistence.valid(career('boat')))
 end)
 
 test('the kind of vehicle comes from its body: car, SUV or pickup, van, box truck, tractor', function()
