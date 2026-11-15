@@ -2614,6 +2614,10 @@ test('bus timetable: each stop has its own time from its distance, late minutes 
   assert(j.bus.at == 4 and j.bus.legStart == due + 500)
   local st = bus.state(j, nil, 0, due + 500)
   assert(st.dueMin == j.bus.stops[4].min and st.late == 2)
+  -- a line saved before the timetable existed: its stops have no times, nothing counts as late
+  j.bus.stops[5].min = nil
+  bus.served(j, 0, 0, due + 600)
+  assert(bus.arrived(j, due + 99999) == 0 and math.abs(bus.lateMinutes(j) - 2) < 1e-6)
 end)
 
 test('bus names: escapes that lost their backslash on the way into the game are letters again', function()

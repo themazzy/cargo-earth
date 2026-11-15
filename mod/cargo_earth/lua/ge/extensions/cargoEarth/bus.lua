@@ -183,6 +183,7 @@ function M.arrived(job, nowS)
   local b = job.bus
   if b.arrivedAt == b.at then return 0 end
   b.arrivedAt = b.at
+  if not (b.stops[b.at] and b.stops[b.at].min) then return 0 end   -- a line taken before the timetable: not counted
   local late = math.max(0, -M.due(job, nowS) / 60)
   b.late = (b.late or 0) + late
   return late
