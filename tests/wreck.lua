@@ -81,6 +81,13 @@ local ok, err = pcall(function()
   wreck.start('rolled', 5)
   wreck.updateGFX(1.1)
   for _, f in ipairs(forces) do assert(f.f.z <= 0, 'nothing is pushed up') end
+  -- spawned out of sight in the air: no ground to hold the roof's push, so the rest is pushed back; no wait to settle
+  forces = {}
+  wreck.start('rolled', 5, false, true)
+  wreck.updateGFX(0.25)
+  local up = 0
+  for _, f in ipairs(forces) do if f.f.z > 0 then up = up + 1 end end
+  assert(up > 0, 'in the air the rest of a rolled car is pushed back')
   -- heavier nodes get more force (light panels are not flung), and the car is held in place while it bends
   forces = {}
   obj.getNodeMass = function(_, cid) return cid < 50 and 1 or 3 end

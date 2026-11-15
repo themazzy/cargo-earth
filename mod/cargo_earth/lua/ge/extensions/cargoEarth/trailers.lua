@@ -27,6 +27,10 @@ M.NEAR_M = 30        -- a trailer this close to the truck counts as with it
 local id = nil       -- the job trailer's vehicle id
 local towed = {}     -- vehicle ids of the cars on a tow job's trailer
 local loaded = {}    -- [vehicle id] = true for the towed cars that were put on the deck (Load, or spawned there)
+-- Jan: the broken-down cars are spawned (and crumpled) out of sight when the job starts, then put by the road before
+-- the player gets there: no spawn lag and no crumple at the pickup.
+local staged = {}    -- [vehicle id] = seconds until it is hidden (setActive 0), or 0 once hidden
+local placedOut = false   -- the staged cars stand by the road at the pickup
 
 -- Tow trailers: the first stock model found is used (override with trailerModels.cartrailer / .flatbed).
 -- Each is a model, or { model, configuration }. BeamNG 0.40 has no 'cartrailer': the 22 ft tilt deck is its car
@@ -184,7 +188,7 @@ local function removeTowed()
     local o = scenetree.findObjectById(tid)
     if o then o:delete() end
   end
-  towed, loaded = {}, {}
+  towed, loaded, staged, placedOut = {}, {}, {}, false
 end
 
 function M.adopted() return obj() ~= nil and adopted ~= false end
@@ -234,11 +238,12 @@ local PARK_CMD = 'if input and input.event then input.event("parkingbrake", 1, 2
   .. 'if electrics and electrics.set_warn_signal then pcall(electrics.set_warn_signal, true) end'
 
 -- wreck: { kind, seed } for the vehicle-side cargoEarth_wreck, or nil for an undamaged car
-local function wreckCmd(wreck, onDeck)
+-- air: spawned in the air out of sight (no ground under it: the wreck pushes back on a rolled roof too)
+local function wreckCmd(wreck, onDeck, air)
   if type(wreck) ~= 'table' or type(wreck[1]) ~= 'string' then return '' end
   return string.format(' extensions.load("cargoEarth_wreck") if extensions.cargoEarth_wreck then '
-    .. 'extensions.cargoEarth_wreck.start(%q, %d, %s) end', wreck[1], math.floor(tonumber(wreck[2]) or 1),
-    onDeck and 'true' or 'false')
+    .. 'extensions.cargoEarth_wreck.start(%q, %d, %s, %s) end', wreck[1], math.floor(tonumber(wreck[2]) or 1),
+    onDeck and 'true' or 'false', air and 'true' or 'false')
 end
 
 -- How far a car's position is above its lowest point (its box bottom), so its wheels, not its middle, go on the deck.
@@ -250,7 +255,7 @@ local function lowestBelow(o)
   return ok and type(lift) == 'number' and math.max(0, math.min(lift, 2)) or 0.5
 end
 
-local function spawnCar(model, p, dir, wreck, onDeckSpot)
+local function spawnCar(model, p, dir, wreck, onDeckSpot, air)
   local ok, v = pcall(core_vehicles.spawnNewVehicle, model, { pos = p, rot = quatFromDir(dir, vec3(0, 0, 1)),
     autoEnterVehicle = false })
   if not ok or not v then return false end
@@ -261,17 +266,31 @@ local function spawnCar(model, p, dir, wreck, onDeckSpot)
   end
   towed[#towed + 1] = v:getID()
   if onDeckSpot then loaded[v:getID()] = true end
-  v:queueLuaCommand(PARK_CMD .. wreckCmd(wreck, onDeckSpot))
+  v:queueLuaCommand(PARK_CMD .. wreckCmd(wreck, onDeckSpot, air))
   return true
 end
 
--- Move a car that is out. setPositionRotation resets the car (the wreck extension damages it again after the reset);
--- vehicles face backwards there, so the rotation is turned around as the game's own callers do.
+-- Move a car without a reset, so it keeps its damage: the game's own way (spawn.lua setSafePositionRec: the car's
+-- cluster moved and turned about its ref node, its speed zeroed). p: where its ref node goes; dir: it faces this way.
+local function moveKeep(o, p, dir)
+  return pcall(function()
+    local ref = o:getRefNodeId()
+    local cur = quatFromDir(vec3(o:getDirectionVector()), vec3(o:getDirectionVectorUp()))
+    local diff = cur:inversed() * quatFromDir(dir, vec3(0, 0, 1))
+    o:setClusterPosRelRot(ref, p.x, p.y, p.z, diff.x, diff.y, diff.z, diff.w)
+    o:applyClusterVelocityScaleAdd(ref, 0, 0, 0, 0)
+  end)
+end
+
+-- Move a car that is out, keeping its damage (moveKeep); when the game cannot, with setPositionRotation, which resets
+-- the car (the wreck extension then damages it again); vehicles face backwards there, so the rotation is turned around
+-- as the game's own callers do.
 local function moveCar(o, p, dir)
   -- the wreck's crumple push must not run again on the deck
   pcall(function() o:queueLuaCommand('if extensions.cargoEarth_wreck then extensions.cargoEarth_wreck.calm() end') end)
-  local rot = quatFromDir(-dir, vec3(0, 0, 1))
   local z = p.z + lowestBelow(o)
+  if moveKeep(o, vec3(p.x, p.y, z), dir) then return true end
+  local rot = quatFromDir(-dir, vec3(0, 0, 1))
   return pcall(function() o:setPositionRotation(p.x, p.y, z, rot.x, rot.y, rot.z, rot.w) end)
 end
 
@@ -391,8 +410,22 @@ end
 -- BeamNG.Earth moved the world origin: positions jumped without a teleport
 function M.onRebased() follow = nil end
 
+local function stagedTick(dt)
+  for tid, left in pairs(staged) do
+    if left > 0 then
+      left = left - dt
+      staged[tid] = math.max(0, left)
+      if left <= 0 then
+        local o = scenetree.findObjectById(tid)
+        if o then pcall(function() o:setActive(0) end) end
+      end
+    end
+  end
+end
+
 function M.update(dt)
   latchTick(dt or 0)
+  stagedTick(dt or 0)
   followTick()
   local h = hitchWanted
   if not h then return end
@@ -567,6 +600,66 @@ local function ground(p, refZ)
   return vec3(p.x, p.y, z + 0.5)
 end
 
+M.HIDE_UP_M = 500      -- staged cars are spawned this high above the player, out of sight
+M.HIDE_AFTER_S = 2.5   -- and hidden (physics off) this long after, once their crumple is done
+M.PLACE_M = 300        -- they are put by the road when the player is this close to the pickup
+
+-- Spawn the broken-down cars for a job out of sight (high above the player) and crumple them there. True when they
+-- are out (or already were).
+function M.stageTowed(cars, wrecks)
+  if #towed >= #cars and M.towedAlive() >= #cars then return true end
+  local veh = getPlayerVehicle and getPlayerVehicle(0)
+  if not veh then return false end
+  removeTowed()
+  local pos = veh:getPosition()
+  for i, carModel in ipairs(cars) do
+    local p = vec3(pos.x + (i - 1) * 12, pos.y, pos.z + M.HIDE_UP_M)
+    if not spawnCar(carModel, p, vec3(0, 1, 0), wrecks and wrecks[i], false, true) then removeTowed() return false end
+    staged[towed[#towed]] = M.HIDE_AFTER_S
+  end
+  backToPlayer(veh)
+  return true
+end
+
+function M.towedStaged() return next(staged) ~= nil and not placedOut end
+function M.towedPlaced() return placedOut end
+
+-- Put the staged cars by the road at world x, y (the pickup), one behind the other along the road, kept damaged.
+-- refZ: a height near there (the player's). True when they stand there.
+function M.placeTowed(x, y, refZ)
+  if placedOut or not next(staged) then return placedOut end
+  for _, tid in ipairs(towed) do if (staged[tid] or 0) > 0 then return false end end   -- still crumpling
+  local marker = require('cargoEarth/marker')
+  local ok, ex, ey, ez = pcall(marker.roadEdge, x, y, refZ, x, y, 80)
+  local cx, cy = x, y
+  if ok and ex then cx, cy = ex, ey end
+  -- along the road: from the nearest road's direction, else north
+  local dir = vec3(0, 1, 0)
+  local okR, a, b = pcall(map.findClosestRoad, vec3(cx, cy, ez or refZ), 80)
+  local nodes = okR and map.getMap() and map.getMap().nodes
+  if nodes and nodes[a] and nodes[b] then
+    local d = nodes[b].pos - nodes[a].pos
+    d.z = 0
+    if d:length() > 0.1 then dir = d:normalized() end
+  end
+  local spots = {}
+  for i = 1, #towed do
+    local p = vec3(cx, cy, 0) - dir * ((i - 1) * M.CAR_GAP_M)
+    local z = marker.groundZ(p.x, p.y, ez or refZ, 30, 150)
+    if not z then return false end   -- the ground there is not loaded yet
+    spots[i] = vec3(p.x, p.y, z)
+  end
+  for i, tid in ipairs(towed) do
+    local o = scenetree.findObjectById(tid)
+    if not o then return false end
+    pcall(function() o:setActive(1) end)
+    if not moveKeep(o, vec3(spots[i].x, spots[i].y, spots[i].z + lowestBelow(o)), dir) then return false end
+  end
+  placedOut, staged = true, {}
+  log('I', 'cargoEarth', string.format('broken-down cars put by the road (%d)', #towed))
+  return true
+end
+
 -- The broken-down cars waiting by the road near the player (the trailer is spawned behind the player when it is not
 -- out yet). Each spot is tried until one is clear of the static world: ahead of the player on the road they came by,
 -- then to either side. True, or false and why.
@@ -579,6 +672,7 @@ function M.spawnRoadside(kind, cars, wrecks)
   end
   local ok, why = towTrailer(kind)
   if not ok then return false, why end
+  if placedOut and M.towedAlive() >= #cars then return true end   -- already waiting by the road (M.placeTowed)
   removeTowed()
   local pos, dir = veh:getPosition(), veh:getDirectionVector()
   dir.z = 0

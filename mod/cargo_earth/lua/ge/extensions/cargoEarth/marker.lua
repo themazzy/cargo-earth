@@ -271,6 +271,8 @@ function M.drawArea(p, key, g, radius, label, now)
   end
 end
 
+M.roadEdge, M.groundZ = roadEdge, groundZ
+
 function M.reset() pickup, delivery, depot, poles, areas, warned = {}, {}, {}, {}, {}, false end
 
 return M
