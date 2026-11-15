@@ -455,6 +455,7 @@ end
 
 local function loadCareer(c)
   S.career = c
+  M.updateOnLoad = true   -- ask the helper to look for a newer release (Jan: every time a save is loaded)
   c.history = c.history or {}
   c.activeSeconds = tonumber(c.activeSeconds) or 0
   if c.employment then
@@ -4315,8 +4316,9 @@ local helperAbout, helperAboutAt = nil, -math.huge
 local updateAskAt, updateSaid = nil, nil
 M.HELPER_ABOUT_S = 30
 M.UPDATE_FIRST_S = 20      -- the first update question, this long after the mod starts
-M.UPDATE_ASK_S = 1800      -- then this often (the helper itself asks GitHub every 6 hours)
+M.UPDATE_ASK_S = 900       -- then this often (the helper asks GitHub at start and every 2 hours)
 M.UPDATE_RETRY_S = 300     -- the helper did not answer: ask again after this long
+M.UPDATE_LOAD_WAIT_S = 8   -- after a save loads: the helper asks GitHub, its answer is read this long after
 M.RELEASES = 'https://github.com/themazzy/cargo-earth/releases'
 
 -- '0.10.2' newer than '0.9.3'? Plain release numbers only; anything else is never newer.
@@ -4367,6 +4369,13 @@ end
 -- From the helper tick: ask for the newest release now and then.
 askUpdate = function()
   if not helper.enabled then return end
+  if M.updateOnLoad then
+    -- a save was loaded: the helper asks GitHub again (it skips that when it asked in the last 5 minutes)
+    M.updateOnLoad = nil
+    helper.ask('/v1/update/check', function() end)
+    updateAskAt = S.clock + M.UPDATE_LOAD_WAIT_S
+    return
+  end
   updateAskAt = updateAskAt or S.clock + M.UPDATE_FIRST_S
   if S.clock < updateAskAt then return end
   updateAskAt = S.clock + M.UPDATE_ASK_S

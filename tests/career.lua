@@ -348,6 +348,7 @@ test('reload in a loaded van restores the contract, cargo and held wages', funct
   resumed.phoneAction('resume')
   assert(state.career.employment and state.phase == 'toDelivery')
   assert(state.career.employment.personalGarage.car.model == 'pigeon')
+  assert(resumed.updateOnLoad, 'a loaded save asks for a newer release')
   advance(resumed)
   assert(boxes[1].currentVolume > 0 and state.career.money == 1000)
   finishOne(resumed)
@@ -3176,6 +3177,15 @@ test('the phone says when a newer release is out (the helper looks it up)', func
     local info
     for _, a in ipairs(asked) do if a[1] == '/v1/info' then info = a end end
     assert(info, 'asked the helper for its info')
+    -- a save was loaded: the helper looks on GitHub, its answer is read a few seconds later
+    core.updateOnLoad = true
+    local n = #asked
+    advance(core, 1)
+    assert(asked[n + 1] and asked[n + 1][1] == '/v1/update/check' and not core.updateOnLoad)
+    advance(core, 2 * core.UPDATE_LOAD_WAIT_S + 2)
+    local reread = false
+    for i = n + 2, #asked do if asked[i][1] == '/v1/info' then reread = true end end
+    assert(reread, 'info read again after the check')
     info[2]({ version = core.VERSION, update = { latest = '99.0.0' } })
     local u = core.phoneState().update
     assert(u and u.available and u.modOld and u.helperOld and u.latest == '99.0.0' and not u.hidden)
