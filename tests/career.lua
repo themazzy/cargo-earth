@@ -224,10 +224,12 @@ package.loaded['cargoEarth/earth'] = {
 }
 local seated   -- bus passengers the game was asked to seat
 local riders   -- taxi passengers the game was asked to seat
+local freeSeats   -- passenger seats the game reports in the player's car (nil: no seat system)
 local function adapter()
   return {
     busPassengers = function(n) seated = n return n end,
     carPassengers = function(n) riders = n return n end,
+    freeSeats = function() return freeSeats end,
     vehicle = function() return vehicle end, ownedVehicle = function() return vehicle end,
     isOwned = function() return true end, damage = function() return damageValue end, configs = function() return {} end,
     playerId = function() return vehicle and vehicle.id end, ownsVehicleId = function(id) return vehicle and vehicle.id == id end,
@@ -1637,6 +1639,12 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
   assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, function() return false end) == 0, 'a long detour is out')
   assert(#taxi.offers(function() return {} end, sights, 50.02, 14.02, rnd) == 0, 'no addresses, no rides')
   assert(#taxi.offers(near, function() return {} end, 50.02, 14.02, rnd) == 0, 'no sights, no rides')
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 0) == 0, 'no passenger seats, no rides')
+  for _ = 1, 5 do
+    for _, o in ipairs(taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 1)) do
+      assert(o.taxi.people == 1, 'one free seat: one passenger')
+    end
+  end
 end)
 
 test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and gets out', function()
@@ -1644,7 +1652,7 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   local c = s.career
   c.garage.debt = 0
   vehicle.bodyStyle = 'Hatchback'
-  riders = nil
+  riders, freeSeats = nil, nil
   s.config.spawnTrailer, s.config.requireTrailer = true, true   -- the game's defaults: a taxi needs no trailer
   s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
     everywhere)
@@ -1655,10 +1663,21 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   for _, offer in ipairs(s.offers) do assert(not offer.taxi, 'no sights known, no taxi rides') end
   fuel.addArea(s.autoIdx, 'k', sightRows())
   core.generate()
+  freeSeats = 0   -- a car with no passenger seats (a two-seater with the seat on the cargo side, say)
+  s.freeSeats = nil
+  core.generate()
+  for _, offer in ipairs(s.offers) do assert(not offer.taxi, 'no passenger seats, no taxi rides') end
+  freeSeats = 4
+  s.freeSeats = nil
+  core.generate()
   local i, job
   for k, offer in ipairs(s.offers) do if offer.taxi then i, job = k, offer end end
   assert(job, 'a car is offered taxi rides')
   assert(job.to.n:find('^Sight'), 'to a sight')
+  freeSeats = job.taxi.people - 1   -- switched to a smaller car after the offer came
+  core.take(i)
+  assert(s.job ~= job, 'more passengers than free seats: the ride is refused')
+  freeSeats = nil   -- a mod car without the seat system: seats unknown, the ride is allowed
   core.take(i)
   assert(s.job == job and s.phase == 'toPickup')
   assert(core.phoneState().active.taxi.people == job.taxi.people)
@@ -3571,6 +3590,8 @@ test('seat occupants: bus seats, a fixed scattered order, and seating the player
   assert(n == 34, 'every passenger seat of the city bus: ' .. n)
   local seats = { { seatId = 'FL', isDriver = true, occupantType = 'player' } }
   for _, id in ipairs(occ.BUS_SEATS) do seats[#seats + 1] = { seatId = id } end
+  assert(occ.freeSeats(seats) == 34 and occ.freeSeats(nil) == nil, 'free seats: all but the driver')
+  assert(occ.freeSeats({ { seatId = 'FL', isDriver = true } }) == 0, 'a one-seater has none')
   local p = occ.plan(seats, 5, '136')
   assert(#p.add == 5 and #p.remove == 0 and p.shown == 5)
   for _, id in ipairs(p.add) do assert(id ~= 'FL', 'never the driver seat') end

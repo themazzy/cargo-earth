@@ -302,6 +302,21 @@ function M.carPassengers(n, seed)
   return plan.shown
 end
 
+-- Passenger seats in the car the player drives (taxi rides): the seats besides the driver's, or nil when the car has no
+-- seat system (most mod cars), so its seats are unknown.
+function M.freeSeats()
+  local so, v = seatSystem(), playerVeh()
+  if not (so and so.getSeats and v) then return nil end
+  local id = v:getID()
+  if so.usesSeatSystem then
+    local okUses, uses = pcall(so.usesSeatSystem, id)
+    if not okUses or not uses then return nil end
+  end
+  local okSeats, seats = pcall(so.getSeats, id)
+  if not okSeats or type(seats) ~= 'table' or #seats == 0 then return nil end
+  return require('cargoEarth/occupants').freeSeats(seats)
+end
+
 -- After the mod spawned, swapped or respawned the player's car: once the game knows its seats, the player sits in the
 -- driver's seat (so the driver figure shows, as in any stock car). Tried for a few seconds, then left alone (the
 -- player may choose to stand up from the game's own seat menu).
