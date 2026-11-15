@@ -2927,3 +2927,40 @@ test('first run asks free play or career; free play keeps nothing when a career 
   assert(c.camerasOff == true, 'settings stay')
   assert(core.phoneState().screen ~= 'choose')
 end)
+
+test('Settings restarts the career only after DELETE and leaves no copy of the old save', function()
+  local core, s = fresh()
+  s.career.camerasOff, s.career.delivered, s.career.home = true, 9, {g = {50, 14}, capacity = 1}
+  core.settingsDo('cameras', false)
+  assert(disk['/settings/cargoEarth/career.json'].money == 1000)
+  disk['/settings/cargoEarth/career.json.backup1'] = copy(disk['/settings/cargoEarth/career.json'])
+  local st = core.settingsState()
+  assert(st.canRestart and st.restartWord == 'DELETE')
+  -- anything but the word deletes nothing
+  for _, word in ipairs({'', 'delete', 'DELETE ', 'yes'}) do
+    local out = core.settingsDo('restart', word)
+    assert(out.restartError and not out.restarted and s.career.money == 1000 and s.career.garage.started, word)
+  end
+  s.job = {id = 'j1', kind = 'food', from = {g = {50, 14}}, to = {g = {50.05, 14}}, pay = 100, minutes = 30}
+  s.phase, s.orders[1] = 'toDelivery', {job = s.job, phase = 'toDelivery'}
+  local out = core.settingsDo('restart', 'DELETE')
+  assert(out.restarted and not out.restartError and not out.canRestart)
+  assert(not s.job and #s.orders == 0 and not s.career.garage.started and s.career.money == 0)
+  assert(s.career.home == nil and (s.career.delivered or 0) == 0 and s.career.camerasOff == true, 'settings stay')
+  assert(core.phoneState().screen == 'choose', 'the phone asks Career or Free play again')
+  for _, suffix in ipairs({'', '.backup1', '.backup2', '.legacy'}) do
+    local c = disk['/settings/cargoEarth/career.json' .. suffix]
+    assert(c == nil or (c.money == 0 and not c.garage.started), 'no copy of the old career: ' .. suffix)
+  end
+end)
+
+test('on the resume screen Restart career drops the saved career instead of loading it', function()
+  local core, s = fresh()
+  s.pendingCareer = {money = 5000, mode = 'trucking', currency = 'EUR', garage = {started = true, car = {model = 'pigeon'}}}
+  assert(core.phoneState().screen == 'resume' and core.settingsState().canRestart)
+  core.settingsDo('restart', 'nope')
+  assert(s.pendingCareer and s.pendingCareer.money == 5000)
+  assert(core.settingsDo('restart', 'DELETE').restarted)
+  assert(not s.pendingCareer and s.career.money == 0 and s.career.currency == 'EUR' and s.mode == 'trucking')
+  assert(core.phoneState().screen == 'choose')
+end)

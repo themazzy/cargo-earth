@@ -354,3 +354,27 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   sc.openPanel('garage', undefined, true)
   assert.equal(sc.panel, 'garage')
 }
+// Settings > Restart career: nothing is sent until DELETE is typed; success closes the Menu
+{
+  assert(directive.template.includes('ng-disabled="restart.word !== st.restartWord" ng-click="restartGo()"'), 'the delete button waits for the word')
+  const sc = {$evalAsync: fn => fn(), $watch: () => {}, $on: () => {}, menuOnly: true}
+  directive.link(sc)
+  sc.st = {canRestart: true, restartWord: 'DELETE'}
+  sc.panel = 'settings'
+  sc.restartOpen()
+  sc.restart.word = 'delete'
+  const before = commands.length
+  sc.restartGo()
+  assert.equal(commands.length, before, 'a wrong word sends nothing')
+  sc.restart.word = 'DELETE'
+  answer = {restarted: true, restartWord: 'DELETE'}
+  sc.restartGo()
+  assert(commands.at(-1).includes(JSON.stringify('restart') + ', ' + JSON.stringify('DELETE')), commands.at(-1))
+  assert(!sc.restart.open && sc.panel === null, 'the Menu closes on the new start')
+  answer = {restartError: 'Type DELETE to confirm. Nothing was deleted.', restartWord: 'DELETE'}
+  sc.panel = 'settings'
+  sc.restartOpen()
+  sc.restart.word = 'DELETE'
+  sc.restartGo()
+  assert(sc.restart.open && sc.restart.error.includes('Nothing was deleted'))
+}

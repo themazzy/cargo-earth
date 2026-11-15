@@ -578,6 +578,46 @@ local function pauseCareer()
   return true
 end
 
+-- Settings > Restart career (the installer's "Delete the career save" from inside the game). The player types DELETE to
+-- confirm. Everything of the career goes: money, cars, home, firm, reputation, progress and the backups of the save, so
+-- nothing can bring it back on the next start. Only the player's settings stay (M.KEEP_ON_START). The phone then shows
+-- the first-run choice again (Career or Free play). On the resume screen it drops the saved career instead of loading it.
+M.RESTART_WORD = 'DELETE'
+function M.restartCareer(word)
+  if word ~= M.RESTART_WORD then return false, 'Type ' .. M.RESTART_WORD .. ' to confirm. Nothing was deleted.' end
+  local pending = S.pendingCareer
+  local from = type(pending) == 'table' and next(pending) ~= nil and pending or S.career
+  if not pending then
+    -- the live world: what the old career put there goes (as when pausing), but nothing is saved
+    clearFreight()
+    releaseStorage()
+    trailers.remove()
+    if earth.status() == 'ok' then earth.gpsClear() end
+    marker.reset()
+  end
+  local fresh = { money = 0, delivered = 0, km = 0, history = {}, garage = garage.new(), backupAt = 0 }
+  for _, k in ipairs(M.KEEP_ON_START) do fresh[k] = from[k] end
+  -- the old save and every copy of it; one that cannot be removed is overwritten with the new, empty career below
+  local left = {}
+  for _, suffix in ipairs({ '', '.pending', '.backup1', '.backup2', '.legacy' }) do
+    local path = SAVE .. suffix
+    if FS and FS.removeFile and (not FS.fileExists or FS:fileExists(path)) then pcall(FS.removeFile, FS, path) end
+    if suffix ~= '' and suffix ~= '.pending' and (not FS or not FS.fileExists or FS:fileExists(path)) then left[#left + 1] = path end
+  end
+  S.pendingCareer, S.resumeError, S.resumeTrip, S.loadBlocked, S.saveError = nil, nil, nil, nil, nil
+  S.parts, S.job, S.phase, S.orders, S.preferredDelivery = nil, nil, 'idle', {}, nil
+  S.offers, S.offerStats, S.offeredAt = {}, nil, nil
+  local ph = S.phone
+  ph.online, ph.incoming, ph.lastDone, ph.lastFailure, ph.cancelAskUntil = false, nil, nil, nil, nil
+  S.stopT, S.dist, S.roadM, S.etaS, S.inCareerWorld = 0, nil, nil, nil, true
+  fuelWatch, fuelPending, gamePump = nil, nil, nil
+  loadCareer(fresh)
+  saveCareer()   -- backupAt 0 with no play time: this first save copies nothing into the backups
+  for _, path in ipairs(left) do pcall(jsonWriteFile, path, fresh, false, nil, true) end
+  say('Career deleted. Choose how to play on the phone.')
+  return true
+end
+
 local function modeReady()
   if S.mode == 'courier' then return S.fidx ~= nil end
   return S.idx ~= nil
@@ -3386,7 +3426,8 @@ function M.settingsState()
   -- paused: a saved career waits on the resume screen. Only what lives outside the career can change then
   -- (the dash phone, help); the job's settings belong to the save and open once it is loaded.
   local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil, window = S.window,
-    reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {} }
+    reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
+    canRestart = S.pendingCareer ~= nil or S.career.garage.started == true or nil, restartWord = M.RESTART_WORD }
   for _, d in ipairs(M.SETTINGS[S.mode]) do
     local key, step, min, max, default = d[1], d[3], d[4], d[5], defs[d[1]]
     if freightTier and (key == 'minKm' or key == 'maxKm') then
@@ -3411,7 +3452,7 @@ function M.settingsState()
 end
 
 -- name: mode (a = courier | trucking), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
--- dark (a = true | false), dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
+-- dark (a = true | false), restart (a = the confirm word, see restartCareer), dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
 function M.settingsDo(name, a, b)
   -- the dash phone is the player's own choice, outside the career: it works on the resume screen too
   if name == 'dash' then
@@ -3423,6 +3464,14 @@ function M.settingsDo(name, a, b)
   if name == 'dark' then
     M.setDark(a)
     return M.settingsState()
+  end
+  -- restart (a = the word the player typed): works on the resume screen too, where it drops the saved career
+  if name == 'restart' then
+    local ok, why = M.restartCareer(a)
+    local out = M.settingsState()
+    out.restartError = not ok and why or nil
+    out.restarted = ok or nil
+    return out
   end
   if S.pendingCareer then return M.settingsState() end
   if S.parts then return M.settingsState() end
