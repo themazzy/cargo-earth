@@ -210,6 +210,7 @@ function M.busLoanerConfig()
     or ('vehicles/' .. M.BUS_MODEL .. '/' .. pick .. '.pc')
   local config = jsonReadFile(file)
   if type(config) ~= 'table' or type(config.parts) ~= 'table' then return nil end
+  require('cargoEarth/occupants').fillBusSeats(config)   -- a seat for every passenger
   return config, pick
 end
 
@@ -225,6 +226,51 @@ function M.busDoors(open)
     .. 'if d and d.setBeamGroupsValveState then pcall(d.setBeamGroupsValveState, { "frontDoors", "rearDoors" }, '
     .. (open and '-1' or '1') .. ') end end')
   return true
+end
+
+------------------------------------------------------------------------------------------ people in the seats
+local function seatSystem() return rawget(_G, 'gameplay_seatOccupants') or ext('gameplay_seatOccupants') end
+
+-- Seated passengers in the player's vehicle: n people (BeamNG's dummy occupants, real weight) in the order the seed
+-- gives. Returns how many sit, or nil when the vehicle has no seat system.
+function M.busPassengers(n, seed)
+  local so, v = seatSystem(), playerVeh()
+  if not (so and so.getSeats and so.setDummyOccupant and v) then return nil end
+  local id = v:getID()
+  if so.usesSeatSystem and not so.usesSeatSystem(id) then return nil end
+  local okSeats, seats = pcall(so.getSeats, id)
+  if not okSeats or type(seats) ~= 'table' then return nil end
+  local occupants = require('cargoEarth/occupants')
+  local plan = occupants.plan(seats, n, seed)
+  for _, seatId in ipairs(plan.remove) do pcall(so.clearDummyOccupant, id, seatId) end
+  for _, seatId in ipairs(plan.add) do pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG) end
+  return plan.shown
+end
+
+-- After the mod spawned, swapped or respawned the player's car: once the game knows its seats, the player sits in the
+-- driver's seat (so the driver figure shows, as in any stock car). Tried for a few seconds, then left alone (the
+-- player may choose to stand up from the game's own seat menu).
+local seatWatch
+function M.watchSeat() local now = os.clock() seatWatch = { fromT = now + 1, untilT = now + 8 } end
+
+function M.seatTick()
+  if not seatWatch then return end
+  local now = os.clock()
+  if now > seatWatch.untilT then seatWatch = nil return end
+  if now < seatWatch.fromT then return end   -- the game's own seating runs first, on the spawn
+  local so, v = seatSystem(), playerVeh()
+  if not (so and so.requestEnterBestSeat and v) then return end
+  local id = v:getID()
+  local okUses, uses = pcall(function() return so.usesSeatSystem and so.usesSeatSystem(id) end)
+  if not okUses then seatWatch = nil return end
+  local d = vehData(id)
+  if not (d and d.vdata) then return end   -- still loading
+  if not uses then seatWatch = nil return end   -- a car without seat occupants (most mod cars): nothing to show
+  local okP, presence = pcall(function() return so.getPlayerPresence and so.getPlayerPresence(0) end)
+  if okP and require('cargoEarth/occupants').needsSeat(true, presence, id) then
+    seatWatch = nil   -- one go: a car that refuses is left alone
+    pcall(so.requestEnterBestSeat, id, 0)
+  end
 end
 
 function M.vehicleData(id) return vehData(id) end
@@ -359,6 +405,7 @@ function M.respawnPlayer(edit)
     replacedData = previousData
     error(err)
   end
+  M.watchSeat()
 end
 
 local configsCache
@@ -433,6 +480,7 @@ function M.spawn(model, key, config, vehicleId, position)
   if not ok then error(spawned) end
   if not spawned then error('BeamNG refused to spawn ' .. tostring(model)) end
   ownedId, replacedData = spawned:getID(), previousData
+  M.watchSeat()
 end
 
 function M.repair()
