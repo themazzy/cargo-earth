@@ -274,6 +274,24 @@ function M.busPassengers(n, seed)
   return plan.shown
 end
 
+-- A taxi's passengers in the player's own car: n people (0 empties the seats). They board only while the player drives
+-- the career car; emptying always works on the career car, even after the player switched to another one. Returns how
+-- many sit, or nil when the car has no seat system (most mod cars) or is not the career car.
+function M.carPassengers(n, seed)
+  local so, v = seatSystem(), playerVeh()
+  if not (so and so.getSeats and so.setDummyOccupant and ownedId) then return nil end
+  if n > 0 and not (v and v:getID() == ownedId) then return nil end
+  local id = ownedId
+  if so.usesSeatSystem and not so.usesSeatSystem(id) then return nil end
+  local okSeats, seats = pcall(so.getSeats, id)
+  if not okSeats or type(seats) ~= 'table' then return nil end
+  local occupants = require('cargoEarth/occupants')
+  local plan = occupants.plan(seats, n, seed)
+  for _, seatId in ipairs(plan.remove) do pcall(so.clearDummyOccupant, id, seatId) end
+  for _, seatId in ipairs(plan.add) do pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG) end
+  return plan.shown
+end
+
 -- After the mod spawned, swapped or respawned the player's car: once the game knows its seats, the player sits in the
 -- driver's seat (so the driver figure shows, as in any stock car). Tried for a few seconds, then left alone (the
 -- player may choose to stand up from the game's own seat menu).

@@ -234,8 +234,8 @@ end
 ------------------------------------------------------------------------------------------ stations
 
 -- Row kinds: 'f' fuel, 'e' charger; the same index also keeps the helper's car places ('p' parts shop, 'g' repair
--- workshop, for parts runs).
-M.PLACE_KINDS = { f = 'fuel', e = 'electric', p = 'parts', g = 'garage' }
+-- workshop, for parts runs; 't' a place people take a taxi to: airport, station, museum, sight, hotel).
+M.PLACE_KINDS = { f = 'fuel', e = 'electric', p = 'parts', g = 'garage', t = 'sight' }
 
 local function cell(lat, lon) return math.floor(lat / M.GRID) .. '_' .. math.floor(lon / M.GRID) end
 

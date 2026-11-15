@@ -53,6 +53,13 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(helper.auto_kind("automotive_repair", None, None), "g")
         self.assertEqual(helper.auto_kind(None, "automotive car_dealer", None), "g")
         self.assertIsNone(helper.auto_kind("gas_station", "automotive", None))
+        # taxi destinations
+        self.assertEqual(helper.auto_kind("airport", "travel airport", None), "t")
+        self.assertEqual(helper.auto_kind("train_station", None, None), "t")
+        self.assertEqual(helper.auto_kind("art_museum", "arts_and_entertainment museum art_museum", None), "t")
+        self.assertEqual(helper.auto_kind("hotel", None, None), "t")
+        self.assertIsNone(helper.auto_kind("tour_operator", None, None))
+        self.assertIsNone(helper.auto_kind("airport_shuttles", None, None))
 
     def test_place_query_keeps_workplaces_out_of_food_orders(self):
         rows = [

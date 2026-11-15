@@ -16,7 +16,7 @@ limits. Little of this has been driven in game yet.
   stops. See `docs/BUS_LINES.md`.
 
 ## Each vehicle has its own work
-- Cars are sorted by BeamNG's "Body Style": cars get no parcel rounds (vans only), SUVs and pickups get parts runs from parts
+- Cars are sorted by BeamNG's "Body Style": cars get taxi rides to airports, stations, museums, sights and hotels (no parcel rounds: vans only), SUVs and pickups get parts runs from parts
   shops and car plants to repair workshops, vans get parcel routes, box trucks get business shipping (no more parcel
   routes), tractors get trailer freight, tanker runs and heavy tows. Food delivery works in anything.
 - Hired drivers hold licences (car, truck, articulated), know one vehicle kind best (+15 %) and wait when their vehicle
