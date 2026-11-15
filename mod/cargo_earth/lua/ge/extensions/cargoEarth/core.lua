@@ -493,6 +493,7 @@ local function loadCareer(c)
     local j = type(o) == 'table' and o.data
     if type(j) == 'table' and j.from and j.to and j.from.g and j.to.g then
       j.trailerSpawned = false
+      if type(j.tow) == 'table' and j.tow.stage == 'hitch' then j.tow.stage = 'shop' end
       careerClock.restoreJob(c, j)
       j.paymentId = j.paymentId or economy.nextId(c, 'delivery')
       local order = { job = j, phase = o.phase == 'toDelivery' and 'toDelivery' or 'toPickup' }
@@ -530,6 +531,8 @@ end
 
 local function target()
   if not S.job then return nil end
+  -- a tow job with a borrowed trailer goes to the workshop for it first
+  if S.phase == 'toPickup' and S.job.tow and S.job.tow.stage then return S.job.to end
   return S.phase == 'toPickup' and S.job.from or S.job.to
 end
 
@@ -778,7 +781,9 @@ local function towOffers(class, p)
       label = 'Workshop' } end
   end
   local addresses = food.addressesNear(S.fidx, p.lat, p.lon, tow.NEAR_KM)
-  local out = tow.offers(class, p.lat, p.lon, addresses, workshop, S.towCars, M.random, nil, roadKmFn(p))
+  -- no car trailer of your own coupled: the job starts by borrowing one at the workshop
+  local borrow = not trailers.ownTowTrailer(kind)
+  local out = tow.offers(class, p.lat, p.lon, addresses, workshop, S.towCars, M.random, nil, roadKmFn(p), borrow)
   local factor = rating.freightPay(c)
   for _, offer in ipairs(out) do
     if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
@@ -1008,6 +1013,15 @@ local function takeJob(j)
         or 'This tow job needs a vehicle with a tow hitch for the car trailer.', 5)
       return
     end
+    -- your own trailer goes along; without it (uncoupled since the offer) the trailer is borrowed at the workshop
+    local kind = tow.CLASSES[j.tow.class].trailer
+    if not j.tow.borrow and not trailers.adopt(kind) then
+      -- the offer was made with your trailer coupled: now the empty-trailer legs are paid and timed too
+      local p = earth.pose()
+      local before = j.pay
+      tow.borrow(j, p and p.lat or j.from.g[1], p and p.lon or j.from.g[2])
+      j.pay = before + math.floor((j.pay - before) * (j.reputationPay or 1) / 5 + 0.5) * 5
+    end
   elseif j.haul then
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
@@ -1073,6 +1087,16 @@ local function finishPickup()
     end
     say(n > 1 and string.format('Collected %d orders from %s.', n, j.from.n)
       or string.format('Collected %s from %s.', j.cargoName, j.from.n))
+  elseif j.tow and j.tow.stage then
+    -- at the workshop: the borrowed trailer stands behind you until Hitch on the phone (M.towHitch)
+    S.stopT = -10
+    if j.tow.stage == 'hitch' and trailers.id() then return end
+    local ok, why = trailers.spawnBorrowed(tow.CLASSES[j.tow.class].trailer)
+    if not ok then say('The trailer could not be put out: ' .. tostring(why), 6) return end
+    j.tow.stage, j.trailerSpawned = 'hitch', true
+    say(string.format('The %s is behind you. Press Hitch on the phone.', tow.CLASSES[j.tow.class].name:lower()), 8)
+    saveCareer()
+    return
   elseif j.tow then
     -- the car waits by the road with the trailer behind you; Load it on the phone puts it on (M.towLoad)
     S.stopT = -10
@@ -1118,8 +1142,33 @@ end
 -- if they are gone, stopping there again brings them back).
 function M.towWaiting()
   local j = S.job
+  if j and j.tow and j.tow.stage == 'hitch' and S.phase == 'toPickup' and trailers.id() then return true end
   return j ~= nil and j.tow ~= nil and j.tow.waiting == true and S.phase == 'toPickup'
     and trailers.id() ~= nil and trailers.towedAlive() >= #j.tow.cars
+end
+
+-- Tow job, at the workshop: put the borrowed trailer on the hitch and head for the broken-down car.
+function M.towHitch()
+  local j = S.job
+  if not (j and j.tow and j.tow.stage == 'hitch' and S.phase == 'toPickup') then return end
+  local p = earth.pose()
+  if p and (p.speed or 0) > M.STOP_SPEED then say('Stop before hitching.') return end
+  local coupled = trailers.coupled(M.G.playerId and M.G.playerId() or -1)
+  if not coupled and trailers.id() and not trailers.withPlayer() then
+    say('Back up to the trailer first: it stands at the workshop.', 5)
+    return
+  end
+  if not coupled and not trailers.hitch() then
+    j.tow.stage = 'shop'
+    say('The trailer is gone. Stop at the workshop again to get it.', 5)
+    return
+  end
+  j.tow.stage = nil
+  S.stopT, S.dist, S.roadM, S.etaS = 0, nil, nil, nil
+  gpsToTarget()
+  say(string.format('Trailer hitched. Drive to the broken-down car at %s.', j.from.n), 6)
+  saveCareer()
+  phoneSound('pickup')
 end
 
 -- Tow job, at the pickup: put the waiting car(s) on the trailer parked next to them.
@@ -1565,6 +1614,8 @@ local function tick(dt)
     M.busTick(p)
     if not S.job then return end
   end
+  -- a borrowed trailer the player coupled with the game's own coupling counts as hitched
+  if S.job.tow and S.job.tow.stage == 'hitch' and M.G.playerId and trailers.coupled(M.G.playerId()) then M.towHitch() end
   -- a tow job: the damage the cars came with is not yours; a car that slides off is noticed
   if S.job.tow and S.phase == 'toDelivery' and S.clock >= (S.towCheckAt or 0) then
     local t = S.job.tow
@@ -2205,6 +2256,8 @@ function M.phoneState()
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
       special = special.info(j), tow = tow.info(j), reloadFee = j.tow and M.TOW_RELOAD_FEE or nil,
       towWaiting = j.tow and j.tow.waiting and S.phase == 'toPickup' or nil,
+      towHitch = j.tow and j.tow.stage == 'hitch' and S.phase == 'toPickup' or nil,
+      here = j.tow and j.tow.stage and S.phase == 'toPickup' and { name = j.to.n, label = 'Get the trailer here', town = j.to.town or '' } or nil,
       slots = j.kind == 'food' and cargo.size(j) or nil,
       distM = distRoad and math.floor(S.roadM + 0.5)
         or (S.dist and math.floor(S.dist + 0.5)) or nil,
@@ -2325,6 +2378,8 @@ function M.phoneAction(a, orderId)
     M.spawnTrailer()
   elseif a == 'towLoad' then
     M.towLoad()
+  elseif a == 'towHitch' then
+    M.towHitch()
   elseif a == 'busDoors' then
     M.busDoors()
   elseif a == 'busEnd' then

@@ -2307,9 +2307,12 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   -- the game side, stubbed: what trailers.lua would do in BeamNG
   local saved = {}
   for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
-    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow' }) do
+    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow', 'ownTowTrailer', 'adopt' }) do
     saved[k] = trailers[k]
   end
+  -- your own car trailer is coupled: the job goes straight to the car (the borrowed one has its own test)
+  trailers.ownTowTrailer = function() return 9, 'tiltdeck' end
+  trailers.adopt = function() return true end
   local spawned, distances, damage = 0, {}, 0
   trailers.existing = function(list) return { list[1] } end
   trailers.towModel = function() return 'cartrailer' end
@@ -3480,4 +3483,131 @@ test('seat occupants: bus seats, a fixed scattered order, and seating the player
   assert(same < 5 or #other.add < 5, 'another line seats people elsewhere')
   assert(occ.needsSeat(true, nil, 5) and occ.needsSeat(true, { vehicleId = 5 }, 5))
   assert(not occ.needsSeat(true, { vehicleId = 5, seatId = 'FL' }, 5) and not occ.needsSeat(false, nil, 5))
+end)
+
+test('a tow job without your own trailer: borrow it at the workshop, hitch it, fetch the car, bring both back', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  vehicle.slotPartMap = { body = 'pigeon', hitch = 'pigeon_tow_hitch' }
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  withStation(s, 50.1, 14)
+  local saved = {}
+  for _, k in ipairs({ 'existing', 'towModel', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
+    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow', 'ownTowTrailer', 'adopt', 'spawnBorrowed',
+    'hitch', 'coupled' }) do
+    saved[k] = trailers[k]
+  end
+  local trailerOut, hitched, coupled, roadside = false, 0, false, 0
+  local distances = {}
+  trailers.existing = function(list) return { list[1] } end
+  trailers.towModel = function() return 'tiltdeck' end
+  trailers.ownTowTrailer = function() return nil end
+  trailers.adopt = function() return false end
+  trailers.spawnBorrowed = function(kind) trailerOut = kind == 'cartrailer' return trailerOut end
+  trailers.hitch = function() if not trailerOut then return false end hitched = hitched + 1 return true end
+  trailers.coupled = function() return coupled end
+  trailers.id = function() return trailerOut and 7 or nil end
+  local nearTrailer = true
+  trailers.withPlayer = function() return trailerOut and nearTrailer end
+  trailers.towedDistances = function() return distances end
+  trailers.towedDamage = function() return 0 end
+  trailers.towedCount = function() return #distances end
+  trailers.towedAlive = function() return #distances end
+  trailers.remove = function() trailerOut, distances = false, {} end
+  trailers.removeTow = function() trailerOut, distances = false, {} end
+  trailers.spawnRoadside = function(_, cars) roadside = roadside + 1 distances = { 20 } return #cars == 1 end
+  trailers.towedNear = function() return true end
+  trailers.loadTowed = function() distances = { 1 } return true end
+  local ok, err = pcall(function()
+    core.setMode('trucking')
+    advance(core, 2)
+    core.generate()
+    local i, job
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    assert(job and job.tow.borrow and job.tow.stage == 'shop', 'no trailer of your own: it is borrowed')
+    local direct = tow.pay('light', job.km)
+    assert(job.pay > direct and job.borrowKm > job.km, 'the empty-trailer legs are paid')
+    core.take(i)
+    assert(s.job == job)
+    -- the GPS and the phone go to the workshop first
+    local a = core.phoneState().active
+    assert(a.here and a.here.name == job.to.n and a.here.label == 'Get the trailer here')
+    pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+    advance(core, 30)
+    assert(roadside == 0 and job.tow.stage == 'shop', 'the car is not there before the trailer')
+    pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+    advance(core)
+    assert(trailerOut and job.tow.stage == 'hitch' and core.phoneState().active.towHitch, 'the trailer stands behind you')
+    assert(core.towWaiting() and core.stopInfo() == nil, 'no countdown while it waits for Hitch')
+    advance(core, 30)
+    assert(job.tow.stage == 'hitch' and s.phase == 'toPickup', 'nothing happens until Hitch')
+    pose.speed = 10
+    core.phoneAction('towHitch')
+    assert(job.tow.stage == 'hitch' and hitched == 0, 'not while moving')
+    pose.speed = 0
+    nearTrailer = false
+    core.phoneAction('towHitch')
+    assert(job.tow.stage == 'hitch' and hitched == 0, 'not from far away (it would pull the trailer across the map)')
+    nearTrailer = true
+    core.phoneAction('towHitch')
+    assert(hitched == 1 and job.tow.stage == nil and s.phase == 'toPickup')
+    assert(core.phoneState().active.here == nil, 'now the broken-down car')
+    pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+    advance(core)
+    assert(roadside == 1 and job.tow.waiting)
+    core.phoneAction('towLoad')
+    assert(s.phase == 'toDelivery')
+    pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+    advance(core, 30)
+    assert(not s.job and c.history[1].kind == 'tow' and not trailerOut, 'delivered at the same workshop, trailer left there')
+    -- coupling it with the game's own coupling counts too; a save in the middle puts it back at the workshop step
+    s.offers = {}
+    pose.lat, pose.lon = 50, 14
+    core.generate()
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    core.take(i)
+    pose.lat, pose.lon = job.to.g[1], job.to.g[2]
+    advance(core)
+    assert(job.tow.stage == 'hitch')
+    coupled = true
+    advance(core, 2)
+    assert(job.tow.stage == nil and hitched == 1, 'coupled by hand')
+    core.cancel(true)
+    assert(not s.job and not trailerOut, 'cancel takes the borrowed trailer away')
+    -- offered with your own trailer coupled, uncoupled before taking it: borrowed, with the extra legs paid and timed
+    s.offers = {}
+    pose.lat, pose.lon = 50, 14
+    trailers.ownTowTrailer = function() return 9, 'tiltdeck' end
+    core.generate()
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    assert(not job.tow.borrow)
+    local pay, minutes = job.pay, job.minutes
+    core.take(i)
+    assert(job.tow.stage == 'shop' and job.pay > pay and job.minutes > minutes and job.borrowKm, 'the detour is paid')
+  end)
+  for k, f in pairs(saved) do trailers[k] = f end
+  assert(ok, err)
+end)
+
+test('your own coupled car trailer is used and never deleted', function()
+  local trailers = require('cargoEarth/trailers')
+  local deleted = 0
+  local objs = { [9] = { getJBeamFilename = function() return 'tiltdeck' end, delete = function() deleted = deleted + 1 end,
+    getID = function() return 9 end } }
+  local oldScene, oldPlayer, oldCv = scenetree, getPlayerVehicle, core_vehicles
+  scenetree = { findObjectById = function(id) return objs[id] end }
+  getPlayerVehicle = function() return { getID = function() return 1 end } end
+  core_vehicles = { vehsCouplings = { [1] = { [9] = true } } }
+  local ok, err = pcall(function()
+    assert(trailers.ownTowTrailer('cartrailer') == 9)
+    assert(trailers.ownTowTrailer('flatbed') == nil, 'a tilt deck is not a flatbed')
+    assert(trailers.adopt('cartrailer') and trailers.id() == 9 and trailers.adopted())
+    trailers.removeTow()
+    trailers.remove()
+    assert(deleted == 0 and trailers.id() == nil, 'your own trailer stays in the world')
+  end)
+  scenetree, getPlayerVehicle, core_vehicles = oldScene, oldPlayer, oldCv
+  assert(ok, err)
 end)

@@ -38,6 +38,7 @@ M.DECK = { tiltdeck = { h = 0.9, back = 0.9 }, tsfb = { h = 0.75, back = 0.7 }, 
 M.DECK_DEFAULT = { h = 0.9, back = 0.4 }
 M.HITCH_TRIES = 120  -- frames to wait for the game to know a new trailer's couplers
 local kindOut = nil  -- the tow trailer kind that is out (for its deck)
+local adopted = false  -- the model of the player's own trailer when that is the one out (coupled before the job): never deleted
 local hitchWanted = nil  -- { vehicle id, trailer id, frames left }: couple the trailer that was just spawned
 
 function M.configure(cfg)
@@ -49,7 +50,7 @@ end
 local function obj()
   if not id then return nil end
   local o = scenetree.findObjectById(id)
-  if not o then id = nil end
+  if not o then id, adopted = nil, false end
   return o
 end
 
@@ -136,12 +137,14 @@ local function removeTowed()
   towed = {}
 end
 
+function M.adopted() return obj() ~= nil and adopted ~= false end
+
 function M.remove()
   removeTowed()
   hitchWanted, kindOut = nil, nil
   local o = obj()
-  if o then o:delete() end
-  id = nil
+  if o and not adopted then o:delete() end
+  id, adopted = nil, false
 end
 
 -- A tow job ends: its cars go, and its trailer when it is a tow trailer (a freight trailer that is out stays).
@@ -293,7 +296,7 @@ local function deckSpots(trailer, n)
   dir.z = 0
   dir = dir:length() > 1e-3 and dir:normalized() or vec3(0, 1, 0)
   local m = kindOut and M.models[kindOut]
-  local deck = M.DECK[m and m.model or ''] or M.DECK_DEFAULT
+  local deck = M.DECK[type(adopted) == 'string' and adopted or (m and m.model) or ''] or M.DECK_DEFAULT
   local mid = vec3(pos.x, pos.y, pos.z)
   local okBox, box = pcall(function() return trailer:getSpawnWorldOOBB() end)
   if okBox and box then
@@ -323,7 +326,8 @@ local function onDeck(trailer, cars, wrecks)
 end
 
 -- Make sure the tow trailer for this kind is out (spawned behind the player when it is not). True, or false and why.
-local function towTrailer(kind, fresh)
+-- parked: left standing behind the player for the phone's Hitch (a borrowed trailer at the workshop).
+local function towTrailer(kind, fresh, parked)
   if obj() and not fresh then return true end
   local model, config = M.towModel(kind)
   if not model then return false, 'this game has no ' .. tostring(kind) .. ' trailer' end
@@ -331,9 +335,48 @@ local function towTrailer(kind, fresh)
   local ok, why = M.spawn(kind)
   if ok then
     kindOut = kind
-    M.hitch()
+    if not parked then M.hitch() end
   end
   return ok, why
+end
+
+-- The borrowed trailer at the workshop: spawned standing behind the player. True, or false and why.
+function M.spawnBorrowed(kind)
+  return towTrailer(kind, true, true)
+end
+
+-- Is this vehicle id one of the models a tow trailer of this kind can be?
+local function isTowModel(vid, kind)
+  local o = scenetree.findObjectById(vid)
+  local ok, model = pcall(function() return o and o:getJBeamFilename() end)
+  if not ok or type(model) ~= 'string' then return false end
+  local custom = M.models[kind]
+  if custom and custom.model == model then return true, model end
+  for _, m in ipairs(M.TOW_MODELS[kind] or {}) do
+    if (type(m) == 'table' and m[1] or m) == model then return true, model end
+  end
+  return false
+end
+
+-- A car trailer (or flatbed) of the player's own, coupled to the player's vehicle now: its vehicle id and model.
+function M.ownTowTrailer(kind)
+  local veh = getPlayerVehicle and getPlayerVehicle(0)
+  local couplings = veh and core_vehicles and core_vehicles.vehsCouplings and core_vehicles.vehsCouplings[veh:getID()]
+  for vid, on in pairs(couplings or {}) do
+    if on and vid ~= id then
+      local yes, model = isTowModel(vid, kind)
+      if yes then return vid, model end
+    end
+  end
+end
+
+-- Use the player's own coupled trailer for this tow job (it is never deleted). True when there is one.
+function M.adopt(kind)
+  local vid, model = M.ownTowTrailer(kind)
+  if not vid then return false end
+  M.remove()
+  id, kindOut, adopted = vid, kind, model
+  return true
 end
 
 -- Spawn a tow trailer behind the player's vehicle with the broken-down cars on its deck (brakes on, engine off).
