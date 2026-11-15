@@ -6,7 +6,7 @@ Hopper) count as such even without a style.
 
 | Kind | Detected by | Food delivery mode | Freight mode |
 | --- | --- | --- | --- |
-| Car | any other road vehicle (Sedan, Hatchback, Wagon, Coupe...) | meals, groceries | company contracts (no parcel rounds: those are for vans) |
+| Car | any other road vehicle (Sedan, Hatchback, Wagon, Coupe...) | meals, groceries | taxi rides (1-3 passengers, 2-15 km to airports, stations, museums, sights and hotels; a rough ride costs pay), company contracts |
 | SUV or pickup | Body Style SUV / Pickup / Crossover / Off-Road | meals, groceries | parts runs, company contracts |
 | Van | the H-Series van | meals, groceries | parcel routes (4-7 stops), van freight, company contracts |
 | Box truck | MD-Series, the mid truck, a T-Series without a fifth wheel | meals, groceries | business shipping between companies |

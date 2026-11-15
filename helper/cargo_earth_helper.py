@@ -37,7 +37,7 @@ API (GET, JSON):
   /v1/area?key=r_c            one ready area: {"key", "restaurants": [[id, lat, lon, curbLat, curbLon, name, cat, town],
                               ...], "grocers": [rows in the same format],
                               "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...],
-                              "autos": [[id, lat, lon, name, "p" (parts shop) | "g" (repair workshop), town], ...],
+                              "autos": [[id, lat, lon, name, "p" (parts shop) | "g" (repair workshop) | "t" (taxi destination), town], ...],
                               "tiles": {"row_col":
                               [[lat, lon, curbLat, curbLon, label, town], ...]}, "houses": bool,
                               "depots": [{id, n, g: [lat, lon], t: "yard" | "shop", town, source, access}, ...]}
@@ -66,7 +66,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "0.10.0"
-AREA_CACHE_VERSION = "6"  # parts shops and repair workshops (parts runs); retain existing downloaded Parquet blocks
+AREA_CACHE_VERSION = "7"  # taxi destinations (airports, stations, sights); retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
 STAC_ROOT = "https://stac.overturemaps.org"
@@ -103,11 +103,16 @@ DEPOT_RULES = [
     ("shop", r"hardware|home_improvement|building_material|furniture|electronics|appliance|auto_parts|grocery|supermarket|hypermarket|department_store"),
 ]
 DEPOT_RX = [(kind, re.compile(pattern)) for kind, pattern in DEPOT_RULES]
-# Car places for parts runs: "p" sells car parts, "g" repairs cars (a parts run goes from a "p" to a "g").
+# Car places for parts runs: "p" sells car parts, "g" repairs cars (a parts run goes from a "p" to a "g"); and "t",
+# where people take a taxi to: airports, railway and bus stations, museums, sights, hotels (taxi rides in a car).
 AUTO_RULES = [
     ("p", r"auto_parts|automotive_parts|car_parts|tire_dealer|tire_shop|tire_store"),
     ("g", r"auto_repair|automotive_repair|automotive_service|auto_service|car_repair|car_service|auto_body|body_shop"
           r"|collision|mechanic|oil_change|transmission_repair|car_dealer|used_car_dealer|tire_repair"),
+    ("t", r"airport_terminal|(^| )airport( |$)|train_station|railway_station|bus_station|museum|tourist_attraction"
+          r"|landmark_and_historical_building|castle|palace|monument|zoo|aquarium|amusement_park|theme_park|stadium"
+          r"|concert_hall|opera_house|opera_and_ballet|theatre|theater|cathedral|basilica|botanical_garden|observatory|hotel|resort"
+          r"|convention_center|exhibition_center"),
 ]
 AUTO_RX = [(kind, re.compile(pattern)) for kind, pattern in AUTO_RULES]
 AUTO_SQL_RX = "|".join(pattern for _, pattern in AUTO_RULES)
@@ -689,7 +694,7 @@ def valid_area(data, key, release):
         return False
     for row in autos:
         if not isinstance(row, list) or len(row) < 5 or not isinstance(row[0], str) or not coordinates(row[1:3] * 2, 0) \
-                or not isinstance(row[3], str) or row[4] not in ("p", "g"):
+                or not isinstance(row[3], str) or row[4] not in ("p", "g", "t"):
             return False
     for depot in data["depots"]:
         if not isinstance(depot, dict) or not isinstance(depot.get("id"), str) or not isinstance(depot.get("n"), str) or depot.get("t") not in ("yard", "shop", "fuel"):
