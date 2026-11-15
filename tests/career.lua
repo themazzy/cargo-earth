@@ -2246,6 +2246,15 @@ test('tow rules: who can tow, offers to a workshop, cars on board, damage costs 
   assert(#tow.offers('light', 50, 14, far, workshop, { 'covet' }, function(n) return n end) == 0)
   local near = { { 50.018, 14, 50.018, 14, 'Close 1', 'Town' } }
   assert(#tow.offers('light', 50, 14, near, workshop, { 'covet' }, function(n) return n end) == 1)
+  -- each car has a wreck look, the same one for the same address; the game side gets a kind and a seed per car
+  assert(job.tow.wrecks and #job.tow.wrecks == 1 and tow.info(job).wreck, 'a wreck look')
+  assert(tow.wreckFor('50.01010,14.00000', 1) == tow.wreckFor('50.01010,14.00000', 1))
+  local plan = tow.wreckPlan(heavy)
+  assert(#plan == 2 and plan[1][1] == heavy.tow.wrecks[1] and plan[1][2] ~= plan[2][2])
+  assert(tow.wreckPlan({ tow = { class = 'light', cars = { 'covet' } } }) == nil, 'an old saved job: no wreck')
+  local kinds = {}
+  for n = 1, 60 do kinds[tow.wreckFor(tostring(n), 1)] = true end
+  for _, w in ipairs(tow.WRECKS) do assert(kinds[w.id], 'every look comes up: ' .. w.id) end
   assert(tow.onBoard({ 1, 5.9, 7, nil }) == 2)
   assert(tow.condition(0) == 100 and tow.condition(600) == 90 and tow.condition(1e9) == 100 - tow.MAX_LOSS)
 end)

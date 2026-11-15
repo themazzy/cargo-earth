@@ -22,6 +22,12 @@ fuel station where no shop is known. At the pickup the car stands by the road (a
 a spot clear of buildings and trees) with the trailer behind you; park the trailer next to it, stop and press Load
 on the phone to put it on the deck.
 
+The broken-down cars are wrecked by the game's own soft-body physics as they spawn (vehicle extension
+`cargoEarth_wreck`): front-end crash, rear-ended, side impact, rolled over (one end or the roof pushed in for 0.3 s,
+the rest of the car pushed back as hard so it stays put), stripped (every break group and the doors off) or flat tyres.
+Some break groups come off and a tyre goes flat on every wreck. The look follows the address, so a breakdown always
+looks the same, and it is done again if loading resets the car. The damage they come with does not cost pay.
+
 ## Parts runs
 
 An SUV or a pickup loads car parts at a supplier within 15 km and brings them to a repair workshop 4-30 km away.

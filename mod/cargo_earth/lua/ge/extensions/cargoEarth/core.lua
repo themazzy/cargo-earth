@@ -1036,7 +1036,7 @@ local function finishPickup()
     -- the car waits by the road with the trailer behind you; Load it on the phone puts it on (M.towLoad)
     S.stopT = -10
     if j.tow.waiting and trailers.id() and trailers.towedAlive() >= #j.tow.cars then return end
-    local ok, why = trailers.spawnRoadside(tow.CLASSES[j.tow.class].trailer, j.tow.cars)
+    local ok, why = trailers.spawnRoadside(tow.CLASSES[j.tow.class].trailer, j.tow.cars, tow.wreckPlan(j))
     if not ok then
       say('The broken-down car could not be placed: ' .. tostring(why), 6)
       return
@@ -1081,7 +1081,7 @@ function M.towLoad()
   if p and (p.speed or 0) > M.STOP_SPEED then say('Stop before loading.') return end
   local near, why = trailers.towedNear(trailers.LOAD_M or 30)
   if not near then say(why, 5) return end
-  local ok, err = trailers.loadTowed(j.tow.cars)
+  local ok, err = trailers.loadTowed(j.tow.cars, tow.wreckPlan(j))
   if not ok then say('Could not load: ' .. tostring(err), 5) return end
   j.tow.waiting, j.tow.spawnedAt, j.tow.damage0, j.tow.onBoard = nil, S.clock, nil, #j.tow.cars
   local _, o = orderOf(j)
@@ -3747,7 +3747,7 @@ function M.spawnTrailer(atPickup)
     if (S.career.money or 0) < M.TOW_RELOAD_FEE then say('Not enough money to load the cars again.') return end
     -- the damage done so far stays counted: the cars spawned again come without it
     local before = j.tow.damage0 and math.max(0, trailers.towedDamage() - j.tow.damage0) or 0
-    local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars)
+    local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars, tow.wreckPlan(j))
     if not ok then say('The cars could not be loaded: ' .. tostring(why)) return end
     economy.post(S.career, -M.TOW_RELOAD_FEE, 'cancel_fee', economy.nextId(S.career, 'cancel_fee'), 'Tow: loading the cars again')
     j.tow.damageDone = (j.tow.damageDone or 0) + before
