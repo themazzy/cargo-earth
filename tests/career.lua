@@ -3603,3 +3603,62 @@ test('your own coupled car trailer is used and never deleted', function()
   scenetree, getPlayerVehicle, core_vehicles = oldScene, oldPlayer, oldCv
   assert(ok, err)
 end)
+
+test('used-car market: every vehicle kind has at least 6 listings at cheap, middle and dear prices', function()
+  local garage, haul = require('cargoEarth/garage'), require('cargoEarth/haul')
+  assert(haul.configClass('van', 'Van', 'H-Series Vanster') == 'van')
+  assert(haul.configClass('us_semi', nil, 'T-Series T75 Box Truck') == 'rigid')
+  assert(haul.configClass('us_semi', nil, 'T-Series TC82 Sleeper') == 'semi')
+  assert(haul.configClass('md_series', nil, 'MD-Series Flatbed') == 'rigid')
+  assert(haul.configClass('pickup', 'Pickup', 'D15') == 'suv')
+  assert(haul.configClass('covet', 'Hatchback', 'Covet') == 'car')
+  assert(haul.configClass('citybus', 'Bus', 'City bus') == nil)
+  -- a spawned vehicle gets the same kind as its listing (a modded van or box truck too)
+  assert(haul.carrier({ model = 'modvan', bodyStyle = 'Van' }) == 'van')
+  assert(haul.carrier({ model = 'modtruck', bodyStyle = 'Box Truck' }) == 'rigid')
+  assert(haul.carrier({ model = 'covet', bodyStyle = 'Minivan' }) == 'car')
+  local configs = {}
+  local function add(model, style, n, typ)
+    for i = 1, n do
+      configs[#configs + 1] = { model = model, key = model .. i, name = model .. ' ' .. i, value = 1000 * i,
+        type = typ or 'Car', bodyStyle = style }
+    end
+  end
+  add('covet', 'Hatchback', 20) add('pickup', 'Pickup', 9, 'Truck') add('van', 'Van', 4, 'Truck')
+  add('md_series', 'Box Truck', 2, 'Truck') add('us_semi', 'Semi Truck', 7, 'Truck') add('citybus', 'Bus', 3, 'Truck')
+  local G = { configs = function() return configs end }
+  local seed = 7
+  local rnd = function() seed = (seed * 16807) % 2147483647 return seed / 2147483647 end
+  local g = {}
+  garage.marketTick(G, g, 0, rnd)
+  local function counts()
+    local n, bands = {}, {}
+    for _, l in ipairs(g.market.list) do
+      assert(l.kind, 'every listing has its kind')
+      assert(l.model ~= 'citybus', 'no buses for sale')
+      n[l.kind] = (n[l.kind] or 0) + 1
+      bands[l.kind] = bands[l.kind] or {}
+      bands[l.kind][l.band] = true
+    end
+    return n, bands
+  end
+  local n, bands = counts()
+  for _, kind in ipairs(haul.KIND_ORDER) do
+    assert((n[kind] or 0) >= garage.MIN_PER_KIND, kind .. ' has ' .. tostring(n[kind]))
+  end
+  assert(bands.car[1] and bands.car[2] and bands.car[3], 'cars at varied prices')
+  assert(bands.semi[1] and bands.semi[3], 'tractors at varied prices')
+  -- a sold listing is replaced by one of its kind; the list says each listing's kind
+  local vanId
+  for _, l in ipairs(g.market.list) do if l.kind == 'van' then vanId = l.id break end end
+  for i, l in ipairs(g.market.list) do if l.id == vanId then table.remove(g.market.list, i) break end end
+  garage.marketTick(G, g, 0, rnd)
+  n = counts()
+  assert(n.van >= garage.MIN_PER_KIND)
+  for _, c in ipairs(garage.market(g)) do assert(c.kind and c.hours == nil) end
+  -- an older save's market keeps its listings and learns their kinds
+  local old = { market = { v = 3, t = 5, seq = 1, nextAt = 100,
+    list = { { id = 1, model = 'van', key = 'van2', name = 'van 2', km = 0, condition = 1, price = 10, listedAt = 0, gone = 90 } } } }
+  garage.marketTick(G, old, 0, rnd)
+  assert(old.market.v == garage.MARKET_V and old.market.list[1].id == 1 and old.market.list[1].kind == 'van')
+end)
