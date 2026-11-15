@@ -760,13 +760,27 @@ function M.partsOffers(p, room, range)
   return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p), range)
 end
 
-local function towOffers(class, p, weak)
+-- specs: the vehicle's power and weight (tow.weak warns per job)
+local function towOffers(class, p, specs)
   local c = S.career
+  -- is this tow trailer kind in the game? (asked once; core's main chunk is at Lua's local limit, so it lives here)
+  local function towTrailerExists(k)
+    if S.towTrailer == nil then S.towTrailer = {} end
+    if S.towTrailer[k] == nil then S.towTrailer[k] = trailers.towModel(k) ~= nil end
+    return S.towTrailer[k]
+  end
   local kind = tow.CLASSES[class].trailer
   S.towCars = S.towCars or trailers.existing(tow.CARS)
-  if S.towTrailer == nil then S.towTrailer = {} end
-  if S.towTrailer[kind] == nil then S.towTrailer[kind] = trailers.towModel(kind) ~= nil end
-  if not S.towTrailer[kind] then return {} end
+  -- a rig with a tow hitch: small cars go on the small car trailer, unless your own big car trailer is coupled (it
+  -- takes them too); with your own small one coupled only small cars are offered
+  local opts = nil
+  local own = nil
+  if class == 'light' then
+    own = (trailers.ownTowTrailer('cartrailer') and 'cartrailer') or (trailers.ownTowTrailer('smalltrailer') and 'smalltrailer') or nil
+    local small = towTrailerExists('smalltrailer') and own ~= 'cartrailer'
+    opts = { small = small, onlySmall = own == 'smalltrailer' and small }
+    if not towTrailerExists(kind) and not small then return {} end
+  elseif not towTrailerExists(kind) then return {} end
   local hq = c.firm and c.firm.hq
   local function workshop(lat, lon)
     if hq and hq.g then
@@ -788,12 +802,17 @@ local function towOffers(class, p, weak)
   end
   local addresses = food.addressesNear(S.fidx, p.lat, p.lon, tow.NEAR_KM)
   -- no car trailer of your own coupled: the job starts by borrowing one at the workshop
-  local borrow = not trailers.ownTowTrailer(kind)
-  local out = tow.offers(class, p.lat, p.lon, addresses, workshop, S.towCars, M.random, nil, roadKmFn(p), borrow)
+  local borrow
+  if class == 'light' then borrow = own == nil else borrow = not trailers.ownTowTrailer(kind) end
+  if class == 'light' and not towTrailerExists(kind) then   -- only the small trailer in this game: small cars only
+    opts.onlySmall = true
+  end
+  local out = tow.offers(class, p.lat, p.lon, addresses, workshop, S.towCars, M.random, nil, roadKmFn(p), borrow, opts)
   local factor = rating.freightPay(c)
   for _, offer in ipairs(out) do
     if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
-    if weak and offer.tow then offer.tow.weak = true end
+    if offer.tow and tow.weak(offer.tow.class, specs) then offer.tow.weak = true end
+    if offer.tow then kind = tow.CLASSES[offer.tow.class].trailer end
     if firm.ownsTrailer(c, kind) then
       offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
       offer.pay = offer.pay + offer.trailerBonus
@@ -896,7 +915,7 @@ function M.generate()
     -- tow jobs: broken-down cars at real addresses, for a vehicle with a tow hitch or a tractor
     local class = v and tow.class(tier, tow.hasHitch(v))
     if class and S.fidx and garage.inOwnCar(M.G, S.career.garage) then
-      for _, offer in ipairs(towOffers(class, p, tow.weak(class, v.specs))) do S.offers[#S.offers + 1] = offer end
+      for _, offer in ipairs(towOffers(class, p, v.specs)) do S.offers[#S.offers + 1] = offer end
     end
   end
   S.offeredAt = { lat = p.lat, lon = p.lon }
@@ -1042,7 +1061,7 @@ local function takeJob(j)
     end
   elseif j.tow then
     local v, tier = freightCarrier()
-    if not v or tow.class(tier, tow.hasHitch(v)) ~= j.tow.class then
+    if not v or not tow.fits(tow.class(tier, tow.hasHitch(v)), j.tow.class) then
       say(j.tow.class == 'heavy' and 'Tow jobs with two cars need a tractor for the flatbed trailer.'
         or 'This tow job needs a vehicle with a tow hitch for the car trailer.', 5)
       return
@@ -4033,9 +4052,24 @@ function M.hqState()
   out.trailers = {}
   local semiDrivers = 0
   for _, b in ipairs(out.bays) do if b.driver and b.tier == 'semi' then semiDrivers = semiDrivers + 1 end end
-  for i, t in ipairs(firm.trailers(c)) do
-    out.trailers[#out.trailers + 1] = { id = t.id, name = t.name, kind = t.kind, busy = i <= semiDrivers or nil }
+  -- tow trailers can be taken out at the headquarters and hitched to your own vehicle (M.hqDo takeTrailer)
+  local pose = earth.status() == 'ok' and earth.pose() or nil
+  local atHq = firm.atHq(c, pose)
+  local v, tier = freightCarrier()
+  local rig = v and garage.inOwnCar(M.G, g) and tow.class(tier, tow.hasHitch(v)) or nil
+  local outId = trailers.ownOut() and S.ownTrailer or nil
+  local hauled = 0
+  for _, t in ipairs(firm.trailers(c)) do
+    local towClass = (t.kind == 'cartrailer' and 'light') or (t.kind == 'smalltrailer' and 'small') or nil
+    local busy = nil
+    if not towClass then hauled = hauled + 1 busy = hauled <= semiDrivers or nil end
+    if t.kind == 'flatbed' then towClass = 'heavy' end
+    out.trailers[#out.trailers + 1] = { id = t.id, name = t.name, kind = t.kind, busy = busy,
+      tow = towClass ~= nil or nil, out = outId == t.id or nil,
+      canTake = towClass ~= nil and not busy and outId == nil and atHq and S.job == nil and tow.fits(rig, towClass) or nil,
+      needs = towClass and not tow.fits(rig, towClass) and (towClass == 'heavy' and 'Needs a tractor' or 'Needs a tow hitch') or nil }
   end
+  out.atHq = atHq or nil
   out.trailerBonus = math.floor(firm.TRAILER_BONUS * 100 + 0.5)
   out.workshopFactor = workshop
   local parts, kinds = 0, 0
@@ -4087,13 +4121,43 @@ function M.hqDo(name, a, b)
     local allowed = { repair = true, switchCar = true, hireDriver = true, releaseDriver = true, refuel = true, paydebt = true,
       service = true, repairParked = true }
     if allowed[name] then S.firmMsg = M.garageDo(name, a, b).msg
+    elseif name == 'takeTrailer' or name == 'leaveTrailer' then
+      local c = S.career
+      local ok, msg = false, 'Unknown action'
+      local pose = earth.status() == 'ok' and earth.pose() or nil
+      local t = nil
+      for _, row in ipairs(firm.trailers(c)) do if row.id == tonumber(a) then t = row end end
+      if S.job then ok, msg = false, 'Finish your current job first.'
+      elseif not firm.atHq(c, pose) then ok, msg = false, 'Drive to your headquarters first.'
+      elseif name == 'leaveTrailer' then
+        trailers.putAwayOwn()
+        S.ownTrailer, ok, msg = nil, true, 'Trailer left in the yard.'
+      elseif not t then ok, msg = false, 'That trailer is not in the yard.'
+      else
+        local v, tier = freightCarrier()
+        local towClass = (t.kind == 'cartrailer' and 'light') or (t.kind == 'smalltrailer' and 'small') or (t.kind == 'flatbed' and 'heavy') or nil
+        if not towClass then ok, msg = false, 'Only tow trailers can be taken out.'
+        elseif not (v and garage.inOwnCar(M.G, personalGarage()) and tow.fits(tow.class(tier, tow.hasHitch(v)), towClass)) then
+          ok, msg = false, towClass == 'heavy' and 'The flatbed trailer needs a tractor.' or 'This trailer needs your own car with a tow hitch.'
+        else
+          ok, msg = trailers.takeOwn(t.kind)
+          if ok then
+            S.ownTrailer, msg = t.id, string.format('Putting your %s on the hitch. Tow jobs now skip borrowing one.', t.name:lower())
+            S.offeredAt = nil   -- offers are made again with your trailer
+          else msg = 'Could not get the trailer out: ' .. tostring(msg) end
+        end
+      end
+      S.firmMsg = msg
+      if ok then say(msg) end
     elseif name == 'buyVehicle' or name == 'buyTrailer' or name == 'sellTrailer' then
       local c, g = S.career, personalGarage()
       local ok, msg = false, 'Unknown action'
       if c.employment then ok, msg = false, 'End company work first.'
       elseif not (c.firm and c.firm.hq) then ok, msg = false, 'Choose the headquarters first.'
       elseif name == 'buyTrailer' then ok, msg = firm.buyTrailer(c, a, g.debt)
-      elseif name == 'sellTrailer' then ok, msg = firm.sellTrailer(c, tonumber(a))
+      elseif name == 'sellTrailer' then
+        ok, msg = firm.sellTrailer(c, tonumber(a))
+        if ok and S.ownTrailer == tonumber(a) then trailers.putAwayOwn() S.ownTrailer = nil end
       else
         local v = firm.vehicleOffer(a)
         if v then

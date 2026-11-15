@@ -2171,6 +2171,31 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   money = c.money
   core.hqDo('sellTrailer', hq.trailers[1].id)
   assert(c.money == money + 3000 and #firm.trailers(c) == 0)
+  -- a tow trailer of the firm's is taken out here and goes on your hitch (Jan: how do I get my own trailer?)
+  local tr = require('cargoEarth/trailers')
+  local saved = { tr.takeOwn, tr.ownOut, tr.putAwayOwn }
+  local out = nil
+  tr.takeOwn = function(kind) out = kind return true end
+  tr.ownOut = function() return out and 5 or nil end
+  tr.putAwayOwn = function() out = nil end
+  local ok, err = pcall(function()
+    c.money = c.money + 5000
+    vehicle.slotPartMap = { body = 'pigeon', hitch = 'pigeon_tow_hitch' }
+    hq = core.hqDo('buyTrailer', 'smalltrailer')
+    local row = hq.trailers[#hq.trailers]
+    assert(row.tow and row.canTake and not row.out, 'a tow trailer can be taken out: ' .. tostring(hq.msg) .. ' ' .. tostring(row.needs))
+    hq = core.hqDo('takeTrailer', row.id)
+    row = hq.trailers[#hq.trailers]
+    assert(out == 'smalltrailer' and row.out and not row.canTake, tostring(hq.msg))
+    hq = core.hqDo('leaveTrailer', row.id)
+    assert(out == nil and not hq.trailers[#hq.trailers].out, 'left in the yard')
+    -- not without a tow hitch
+    vehicle.slotPartMap = { body = 'pigeon' }
+    hq = core.hqState()
+    assert(not hq.trailers[#hq.trailers].canTake and hq.trailers[#hq.trailers].needs == 'Needs a tow hitch')
+  end)
+  tr.takeOwn, tr.ownOut, tr.putAwayOwn = saved[1], saved[2], saved[3]
+  assert(ok, err)
 end)
 
 test('customers tip by speed and the order\'s condition, not by how it was driven', function()
@@ -2410,6 +2435,16 @@ test('tow rules: who can tow, offers to a workshop, cars on board, damage costs 
   local kinds = {}
   for n = 1, 60 do kinds[tow.wreckFor(tostring(n), 1)] = true end
   for _, w in ipairs(tow.WRECKS) do assert(kinds[w.id], 'every look comes up: ' .. w.id) end
+  -- Jan: a small car goes on the small, light car trailer (TSFB) when the game has it and no big one of yours is coupled
+  local small = tow.offers('light', 50, 14, addresses, workshop, { 'covet' }, function() return 1 end, nil, nil, true, { small = true })[1]
+  assert(small.tow.class == 'small' and small.trailer == 'smalltrailer' and tow.info(small).trailer == 'Small car trailer')
+  assert(small.pay < tow.pay('light', small.km) + tow.CLASSES.light.rate * tow.BORROW_RATE * small.borrowKm, 'the small trailer pays a little less')
+  local big = tow.offers('light', 50, 14, addresses, workshop, { 'midsize' }, function() return 1 end, nil, nil, false, { small = true })[1]
+  assert(big.tow.class == 'light' and big.trailer == 'cartrailer', 'a big car still goes on the 22 ft car trailer')
+  assert(#tow.offers('light', 50, 14, addresses, workshop, { 'midsize' }, function() return 1 end, nil, nil, false, { small = true, onlySmall = true }) == 0,
+    'your own small trailer coupled: no big cars')
+  assert(tow.fits('light', 'small') and tow.fits('light', 'light') and not tow.fits('light', 'heavy') and not tow.fits('heavy', 'small'))
+  assert(tow.weak('small', { power = 55, weight = 900 }) == false and tow.weak('light', { power = 55, weight = 900 }), 'the small trailer is light')
   assert(tow.onBoard({ 1, 5.9, 7, nil }) == 2)
   assert(tow.condition(0) == 100 and tow.condition(600) == 90 and tow.condition(1e9) == 100 - tow.MAX_LOSS)
 end)
@@ -3912,7 +3947,7 @@ test('a tow job without your own trailer: borrow it at the workshop, hitch it, f
   end
   local trailerOut, hitched, coupled, roadside = false, 0, false, 0
   local distances = {}
-  trailers.existing = function(list) return { list[1] } end
+  trailers.existing = function() return { 'midsize' } end   -- a big car: the 22 ft car trailer
   trailers.towModel = function() return 'tiltdeck' end
   trailers.ownTowTrailer = function() return nil end
   trailers.adopt = function() return false end
@@ -4014,10 +4049,15 @@ test('your own coupled car trailer is used and never deleted', function()
   local oldScene, oldPlayer, oldCv = scenetree, getPlayerVehicle, core_vehicles
   scenetree = { findObjectById = function(id) return objs[id] end }
   getPlayerVehicle = function() return { getID = function() return 1 end } end
-  core_vehicles = { vehsCouplings = { [1] = { [9] = true } } }
+  core_vehicles = { vehsCouplings = { [1] = { [9] = true } }, getModel = function(m) return { model = m } end }
   local ok, err = pcall(function()
     assert(trailers.ownTowTrailer('cartrailer') == 9)
     assert(trailers.ownTowTrailer('flatbed') == nil, 'a tilt deck is not a flatbed')
+    assert(trailers.ownTowTrailer('smalltrailer') == nil, 'nor the small car trailer')
+    -- the small TSFB counts as the small car trailer only (the game has the tilt deck for the big one)
+    objs[9].getJBeamFilename = function() return 'tsfb' end
+    assert(trailers.ownTowTrailer('smalltrailer') == 9 and trailers.ownTowTrailer('cartrailer') == nil)
+    objs[9].getJBeamFilename = function() return 'tiltdeck' end
     assert(trailers.adopt('cartrailer') and trailers.id() == 9 and trailers.adopted())
     trailers.removeTow()
     trailers.remove()
@@ -4025,6 +4065,35 @@ test('your own coupled car trailer is used and never deleted', function()
   end)
   scenetree, getPlayerVehicle, core_vehicles = oldScene, oldPlayer, oldCv
   assert(ok, err)
+end)
+
+test('a car goes on the deck by the middle of its body, not its ref node', function()
+  local V = {}
+  V.__index = V
+  local oldVec = rawget(_G, 'vec3')
+  vec3 = function(x, y, z)
+    if type(x) == 'table' then x, y, z = x.x, x.y, x.z end
+    return setmetatable({ x = x, y = y, z = z }, V)
+  end
+  function V:dot(b) return self.x * b.x + self.y * b.y + self.z * b.z end
+  function V:normalized() local l = math.sqrt(self:dot(self)) return vec3(self.x / l, self.y / l, self.z / l) end
+  -- a car facing +y whose ref node sits 1 m behind its middle and 0.3 m to the left of it; a broken-off part lies
+  -- further away in another cluster
+  local nodes = { { -0.9, -1.0 }, { 0.3, -1.0 }, { -0.9, 3.0 }, { 0.3, 3.0 }, { 5, 9 } }
+  local o = {
+    getDirectionVector = function() return vec3(0, 1, 0) end,
+    getNodeClusters = function() return { 1, 1, 1, 1, 2 } end,
+    getRefNodeId = function() return 0 end,
+    getNodeCount = function() return #nodes end,
+    getNodePosition = function(_, i) return vec3(nodes[i + 1][1], nodes[i + 1][2], 0) end,
+  }
+  local f, r = trailers.bodyOffset(o)
+  -- right of a car facing +y is +x here (the trailer side's own convention): middle at x = -0.3, y = 1.0
+  assert(math.abs(f - 1.0) < 1e-9 and math.abs(r + 0.3) < 1e-9, 'body middle from the ref node: ' .. f .. ' ' .. r)
+  -- a game without these calls: no shift
+  local f0, r0 = trailers.bodyOffset({})
+  vec3 = oldVec
+  assert(f0 == 0 and r0 == 0)
 end)
 
 test('used-car market: every vehicle kind has at least 6 listings at cheap, middle and dear prices', function()
