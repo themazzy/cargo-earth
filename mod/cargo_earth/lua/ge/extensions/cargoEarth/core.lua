@@ -1309,7 +1309,7 @@ function M.busDoors()
   if not S.dist or S.dist > rules(j).arriveM then say('Drive up to the stop first.') return end
   local bus = require('cargoEarth/bus')
   local off, on, dwell = bus.passengers(j, M.random)
-  S.busDwell = { off = off, on = on, untilT = S.clock + dwell, at = j.bus.at }
+  S.busDwell = { off = off, on = on, untilT = S.clock + dwell, at = j.bus.at, job = j }
   if M.G.busDoors then M.G.busDoors(true) end
   say(string.format('Doors open at %s: %d off, %d on.', j.bus.stops[j.bus.at].n, off, on), math.ceil(dwell))
 end
@@ -1317,7 +1317,7 @@ end
 function M.busTick(p)
   local d, j = S.busDwell, S.job
   if not d then return end
-  if not (j and j.bus) or j.bus.at ~= d.at then S.busDwell = nil return end
+  if not (j and j.bus) or d.job ~= j or j.bus.at ~= d.at then S.busDwell = nil return end
   if p and (p.speed or 0) > M.STOP_SPEED then
     -- drove off with the doors open: nobody got on or off, open them again at the stop
     S.busDwell = nil
@@ -1808,6 +1808,7 @@ local function companyReturn(aborted)
     clearFreight()
     releaseStorage()
     S.orders, S.job, S.phase, S.stopT = {}, nil, 'idle', 0
+    S.busDwell = nil
     trailers.remove()
     earth.gpsClear()
   end

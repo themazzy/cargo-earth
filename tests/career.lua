@@ -2493,6 +2493,33 @@ test('a bus shift: the lent bus, doors at every stop, the line paid and your car
   assert(s.mode == 'bus', 'still on the bus board')
 end)
 
+test('a bus shift ended with the doors open leaves nothing behind for the next shift', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  helperAsks = {}
+  core.setMode('bus')
+  advance(core, 2)
+  for _, a in ipairs(helperAsks) do if a.path:find('/v1/buslines', 1, true) then a.cb(busData()) end end
+  pose.lat, pose.lon, pose.speed = 50.0005, 14.0005, 0
+  local id = core.phoneState().bus.lines[1].id
+  core.phoneAction('busStart', id)
+  advance(core, 2)
+  local st = s.job.bus.stops[1]
+  pose.lat, pose.lon = st.g[1], st.g[2]
+  advance(core, 4)
+  core.phoneAction('busDoors')
+  assert(s.busDwell, 'the doors are open')
+  core.phoneAction('busEnd')
+  assert(not c.employment and not s.job and not s.busDwell, 'the open doors go with the shift')
+  -- a new shift at the depot: its first stop is not served by the old doors
+  c.garage.pendingUsed = nil   -- your car finished loading its parts
+  pose.lat, pose.lon = 50.0005, 14.0005
+  core.phoneAction('busStart', id)
+  advance(core, 40)
+  assert(s.job and s.job.bus.at == 1 and s.phase == 'toPickup', 'the new line still waits at its first stop')
+end)
+
 test('local money: country borders, exchange rates and free exchange at the border', function()
   local borders, currency = require('cargoEarth/borders'), require('cargoEarth/currency')
   -- two square countries side by side; the second has a hole (a lake) and an island
