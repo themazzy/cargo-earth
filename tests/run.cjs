@@ -29,6 +29,7 @@ run(fs.readFileSync('tests/helper.lua', 'utf8'), 'tests/helper.lua')
 run(fs.readFileSync('tests/career.lua', 'utf8'), 'tests/career.lua')
 run(fs.readFileSync('tests/dash.lua', 'utf8'), 'tests/dash.lua')
 run(fs.readFileSync('tests/wreck.lua', 'utf8'), 'tests/wreck.lua')
+run(fs.readFileSync('tests/bus-controls.lua', 'utf8'), 'tests/bus-controls.lua')
 // Exercise the actual supplied freight pack as well as the small rule fixtures.
 function toLua(value) {
   if (value === null) return 'nil'
