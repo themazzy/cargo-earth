@@ -22,6 +22,12 @@ local function job(j)
     and finite(j.pay) and j.pay >= 0 and finite(j.minutes) and j.minutes > 0) then return false end
   for _, key in ipairs({'startedActive', 'startedAt', 'km', 'pickupKm'}) do if j[key] ~= nil and not finite(j[key]) then return false end end
   if j.cargoCondition ~= nil and (not finite(j.cargoCondition) or j.cargoCondition < 0 or j.cargoCondition > 100) then return false end
+  if j.bus ~= nil then
+    local b = j.bus
+    if type(b) ~= 'table' or type(b.stops) ~= 'table' or #b.stops < 2 or not finite(b.at) or b.at < 1 or b.at > #b.stops
+      or not finite(b.onBoard) or b.onBoard < 0 or not finite(b.boarded) or b.boarded < 0 then return false end
+    for _, st in ipairs(b.stops) do if type(st) ~= 'table' or not point(st.g) then return false end end
+  end
   if j.haul ~= nil then
     local h = j.haul
     if type(h) ~= 'table' or (h.tier ~= 'van' and h.tier ~= 'rigid' and h.tier ~= 'semi')
@@ -56,9 +62,9 @@ local function valid(c)
   if c.employment ~= nil then
     local s = c.employment
     if type(s) ~= 'table' or not phases[s.phase] or type(s.id) ~= 'string' or type(s.companyId) ~= 'string'
-      or type(s.companyName) ~= 'string' or type(s.jobs) ~= 'table' or #s.jobs ~= 2
-      or not finite(s.index) or s.index < 1 or s.index > 3 or s.index ~= math.floor(s.index)
-      or not finite(s.completed) or s.completed < 0 or s.completed > 2 or not finite(s.gross) or s.gross < 0
+      or type(s.companyName) ~= 'string' or type(s.jobs) ~= 'table' or #s.jobs ~= (s.tier == 'bus' and 1 or 2)
+      or not finite(s.index) or s.index < 1 or s.index > #s.jobs + 1 or s.index ~= math.floor(s.index)
+      or not finite(s.completed) or s.completed < 0 or s.completed > #s.jobs or not finite(s.gross) or s.gross < 0
       or type(s.yard) ~= 'table' or not point(s.yard.g) then return false end
     if not optional(s, 'ownerOperator', 'boolean') or (s.share ~= nil and (not finite(s.share) or s.share < 0 or s.share > 1)) then return false end
     for _, key in ipairs({'failed', 'quality', 'vehicleDamage'}) do

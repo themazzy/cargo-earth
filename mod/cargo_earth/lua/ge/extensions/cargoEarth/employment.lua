@@ -1,4 +1,5 @@
--- Company contracts: fixed two-delivery manifests, held wages, return-to-yard settlement and reputation.
+-- Company contracts: fixed two-delivery manifests (one bus line for a city bus shift, cargoEarth/bus), held wages,
+-- return-to-yard settlement and reputation.
 -- Vehicle spawning stays in core/gamecar; all rules here can be exercised without the game.
 local jobs = require('cargoEarth/jobs')
 local haul = require('cargoEarth/haul')
@@ -97,7 +98,7 @@ end
 
 function M.begin(c, offer, personal, companyGarage, mode, independent)
   if c.employment then return false, 'Finish or end your company contract first.' end
-  if not offer or #offer.jobs ~= 2 then return false, 'Refresh the company board.' end
+  if not offer or #offer.jobs ~= (offer.jobCount or 2) then return false, 'Refresh the company board.' end
   local companyId = offer.companyId or offer.id
   local reputation = c.companies and c.companies[companyId] and c.companies[companyId].reputation or 0
   if independent and reputation < M.INDEPENDENT_REP then return false, 'Build 20 reputation with this company to unlock independent contracts.' end

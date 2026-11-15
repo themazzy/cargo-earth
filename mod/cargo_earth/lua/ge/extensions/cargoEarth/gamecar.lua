@@ -185,6 +185,34 @@ function M.freightLoanerConfig(model, key)
   return config
 end
 
+-- The city bus the city lends for a bus line: a stock Wentward citybus configuration, a city one when the game has one
+-- (not a coach or highway one). Returns the config and its key, or nil.
+M.BUS_MODEL = 'citybus'
+function M.busLoanerConfig()
+  local ok, info = pcall(function() return core_vehicles.getModel(M.BUS_MODEL) end)
+  local configs = ok and type(info) == 'table' and type(info.configs) == 'table' and info.configs or {}
+  local keys = {}
+  for key in pairs(configs) do keys[#keys + 1] = key end
+  table.sort(keys)
+  local pick
+  for _, key in ipairs(keys) do
+    local k = key:lower()
+    if k:find('city', 1, true) and not k:find('coach', 1, true) and not k:find('highway', 1, true) then pick = key break end
+  end
+  for _, key in ipairs(pick and {} or keys) do
+    local k = key:lower()
+    if not k:find('coach', 1, true) and not k:find('highway', 1, true) then pick = key break end
+  end
+  pick = pick or keys[1]
+  if not pick then return nil end
+  local entry = configs[pick]
+  local file = type(entry) == 'table' and type(entry.pcFilename) == 'string' and entry.pcFilename
+    or ('vehicles/' .. M.BUS_MODEL .. '/' .. pick .. '.pc')
+  local config = jsonReadFile(file)
+  if type(config) ~= 'table' or type(config.parts) ~= 'table' then return nil end
+  return config, pick
+end
+
 function M.vehicleData(id) return vehData(id) end
 
 function M.partsTarget()

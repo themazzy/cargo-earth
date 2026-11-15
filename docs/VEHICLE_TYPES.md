@@ -12,7 +12,7 @@ Hopper) count as such even without a style.
 | Box truck | MD-Series, the mid truck, a T-Series without a fifth wheel | meals, groceries | business shipping between companies |
 | Tractor | any truck with a fifth wheel | meals, groceries | trailer freight, fuel tanker runs, heavy tow jobs |
 
-Any vehicle with a tow hitch also gets light tow jobs. Every load travels in BeamNG's own cargo containers.
+City buses come lent with a bus line shift (Bus mode, see BUS_LINES.md). Any vehicle with a tow hitch also gets light tow jobs. Every load travels in BeamNG's own cargo containers.
 
 ## Tow jobs
 

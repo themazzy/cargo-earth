@@ -24,6 +24,8 @@ M.loaners = {
   van = { model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', label = 'van' },
   rigid = { model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', label = 'box truck' },
   semi = { model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', label = 'tractor' },
+  -- a city bus line (cargoEarth/bus): the stock Wentward city bus, its configuration found in the game
+  bus = { model = 'citybus', name = 'city bus', label = 'city bus' },
 }
 
 -- kg per parcel slot of freight. Real loads (Jan, 2026-11-15): a van leaves with about 0.6-1 t, a box truck with 4-8 t and a
