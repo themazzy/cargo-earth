@@ -1577,6 +1577,7 @@ test('a small car in freight mode gets no parcel rounds and still sees company c
   end
   local t = core.phoneState().trucking
   assert(t.carrier == 'Car' and #t.contracts == 1, 'company contracts are still listed')
+  assert(t.hint and not t.hint:find('parcel'), 'the hint does not offer parcel rounds')
 end)
 
 local cameras = require('cargoEarth/cameras')
