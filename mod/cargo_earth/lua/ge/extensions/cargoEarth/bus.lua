@@ -9,9 +9,16 @@ local M = {}
 M.NEAR_KM = 4            -- lines whose depot is this close to the player are offered
 M.DEPOT_KM = 3           -- a bus station or depot this close to the first stop is where the bus is lent
 M.OFFERS = 6
-M.ROAD_FACTOR = 1.15     -- the line's straight stop-to-stop km to road km
-M.BASE, M.PER_KM, M.PER_STOP, M.PER_PASSENGER = 120, 12, 6, 2
-M.SPEED_KMH, M.SLACK_MIN, M.STOP_MIN = 24, 6, 0.4
+M.ROAD_FACTOR = 1.25     -- the line's straight stop-to-stop km to road km (until the GPS knows the road)
+-- Pay goes by the timetable's minutes, as a driver's wage does, plus a little per stop and the fares.
+M.BASE, M.PER_MIN, M.PER_STOP, M.PER_PASSENGER = 60, 7, 3, 2   -- about 500-620 CZK/h with fares, near van freight
+-- The timetable: each stop has its own time from the one before. A bus is slow on short hops (pulling out, braking
+-- for the next stop) and faster between stops far apart: its speed grows with the hop's road km, within LEG_KMH.
+M.LEG_KMH, M.LEG_KMH_PER_KM = { 18, 45 }, 8
+M.LEG_STOP_MIN = 0.6     -- pulling in, the doors and pulling out again
+M.LEG_SLACK = 1.15       -- the time on the road times this
+M.LEG_MIN = 1.5          -- no stop is due sooner than this
+M.BOARD_MIN = 1          -- the first stop: getting the bus out of the depot
 M.CAPACITY = 70          -- people a city bus takes
 M.DWELL_S, M.PER_PERSON_S, M.MAX_DWELL_S = 3, 0.6, 15
 M.MAX_STOPS = 40         -- a longer line is cut here (its last stop is the end of this run)
@@ -24,6 +31,24 @@ local function place(id, n, lat, lon)
 end
 
 local function finite(x) return type(x) == 'number' and x == x and x ~= math.huge and x ~= -math.huge end
+
+-- Text from an older helper lost the backslash of its JSON escapes on the way into the game ("u0161" for "š"):
+-- such sequences are turned back into the letters (UTF-8). Text that is already right is left as it is.
+local function utf8char(c)
+  if c < 0x80 then return string.char(c) end
+  if c < 0x800 then return string.char(0xC0 + math.floor(c / 0x40), 0x80 + c % 0x40) end
+  return string.char(0xE0 + math.floor(c / 0x1000), 0x80 + math.floor(c / 0x40) % 0x40, 0x80 + c % 0x40)
+end
+
+function M.text(v)
+  if type(v) ~= 'string' then return nil end
+  return (v:gsub('\\?u(%x%x%x%x)', function(h)
+    local c = tonumber(h, 16)
+    if c < 0x80 or (c >= 0xD800 and c <= 0xDFFF) then return nil end   -- plain ASCII or half of a pair: kept as written
+    return utf8char(c)
+  end))
+end
+local text = M.text
 
 function M.index() return { lines = {}, depots = {}, state = nil } end
 
@@ -43,21 +68,21 @@ function M.set(idx, data)
       local stops = {}
       for _, s in ipairs(l.stops) do
         if type(s) == 'table' and finite(s[2]) and finite(s[3]) and math.abs(s[2]) <= 90 and math.abs(s[3]) <= 180 then
-          stops[#stops + 1] = { n = type(s[1]) == 'string' and s[1] ~= '' and s[1] or ('Stop ' .. (#stops + 1)), g = { s[2], s[3] } }
+          stops[#stops + 1] = { n = type(s[1]) == 'string' and s[1] ~= '' and text(s[1]) or ('Stop ' .. (#stops + 1)), g = { s[2], s[3] } }
         end
       end
       if #stops >= 4 then
-        lines[#lines + 1] = { id = l.id, ref = type(l.ref) == 'string' and l.ref or '', name = type(l.name) == 'string' and l.name or '',
-          from = type(l.from) == 'string' and l.from ~= '' and l.from or stops[1].n,
-          to = type(l.to) == 'string' and l.to ~= '' and l.to or stops[#stops].n,
-          operator = type(l.operator) == 'string' and l.operator or '', colour = type(l.colour) == 'string' and l.colour or nil,
+        lines[#lines + 1] = { id = l.id, ref = text(l.ref) or '', name = text(l.name) or '',
+          from = type(l.from) == 'string' and l.from ~= '' and text(l.from) or stops[1].n,
+          to = type(l.to) == 'string' and l.to ~= '' and text(l.to) or stops[#stops].n,
+          operator = text(l.operator) or '', colour = type(l.colour) == 'string' and l.colour or nil,
           stops = stops }
       end
     end
   end
   for _, d in ipairs(type(data.depots) == 'table' and data.depots or {}) do
     if type(d) == 'table' and type(d.id) == 'string' and finite(d.lat) and finite(d.lon) then
-      depots[#depots + 1] = place('busdepot:' .. d.id, type(d.name) == 'string' and d.name or 'Bus depot', d.lat, d.lon)
+      depots[#depots + 1] = place('busdepot:' .. d.id, text(d.name) or 'Bus depot', d.lat, d.lon)
     end
   end
   idx.lines, idx.depots = lines, depots
@@ -69,6 +94,15 @@ local function lineKm(stops)
   for i = 2, #stops do k = k + jobs.km(stops[i - 1].g[1], stops[i - 1].g[2], stops[i].g[1], stops[i].g[2]) end
   return k
 end
+
+-- Minutes the timetable gives a hop of this many road km (the doors at its end included).
+function M.legMinutes(roadKm)
+  roadKm = math.max(0, tonumber(roadKm) or 0)
+  local kmh = math.max(M.LEG_KMH[1], math.min(M.LEG_KMH[2], M.LEG_KMH[1] + M.LEG_KMH_PER_KM * roadKm))
+  return math.max(M.LEG_MIN, roadKm / kmh * 60 * M.LEG_SLACK + M.LEG_STOP_MIN)
+end
+
+local function round1(x) return math.floor(x * 10 + 0.5) / 10 end
 
 -- Where the bus for this line is lent and given back: the nearest bus station or depot to its first stop, else the
 -- first stop itself.
@@ -87,22 +121,75 @@ local function title(line)
   return ref and ('Line ' .. ref) or (line.name ~= '' and line.name or 'Bus line')
 end
 
--- The job for one run of the line.
+-- The job for one run of the line. Every stop has `min`, the minutes from the stop before (from the depot for the
+-- first one); the job's minutes are their sum.
 function M.job(line, depot)
   local stops = {}
   for i = 1, math.min(#line.stops, M.MAX_STOPS) do stops[i] = { n = line.stops[i].n, g = { line.stops[i].g[1], line.stops[i].g[2] } } end
   local km = lineKm(stops) * M.ROAD_FACTOR
   local depotKm = jobs.km(depot.g[1], depot.g[2], stops[1].g[1], stops[1].g[2])
+  local total = 0
+  for i, st in ipairs(stops) do
+    local from = i == 1 and depot.g or stops[i - 1].g
+    st.min = round1(M.legMinutes(jobs.km(from[1], from[2], st.g[1], st.g[2]) * M.ROAD_FACTOR) + (i == 1 and M.BOARD_MIN or 0))
+    total = total + st.min
+  end
   local function stopPlace(i) return place('bus:' .. line.id .. ':' .. i, stops[i].n, stops[i].g[1], stops[i].g[2]) end
   return {
     id = 'bus:' .. line.id, kind = 'bus', cargoName = title(line) .. ' to ' .. stops[#stops].n,
     from = stopPlace(1), to = stopPlace(2), km = km, straightKm = lineKm(stops), pickupKm = depotKm,
-    pay = math.floor((M.BASE + M.PER_KM * km + M.PER_STOP * #stops) / 5 + 0.5) * 5,
-    minutes = math.ceil((km + depotKm) / M.SPEED_KMH * 60 + M.SLACK_MIN + M.STOP_MIN * #stops),
+    pay = math.floor((M.BASE + M.PER_MIN * total + M.PER_STOP * #stops) / 5 + 0.5) * 5,
+    minutes = math.ceil(total),
     bus = { line = line.id, ref = line.ref, name = title(line), colour = line.colour, stops = stops, at = 1,
-      onBoard = 0, boarded = 0 },
+      onBoard = 0, boarded = 0, legStart = 0, late = 0 },
   }
 end
+
+-- About how many people ride the whole line (M.passengers on average with nobody turned away): for the fares the
+-- board shows.
+function M.expectedRiders(n)
+  local sum = 0
+  for at = 1, n - 1 do sum = sum + math.max(1, math.ceil(14 * (1 - (at - 1) / n))) / 2 end
+  return math.floor(sum + 0.5)
+end
+
+-- The current stop's timetable: seconds left until it is due (below 0: late) and the minutes it was given.
+-- nowS: the job's elapsed seconds.
+function M.due(job, nowS)
+  local b = job.bus
+  local st = b.stops[b.at]
+  local min = st and st.min or M.LEG_MIN
+  return (b.legStart or 0) + min * 60 - (nowS or 0), min
+end
+
+-- The GPS knows the road to the current stop: its time follows that road's km instead of the straight-line guess
+-- (once per stop). roadKm: the road left to the stop, nowS: the job's elapsed seconds. True when the time changed.
+function M.roadKnown(job, roadKm, nowS)
+  local b = job.bus
+  local st = b.stops[b.at]
+  if not st or b.timed == b.at or b.arrivedAt == b.at or not finite(roadKm) or roadKm < 0 then return false end
+  b.timed = b.at
+  local driven = math.max(0, (nowS or 0) - (b.legStart or 0)) / 60
+  local min = round1(driven + M.legMinutes(roadKm) + (b.at == 1 and M.BOARD_MIN or 0))
+  if math.abs(min - (st.min or 0)) < 0.2 then return false end
+  job.minutes = math.max(1, math.ceil(job.minutes + min - (st.min or 0)))
+  st.min = min
+  return true
+end
+
+-- The bus reached the current stop (the doors open): the minutes it is behind the timetable are added up (once per
+-- stop). Returns them.
+function M.arrived(job, nowS)
+  local b = job.bus
+  if b.arrivedAt == b.at then return 0 end
+  b.arrivedAt = b.at
+  local late = math.max(0, -M.due(job, nowS) / 60)
+  b.late = (b.late or 0) + late
+  return late
+end
+
+-- Minutes the bus was behind the timetable over the whole line.
+function M.lateMinutes(job) return job.bus.late or 0 end
 
 -- Lines near the player as company offers (cargoEarth/employment): one job each, the depot as the yard.
 function M.board(idx, lat, lon)
@@ -121,7 +208,7 @@ function M.board(idx, lat, lon)
     local operator = r.line.operator ~= '' and r.line.operator or 'City buses'
     out[#out + 1] = { id = 'bus:' .. r.line.id, companyId = 'bus:' .. operator, tier = 'bus', vehicle = 'City bus',
       name = operator, yard = r.depot, jobs = { j }, jobCount = 1, gross = j.pay, km = j.km, pickupKm = r.km,
-      minutes = j.minutes, wages = j.pay, bus = { ref = r.line.ref, name = j.bus.name, from = j.from.n,
+      minutes = j.minutes, wages = j.pay, fares = M.PER_PASSENGER * M.expectedRiders(#j.bus.stops), bus = { ref = r.line.ref, name = j.bus.name, from = j.from.n,
       to = j.bus.stops[#j.bus.stops].n, stops = #j.bus.stops, colour = r.line.colour } }
   end
   return out
@@ -146,9 +233,11 @@ function M.passengers(job, rnd)
   return off, math.max(0, on), dwell
 end
 
--- After the doors closed: the counts change and the bus heads for the next stop (the job's `to` becomes it).
-function M.served(job, off, on)
+-- After the doors closed: the counts change and the bus heads for the next stop (the job's `to` becomes it); its
+-- time starts now (nowS: the job's elapsed seconds).
+function M.served(job, off, on, nowS)
   local b = job.bus
+  b.legStart = nowS or b.legStart or 0
   b.onBoard = math.max(0, b.onBoard - off) + on
   b.boarded = b.boarded + on
   if b.at < #b.stops then
@@ -160,11 +249,11 @@ end
 
 -- A stop the bus cannot reach: nobody gets on (everyone gets off at the last one) and the stop is not paid.
 -- Returns how many got off.
-function M.skip(job)
+function M.skip(job, nowS)
   local b = job.bus
   local off = M.last(job) and b.onBoard or 0
   b.skipped = (b.skipped or 0) + 1
-  M.served(job, off, 0)
+  M.served(job, off, 0, nowS)
   return off
 end
 
@@ -179,12 +268,14 @@ function M.linePay(job)
 end
 
 -- For the phone: the line, where you are on it and the next few stops.
-function M.state(job, dwell, clock)
+function M.state(job, dwell, clock, nowS)
   if not job or not job.bus then return nil end
   local b, next = job.bus, {}
+  local dueS, dueMin = M.due(job, nowS)
   for i = b.at, math.min(#b.stops, b.at + 3) do next[#next + 1] = { n = b.stops[i].n, current = i == b.at or nil } end
   return { ref = b.ref, name = b.name, colour = b.colour, at = b.at, count = #b.stops, onBoard = b.onBoard,
-    boarded = b.boarded, skipped = b.skipped or 0, next = next, last = M.last(job), capacity = M.CAPACITY,
+    boarded = b.boarded, skipped = b.skipped or 0, next = next, dueS = math.floor(dueS + 0.5), dueMin = dueMin,
+    late = math.floor(M.lateMinutes(job) + 0.5), last = M.last(job), capacity = M.CAPACITY,
     doors = dwell and { off = dwell.off, on = dwell.on, left = math.max(0, math.ceil(dwell.untilT - (clock or 0))) } or nil }
 end
 

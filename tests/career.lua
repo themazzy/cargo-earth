@@ -2577,6 +2577,67 @@ test('bus lines: offers at the depot, passengers on and off, fares', function()
   assert(bus.fares(j) == bus.PER_PASSENGER * j.bus.boarded)
 end)
 
+test('bus timetable: each stop has its own time from its distance, late minutes add up stop by stop', function()
+  -- slow on short hops, faster on long ones, never under the floor
+  assert(bus.legMinutes(0.1) == bus.LEG_MIN)
+  local short, long = bus.legMinutes(0.5), bus.legMinutes(4)
+  assert(0.5 / (short / 60) < 4 / (long / 60), 'a long hop is driven faster on average')
+  assert(long < 4 / bus.LEG_KMH[1] * 60 * bus.LEG_SLACK + 1, 'a long hop is not driven at the slow city speed')
+  local idx = bus.index()
+  bus.set(idx, busData())
+  local j = bus.board(idx, 50, 14)[1].jobs[1]
+  local sum = 0
+  for i, st in ipairs(j.bus.stops) do
+    assert(st.min and st.min >= bus.LEG_MIN, 'stop ' .. i .. ' has its time')
+    sum = sum + st.min
+  end
+  assert(j.minutes == math.ceil(sum), 'the line takes the sum of its stops')
+  assert(j.bus.stops[1].min > j.bus.stops[2].min, 'the first stop includes getting out of the depot')
+  -- the pay follows the timetable's minutes
+  assert(j.pay == math.floor((bus.BASE + bus.PER_MIN * sum + bus.PER_STOP * 5) / 5 + 0.5) * 5)
+  -- the first stop: on time
+  local left, min = bus.due(j, 30)
+  assert(min == j.bus.stops[1].min and math.abs(left - (min * 60 - 30)) < 1e-6)
+  assert(bus.arrived(j, 30) == 0 and bus.arrived(j, 9999) == 0, 'counted once per stop')
+  bus.served(j, 0, 3, 60)
+  -- the second stop: the GPS road is longer than the guess, the time grows; once only
+  local before, total = j.bus.stops[2].min, j.minutes
+  assert(bus.roadKnown(j, 2, 90) and j.bus.stops[2].min > before and j.minutes > total)
+  assert(not bus.roadKnown(j, 9, 95), 'the road is taken once per stop')
+  -- two minutes late at the second stop
+  local due = 60 + j.bus.stops[2].min * 60
+  assert(math.abs(bus.arrived(j, due + 120) - 2) < 1e-6 and math.abs(bus.lateMinutes(j) - 2) < 1e-6)
+  bus.served(j, 0, 0, due + 140)
+  assert(bus.due(j, due + 140) == j.bus.stops[3].min * 60, 'the next stop gets its own time from the doors closing')
+  -- a skipped stop starts the next one's time too
+  bus.skip(j, due + 500)
+  assert(j.bus.at == 4 and j.bus.legStart == due + 500)
+  local st = bus.state(j, nil, 0, due + 500)
+  assert(st.dueMin == j.bus.stops[4].min and st.late == 2)
+end)
+
+test('bus names: escapes that lost their backslash on the way into the game are letters again', function()
+  assert(bus.text('Tiu0161ice, Chru00e1st') == 'Tišice, Chrást')
+  assert(bus.text('Ku0159u00edu017eek') == 'Křížek')
+  assert(bus.text('\\u010cerven\\u00e1') == 'Červená')
+  assert(bus.text('Nádraží 12') == 'Nádraží 12', 'right text stays')
+  assert(bus.text('Bus 0041') == 'Bus 0041' and bus.text('u0041') == 'u0041', 'plain letters are not guessed')
+  local idx = bus.index()
+  local data = busData()
+  data.lines[1].stops[1][1] = 'Ovu010du00e1ry'
+  data.lines[1].to = 'Nedomice, u0160kola'
+  data.depots[1].name = 'Garu00e1u017e'
+  bus.set(idx, data)
+  assert(idx.lines[1].stops[1].n == 'Ovčáry' and idx.lines[1].to == 'Nedomice, Škola' and idx.depots[1].n == 'Garáž')
+end)
+
+test('bus board: the fares a line is expected to bring are shown with its pay', function()
+  local idx = bus.index()
+  bus.set(idx, busData())
+  local o = bus.board(idx, 50, 14)[1]
+  assert(o.fares == bus.PER_PASSENGER * bus.expectedRiders(5) and o.fares > 0)
+end)
+
 test('speed cameras are paused even for a save that previously enabled them', function()
   local core, s = fresh()
   s.career.camerasOff = nil
