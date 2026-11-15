@@ -28,6 +28,7 @@ Close BeamNG and the helper first. Keep only one Cargo Earth ZIP installed. Save
   The board shows the fares a line usually brings.
 - **Passenger comfort:** with people on board, harsh braking or cornering and bumps cost comfort; the line's pay is
   multiplied by 0.6 + 0.004 x comfort, and comfort counts in the stars. The phone shows it once it drops below 100 %.
+- The lent bus's destination signs show its line number, destination and next stops.
 - Stop names from an older helper (`u0161`-style leftovers) are shown as proper letters.
 
 ## Tow jobs
@@ -42,5 +43,5 @@ Close BeamNG and the helper first. Keep only one Cargo Earth ZIP installed. Save
 - Freight texts name the real vehicle (van, box truck, tractor, city bus) instead of always saying "van".
 
 ## Not tested in game yet
-Taxi modes and seat check, bus timetable, comfort and pay, wreck press depth, small trailer and HQ trailers, and the
+Taxi modes and seat check, bus timetable, comfort, pay and destination signs, wreck press depth, small trailer and HQ trailers, and the
 installer's update of BeamNG.Earth's helper copy.
