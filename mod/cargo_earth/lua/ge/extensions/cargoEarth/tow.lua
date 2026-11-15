@@ -78,6 +78,18 @@ function M.hasHitch(vehicle)
   return false
 end
 
+-- Power check (Jan: warn only, the job can still be taken): tonnes a tow job adds behind the vehicle (trailer and
+-- the cars on it), and the power per tonne of the whole rig below which the phone says the car may struggle.
+M.ADDED_T = { light = 2.6, heavy = 9 }
+M.MIN_HP_PER_T = 20
+
+-- Is this vehicle short on power for this class of tow job? specs = { power = hp, weight = kg } from the game's
+-- vehicle list; false when the numbers are unknown (no warning then).
+function M.weak(class, specs)
+  if type(specs) ~= 'table' or not specs.power or not specs.weight or not M.ADDED_T[class] then return false end
+  return specs.power / (specs.weight / 1000 + M.ADDED_T[class]) < M.MIN_HP_PER_T
+end
+
 function M.pay(class, km)
   local c = M.CLASSES[class]
   return round5((c.base + c.rate * km) * (c.cars > 1 and 1.5 or 1))
@@ -162,7 +174,8 @@ function M.info(job)
   local looks = {}
   for i, id in ipairs(job.tow.wrecks or {}) do looks[i] = WRECK_NAMES[id] end
   return { class = job.tow.class, trailer = c.name, cars = #job.tow.cars, onBoard = job.tow.onBoard,
-    wreck = #looks > 0 and table.concat(looks, ', ') or nil, borrow = job.tow.borrow, stage = job.tow.stage }
+    wreck = #looks > 0 and table.concat(looks, ', ') or nil, borrow = job.tow.borrow, stage = job.tow.stage,
+    weak = job.tow.weak or nil }
 end
 
 return M

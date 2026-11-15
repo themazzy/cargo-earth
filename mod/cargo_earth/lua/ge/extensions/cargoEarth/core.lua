@@ -754,7 +754,7 @@ function M.partsOffers(p, room, range)
   return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p), range)
 end
 
-local function towOffers(class, p)
+local function towOffers(class, p, weak)
   local c = S.career
   local kind = tow.CLASSES[class].trailer
   S.towCars = S.towCars or trailers.existing(tow.CARS)
@@ -787,6 +787,7 @@ local function towOffers(class, p)
   local factor = rating.freightPay(c)
   for _, offer in ipairs(out) do
     if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
+    if weak and offer.tow then offer.tow.weak = true end
     if firm.ownsTrailer(c, kind) then
       offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
       offer.pay = offer.pay + offer.trailerBonus
@@ -873,7 +874,7 @@ function M.generate()
     -- tow jobs: broken-down cars at real addresses, for a vehicle with a tow hitch or a tractor
     local class = v and tow.class(tier, tow.hasHitch(v))
     if class and S.fidx and garage.inOwnCar(M.G, S.career.garage) then
-      for _, offer in ipairs(towOffers(class, p)) do S.offers[#S.offers + 1] = offer end
+      for _, offer in ipairs(towOffers(class, p, tow.weak(class, v.specs))) do S.offers[#S.offers + 1] = offer end
     end
   end
   S.offeredAt = { lat = p.lat, lon = p.lon }

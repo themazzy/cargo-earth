@@ -109,23 +109,47 @@ local function styleOf(t)
     if type(first) == 'string' then return first end
   end
 end
+local infos = {}
+-- The game's vehicle list entries for this model and config (the config's own, the model's): looked up once.
+local function infoOf(model, config)
+  if type(model) ~= 'string' then return nil end
+  local file = type(config) == 'table' and config.partConfigFilename
+  local key = type(file) == 'string' and file:match('([^/\\]+)%.pc$') or ''
+  local cacheKey = model .. '/' .. key
+  if infos[cacheKey] == nil then
+    infos[cacheKey] = false
+    local cv = ext('core_vehicles')
+    if cv and cv.getModel then
+      local ok, md = pcall(cv.getModel, model)
+      if ok and type(md) == 'table' then
+        infos[cacheKey] = { config = type(md.configs) == 'table' and md.configs[key] or nil, model = md.model }
+      end
+    end
+  end
+  return infos[cacheKey] or nil
+end
+
 local function bodyStyle(model, config)
   if type(model) ~= 'string' then return nil end
   local file = type(config) == 'table' and config.partConfigFilename
   local key = type(file) == 'string' and file:match('([^/\\]+)%.pc$') or ''
   local cacheKey = model .. '/' .. key
   if styles[cacheKey] == nil then
-    local found = false
-    local cv = ext('core_vehicles')
-    if cv and cv.getModel then
-      local ok, md = pcall(cv.getModel, model)
-      if ok and type(md) == 'table' then
-        found = styleOf(type(md.configs) == 'table' and md.configs[key] or nil) or styleOf(md.model) or false
-      end
-    end
-    styles[cacheKey] = found
+    local i = infoOf(model, config)
+    styles[cacheKey] = i and (styleOf(i.config) or styleOf(i.model)) or false
   end
   return styles[cacheKey] or nil
+end
+
+-- Power (the game's info value, hp) and weight (kg) of this config, from the game's vehicle list; nil when unknown
+-- (a mod car without the numbers, or a config the player changed and saved under no listed name).
+local function specsOf(model, config)
+  local i = infoOf(model, config)
+  local c = i and i.config
+  if type(c) ~= 'table' then return nil end
+  local power, weight = tonumber(c.Power), tonumber(c.Weight)
+  if not power or not weight or power <= 0 or weight <= 0 then return nil end
+  return { power = power, weight = weight }
 end
 
 local function describe(v, d)
@@ -134,7 +158,8 @@ local function describe(v, d)
   local model = vdata.model or config.model or (d.model)
   if not model then model = v and v.getJBeamFilename and v:getJBeamFilename() or nil end
   return { model = model, slotPartMap = vdata.slotPartMap, tree = config.partsTree, ioCtx = d.ioCtx,
-    id = v and v:getID(), data = d, config = config, bodyStyle = bodyStyle(model, config) }
+    id = v and v:getID(), data = d, config = config, bodyStyle = bodyStyle(model, config),
+    specs = specsOf(model, config) }
 end
 
 function M.vehicle() return describe(playerVeh(), vehData()) end

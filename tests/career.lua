@@ -2265,6 +2265,10 @@ test('tow rules: who can tow, offers to a workshop, cars on board, damage costs 
   assert(tow.class('semi', false) == 'heavy' and tow.class(nil, true) == 'light' and tow.class('van', false) == nil)
   assert(tow.hasHitch({ slotPartMap = { a = 'pickup_tow_hitch' } }))
   assert(not tow.hasHitch({ slotPartMap = { a = 'pickup_hitch_delete' } }) and not tow.hasHitch({ slotPartMap = { a = 'engine' } }))
+  -- power check (warn only): a 30 hp, 600 kg car is weak for a car trailer, a 200 hp, 1500 kg one is not; unknown = no warning
+  assert(tow.weak('light', { power = 30, weight = 600 }) and not tow.weak('light', { power = 200, weight = 1500 }))
+  assert(not tow.weak('light', nil) and not tow.weak('light', { power = 30 }))
+  assert(tow.info({ tow = { class = 'light', cars = { 'covet' }, weak = true } }).weak == true)
   local addresses = { { 50.01, 14, 50.0101, 14, 'Main Street 1', 'Town' }, { 50.5, 14, 50.5, 14, 'Far Away 2', 'Far' } }
   local workshop = function(lat, lon) return { id = 'w', n = 'Workshop', g = { lat + 0.1, lon } } end
   local offers = tow.offers('light', 50, 14, addresses, workshop, { 'covet' }, function() return 1 end)
