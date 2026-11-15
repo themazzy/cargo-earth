@@ -68,6 +68,8 @@ limits. Little of this has been driven in game yet.
 
 ## Fixes
 - Car and SUV jobs could not be saved ("Progress could not be saved").
+- A career whose car was a vehicle mod that is no longer installed now loads: you drive another car you own, or a
+  base Pigeon stands in (worth nothing at trade-in). The missing car stays in My cars and comes back with its mod.
 - Cargo weight no longer stays in the car after cancelling an order. After a reset the load is put back, and any
   leftover load is emptied once nothing is on board.
 - The debug window no longer breaks on tow and parcel offers.

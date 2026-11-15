@@ -3780,3 +3780,64 @@ test('used-car market: every vehicle kind has at least 6 listings at cheap, midd
   garage.marketTick(G, old, 0, rnd)
   assert(old.market.v == garage.MARKET_V and old.market.list[1].id == 1 and old.market.list[1].kind == 'van')
 end)
+
+test('a save whose car mod is gone: another owned car, else a base Pigeon; the missing car is kept', function()
+  local garage = require('cargoEarth/garage')
+  local installed = { pigeon = true, van = true }
+  local G = {
+    modelExists = function(m) return installed[m] == true end,
+    configs = function()
+      return { { model = 'pigeon', key = 'cheap', name = 'Cheap', brand = 'Ibishu', value = 900, type = 'Car' },
+        { model = 'pigeon', key = 'base', name = 'Base', brand = 'Ibishu', value = 1000, type = 'Car' } }
+    end,
+  }
+  -- the car is there: nothing changes
+  local g = { started = true, car = { model = 'van', name = 'Van' }, parked = {} }
+  assert(garage.fallbackCar(G, g) == nil and g.car.model == 'van')
+  -- unknown answer from the game: nothing changes either
+  assert(garage.fallbackCar({ modelExists = function() return nil end }, { car = { model = 'x' } }) == nil)
+  -- another owned car (a driver's car and a missing one are skipped)
+  g = { started = true, repair = 120, pendingUsed = { starter = true },
+    car = { model = 'modcar', name = 'Mod car', fleetId = 1 },
+    parked = { { model = 'van', name = 'Busy van', driver = { name = 'D' }, fleetId = 2 },
+      { model = 'othermod', name = 'Other mod', fleetId = 3 },
+      { model = 'van', name = 'Van', fleetId = 4, parkedRepair = 30 } } }
+  local note = garage.fallbackCar(G, g)
+  assert(note and note:find('Mod car') and note:find('Now driving Van'), note)
+  assert(g.car.fleetId == 4 and g.repair == 30 and g.pendingUsed == nil)
+  local kept
+  for _, c in ipairs(g.parked) do if c.fleetId == 1 then kept = c end end
+  assert(kept and kept.parkedRepair == 120 and #g.parked == 3, 'the missing car stays in My cars with its repairs')
+  -- switching back while its mod is still gone says why
+  local ok, why = garage.switchCar(G, g, 1)
+  assert(not ok and why:find('not installed'), why)
+  -- no installed car at all: a base Pigeon stands in, worth nothing when sold
+  g = { started = true, car = { model = 'modcar', name = 'Mod car' }, parked = { { model = 'othermod', name = 'Other' } } }
+  note = garage.fallbackCar(G, g)
+  assert(note and note:find('stands in'), note)
+  assert(g.car.model == 'pigeon' and g.car.key == 'base' and g.car.standIn and #g.parked == 2)
+  assert(garage.carWorth(G, g) == 0)
+  garage.updateStarter(g)
+  assert(g.pendingUsed == nil, 'the stand-in is not stripped like a new starter')
+  -- a later load with the mod still gone keeps the same stand-in (no second Pigeon)
+  local standIn = g.car
+  g.car = g.parked[1]
+  table.remove(g.parked, 1)
+  g.parked[#g.parked + 1] = standIn
+  standIn.driver = { name = 'D' }
+  local busy = g.car
+  garage.fallbackCar(G, g)
+  assert(g.car ~= standIn and g.car.standIn and standIn.driver, 'a stand-in with a driver keeps working')
+  g.car, standIn.driver = busy, nil
+  for i, c in ipairs(g.parked) do if c.standIn and c ~= standIn then table.remove(g.parked, i) break end end
+  for i, c in ipairs(g.parked) do if c == busy then table.remove(g.parked, i) break end end
+  garage.fallbackCar(G, g)
+  assert(g.car == standIn and #g.parked == 2)
+  -- a company loaner is left alone
+  g = { car = { model = 'modcar', loaner = true }, parked = {} }
+  assert(garage.fallbackCar(G, g) == nil)
+  -- no Pigeon in this game either: nothing to fall back to
+  installed.pigeon = false
+  g = { car = { model = 'modcar', name = 'Mod car' }, parked = {} }
+  assert(garage.fallbackCar(G, g) == nil and g.car.model == 'modcar')
+end)

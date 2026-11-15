@@ -551,6 +551,8 @@ end
 
 local function spawnCareerCar(g, vehicleId, position)
   if not g.car then return true end
+  local note = garage.fallbackCar(M.G, g)   -- the saved car's vehicle mod is gone: another owned car or a Pigeon
+  if note then say(note, 12) end
   local car = g.car
   local ok, err = pcall(M.G.spawn, car.model, car.key, garage.savedConfig(car), vehicleId, position)
   if not ok then return false, 'Car not spawned: ' .. tostring(err) end

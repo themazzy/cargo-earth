@@ -12,6 +12,7 @@
 --   G.configs()                 -> list of { model, key, name, value, brand, type } of every car config
 --   G.spawn(model, key)         -> replaces the player's car
 --   G.repair()                  -> fixes the player's car
+--   G.modelExists(model)        -> false when that vehicle model is not installed (a removed mod), nil when unknown
 --
 -- Slot paths are the game's: '/' is the car's main part, '/pigeon_engine/' the engine slot under it, and so on; the
 -- slot's id is the path's last name, its parent the path without it.
@@ -504,7 +505,7 @@ end
 -- Buy a used car, trading in the one you have (its parts; spare parts are kept). Returns ok, message.
 -- What a dealer pays for your car: its parts' worth, less for the kilometres on it.
 function M.carWorth(G, g)
-  if not g.car then return 0 end
+  if not g.car or g.car.standIn then return 0 end
   local km = g.car.km or 0
   return round5(M.carValue(G) * (1 - math.min(0.5, km / 300000)))
 end
@@ -603,6 +604,9 @@ function M.switchCar(G, g, id)
   local car, index = M.parkedCar(g, id)
   if not car then return false, 'That car is no longer parked.' end
   if car.driver then return false, 'Release the driver before using this car.' end
+  if G.modelExists and G.modelExists(car.model) == false then
+    return false, car.name .. ' is not installed. Put its vehicle mod back to drive it.'
+  end
   if not captureCurrent(G, g) then return false, 'Could not save the current car configuration.' end
   local ok, err = pcall(G.spawn, car.model, car.key, M.savedConfig(car))
   if not ok then return false, 'Car not spawned: ' .. tostring(err) end
@@ -611,6 +615,50 @@ function M.switchCar(G, g, id)
   g.car, g.repair, g.lastDamage, g.fixUntil = car, car.parkedRepair or 0, 0, nil
   g.carriedRepair, car.parkedRepair = g.repair, nil
   return true, 'Now driving ' .. car.name .. '.'
+end
+
+-- A save whose car is a vehicle mod that is no longer installed (Jan, 2026-11-15): drive another owned car whose model
+-- is there, or else a base Pigeon lent as a stand-in. The missing car stays in My cars, so it comes back when its mod
+-- does. Changes only the save (the caller spawns g.car). Returns a note for the player, nil when nothing changed.
+local function modelThere(G, model) return G.modelExists(model) == true end
+
+function M.standInConfig(G)
+  for _, c in ipairs(G.configs() or {}) do
+    if c.model == M.STARTER_MODEL and c.key == 'base' then return c end
+  end
+  local s = M.starter(G)
+  return s and s.model == M.STARTER_MODEL and s or nil
+end
+
+function M.fallbackCar(G, g)
+  local car = g.car
+  if not car or car.loaner or not G.modelExists or G.modelExists(car.model) ~= false then return nil end
+  local gone = car.name or car.model or 'Your car'
+  local pick, index
+  for i, p in ipairs(g.parked or {}) do
+    if not p.loaner and not p.driver and not p.standIn and modelThere(G, p.model) then pick, index = p, i break end
+  end
+  if not pick then
+    for i, p in ipairs(g.parked or {}) do
+      if p.standIn and not p.driver and modelThere(G, p.model) then pick, index = p, i break end
+    end
+  end
+  if not pick then
+    local s = M.standInConfig(G)
+    if not s or not modelThere(G, s.model) then return nil end
+    pick = { model = s.model, key = s.key, name = (s.brand and (s.brand .. ' ') or '') .. (s.name or s.key),
+      km = 0, standIn = true, wearVersion = WEAR_VERSION }
+  end
+  if index then table.remove(g.parked, index) end
+  if not car.loaner then parkCurrent(g) end   -- kept in My cars for when its mod is back
+  g.car, g.repair, g.lastDamage, g.fixUntil, g.pendingUsed = pick, pick.parkedRepair or 0, 0, nil, nil
+  g.carriedRepair, pick.parkedRepair = g.repair, nil
+  if pick.standIn then
+    return string.format('%s is not installed (removed vehicle mod?). A %s stands in; %s stays in My cars.',
+      gone, pick.name, gone)
+  end
+  return string.format('%s is not installed (removed vehicle mod?). Now driving %s; %s stays in My cars.',
+    gone, pick.name, gone)
 end
 
 -- opts: tradeIn (CZK for a preview), noSpawn (the listing is already live), keepCar (park the current car)

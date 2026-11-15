@@ -163,6 +163,16 @@ local function describe(v, d)
 end
 
 function M.vehicle() return describe(playerVeh(), vehData()) end
+-- Is this vehicle model installed? false when the game lists it nowhere (a removed vehicle mod), nil when the game
+-- can't answer (the career then just tries to spawn it). core_vehicles.getModel gives {} for a missing model.
+function M.modelExists(model)
+  if type(model) ~= 'string' or model == '' then return false end
+  local cv = ext('core_vehicles')
+  if not (cv and cv.getModel) then return nil end
+  local ok, md = pcall(cv.getModel, model)
+  if not ok or type(md) ~= 'table' then return nil end
+  return md.model ~= nil
+end
 function M.ownedVehicle()
   local v = ownedId and getObjectByID and getObjectByID(ownedId)
   if v then return describe(v, vehData(ownedId)) end
