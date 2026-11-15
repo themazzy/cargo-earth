@@ -237,6 +237,8 @@ function M.busPassengers(n, seed)
   local so, v = seatSystem(), playerVeh()
   if not (so and so.getSeats and so.setDummyOccupant and v) then return nil end
   local id = v:getID()
+  -- only the lent bus itself: not a car the player switched to during the line
+  if id ~= ownedId or (v.getJBeamFilename and v:getJBeamFilename() ~= M.BUS_MODEL) then return nil end
   if so.usesSeatSystem and not so.usesSeatSystem(id) then return nil end
   local okSeats, seats = pcall(so.getSeats, id)
   if not okSeats or type(seats) ~= 'table' then return nil end
