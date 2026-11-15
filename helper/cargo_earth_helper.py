@@ -210,7 +210,7 @@ from concurrent.futures import ThreadPoolExecutor
 POOL = ThreadPoolExecutor(8)
 
 
-def http_get(url, headers=None, tries=4):
+def http_get(url, headers=None, tries=4, timeout=20):
     err = None
     headers = dict(headers or {}, **{"User-Agent": f"cargo-earth-helper/{VERSION}"})
     requested = re.fullmatch(r"bytes=(\d+)-(\d+)", headers.get("Range", ""))
@@ -220,7 +220,7 @@ def http_get(url, headers=None, tries=4):
             with NETWORK_LOCK:
                 NETWORK["requests"] += 1
                 NETWORK["range_requests"] += int(requested is not None)
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 limit = MAX_AREA_BYTES
                 if requested:
                     start, end = map(int, requested.groups())
@@ -843,6 +843,8 @@ class Areas:
 ######################################################################################## speed cameras (OpenStreetMap)
 
 OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
+OVERPASS_TIMEOUT_S = 90       # the helper waits this long for an answer (a city's bus lines take a while)
+OVERPASS_ONE = threading.Lock()   # one Overpass request at a time: a burst of them is refused (HTTP 429)
 CAMERA_CELL = 0.5          # one Overpass request covers this many degrees
 CAMERA_REACH = 0.15        # cells this close to the player are fetched too, degrees
 CAMERA_DAYS = 30           # a cached cell is asked for again after this long
@@ -932,11 +934,13 @@ class OsmCells:
     def _overpass(self, box):
         q = self.query(box)
         err = None
-        for base in OVERPASS:
-            try:
-                return json.loads(http_get(base + "?data=" + urllib.parse.quote(q), tries=1))
-            except Exception as e2:  # noqa: BLE001 - the next mirror
-                err = e2
+        with OVERPASS_ONE:
+            for base in OVERPASS:
+                try:
+                    return json.loads(http_get(base + "?data=" + urllib.parse.quote(q), tries=1,
+                                               timeout=OVERPASS_TIMEOUT_S))
+                except Exception as e2:  # noqa: BLE001 - the next mirror
+                    err = e2
         raise err
 
     def _load(self, key):
@@ -1010,8 +1014,8 @@ class Cameras(OsmCells):
 
 ######################################################################################## bus lines (OpenStreetMap)
 
-BUS_CELL = 0.1             # one Overpass request covers this many degrees (a city's lines are many)
-BUS_REACH = 0.03           # cells this close to the player are fetched too, degrees
+BUS_CELL = 0.04            # one Overpass request covers this many degrees (about 4 x 3 km: a city's lines are many)
+BUS_REACH = 0.015          # cells this close to the player are fetched too, degrees
 BUS_DAYS = 14              # a cached cell is asked for again after this long
 BUS_MIN_STOPS = 4          # a line with fewer stops is left out
 BUS_MAX_GAP_KM = 4         # stops further apart than this: the relation has gaps, the line is left out
@@ -1109,11 +1113,19 @@ class BusLines(OsmCells):
 
     def query(self, box):
         s, w, n, e = box
-        return (f'[out:json][timeout:60];'
-                f'rel["type"="route"]["route"~"^(bus|trolleybus)$"]({s},{w},{n},{e})->.r;.r out body;'
-                f'node(r.r);out body;way(r.r);out tags center;'
-                f'(nwr["amenity"="bus_station"]({s},{w},{n},{e});'
-                f'nwr["depot"="bus"]({s},{w},{n},{e}););out tags center;')
+        # the bus stops of the cell first, then only the lines that stop there, then only those lines' stops and
+        # platforms (not their roads: a city's lines are thousands of road pieces)
+        b = f"({s},{w},{n},{e})"
+        stops = "".join(f'node(r.r:"{role}");' for role in BUS_STOP_ROLES + BUS_PLATFORM_ROLES)
+        platforms = "".join(f'way(r.r:"{role}");' for role in BUS_PLATFORM_ROLES)
+        return (f'[out:json][timeout:{OVERPASS_TIMEOUT_S - 10}];'
+                f'(node["highway"="bus_stop"]{b};node["public_transport"~"^(stop_position|platform)$"]["bus"="yes"]{b};'
+                f'node["public_transport"~"^(stop_position|platform)$"]["trolleybus"="yes"]{b};)->.s;'
+                f'way["public_transport"="platform"]{b}->.p;'
+                f'(rel(bn.s);rel(bw.p);)->.a;'
+                f'rel.a["type"="route"]["route"~"^(bus|trolleybus)$"]->.r;.r out body;'
+                f'({stops});out body;({platforms});out tags center;'
+                f'(nwr["amenity"="bus_station"]{b};nwr["depot"="bus"]{b};);out tags center;')
 
     def rows(self, data):
         return bus_rows(data)
