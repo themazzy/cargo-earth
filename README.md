@@ -46,7 +46,7 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
 ### Career
 
 - Start with a beat-up car and a little money, or pick **Free play** to just drive without a save.
-- Buy used cars with real wear, trade in, and buy real BeamNG parts. Repairs cost money; repairing for free through the
+- Buy used cars with real wear (filter by kind, see cargo space and the jobs each can do), trade in, and buy real BeamNG parts. Repairs cost money; repairing for free through the
   game's menu puts the bill on your debt, and Finances shows where every charge came from.
 - Choose a home garage at a real address, store and switch cars there.
 - Earn 1 to 5 stars on every order. They build two reputations, courier and freight, that bring premium work and better

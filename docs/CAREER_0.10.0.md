@@ -6,7 +6,8 @@ limits. Little of this has been driven in game yet.
 
 ## New: Bus mode
 - A third work mode beside Food delivery and Freight. The helper reads real city bus and trolleybus lines from
-  OpenStreetMap; the phone lists up to 6 lines near you.
+  OpenStreetMap (stops near you first, then only their lines, so requests stay small); the phone lists up to 6
+  lines near you.
 - Drive to the depot or terminus and press **Start**: the city lends you a bus and keeps your car. Stop at each stop,
   press **Open doors** (the bus's real doors open), wait while passengers get off and on, and drive on. The line pays
   at the last stop, where the bus is handed over and BeamNG.Earth takes you back to the depot and your own car.
@@ -21,6 +22,8 @@ limits. Little of this has been driven in game yet.
   routes), tractors get trailer freight, tanker runs and heavy tows. Food delivery works in anything.
 - Hired drivers hold licences (car, truck, articulated), know one vehicle kind best (+15 %) and wait when their vehicle
   has no cargo boxes. See `docs/VEHICLE_TYPES.md`.
+- **Used cars:** every listing shows its vehicle type, cargo space and the jobs it can do (tap **?**), with tap filters
+  by kind and at least 6 cars of each kind at varied prices. Modded vans and box trucks are recognised by Body Style.
 
 ## Tow jobs, redone
 - Broken-down cars are real wrecks (crashed front, rear or side, rolled over, stripped, flat tyres) and wait by the
@@ -31,6 +34,10 @@ limits. Little of this has been driven in game yet.
   the car and bring both back to the same shop. The empty-trailer legs pay half the tow rate. A trailer of your own
   that is coupled is used instead and never deleted.
 - Wrecks go to a real auto repair shop (or your headquarters), not a fuel station, when one is known.
+- The borrowed trailer goes straight onto your hitch, only where there's room; the coupling is checked and **Hitch**
+  again retries if it doesn't latch. Wrecks no longer spawn on roofs or inside other cars, are held still while they
+  crumple (no flying), aren't crushed off the deck when loaded, and come along when you teleport.
+- Tow offers warn "Your car may struggle" when your car is short on power (a warning only).
 
 ## Heavier, visible loads
 - Parcels, parts and freight weigh what they would in real life: a van carries up to a tonne, a box truck up to 8 t,
