@@ -1033,17 +1033,19 @@ local function finishPickup()
     say(n > 1 and string.format('Collected %d orders from %s.', n, j.from.n)
       or string.format('Collected %s from %s.', j.cargoName, j.from.n))
   elseif j.tow then
-    local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars)
+    -- the car waits by the road with the trailer behind you; Load it on the phone puts it on (M.towLoad)
+    S.stopT = -10
+    if j.tow.waiting and trailers.id() and trailers.towedAlive() >= #j.tow.cars then return end
+    local ok, why = trailers.spawnRoadside(tow.CLASSES[j.tow.class].trailer, j.tow.cars, tow.wreckPlan(j))
     if not ok then
-      S.stopT = -10
-      say('The broken-down car could not be loaded: ' .. tostring(why), 6)
+      say('The broken-down car could not be placed: ' .. tostring(why), 6)
       return
     end
-    j.trailerSpawned, j.tow.spawnedAt, j.tow.damage0, j.tow.onBoard = true, S.clock, nil, #j.tow.cars
-    local _, o = orderOf(j)
-    if o then o.phase = 'toDelivery' end
-    say(string.format('%s on the trailer behind you. Couple it and drive gently to %s: %s not strapped down.',
-      #j.tow.cars > 1 and 'The cars are' or 'The car is', j.to.n, #j.tow.cars > 1 and 'they are' or 'it is'), 8)
+    j.trailerSpawned, j.tow.waiting, j.tow.onBoard = true, true, 0
+    say(string.format('%s by the road, the trailer behind you. Park the trailer next to %s and press Load on the phone.',
+      #j.tow.cars > 1 and 'The cars wait' or 'The car waits', #j.tow.cars > 1 and 'them' or 'it'), 8)
+    saveCareer()
+    return
   elseif j.haul then
     if j.haul.tier == 'semi' and not trailers.id() then
       M.spawnTrailer(true)
@@ -1065,6 +1067,27 @@ local function finishPickup()
       say('Loaded: ' .. j.cargoName .. '.')
     end
   end
+  nextStop()
+  saveCareer()
+  syncStorage()
+  phoneSound('pickup')
+end
+
+-- Tow job, at the pickup: put the waiting car(s) on the trailer parked next to them.
+function M.towLoad()
+  local j = S.job
+  if not (j and j.tow and j.tow.waiting and S.phase == 'toPickup') then return end
+  local p = earth.pose()
+  if p and (p.speed or 0) > M.STOP_SPEED then say('Stop before loading.') return end
+  local near, why = trailers.towedNear(trailers.LOAD_M or 30)
+  if not near then say(why, 5) return end
+  local ok, err = trailers.loadTowed(j.tow.cars, tow.wreckPlan(j))
+  if not ok then say('Could not load: ' .. tostring(err), 5) return end
+  j.tow.waiting, j.tow.spawnedAt, j.tow.damage0, j.tow.onBoard = nil, S.clock, nil, #j.tow.cars
+  local _, o = orderOf(j)
+  if o then o.phase = 'toDelivery' end
+  say(string.format('Loaded. Couple the trailer and drive gently to %s: %s not strapped down.', j.to.n,
+    #j.tow.cars > 1 and 'they are' or 'it is'), 8)
   nextStop()
   saveCareer()
   syncStorage()
@@ -1919,6 +1942,7 @@ function M.phoneState()
         or (j.tow and S.phase == 'toDelivery' and (j.tow.onBoard or #j.tow.cars) < #j.tow.cars)) or nil,
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
       special = special.info(j), tow = tow.info(j), reloadFee = j.tow and M.TOW_RELOAD_FEE or nil,
+      towWaiting = j.tow and j.tow.waiting and S.phase == 'toPickup' or nil,
       slots = j.kind == 'food' and cargo.size(j) or nil,
       distM = distRoad and math.floor(S.roadM + 0.5)
         or (S.dist and math.floor(S.dist + 0.5)) or nil,
@@ -2037,6 +2061,8 @@ function M.phoneAction(a, orderId)
     selectDelivery(orderId)
   elseif a == 'restoreTrailer' then
     M.spawnTrailer()
+  elseif a == 'towLoad' then
+    M.towLoad()
   elseif a == 'contractGps' or a == 'contractStart' then
     -- a failure (not parked at the yard, no van config...) shows on the freight page for a while
     S.placesOk = nil
@@ -3721,7 +3747,7 @@ function M.spawnTrailer(atPickup)
     if (S.career.money or 0) < M.TOW_RELOAD_FEE then say('Not enough money to load the cars again.') return end
     -- the damage done so far stays counted: the cars spawned again come without it
     local before = j.tow.damage0 and math.max(0, trailers.towedDamage() - j.tow.damage0) or 0
-    local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars)
+    local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars, tow.wreckPlan(j))
     if not ok then say('The cars could not be loaded: ' .. tostring(why)) return end
     economy.post(S.career, -M.TOW_RELOAD_FEE, 'cancel_fee', economy.nextId(S.career, 'cancel_fee'), 'Tow: loading the cars again')
     j.tow.damageDone = (j.tow.damageDone or 0) + before

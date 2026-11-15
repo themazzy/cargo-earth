@@ -18,11 +18,17 @@ for (const file of fs.readdirSync(`${extensions}/cargoEarth`).filter(name => nam
   if (status !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
   lua.lua_pop(L, 1)
 }
+for (const file of fs.readdirSync('mod/cargo_earth/lua/vehicle/extensions/cargoEarth').filter(name => name.endsWith('.lua'))) {
+  const status = lauxlib.luaL_loadbuffer(L, to_luastring(fs.readFileSync(`mod/cargo_earth/lua/vehicle/extensions/cargoEarth/${file}`, 'utf8')), null, to_luastring(file))
+  if (status !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)))
+  lua.lua_pop(L, 1)
+}
 console.log('Lua syntax: all career modules compile')
 run(`package.path = '${extensions}/?.lua;' .. package.path`, 'test-path')
 run(fs.readFileSync('tests/helper.lua', 'utf8'), 'tests/helper.lua')
 run(fs.readFileSync('tests/career.lua', 'utf8'), 'tests/career.lua')
 run(fs.readFileSync('tests/dash.lua', 'utf8'), 'tests/dash.lua')
+run(fs.readFileSync('tests/wreck.lua', 'utf8'), 'tests/wreck.lua')
 // Exercise the actual supplied freight pack as well as the small rule fixtures.
 function toLua(value) {
   if (value === null) return 'nil'

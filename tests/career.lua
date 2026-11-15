@@ -2262,6 +2262,15 @@ test('tow rules: who can tow, offers to a workshop, cars on board, damage costs 
   assert(#tow.offers('light', 50, 14, far, workshop, { 'covet' }, function(n) return n end) == 0)
   local near = { { 50.018, 14, 50.018, 14, 'Close 1', 'Town' } }
   assert(#tow.offers('light', 50, 14, near, workshop, { 'covet' }, function(n) return n end) == 1)
+  -- each car has a wreck look, the same one for the same address; the game side gets a kind and a seed per car
+  assert(job.tow.wrecks and #job.tow.wrecks == 1 and tow.info(job).wreck, 'a wreck look')
+  assert(tow.wreckFor('50.01010,14.00000', 1) == tow.wreckFor('50.01010,14.00000', 1))
+  local plan = tow.wreckPlan(heavy)
+  assert(#plan == 2 and plan[1][1] == heavy.tow.wrecks[1] and plan[1][2] ~= plan[2][2])
+  assert(tow.wreckPlan({ tow = { class = 'light', cars = { 'covet' } } }) == nil, 'an old saved job: no wreck')
+  local kinds = {}
+  for n = 1, 60 do kinds[tow.wreckFor(tostring(n), 1)] = true end
+  for _, w in ipairs(tow.WRECKS) do assert(kinds[w.id], 'every look comes up: ' .. w.id) end
   assert(tow.onBoard({ 1, 5.9, 7, nil }) == 2)
   assert(tow.condition(0) == 100 and tow.condition(600) == 90 and tow.condition(1e9) == 100 - tow.MAX_LOSS)
 end)
@@ -2276,7 +2285,8 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   withStation(s, 50.1, 14)
   -- the game side, stubbed: what trailers.lua would do in BeamNG
   local saved = {}
-  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id' }) do
+  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
+    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive' }) do
     saved[k] = trailers[k]
   end
   local spawned, distances, damage = 0, {}, 0
@@ -2289,6 +2299,12 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   trailers.towedCount = function() return #distances end
   trailers.remove = function() distances = {} end
   trailers.id = function() return #distances > 0 and 7 or nil end
+  local roadside, nearTrailer, loaded = 0, false, 0
+  local alive = true
+  trailers.towedAlive = function() return alive and #distances or 0 end
+  trailers.spawnRoadside = function(kind, cars) roadside = roadside + 1 distances = { 20 } return kind == 'cartrailer' and #cars == 1 end
+  trailers.towedNear = function() if nearTrailer then return true end return false, 'Park the trailer next to the broken-down car first.' end
+  trailers.loadTowed = function(cars) loaded = loaded + 1 distances = { 1 } return #cars == 1 end
   local ok, err = pcall(function()
     core.setMode('trucking')
     advance(core, 2)
@@ -2326,7 +2342,22 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     damage = 500                    -- the damage it broke down with
     pose.lat, pose.lon = job.from.g[1], job.from.g[2]
     advance(core)
-    assert(spawned == 1 and s.phase == 'toDelivery' and job.tow.onBoard == 1)
+    -- the car waits by the road; Load puts it on once the trailer is next to it
+    assert(roadside == 1 and spawned == 0 and s.phase == 'toPickup' and job.tow.waiting and job.tow.onBoard == 0)
+    assert(core.phoneState().active.towWaiting, 'the phone offers Load')
+    advance(core, 40)
+    assert(roadside == 1, 'stopping again does not spawn the car twice')
+    alive = false                   -- the waiting car was deleted: stopping again brings it back
+    advance(core, 40)
+    assert(roadside == 2 and job.tow.waiting, 'a lost car is placed again')
+    alive = true
+    core.phoneAction('towLoad')
+    assert(loaded == 0 and s.phase == 'toPickup', 'not loaded while the trailer is away')
+    nearTrailer = true
+    core.phoneAction('towLoad')
+    assert(loaded == 1 and s.phase == 'toDelivery' and job.tow.onBoard == 1 and not job.tow.waiting)
+    assert(not core.phoneState().active.towWaiting)
+    advance(core)
     assert(job.tow.damage0 == 500, 'damage before the tow is not yours ' .. tostring(job.tow.damage0) .. ' ' .. tostring(job.tow.spawnedAt) .. ' ' .. tostring(s.clock))
     -- it is damaged and slides off
     damage = damage + 300
@@ -2339,7 +2370,7 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     assert(s.job == job, 'not delivered without the car')
     c.money = 1000
     core.phoneAction('restoreTrailer')
-    assert(spawned == 2 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
+    assert(spawned == 1 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
     damage = 0                      -- the cars spawned again are undamaged; the 300 stays counted
     advance(core, 8)
     damage = damage + 600           -- 10 % worse on the way, 5 % before the reload
