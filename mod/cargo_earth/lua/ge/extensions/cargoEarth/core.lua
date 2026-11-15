@@ -1145,7 +1145,9 @@ local function finishPickup()
     local _, o = orderOf(j)
     if o then o.phase = 'toDelivery' end
     M.taxiSeats(j.taxi.people, j.id)
-    say(string.format('%s in. Drive to %s, and drive smoothly: a rough ride costs pay.',
+    local rush = require('cargoEarth/taxi').info(j).mode == 'rush'
+    say(string.format(rush and '%s in, in a hurry. Get to %s fast: arriving early pays a big tip.'
+      or '%s in. Drive to %s smoothly: a rough ride costs a lot of pay.',
       j.taxi.people == 1 and 'Your passenger is' or (j.taxi.people .. ' passengers are'), j.to.n), 6)
   elseif j.tow and j.tow.stage then
     -- at the workshop: the borrowed trailer stands behind you until Hitch on the phone (M.towHitch)
@@ -1373,6 +1375,10 @@ local function finishDelivery(force)
   local conditionFactor = (j.kind == 'food' or j.taxi) and (0.6 + 0.004 * condition) or condition / 100
   pay = math.floor(pay * conditionFactor * (1 - special.penalty(j) / 100) + 0.5)
   tip = math.floor(tip * condition / 100 + 0.5)
+  if j.taxi then
+    -- the passenger's mode decides: comfort pays for a smooth ride, rush for a fast one (cargoEarth/taxi)
+    pay, tip, tipWhy = require('cargoEarth/taxi').settle(j, j.pay, minutes, j.minutes, perMin, M.LATE_FLOOR, condition, food.tip)
+  end
   local c = S.career
   local toDebt = 0
   if j.companyShift then
