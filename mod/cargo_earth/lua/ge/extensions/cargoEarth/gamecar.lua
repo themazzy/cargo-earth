@@ -263,6 +263,17 @@ function M.busDoors(open)
   return true
 end
 
+function M.watchBusDoors(id, token)
+  local v = getObjectByID and getObjectByID(id)
+  if not v or not v.queueLuaCommand then return false end
+  if token then
+    v:queueLuaCommand(string.format('extensions.load("cargoEarth_busdoors"); if extensions.cargoEarth_busdoors then extensions.cargoEarth_busdoors.watch(%d) end', token))
+  else
+    v:queueLuaCommand('if extensions.cargoEarth_busdoors then extensions.unload("cargoEarth_busdoors") end')
+  end
+  return true
+end
+
 ------------------------------------------------------------------------------------------ people in the seats
 local function seatSystem() return rawget(_G, 'gameplay_seatOccupants') or ext('gameplay_seatOccupants') end
 
@@ -623,3 +634,4 @@ end
 function M._reset() configsCache, jbeamIO = nil, nil end
 
 return M
+

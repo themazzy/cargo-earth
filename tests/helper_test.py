@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 import json
+import io
 import os
 import tempfile
 import threading
@@ -327,6 +328,15 @@ class NetworkAndStorageTests(unittest.TestCase):
             self.assertEqual(cameras.near(50.25, 14.25)["state"], "failed")
             self.assertEqual(len(calls), 1)
 
+    def test_paused_cameras_do_not_download_or_return_cached_fines(self):
+        with cache_dir() as cache:
+            calls = []
+            cameras = helper.Cameras(str(cache), lambda box: calls.append(box), enabled=False)
+            cameras.state["100_28"] = [["n1", 50.25, 14.25, 50, "primary"]]
+            self.assertEqual(cameras.near(50.25, 14.25)["state"], "paused")
+            self.assertEqual(cameras.near(50.25, 14.25)["cameras"], [])
+            self.assertEqual(calls, [])
+
     def test_bus_lines_from_route_relations(self):
         def node(i, lat, lon, name=None):
             return {"type": "node", "id": i, "lat": lat, "lon": lon, "tags": {"name": name} if name else {}}
@@ -379,6 +389,97 @@ class NetworkAndStorageTests(unittest.TestCase):
             self.assertEqual(len(got["lines"]), 1)
             self.assertGreaterEqual(len(got["depots"]), 1)
             self.assertGreater(len(got["cells"]), 1)
+
+    def test_overpass_runtime_error_tries_mirror_instead_of_caching_empty_lines(self):
+        with cache_dir() as cache:
+            lines = helper.BusLines(str(cache))
+            with patch.object(helper, "http_get", side_effect=[
+                    json.dumps({"elements": [], "remark": "runtime error: Query timed out"}).encode(),
+                    json.dumps({"elements": []}).encode()]) as fetch:
+                lines._work("1250_350")
+            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(lines.near(50.02, 14.02)["state"], "ready")
+
+    def test_bus_failure_reports_reason_and_cooldown_and_manual_retry_recovers(self):
+        with cache_dir() as cache:
+            lines = helper.BusLines(str(cache), lambda box: {"elements": [], "remark": "Query timed out"})
+            lines._work("1250_350")
+            failed = lines.near(50.02, 14.02)
+            self.assertEqual((failed["state"], failed["failed"], failed["total"]), ("failed", 1, 1))
+            self.assertIn("timed out", failed["errors"][0])
+            self.assertGreater(failed["retryAfter"], 0)
+            self.assertFalse(Path(lines.path("1250_350")).exists(), "a server error must not become a 14-day empty cache")
+            lines.fetch = lambda box: {"elements": []}
+            lines.near(50.02, 14.02, retry=True)
+            for _ in range(100):
+                ready = lines.near(50.02, 14.02)
+                if ready["state"] == "ready":
+                    break
+                time.sleep(0.01)
+            self.assertEqual((ready["state"], ready["ready"], ready["errors"]), ("ready", 1, []))
+
+    def test_bus_cache_from_before_error_validation_is_refetched(self):
+        with cache_dir() as cache:
+            calls = []
+            lines = helper.BusLines(str(cache), lambda box: calls.append(box) or {"elements": []})
+            Path(lines.path("1250_350")).write_text(json.dumps({"at": time.time(), "lines": []}), encoding="utf-8")
+            self.assertIsNone(lines._load("1250_350"))
+            lines._work("1250_350")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(lines._load("1250_350"), [])
+
+    def test_bus_loading_reports_queued_and_active_progress(self):
+        with cache_dir() as cache:
+            lines = helper.BusLines(str(cache))
+            entered, release = threading.Event(), threading.Event()
+            def fetch(*a, **kw):
+                entered.set()
+                release.wait(2)
+                return json.dumps({"elements": []}).encode()
+            with patch.object(helper, "http_get", side_effect=fetch):
+                try:
+                    with helper.overpass_slot():
+                        queued = lines.near(50.02, 14.02)
+                        self.assertEqual((queued["loading"], queued["queued"]), (1, 1))
+                        again = lines.near(50.02, 14.02, retry=True)
+                        self.assertEqual(again["loading"], 1)
+                    self.assertTrue(entered.wait(1))
+                    active = lines.near(50.02, 14.02)
+                    self.assertEqual((active["queued"], active["attempt"]), (0, 1))
+                    self.assertIn("overpass", active["server"])
+                finally:
+                    release.set()
+                for _ in range(100):
+                    if lines.near(50.02, 14.02)["state"] == "ready":
+                        break
+                    time.sleep(0.01)
+
+    def test_bus_query_includes_public_transport_stops_without_bus_yes(self):
+        with cache_dir() as cache:
+            q = helper.BusLines(str(cache)).query((50, 14, 50.04, 14.04))
+            self.assertIn('node["public_transport"~"^(stop_position|platform)$"](50,14,50.04,14.04)', q)
+            self.assertNotIn('["bus"="yes"]', q)
+
+    def test_bus_requests_take_priority_over_queued_camera_requests(self):
+        order = []
+        def request(name, priority):
+            with helper.overpass_slot(priority):
+                order.append(name)
+        threads = []
+        with helper.overpass_slot():
+            for name, priority in (("camera", 1), ("bus", 0)):
+                t = threading.Thread(target=request, args=(name, priority))
+                threads.append(t)
+                t.start()
+            for _ in range(100):
+                with helper.OVERPASS_ONE:
+                    if len(helper.OVERPASS_WAITING) == 2:
+                        break
+                time.sleep(0.01)
+        for t in threads:
+            t.join(2)
+            self.assertFalse(t.is_alive())
+        self.assertEqual(order, ["bus", "camera"])
 
     def test_radio_rows_keep_working_streams_of_the_country(self):
         good = {"stationuuid": "960e57c5-0601-11e8-ae97-52543be04c81", "name": " Radio  Jih ", "url": "http://a/x.pls",
@@ -573,6 +674,26 @@ class NetworkAndStorageTests(unittest.TestCase):
         self.assertIn("1 ready", page)
         self.assertIn("no &lt;network&gt;", page)
 
+    def test_stop_names_are_sent_as_utf8_instead_of_unicode_escape_sequences(self):
+        captured = []
+        def server(address, handler):
+            captured.append(handler)
+            return SimpleNamespace(serve_forever=lambda: None)
+        areas = SimpleNamespace(budget=SimpleNamespace(stats={}))
+        with patch.object(helper, 'ThreadingHTTPServer', side_effect=server):
+            helper.serve(areas, 'test', 47820)
+        handler = object.__new__(captured[0])
+        handler.send_response = lambda code: None
+        handler.send_header = lambda *args: None
+        handler.end_headers = lambda: None
+        handler.wfile = io.BytesIO()
+        names = ['Kralupy n. Vlt., Kovošrot', 'Chvatěruby', 'Zlončice', 'Kozomín', '😀']
+        handler._send(200, {'names': names})
+        wire = handler.wfile.getvalue()
+        self.assertNotIn(b'\\u', wire)
+        self.assertIn('Kovošrot'.encode('utf-8'), wire)
+        self.assertEqual(json.loads(wire)['names'], names)
+
     def test_port_in_use_exits_with_a_message(self):
         def busy(address, handler):
             raise OSError(10048, "address already in use")
@@ -630,3 +751,4 @@ class UpdateCheckTests(unittest.TestCase):
             now[0] += helper.UPDATE_RETRY_S
             self.assertTrue(bad.due())
             self.assertFalse(helper.Updates(d, enabled=False).due())
+

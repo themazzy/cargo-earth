@@ -1728,6 +1728,7 @@ end)
 
 test('a speed camera fines the driver and costs a star on the order on board', function()
   local core, s = fresh()
+  core.CAMERAS_PAUSED = false -- exercise dormant camera rules independently of the feature pause
   s.career.garage.debt = 0
   core.onHelperCameras({state = 'ready', cameras = {{'n1', 50.001, 14, 50, 'primary'}}})
   advance(core, 2)
@@ -1823,6 +1824,7 @@ end)
 
 test('the phone shows the limit under the car, red when too fast, and a camera without a limit takes its road one', function()
   local core, s = fresh()
+  core.CAMERAS_PAUSED = false
   s.career.garage.debt = 0
   local road = straightRoad(function() return 13.89 end)
   local near = 3
@@ -2594,6 +2596,219 @@ test('bus lines: offers at the depot, passengers on and off, fares', function()
   assert(bus.fares(j) == bus.PER_PASSENGER * j.bus.boarded)
 end)
 
+test('speed cameras are paused even for a save that previously enabled them', function()
+  local core, s = fresh()
+  s.career.camerasOff = nil
+  core.onHelperCameras({state = 'ready', cameras = {{'n1', 50.001, 14, 50, 'primary'}}})
+  local h = package.loaded['cargoEarth/helper']
+  local tick, called = h.tick, 0
+  h.tick = function(_, _, _, _, onCameras)
+    called = called + 1
+    assert(onCameras == nil, 'no camera downloads while paused')
+  end
+  local money = s.career.money
+  pose.speed, pose.heading = 80 / 3.6, 0
+  for step = 0, 20 do
+    pose.lat = 50 + step * 0.0001
+    advance(core, 2)
+  end
+  h.tick = tick
+  assert(s.career.money == money and core.phoneState().camera == nil and core.phoneState().flash == nil)
+  assert(core.settingsState().cameras.paused and not core.settingsState().cameras.on)
+  assert(not core.settingsDo('cameras', true).cameras.on, 'settings cannot turn the paused feature back on')
+end)
+
+test('bus discovery: request errors, area progress, distant depots and manual retry', function()
+  local core, s = fresh()
+  core.setMode('bus')
+  helperAsks = {}
+  s.busAskAt = 0
+  core.busFetch(pose)
+  local ask = helperAsks[#helperAsks]
+  ask.cb(nil, 'timeout')
+  assert(s.busIdx.state ~= 'old' and s.busIdx.error:find('timeout'), 'a timeout never says update the helper')
+  s.busAskAt = 0
+  core.busFetch(pose)
+  helperAsks[#helperAsks].cb(nil, 'HTTP 404')
+  assert(s.busIdx.state == 'old', 'a missing endpoint means an old helper')
+  core.phoneAction('busRetry')
+  assert(helperAsks[#helperAsks].path:find('&retry=1', 1, true))
+  helperAsks[#helperAsks].cb({state = 'loading', lines = {}, total = 4, ready = 1, loading = 2, queued = 1,
+    failed = 1, errors = {'Query timed out'}, elapsed = 21, retryAfter = 250, server = 'overpass-api.de', attempt = 2})
+  local b = core.busState()
+  assert(b.progress.ready == 1 and b.progress.queued == 1 and b.error == 'Query timed out')
+  assert(b.progress.attempt == 2 and b.progress.retryAfter == 250)
+  local data = busData()
+  bus.set(s.busIdx, data)
+  pose.lat = 51
+  s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+  b = core.busState()
+  assert(#b.lines == 0 and b.found == 1 and b.nearestKm > b.radiusKm)
+end)
+
+test('bus depot marker: selection never spawns a bus until your car parks inside it', function()
+  local core, s = fresh()
+  core.setMode('bus')
+  s.busIdx = bus.index()
+  bus.set(s.busIdx, busData())
+  s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+  local id = s.busBoard[1].id
+  local spawns, spawn = 0, core.G.spawn
+  core.G.spawn = function(...) spawns = spawns + 1 return spawn(...) end
+  core.phoneAction('busStart', id)
+  assert(s.busDepot and spawns == 0 and core.phoneState().bus.selected.id == id)
+  core.busDepotTick(pose, 10)
+  assert(spawns == 0, 'not inside the 12 m parking marker')
+  pose.lat, pose.lon, pose.speed = 50.0005, 14.0005, 2
+  core.busDepotTick(pose, 10)
+  assert(spawns == 0 and s.busDepot.parked == 0, 'driving through never spawns the bus')
+  pose.speed = 0
+  core.busDepotTick(pose, 1)
+  assert(spawns == 0 and core.busDepotInfo(pose).frac == 0.5)
+  core.phoneAction('busCancelSelection')
+  assert(not s.busDepot and spawns == 0)
+  core.phoneAction('busStart', id)
+  core.busDepotTick(pose, 2)
+  assert(spawns == 1 and not s.busDepot and s.career.garage.car.model == 'citybus')
+  assert(s.career.employment.personalGarage.car.model == 'pigeon', 'your own car is stored before replacement')
+end)
+
+test('bus pickup preserves the selected depot when discovery refreshes or removes its board entry', function()
+  for _, refreshed in ipairs({true, false}) do
+    local core, s = fresh()
+    core.setMode('bus')
+    s.busIdx = bus.index()
+    bus.set(s.busIdx, busData())
+    s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+    core.busSelect(s.busBoard[1].id)
+    local selected = s.busDepot.offer
+    local other = copy(selected)
+    other.id = 'bus:other'
+    if refreshed then
+      local data = busData()
+      data.depots = {{id = 'newDepot', name = 'Newly discovered depot', lat = 50.012, lon = 14.002}}
+      bus.set(s.busIdx, data)
+      s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+      assert(s.busBoard[1].id == selected.id and s.busBoard[1].yard.id ~= selected.yard.id,
+        'same line discovered with a different depot')
+      s.busBoard[#s.busBoard + 1] = other
+    else
+      s.busBoard = {other}
+    end
+    pose.lat, pose.lon = selected.yard.g[1], selected.yard.g[2]
+    assert(core.busDepotInfo(pose).inZone, 'the displayed marker still uses the selected depot')
+    core.busDepotTick(pose, bus.PARK_S)
+    local shift = s.career.employment
+    assert(shift and not s.busDepot and s.career.garage.car.model == 'citybus',
+      'parking at the selected marker starts the shift after a board refresh')
+    assert(shift.yard.id == selected.yard.id and shift.yard.g[1] == selected.yard.g[1],
+      'the saved shift uses the selected depot for returning the personal car')
+    local kept = false
+    for _, offer in ipairs(s.busBoard) do
+      if offer.id == selected.id then assert(offer == selected, 'start uses the selected offer snapshot') end
+      if offer == other then kept = true end
+    end
+    assert(kept and #s.busBoard == 2, 'unrelated offers are preserved')
+  end
+end)
+
+test('the native bus doors and phone share boarding; closing early cancels without serving the stop', function()
+  local core, s = fresh()
+  core.setMode('bus')
+  s.busIdx = bus.index()
+  bus.set(s.busIdx, busData())
+  s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+  pose.lat, pose.lon = 50.0005, 14.0005
+  core.busSelect(s.busBoard[1].id)
+  core.busDepotTick(pose, 2)
+  advance(core, 2)
+  local j, watched, commands = s.job, nil, 0
+  core.G.watchBusDoors = function(id, token) watched = {id = id, token = token} return true end
+  core.G.busDoors = function() commands = commands + 1 end
+  core.busDoorWatch()
+  local stop = j.bus.stops[1]
+  pose.lat, pose.lon = stop.g[1], stop.g[2]
+  core.onCargoEarthBusDoors(watched.id + 1, watched.token, true)
+  assert(not s.busDwell, 'another bus cannot start this boarding timer')
+  core.onCargoEarthBusDoors(watched.id, watched.token, true)
+  local dwell = s.busDwell
+  assert(dwell and commands == 0, 'native O opens the timer without toggling the real doors again')
+  assert(core.stopInfo().leftS == core.busState().line.doors.left and core.stopInfo().frac == 0)
+  core.phoneAction('busDoors')
+  assert(s.busDwell == dwell, 'a second press cannot duplicate passengers')
+  core.onCargoEarthBusDoors(watched.id, watched.token, false)
+  assert(not s.busDwell and j.bus.at == 1 and j.bus.boarded == 0)
+  core.phoneAction('busDoors')
+  assert(s.busDwell and commands == 1, 'the phone opens the same boarding flow')
+  advance(core, 4)
+  assert(core.stopInfo().frac > 0 and core.stopInfo().leftS == core.busState().line.doors.left)
+  advance(core, 32)
+  assert(j.bus.at == 2 and not s.busDwell and commands == 2)
+  pose.lat, pose.lon = j.bus.stops[2].g[1], j.bus.stops[2].g[2]
+  advance(core, 40)
+  assert(j.bus.at == 2 and not core.stopInfo().stopping and core.stopInfo().stopS == 0,
+    'a bus stop never runs the generic one-second cargo timer')
+end)
+
+test('bus GPS road distance and ETA refresh before bypassing the cargo stop timer', function()
+  local core, s = fresh()
+  core.setMode('bus')
+  s.busIdx = bus.index()
+  bus.set(s.busIdx, busData())
+  s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+  pose.lat, pose.lon = 50.0005, 14.0005
+  core.busSelect(s.busBoard[1].id)
+  core.busDepotTick(pose, 2)
+  advance(core, 2)
+  local j = s.job
+  gpsRoute = {remaining = 1200, eta = 100}
+  advance(core, 2)
+  local active = core.phoneState().active
+  assert(active.distRoad and active.distM == 1200 and active.etaS == 100, 'bus navigation uses GPS distance and ETA')
+  gpsRoute = {remaining = 860, eta = 70}
+  advance(core, 2)
+  active = core.phoneState().active
+  assert(active.distM == 860 and active.etaS == 70, 'bus route metrics keep updating')
+  gpsRoute = {planning = true, remaining = 500, eta = 40}
+  advance(core, 2)
+  active = core.phoneState().active
+  assert(not active.distRoad and active.etaS == nil and s.roadM == nil, 'planning clears stale bus metrics')
+  gpsRoute = {remaining = 700, eta = 60}
+  advance(core, 2)
+  gpsRoute = nil
+  advance(core, 2)
+  assert(s.roadM == nil and s.etaS == nil, 'clearing GPS clears old bus distance and ETA')
+  pose.lat, pose.lon = j.bus.stops[1].g[1], j.bus.stops[1].g[2]
+  gpsRoute = {remaining = 20, eta = 3}
+  advance(core, 40)
+  assert(j.bus.at == 1 and not s.busDwell and s.roadM == 20 and s.etaS == 3,
+    'bus metrics refresh while waiting for doors, without serving the stop automatically')
+end)
+
+test('an active bus shift repairs corrupted saved stop names from fresh OSM coordinates', function()
+  local core, s = fresh()
+  core.setMode('bus')
+  s.busIdx = bus.index()
+  bus.set(s.busIdx, busData())
+  s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+  pose.lat, pose.lon = 50.0005, 14.0005
+  core.busSelect(s.busBoard[1].id)
+  core.busDepotTick(pose, 2)
+  advance(core, 2)
+  local j = s.job
+  j.bus.stops[2].n, j.to.n = 'Chvatu011bruby', 'Chvatu011bruby'
+  assert(core.busNamesNeedRefresh())
+  local before = j.paymentId
+  local data = busData()
+  data.lines[1].stops[2][1] = 'Chvatěruby'
+  helperAsks, s.busAskAt = {}, 0
+  core.busFetch(pose)
+  assert(#helperAsks == 1, 'an active line can refresh its corrupted names')
+  helperAsks[1].cb(data)
+  assert(j.bus.stops[2].n == 'Chvatěruby' and j.to.n == 'Chvatěruby' and not core.busNamesNeedRefresh())
+  assert(j.paymentId == before and j.bus.at == 1, 'names are repaired without restarting or paying the shift')
+end)
+
 test('a bus shift: the lent bus, doors at every stop, the line paid and your car back', function()
   local core, s = fresh()
   local c = s.career
@@ -2615,11 +2830,13 @@ test('a bus shift: the lent bus, doors at every stop, the line paid and your car
   local line = state.bus.lines[1]
   assert(line.ref == '136' and line.depot == 'Bus Garage' and line.pay > 0 and not line.atDepot)
   core.phoneAction('busStart', line.id)
+  assert(s.busDepot and c.garage.car.model == 'pigeon', 'choosing a line only shows the depot marker')
   assert(not c.employment, 'not started away from the depot')
   pose.lat, pose.lon = 50.0005, 14.0005
   assert(core.phoneState().bus.lines[1].atDepot)
   local money = c.money
   core.phoneAction('busStart', line.id)
+  advance(core, 4)
   local shift = c.employment
   assert(shift and shift.tier == 'bus' and c.garage.car.model == 'citybus' and c.garage.car.loaner, 'the city lends a bus: ' .. tostring(s.placesMsg) .. ' ' .. tostring(shift and shift.tier) .. ' ' .. tostring(c.garage.car.model))
   advance(core, 2)
@@ -2634,6 +2851,8 @@ test('a bus shift: the lent bus, doors at every stop, the line paid and your car
     local bs = core.phoneState().bus
     assert(bs.canDoors, 'the doors can open at stop ' .. n .. ' dist ' .. tostring(s.dist) .. ' ' .. tostring(bs.line) .. ' ' .. tostring(s.mode))
     core.phoneAction('busDoors')
+    assert(core.stopInfo().bus and core.stopInfo().leftS == core.phoneState().bus.line.doors.left,
+      'the upper overlay and phone share the boarding clock')
     assert(core.phoneState().bus.line.doors, 'the doors are open')
     advance(core, 40)
   end
@@ -2680,7 +2899,7 @@ test('a bus shift ended with the doors open leaves nothing behind for the next s
   pose.lat, pose.lon, pose.speed = 50.0005, 14.0005, 0
   local id = core.phoneState().bus.lines[1].id
   core.phoneAction('busStart', id)
-  advance(core, 2)
+  advance(core, 6)
   local st = s.job.bus.stops[1]
   pose.lat, pose.lon = st.g[1], st.g[2]
   advance(core, 4)
@@ -2714,12 +2933,12 @@ test('ending a bus shift: free at the depot; settled where you are when BeamNG.E
   local id = core.phoneState().bus.lines[1].id
   local money = c.money
   core.phoneAction('busStart', id)
-  advance(core, 2)
+  advance(core, 6)
   core.phoneAction('busEnd')
   assert(not c.employment and c.money == money and c.garage.car.model == 'pigeon', 'ended at the depot: no fee')
   c.garage.pendingUsed = nil
   core.phoneAction('busStart', id)
-  advance(core, 2)
+  advance(core, 6)
   local st = s.job.bus.stops[2]
   pose.lat, pose.lon = st.g[1], st.g[2]
   local earth = package.loaded['cargoEarth/earth']
@@ -3862,3 +4081,4 @@ test('a save whose car mod is gone: another owned car, else a base Pigeon; the m
   g = { car = { model = 'modcar', name = 'Mod car' }, parked = {} }
   assert(garage.fallbackCar(G, g) == nil and g.car.model == 'modcar')
 end)
+

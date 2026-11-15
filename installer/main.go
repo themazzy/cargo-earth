@@ -2,6 +2,7 @@
 // for BeamNG.drive with BeamNG.Earth. Build for Windows with:
 //
 //	GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o CargoEarthSetup.exe .
+//	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-s -w" -o CargoEarthSetup-linux-x86_64 .
 //
 // Double-click it for a short menu, or run it from a command prompt with options (see -help).
 package main
@@ -45,7 +46,7 @@ type options struct {
 
 var opt options
 var stdin = bufio.NewReader(os.Stdin)
-var local string // %LOCALAPPDATA%
+var local string // Windows LOCALAPPDATA or Linux XDG data directory
 
 func say(format string, a ...any)  { fmt.Printf("  "+format+"\n", a...) }
 func step(text string)             { fmt.Printf("\n== %s\n", text) }
@@ -74,9 +75,13 @@ func main() {
 	flag.BoolVar(&opt.deleteSave, "delete-save", false, "delete the Cargo Earth career save and its backups (asks first)")
 	flag.BoolVar(&opt.yes, "yes", false, "with -delete-save: don't ask for confirmation")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Cargo Earth installer %s\n\nDouble-click to choose from a menu, or use options:\n\n", buildVersion)
+		fmt.Fprintf(os.Stderr, "Cargo Earth installer %s\n\nRun without options to choose from a menu, or use options:\n\n", buildVersion)
 		flag.PrintDefaults()
-		fmt.Fprintln(os.Stderr, "\nExamples:\n  CargoEarthSetup.exe\n  CargoEarthSetup.exe -version 0.10.0\n  CargoEarthSetup.exe -uninstall\n  CargoEarthSetup.exe -delete-save\n  CargoEarthSetup.exe -zip cargo_earth_career_0.3.5.zip -helper cargo_earth_helper.py")
+		name := "CargoEarthSetup.exe"
+		if runtime.GOOS == "linux" {
+			name = "./CargoEarthSetup-linux-x86_64"
+		}
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s\n  %[1]s -version 0.10.0\n  %[1]s -uninstall\n  %[1]s -delete-save\n  %[1]s -zip cargo_earth_career_0.10.0.zip -helper cargo_earth_helper.py\n", name)
 	}
 	flag.Parse()
 
@@ -124,9 +129,10 @@ func menu() bool {
 }
 
 func run() error {
-	local = os.Getenv("LOCALAPPDATA")
-	if local == "" {
-		return errors.New("LOCALAPPDATA is not set. Run this on Windows.")
+	var err error
+	local, err = installerDataDir()
+	if err != nil {
+		return err
 	}
 	if opt.deleteSave {
 		user, err := findUserFolder()
@@ -255,6 +261,9 @@ func findUserFolder() (string, error) {
 			return "", fmt.Errorf("the user folder %q does not exist", opt.userFolder)
 		}
 		return filepath.Abs(opt.userFolder)
+	}
+	if runtime.GOOS == "linux" {
+		return findLinuxUserFolder()
 	}
 	var candidates []string
 	if current := filepath.Join(local, "BeamNG", "BeamNG.drive", "current"); isDir(current) {
@@ -448,7 +457,7 @@ func installMod(zipFile, user string) error {
 	}
 	backup := filepath.Join(user, "cargo_earth_old_mods")
 	for _, old := range modZips(mods) {
-		if strings.EqualFold(old, target) {
+		if old == target || (runtime.GOOS == "windows" && strings.EqualFold(old, target)) {
 			continue
 		}
 		dst := filepath.Join(backup, filepath.Base(old))
@@ -497,7 +506,11 @@ type python struct {
 }
 
 func findPython() *python {
-	for _, cmd := range [][]string{{"py", "-3"}, {"python"}, {"python3"}} {
+	commands := [][]string{{"py", "-3"}, {"python"}, {"python3"}}
+	if runtime.GOOS == "linux" {
+		commands = [][]string{{"python3"}, {"python"}}
+	}
+	for _, cmd := range commands {
 		exe, err := exec.LookPath(cmd[0])
 		if err != nil {
 			continue
@@ -515,7 +528,7 @@ func findPython() *python {
 	return nil
 }
 
-func addonsFile() string { return filepath.Join(local, "beamng-earth", "addons", "local.json") }
+func addonsFile() string { return filepath.Join(earthDataDir(), "addons", "local.json") }
 func helperDir() string  { return filepath.Join(local, "CargoEarth", "helper") }
 
 // readAddons keeps every field of the file and of other add-ons as they are.
@@ -590,7 +603,11 @@ func installHelper(py, tag string) error {
 	}
 	say("Helper: %s", target)
 
-	if p := findPython(); p == nil {
+	if runtime.GOOS == "linux" {
+		if err := installLinuxPython(target); err != nil {
+			return err
+		}
+	} else if p := findPython(); p == nil {
 		warn("Python 3.9 or newer was not found. Install it (for example: winget install Python.Python.3.12), then run this again.")
 	} else {
 		say("Python %s: %s", p.version, p.exe)
@@ -634,8 +651,8 @@ func installHelper(py, tag string) error {
 		return fmt.Errorf("could not register the helper with BeamNG.Earth: %v", err)
 	}
 	say("Registered with BeamNG.Earth in %s (other add-ons kept, old file saved as local.json.bak).", addonsFile())
-	if !isDir(filepath.Join(local, "beamng-earth")) {
-		warn("BeamNG.Earth's app folder was not found. Install BeamNG.Earth first, or run the helper with start_helper.cmd.")
+	if !isDir(earthDataDir()) {
+		warn("BeamNG.Earth's app folder was not found. Install BeamNG.Earth first, or run the helper with the manual launcher shown above.")
 	}
 	return nil
 }
@@ -691,6 +708,9 @@ func fileExists(p string) bool {
 
 // gameRunning reports whether BeamNG.drive is open; it would write the save again when it closes.
 func gameRunning() bool {
+	if runtime.GOOS == "linux" {
+		return linuxGameRunning()
+	}
 	if runtime.GOOS != "windows" {
 		return false
 	}
