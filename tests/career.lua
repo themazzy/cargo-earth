@@ -2404,9 +2404,17 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   -- the game side, stubbed: what trailers.lua would do in BeamNG
   local saved = {}
   for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
-    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow', 'ownTowTrailer', 'adopt' }) do
+    'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow', 'ownTowTrailer', 'adopt',
+    'stageTowed', 'towedStaged', 'towedPlaced', 'placeTowed' }) do
     saved[k] = trailers[k]
   end
+  -- the cars are spawned out of sight as the job starts; putting them by the road fails here (no ground loaded), so
+  -- they are spawned at the stop as before
+  local stagedN, placeTries = 0, 0
+  trailers.stageTowed = function(cars) stagedN = stagedN + 1 return #cars == 1 end
+  trailers.towedStaged = function() return stagedN > 0 end
+  trailers.towedPlaced = function() return false end
+  trailers.placeTowed = function() placeTries = placeTries + 1 return false end
   -- your own car trailer is coupled: the job goes straight to the car (the borrowed one has its own test)
   trailers.ownTowTrailer = function() return 9, 'tiltdeck' end
   trailers.adopt = function() return true end
@@ -2467,6 +2475,7 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     pose.lat, pose.lon = job.from.g[1], job.from.g[2]
     advance(core)
     -- the car waits by the road; Load puts it on once the trailer is next to it
+    assert(stagedN == 1, 'the broken-down car was spawned out of sight once: ' .. stagedN)
     assert(roadside == 1 and spawned == 0 and s.phase == 'toPickup' and job.tow.waiting and job.tow.onBoard == 0)
     assert(core.phoneState().active.towWaiting, 'the phone offers Load')
     assert(core.towWaiting() and core.stopInfo() == nil and s.stopT == 0, 'no stop countdown while the car waits for Load')

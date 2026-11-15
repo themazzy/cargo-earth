@@ -1175,6 +1175,21 @@ function M.towWaiting()
     and trailers.id() ~= nil and trailers.towedAlive() >= #j.tow.cars
 end
 
+-- Tow job on its way to the car (Jan): the broken-down cars are spawned and crumpled out of sight as the job starts,
+-- then put by the road once the player is within trailers.PLACE_M of the pickup and the ground there has loaded.
+-- When that cannot be done they are spawned by the road at the stop, as before (finishPickup).
+M.towStageTick = function()
+  local j = S.job
+  if j.tow.waiting or earth.status() ~= 'ok' then return end
+  if trailers.towedPlaced() then return end
+  if not trailers.towedStaged() then trailers.stageTowed(j.tow.cars, tow.wreckPlan(j)) return end
+  local p = earth.pose()
+  local g = j.from and j.from.g
+  if not (p and p.z and g) or jobs.km(p.lat, p.lon, g[1], g[2]) * 1000 > trailers.PLACE_M then return end
+  local x, y = earth.worldXY(p, g)
+  if x then trailers.placeTowed(x, y, p.z) end
+end
+
 -- Tow job, at the workshop: put the borrowed trailer on the hitch and head for the broken-down car.
 function M.towHitch()
   local j = S.job
@@ -4514,9 +4529,13 @@ function M.onUpdate(dtReal, dtSim)
   end
   S.clock = S.clock + (dtReal or 0)
   S.tick = S.tick + (dtReal or 0)
-  trailers.update(dtReal)                                   -- couples a tow trailer once the game knows its hitch
+  trailers.update(dtReal, dtSim)                                 -- couples a tow trailer once the game knows its hitch
   if trailers.hitchFailed() and S.job and S.job.tow and S.job.tow.stage == 'hitch' then
     say('The trailer did not latch on. Stand still and press Hitch on the phone to try again.', 8)
+  end
+  if S.job and S.job.tow and S.phase == 'toPickup' and S.clock >= (S.towStageAt or 0) then
+    S.towStageAt = S.clock + 1
+    M.towStageTick()
   end
   if M.G.seatTick then M.G.seatTick() end                   -- the player sits in a car the mod just spawned
   if helper.commanding() then helper.pump(S.clock) end     -- radio presses: answered within frames, not ticks
