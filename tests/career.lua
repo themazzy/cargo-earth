@@ -6,6 +6,7 @@ local employment = require('cargoEarth/employment')
 local cargo = require('cargoEarth/cargo')
 local jobs = require('cargoEarth/jobs')
 local food = require('cargoEarth/food')
+local earthReal = require('cargoEarth/earth')
 local total = 0
 local function test(name, fn)
   local ok, why = pcall(fn)
@@ -30,6 +31,40 @@ test('deadlines freeze while paused, disconnected or loading', function()
   c.savedAt = 160
   clock.restoreJob(c, j)
   assert(clock.elapsed(c, j) == 60)
+end)
+
+test('BeamNG.Earth 1.10 API: multi-stop GPS, the next stop of a route, Earth\'s own conversion', function()
+  local set, setRoute
+  local api = {
+    version = function() return 1, 8 end, has = function(n) return n == 'gpsRoute' or n == 'transform' end,
+    gpsSet = function(lat, lon, name) set = {lat, lon, name} return true end,
+    gpsSetRoute = function(points) setRoute = points return true end,
+    gps = function()
+      return {remaining = 3000, eta = 300, waypoints = {{lat = 1, lon = 1}}, legs = {{500, 50}, {1000, 100}, {1200, 120}}}
+    end,
+    toGame = function(lat, lon) return lon * 10, lat * 10, 0 end,
+  }
+  beamngEarth_api = api
+  assert(earthReal.canRoute())
+  local stops = {}
+  for i = 1, 13 do stops[i] = {50 + i / 100, 14, 'Stop ' .. i} end
+  assert(earthReal.gpsStops(stops) and #setRoute == earthReal.ROUTE_MAX and setRoute[1][3] == 'Stop 1')
+  assert(earthReal.gpsStops({stops[2]}) and set[3] == 'Stop 2', 'one stop: an ordinary destination')
+  -- one waypoint ahead: the last leg (1200 m) lies past it
+  local r = earthReal.route()
+  assert(r.stops == 2 and r.remaining == 1800 and r.toEnd == 3000 and math.abs(r.eta - 180) < 1e-9)
+  local x, y = earthReal.worldXY({x = 0, y = 0, lat = 50, lon = 14, anchorLat = 50, anchorLon = 14}, {2, 3})
+  assert(x == 30 and y == 20, 'Earth converts')
+  -- an older Earth: no multi-stop routes, the stops go one by one, the maths done here
+  api.has = function() return false end
+  set, setRoute = nil, nil
+  assert(not earthReal.canRoute() and earthReal.gpsStops(stops) and set[3] == 'Stop 1' and not setRoute)
+  api.gps = function() return {remaining = 900, eta = 90} end
+  r = earthReal.route()
+  assert(r.stops == 1 and r.remaining == 900)
+  x = earthReal.worldXY({x = 0, y = 0, lat = 50, lon = 14, anchorLat = 50, anchorLon = 14}, {50, 14.001})
+  assert(math.abs(x - 71.7) < 0.5)
+  beamngEarth_api = nil
 end)
 
 test('odometer survives rebases and excludes teleport jumps', function()
@@ -162,7 +197,7 @@ end)
 -- Integration: real core/job/garage code with isolated game, Earth and filesystem adapters.
 local pose, vehicle, boxes, spawnFailure, ready, payWrites = nil, nil, nil, nil, true, 0
 local damageValue, impactToken = 0, nil
-local gps
+local gps, gpsRoute, routeCapable
 log = function() end
 ui_imgui = {}
 FS = {findFiles = function() return {} end}
@@ -178,8 +213,10 @@ package.loaded['cargoEarth/helper'] = {configure = function() end, tick = functi
   asking = function() return false end}
 package.loaded['cargoEarth/earth'] = {
   pose = function() return pose end, status = function() return ready and 'ok' or 'World loading' end,
-  notify = function() end, route = function() return nil end,
+  notify = function() end, route = function() return gpsRoute end,
   gps = function(lat, lon) gps = {lat = lat, lon = lon} return true end,
+  canRoute = function() return routeCapable end, ROUTE_MAX = 11,
+  gpsStops = function(stops) gps = {lat = stops[1][1], lon = stops[1][2], stops = #stops} return true end,
   gpsClear = function() gps = nil end,
   teleport = function(lat, lon) pose.lat, pose.lon = lat, lon return true end,
   worldXY = function(p, pt) return p.x + (pt[2] - p.lon) * 71700, p.y + (pt[1] - p.lat) * 111320 end,
@@ -211,6 +248,7 @@ local function adapter()
 end
 local function fresh()
   disk, failPath, spawnFailure, ready = {}, nil, nil, true
+  gps, gpsRoute, routeCapable = nil, nil, nil
   damageValue, impactToken = 0, nil
   pose = {lat = 50, lon = 14, speed = 0}
   local G = adapter()
@@ -1347,6 +1385,47 @@ test('a parcel route loads the van, empties the containers stop by stop and pays
   assert(core.careerState().reputation.freight.rated == 1)
 end)
 
+test('a parcel route shows all its addresses on the GPS and keeps the route Earth is already following', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
+    function(row, col) if row == 1000 and col == 280 then return streets(50, 14) end end)
+  core.setMode('trucking')
+  advance(core, 2)
+  routeCapable = true
+  core.generate()
+  local i, job
+  for k, offer in ipairs(s.offers) do if offer.route then i, job = k, offer break end end
+  assert(job, 'a parcel route is offered in a van')
+  local stops = #job.route.stops
+  core.take(i)
+  assert(gps and not gps.stops, 'to the depot: an ordinary destination')
+  pose.lat, pose.lon = job.from.g[1], job.from.g[2]
+  advance(core)
+  assert(s.phase == 'toDelivery' and gps.stops == stops, 'loaded: every address in one route')
+  -- Earth drops the first address as the car drives past it without stopping: it is put back once clear of it
+  gpsRoute, gps = {remaining = 2000, stops = stops - 1}, nil
+  advance(core, 8)
+  assert(gps and gps.stops == stops, 'a passed but unserved address goes back on the route')
+  -- the first address served where Earth dropped it too: the route is left as it is
+  local first = job.route.stops[1]
+  pose.lat, pose.lon = first.g[1], first.g[2]
+  gpsRoute, gps = {remaining = 0, stops = stops}, nil
+  advance(core, 4)
+  gpsRoute.stops = stops - 1
+  advance(core)
+  assert(job.route.at == 2 and gps == nil, 'the route Earth follows stays')
+  -- an Earth without multi-stop routes: the next address alone, as before
+  routeCapable, gpsRoute = false, nil
+  local second = job.route.stops[2]
+  pose.lat, pose.lon = second.g[1], second.g[2]
+  advance(core)
+  assert(job.route.at == 3 and gps and not gps.stops and gps.lat == job.to.g[1])
+end)
+
 test('the kind of vehicle comes from its body: car, SUV or pickup, van, box truck, tractor', function()
   local haul = require('cargoEarth/haul')
   assert(haul.carrier({model = 'etk800', bodyStyle = 'Sedan'}) == 'car')
@@ -1560,6 +1639,14 @@ test('speed limit from the road graph: bends do not lower it, a change ahead is 
   assert(select(2, speedlimit.at(straightRoad(function() return 13.89 end), 'n0', 'n1', 'km/h')) == 50)
   assert(select(3, speedlimit.at(straightRoad(function() return 26.82 end), 'n0', 'n1', 'mph')) == 'mph', '60 mph in the UK')
   assert(speedlimit.unitsFor('gb') == 'mph' and speedlimit.unitsFor('DE') == 'km/h' and speedlimit.unitsFor(nil) == nil)
+  -- BeamNG.Earth 1.10 keeps the legal limit on each edge (posted: + the map's, - the road class default): no guess
+  local legal = straightRoad(function() return 15.65 end)
+  for _, n in pairs(legal.nodes) do for _, l in pairs(n.links) do l.speedLimit, l.posted = 8, -13.89 end end
+  local kmhP, signP, unitP, sureP = speedlimit.at(legal, 'n0', 'n1', speedlimit.unitsFor('CZ'))
+  assert(kmhP == 50 and signP == 50 and unitP == 'km/h' and sureP == true, 'a bend speed does not hide the posted 50')
+  legal.nodes.n0.links.n1.posted = 15.65
+  assert(select(2, speedlimit.at(legal, 'n0', 'n1', 'mph')) == 35, 'a mapped 35 mph')
+  assert(speedlimit.postedOf({posted = 0}) == nil and speedlimit.postedOf({}) == nil)
   assert(speedlimit.at({}, 'n0', 'n1') == nil and speedlimit.at(nil, 'a', 'b') == nil)
 end)
 
