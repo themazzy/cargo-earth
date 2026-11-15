@@ -194,6 +194,13 @@ function M.drawStop(st)
       im.WindowFlags_NoScrollbar + im.WindowFlags_NoSavedSettings + im.WindowFlags_NoInputs +
       im.WindowFlags_NoFocusOnAppearing + im.WindowFlags_AlwaysAutoResize
     if im.Begin('##cargoEarthStop', nil, flags) then
+      if st.bus or st.depot then
+        txt(st.title)
+        if st.detail then txt(st.detail) end
+        if st.stopping then
+          im.ProgressBar(st.frac, im.ImVec2(w - 16, 26), string.format('%.0f s', st.leftS))
+        end
+      else
       local what = st.pickup and 'Picking up the order' or 'Handing over the order'
       if st.stopping then
         txt(what)
@@ -201,6 +208,7 @@ function M.drawStop(st)
       else
         txt(st.pickup and 'You are at the pickup: stop to pick up' or 'You are at the customer: stop to deliver')
         im.ProgressBar(0, im.ImVec2(w - 16, 26), string.format('stand still %d s', st.stopS))
+      end
       end
     end
     im.End()

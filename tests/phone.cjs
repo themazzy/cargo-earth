@@ -35,8 +35,15 @@ for (const tag of directive.template.matchAll(/<(\/?)([a-z][\w-]*)(?:\s+(?:"[^"]
   else if (!tag[0].endsWith('/>')) stack.push(name)
 }
 assert.deepEqual(stack, [])
+require('./phone-layout.cjs')(directive)
 const scope = {$evalAsync: fn => { digests++; fn() }, $watch: (name, fn) => { watches[name] = fn }, $on: (name, fn) => { if (name === '$destroy') destroy.push(fn) }}
 directive.link(scope)
+assert(scope.busStatus({state: 'loading', progress: {queued: 2, loading: 2}}).includes('queued'))
+assert(scope.busStatus({state: 'failed'}).includes('error below'))
+assert(scope.busStatus({state: 'old'}).includes('Update'))
+assert(scope.busStatus({state: 'ready', lines: [], found: 6, radiusKm: 4, nearestKm: 8.25}).includes('8.3 km'))
+assert(scope.busStatus({state: 'ready', lines: [], found: 0}).includes('No usable bus routes'))
+assert(scope.busStatus({state: 'ready', lines: [{id: 1}]}).includes('Choose a line'))
 scope.pdo('search', 'Dlouhá \"12\"')
 assert(commands.some(command => command.includes('pcall(cargoEarth_core.placesDo, ' + JSON.stringify('search') + ', ' + JSON.stringify('Dlouhá \"12\"'))))
 scope.openCompany()

@@ -17,6 +17,7 @@ M.DWELL_S, M.PER_PERSON_S, M.MAX_DWELL_S = 3, 0.6, 15
 M.MAX_STOPS = 40         -- a longer line is cut here (its last stop is the end of this run)
 M.STOP_ARRIVE_M = 30     -- a stop counts as reached this close
 M.COLLECT_FEE = 150      -- CZK: ending a shift away from the depot, the company fetches the bus
+M.DEPOT_RADIUS, M.PARK_S, M.PARK_SPEED = 12, 2, 0.5  -- choose a line, then park in its marker to collect the bus
 
 local function place(id, n, lat, lon)
   return { id = id, n = n, town = '', g = { lat, lon } }
@@ -30,6 +31,12 @@ function M.index() return { lines = {}, depots = {}, state = nil } end
 function M.set(idx, data)
   if type(idx) ~= 'table' or type(data) ~= 'table' then return end
   idx.state = data.state
+  idx.progress = type(data.total) == 'number' and {
+    total = data.total, ready = data.ready or 0, loading = data.loading or 0, queued = data.queued or 0,
+    failed = data.failed or 0, elapsed = data.elapsed or 0, retryAfter = data.retryAfter or 0,
+    server = data.server, attempt = data.attempt,
+  } or nil
+  idx.error = type(data.errors) == 'table' and data.errors[1] or nil
   local lines, depots = {}, {}
   for _, l in ipairs(type(data.lines) == 'table' and data.lines or {}) do
     if type(l) == 'table' and type(l.id) == 'string' and type(l.stops) == 'table' and #l.stops >= 4 then
