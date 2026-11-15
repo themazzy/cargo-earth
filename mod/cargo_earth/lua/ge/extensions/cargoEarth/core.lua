@@ -1015,7 +1015,13 @@ local function takeJob(j)
     end
     -- your own trailer goes along; without it (uncoupled since the offer) the trailer is borrowed at the workshop
     local kind = tow.CLASSES[j.tow.class].trailer
-    if not j.tow.borrow and not trailers.adopt(kind) then j.tow.borrow, j.tow.stage = true, 'shop' end
+    if not j.tow.borrow and not trailers.adopt(kind) then
+      -- the offer was made with your trailer coupled: now the empty-trailer legs are paid and timed too
+      local p = earth.pose()
+      local before = j.pay
+      tow.borrow(j, p and p.lat or j.from.g[1], p and p.lon or j.from.g[2])
+      j.pay = before + math.floor((j.pay - before) * (j.reputationPay or 1) / 5 + 0.5) * 5
+    end
   elseif j.haul then
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
@@ -1147,7 +1153,12 @@ function M.towHitch()
   if not (j and j.tow and j.tow.stage == 'hitch' and S.phase == 'toPickup') then return end
   local p = earth.pose()
   if p and (p.speed or 0) > M.STOP_SPEED then say('Stop before hitching.') return end
-  if not trailers.coupled(M.G.playerId and M.G.playerId() or -1) and not trailers.hitch() then
+  local coupled = trailers.coupled(M.G.playerId and M.G.playerId() or -1)
+  if not coupled and trailers.id() and not trailers.withPlayer() then
+    say('Back up to the trailer first: it stands at the workshop.', 5)
+    return
+  end
+  if not coupled and not trailers.hitch() then
     j.tow.stage = 'shop'
     say('The trailer is gone. Stop at the workshop again to get it.', 5)
     return

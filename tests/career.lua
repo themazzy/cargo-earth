@@ -3509,7 +3509,8 @@ test('a tow job without your own trailer: borrow it at the workshop, hitch it, f
   trailers.hitch = function() if not trailerOut then return false end hitched = hitched + 1 return true end
   trailers.coupled = function() return coupled end
   trailers.id = function() return trailerOut and 7 or nil end
-  trailers.withPlayer = function() return trailerOut end
+  local nearTrailer = true
+  trailers.withPlayer = function() return trailerOut and nearTrailer end
   trailers.towedDistances = function() return distances end
   trailers.towedDamage = function() return 0 end
   trailers.towedCount = function() return #distances end
@@ -3546,6 +3547,10 @@ test('a tow job without your own trailer: borrow it at the workshop, hitch it, f
     core.phoneAction('towHitch')
     assert(job.tow.stage == 'hitch' and hitched == 0, 'not while moving')
     pose.speed = 0
+    nearTrailer = false
+    core.phoneAction('towHitch')
+    assert(job.tow.stage == 'hitch' and hitched == 0, 'not from far away (it would pull the trailer across the map)')
+    nearTrailer = true
     core.phoneAction('towHitch')
     assert(hitched == 1 and job.tow.stage == nil and s.phase == 'toPickup')
     assert(core.phoneState().active.here == nil, 'now the broken-down car')
@@ -3571,6 +3576,16 @@ test('a tow job without your own trailer: borrow it at the workshop, hitch it, f
     assert(job.tow.stage == nil and hitched == 1, 'coupled by hand')
     core.cancel(true)
     assert(not s.job and not trailerOut, 'cancel takes the borrowed trailer away')
+    -- offered with your own trailer coupled, uncoupled before taking it: borrowed, with the extra legs paid and timed
+    s.offers = {}
+    pose.lat, pose.lon = 50, 14
+    trailers.ownTowTrailer = function() return 9, 'tiltdeck' end
+    core.generate()
+    for k, offer in ipairs(s.offers) do if offer.tow then i, job = k, offer break end end
+    assert(not job.tow.borrow)
+    local pay, minutes = job.pay, job.minutes
+    core.take(i)
+    assert(job.tow.stage == 'shop' and job.pay > pay and job.minutes > minutes and job.borrowKm, 'the detour is paid')
   end)
   for k, f in pairs(saved) do trailers[k] = f end
   assert(ok, err)
