@@ -2,7 +2,7 @@
 
 A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight, work company contracts and build a garage at an address you choose.
 
-**Early development · mod 0.10.2 · helper 0.10.2**
+**Early development · mod 0.10.3 · helper 0.10.3**
 
 [Download the mod and helper (latest release)](https://github.com/themazzy/cargo-earth/releases/latest) · [Landing page](website/index.html) · [Payout statistics](docs/research/payout-statistics-0.3.5/README.md)
 
@@ -48,7 +48,8 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
 ### Career
 
 - Start with a beat-up car and a little money, or pick **Free play** to just drive without a save.
-- Buy used cars with real wear (filter by kind, see cargo space and the jobs each can do), trade in, and buy real BeamNG parts. Repairs cost money; repairing for free through the
+- Buy used cars with real wear (each with the game's own picture and a Details card: power, torque, weight, top speed,
+  0-100, drive, gearbox and fuel; filter by kind, see cargo space and the jobs each can do), trade in, and buy real BeamNG parts. Repairs cost money; repairing for free through the
   game's menu puts the bill on your debt, and Finances shows where every charge came from.
 - Choose a home garage at a real address, store and switch cars there.
 - If a car you own came from a vehicle mod you have since removed, the career still loads: another of your cars (or a
@@ -64,7 +65,9 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
 - Speed cameras are temporarily paused: no camera downloads, camera fines or lost stars. The normal road speed-limit
   display still works.
 - A delivery map with your personal records, and a full progress and finance overview.
-- Restart the career any time from Menu → Settings (type DELETE to confirm).
+- Keep several named careers (up to 20): load or delete one on the phone's start screen, start a new one with its own
+  name, and switch from Menu → Settings → **Save and switch career**. A save from before 0.10.3 becomes **Career 1**.
+  **Delete this career** in Settings deletes only the current one (type DELETE to confirm).
 
 ### The phone
 
@@ -100,15 +103,15 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | Option | What it does |
 | --- | --- |
 | `-user-folder "D:\BeamNG\user"` | Use this BeamNG user folder when it is not found automatically |
-| `-version 0.10.2` | Install a specific release instead of the latest |
+| `-version 0.10.3` | Install a specific release instead of the latest |
 | `-mod-only`, `-helper-only` | Install only one part |
 | `-skip-python` | Don't install the helper's Python libraries |
 | `-zip <file>`, `-helper <file>` | Use files you already downloaded |
 | `-uninstall` | Remove the mod, the helper and its BeamNG.Earth entry (saves are kept) |
-| `-delete-save` | Delete the career save and its backups (asks you to type DELETE; add `-yes` to skip). Close the game first |
+| `-delete-save` | Delete every career save and its backups (asks you to type DELETE; add `-yes` to skip). Close the game first |
 | `-dry-run` | Only show what would happen |
 
-In the game you can do the same from the phone: Menu → Settings → Restart career (type DELETE to confirm). It also works on the screen that offers to load a saved career.
+In the game you can delete one career from the phone: Menu → Settings → **Delete this career** (type DELETE to confirm), or ✕ next to it on the careers list. `-delete-save` deletes all careers.
 
 ### Quick install (Linux x86_64 / Steam Deck Desktop Mode)
 
@@ -154,7 +157,7 @@ Parts selected in BeamNG Vehicle Config are previews. Apply them, leave Vehicle 
 
 ## Saves and cache
 
-Career progress is local JSON at `settings/cargoEarth/career.json` in the active BeamNG profile, with two recovery backups. It includes your selected home address/coordinates. Cargo Earth implements no cloud-save upload.
+Career progress is local JSON in `settings/cargoEarth/` in the active BeamNG profile: `career.json` for the first career, `career-2.json` and so on for the others, each with two recovery backups, and `saves.json` listing their names. It includes your selected home address/coordinates. Cargo Earth implements no cloud-save upload.
 
 The helper's default 1 GiB soft cache budget covers replaceable downloaded source blocks and processed geographic areas. It does not include career saves, installed mod assets or BeamNG.Earth's own terrain/imagery cache. Increase it with `--cache-mb 4096` for 4 GiB; use `--cache` to choose a directory.
 
@@ -179,13 +182,13 @@ node tools/payout-stats.cjs
 
 Both installers share the Go program in `installer/`. From that folder, build with `GOOS=windows GOARCH=amd64 go build -o CargoEarthSetup.exe .` or `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o CargoEarthSetup-linux-x86_64 .`. Run installer checks with `go test ./...` and `go vet ./...`.
 
-To publish a release, create a GitHub release with a tag such as `v0.10.2` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
+To publish a release, create a GitHub release with a tag such as `v0.10.3` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.2 notes](docs/CAREER_0.10.2.md), [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.3 notes](docs/CAREER_0.10.3.md), [0.10.2 notes](docs/CAREER_0.10.2.md), [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
-This is an early development build, made by one person with a lot of help and tested in game as time allows. Bus lines, tow jobs (wrecks, coupling and loading), parts runs, vehicle-type detection, heavier loads and the BeamNG.Earth 1.10 speed limits are new in 0.10 and still need more driving; check the [release notes](docs/CAREER_0.10.2.md) for what is untested. Public places are candidate stops rather than certified loading bays, and a truck may not fit every yard a van does. Bulk and fluid loads have no condition yet. The payout report describes 0.3.5, before fuel costs.
+This is an early development build, made by one person with a lot of help and tested in game as time allows. Bus lines, tow jobs (wrecks, coupling and loading), parts runs, vehicle-type detection, heavier loads and the BeamNG.Earth 1.10 speed limits are new in 0.10 and still need more driving; check the [release notes](docs/CAREER_0.10.3.md) for what is untested. Public places are candidate stops rather than certified loading bays, and a truck may not fit every yard a van does. Bulk and fluid loads have no condition yet. The payout report describes 0.3.5, before fuel costs.
 
 The helper fetches public Overture source data; busy areas and first visits may take time to load. Python queries and connections are bounded, but real-world latency and coverage vary.
 
