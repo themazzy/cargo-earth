@@ -823,6 +823,8 @@ local function towOffers(class, p, specs)
 end
 
 function M.generate()
+  -- the firm's trailer is still being hitched: no offers until it is on (M.trailerOffersTick)
+  if S.trailerOffersWait then S.offers, S.offerStats = {}, nil S.offeredAt = S.offeredAt or { lat = 0, lon = 0 } return end
   if not modeReady() or S.mode == 'bus' then S.offers, S.offerStats = {}, nil return end   -- bus lines: no ringing
   local p = earth.pose()
   if not p then S.offers, S.offerStats = {}, nil return end
@@ -1297,7 +1299,7 @@ end
 
 local function finishDelivery(force)
   local j = S.job
-  if cargo.supports(j) and cargo.condition(j) == 0 then M.spoil(nil, {[j] = true}) return end
+  if cargo.supports(j) and cargo.condition(j) == 0 and not M.speedOnly(j) then M.spoil(nil, {[j] = true}) return end
   if j.bus then
     if not j.bus.ready then
       S.stopT = -10
@@ -1353,12 +1355,13 @@ local function finishDelivery(force)
     S.stopT = -10   -- don't repeat the message every tick
     return
   end
-  local minutes = M.elapsed(j) / 60
+  local minutes = M.elapsed(j) / 60          -- the time it really took (history and records)
   local late = math.max(0, minutes - j.minutes)
+  local judged = minutes                     -- the time the rating goes by
   if j.bus then
     -- a bus keeps to its timetable stop by stop: the minutes late at each stop count, not the whole run's
     late = require('cargoEarth/bus').lateMinutes(j)
-    minutes = j.minutes + late
+    judged = j.minutes + late
   end
   local perMin = M.LATE_PER_MIN[j.kind == 'food' and 'courier' or j.bus and 'bus' or 'trucking']
   local pay = math.floor(j.pay * math.max(M.LATE_FLOOR, 1 - late * perMin) + 0.5)
@@ -1404,7 +1407,7 @@ local function finishDelivery(force)
   local track = rating.track(j)
   -- a passenger in a rush rates only the speed
   local felt = j.taxi and require('cargoEarth/taxi').mode(j).speedOnly and 100 or condition
-  local stars = rating.add(c, track, rating.stars(minutes, j.minutes, felt, j.starPenalty))
+  local stars = rating.add(c, track, rating.stars(judged, j.minutes, felt, j.starPenalty))
   local note = rating.note(track, stars, late > 0, felt < 100, c.delivered)
   local newRecords = records.record(c, j, { pay = pay, tip = tip, minutes = minutes, stars = stars, date = today,
     earnedToday = c.today.earned })
@@ -1747,6 +1750,11 @@ function M.spoil(peak, ruined)
   return lost
 end
 
+-- A taxi passenger in a rush rates only the speed: a rough ride never ends it (cargoEarth/taxi MODES).
+function M.speedOnly(job)
+  return job and job.taxi and require('cargoEarth/taxi').mode(job).speedOnly == true or false
+end
+
 function M.onCargoEarthShock(id, token, peak)
   local watch = forceWatch
   if not watch or watch.id ~= id or watch.token ~= token or S.pendingCareer then return end
@@ -1767,7 +1775,7 @@ function M.onCargoEarthShock(id, token, peak)
   for _, order in ipairs(S.orders) do
     local job = order.job
     if cargo.supports(job) and order.phase == 'toDelivery' and cargo.shock(job, peak) then
-      if cargo.condition(job) == 0 then ruined[job] = true else damaged = damaged + 1 end
+      if cargo.condition(job) == 0 and not M.speedOnly(job) then ruined[job] = true else damaged = damaged + 1 end
     end
   end
   if next(ruined) then M.spoil(peak, ruined)
@@ -1933,7 +1941,7 @@ M.stopInfo = stopInfo
 
 local function phoneTick()
   local ph = S.phone
-  if not ph.online or S.parts or S.career.employment then return end
+  if not ph.online or S.parts or S.career.employment or S.trailerOffersWait then return end
   if S.job and (S.mode ~= 'courier' or #S.orders >= maxOrders()) then return end
   if not garage.inOwnCar(M.G, S.career.garage) then ph.incoming = nil return end
   if ph.incoming then
@@ -2874,6 +2882,8 @@ local radioAlive   -- (the radio, below)
 local radioView    -- (the shared radio, below)
 local askUpdate    -- (the update notice, with the support report below)
 local function helperTick(p)
+  -- an install asked for from the phone goes on to start the helper, even after the notice was closed
+  if S.helperStartAt then require('cargoEarth/earthaddon').tick(S.clock) end
   if not p then return end
   if camerasOn() then
     cameras.refresh(cams, p.lat, p.lon)
@@ -3175,7 +3185,7 @@ end
 M.HELPER_STARTING_S = 30   -- after Start: "Starting..." this long while the helper comes up (helper.RETRY_S 15)
 function M.helperStartInfo()
   local h = helper.status()
-  if not helper.enabled or S.helperStartHidden or h.state ~= 'off' or not h.msg then return nil end
+  if not helper.enabled or S.helperStartHidden or h.state ~= 'off' or not (h.msg or h.down) then return nil end
   local ea = require('cargoEarth/earthaddon')
   ea.tick(S.clock)
   local e = ea.state()
@@ -4148,6 +4158,13 @@ function M.hqState()
   return out
 end
 
+-- The firm's trailer taken out at the headquarters: once its hitch has latched (or given up), offers are made again.
+function M.trailerOffersTick()
+  if trailers.hitching() or trailers.latching() then return end
+  S.trailerOffersWait = nil
+  if not S.job then S.offeredAt = nil end
+end
+
 -- name: found (a = name), rename (a = name), setHq, gpsHq, upgrade (a = id). Returns the firm for the phone.
 function M.firmDo(name, a)
   if S.pendingCareer then return M.firmState() end
@@ -4205,7 +4222,10 @@ function M.hqDo(name, a, b)
           ok, msg = trailers.takeOwn(t.kind)
           if ok then
             S.ownTrailer, msg = t.id, string.format('Putting your %s on the hitch. Tow jobs now skip borrowing one.', t.name:lower())
-            S.offeredAt = nil   -- offers are made again with your trailer
+            -- offers are made again with your trailer once it is on the hitch (M.trailerOffersTick); until then
+            -- none are shown, so no offer still asks to borrow one
+            S.offers, S.offerStats, S.offeredAt, S.phone.incoming = {}, nil, { lat = 0, lon = 0 }, nil
+            S.trailerOffersWait = true
           else msg = 'Could not get the trailer out: ' .. tostring(msg) end
         end
       end
@@ -4348,6 +4368,8 @@ M.UPDATE_FIRST_S = 20      -- the first update question, this long after the mod
 M.UPDATE_ASK_S = 900       -- then this often (the helper asks GitHub at start and every 2 hours)
 M.UPDATE_RETRY_S = 300     -- the helper did not answer: ask again after this long
 M.UPDATE_LOAD_WAIT_S = 8   -- after a save loads: the helper asks GitHub, its answer is read this long after
+M.UPDATE_PENDING_S = 5     -- the helper still waits for GitHub (update.checking): read again after this long
+M.UPDATE_PENDING_TRIES = 6 -- at most this many times (GitHub's own timeout is 20 s)
 M.RELEASES = 'https://github.com/themazzy/cargo-earth/releases'
 
 -- '0.10.2' newer than '0.9.3'? Plain release numbers only; anything else is never newer.
@@ -4402,7 +4424,7 @@ askUpdate = function()
     -- a save was loaded: the helper asks GitHub again (it skips that when it asked in the last 5 minutes)
     M.updateOnLoad = nil
     helper.ask('/v1/update/check', function() end)
-    updateAskAt = S.clock + M.UPDATE_LOAD_WAIT_S
+    updateAskAt, M.updatePendingLeft = S.clock + M.UPDATE_LOAD_WAIT_S, M.UPDATE_PENDING_TRIES
     return
   end
   updateAskAt = updateAskAt or S.clock + M.UPDATE_FIRST_S
@@ -4410,7 +4432,11 @@ askUpdate = function()
   updateAskAt = S.clock + M.UPDATE_ASK_S
   helperAboutAt = S.clock
   helper.ask('/v1/info', function(data, err)
-    if not data then updateAskAt = S.clock + M.UPDATE_RETRY_S end
+    if not data then updateAskAt = S.clock + M.UPDATE_RETRY_S
+    elseif type(data.update) == 'table' and data.update.checking == true and (M.updatePendingLeft or 0) > 0 then
+      -- a slow GitHub answer is still on its way: read it again soon, not in a quarter of an hour
+      M.updatePendingLeft, updateAskAt = M.updatePendingLeft - 1, S.clock + M.UPDATE_PENDING_S
+    else M.updatePendingLeft = nil end
     onAbout(data, err)
   end)
 end
@@ -4982,6 +5008,7 @@ function M.onUpdate(dtReal, dtSim)
       rememberLocation(pose)
       if S.job and not S.parts and dt > 0 then tick(dt) end
       if S.taxiSeated or (S.job and S.job.taxi) then M.taxiTick() end
+      if S.trailerOffersWait then M.trailerOffersTick() end
       if S.phone.online and dt > 0 then phoneTick()
       elseif not S.job and not S.offeredAt and not S.career.employment then M.generate() end
     end
