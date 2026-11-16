@@ -244,8 +244,10 @@ angular.module('beamng.apps')
     // used-car pictures: the game's config preview over a plain car outline (shown when a mod car has no picture)
     '.cep-thumb{position:relative;flex:0 0 auto;width:78px;height:48px;border:0;padding:0;border-radius:8px;overflow:hidden;cursor:pointer;' +
     'background:var(--line) url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 32%27><path fill=%27%23999%27 d=%27M8 21l3-7c1-2 3-3 5-3h22c2 0 4 1 6 3l5 5 7 1c1 0 2 1 2 2v3c0 1-1 2-2 2h-4a5 5 0 0 0-10 0H23a5 5 0 0 0-10 0H9c-1 0-2-1-2-2z%27/></svg>") center/70% no-repeat}' +
-    '.cep-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}' +
-    '.cep-thumb.big{width:100%;height:0;padding-top:56%;cursor:default;margin-bottom:6px}.cep-thumb.big img{object-fit:contain;background:var(--card)}' +
+    // a background picture, not <img>: Angular's img sanitizer (dash phone page) refuses local:// game files, and a
+    // missing file just leaves the outline underneath showing
+    '.cep-thumb i{position:absolute;top:0;left:0;right:0;bottom:0;background:center/cover no-repeat}' +
+    '.cep-thumb.big{width:100%;height:0;padding-top:56%;cursor:default;margin-bottom:6px}.cep-thumb.big i{background-size:contain}' +
     '.cep-cartop{display:flex;gap:8px;align-items:flex-start}.cep-cartop>div{flex:1;min-width:0}' +
     '.cep-cardetail{flex:0 0 100%;border-top:1px solid var(--line);padding-top:8px}' +
     '.cep-specs{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:12px}.cep-specs span{color:var(--muted)}.cep-specs b{font-weight:700}' +
@@ -944,8 +946,7 @@ angular.module('beamng.apps')
           '<div class="cep-li" ng-repeat="c in shownCars() track by c.id" style="align-items:flex-start;cursor:default;flex-wrap:wrap"><div style="flex:1;min-width:0">' +
             // the picture and numbers come from the game's vehicle list: nothing is spawned (Look at it does that)
             '<div class="cep-cartop"><button class="cep-thumb" ng-click="cf.detail = (cf.detail === c.id ? null : c.id)" ' +
-              'aria-label="Show details" title="Show details"><img ng-if="c.info.preview" ng-src="{{ c.info.preview }}" alt="" ' +
-              'onerror="this.style.display=\'none\'"></button><div>' +
+              'aria-label="Show details" title="Show details"><i ng-if="c.info.preview" ng-style="carPic(c)"></i></button><div>' +
             '<div class="cep-name" style="white-space:normal">{{ c.name }} <span class="cep-adr" ng-if="c.isNew" style="background:var(--ok)">NEW</span></div>' +
             '<div class="cep-kind" ng-if="kindOf(c)"><b>{{ kindOf(c).name }}</b>' +
               '<button class="cep-q" ng-class="{on: cf.help === c.id}" ng-click="cf.help = (cf.help === c.id ? null : c.id)" ' +
@@ -965,8 +966,7 @@ angular.module('beamng.apps')
             '<button class="cep-sm ghost" style="flex:0 0 100%;min-height:26px;padding:4px" ng-if="cf.detail !== c.id" ' +
               'ng-click="cf.detail = c.id">Details ▾</button>' +
             '<div class="cep-cardetail" ng-if="cf.detail === c.id">' +
-              '<div class="cep-thumb big"><img ng-if="c.info.preview" ng-src="{{ c.info.preview }}" alt="{{ c.name }}" ' +
-                'onerror="this.style.display=\'none\'"></div>' +
+              '<div class="cep-thumb big" role="img" aria-label="{{ c.name }}"><i ng-if="c.info.preview" ng-style="carPic(c)"></i></div>' +
               '<div class="cep-specs"><div ng-repeat="r in carSpecs(c) track by r[0]"><span>{{ r[0] }}</span><b>{{ r[1] }}</b></div></div>' +
               '<div class="cep-sub" ng-if="!carSpecs(c).length">The game has no details for this car.</div>' +
               '<button class="cep-sm ghost" style="width:100%;margin-top:6px;min-height:26px;padding:4px" ng-click="cf.detail = null">Hide details ▴</button>' +
@@ -1914,6 +1914,12 @@ angular.module('beamng.apps')
         return list
       }
       // the details card's rows, from the game's own vehicle info (mod cars often lack some, so only known ones show)
+      scope.carPic = function (car) {
+        var p = car.info && car.info.preview
+        if (car.picStyle && car.picStyle.src === p) return car.picStyle.css
+        car.picStyle = { src: p, css: { 'background-image': 'url("' + String(p).replace(/["\\]/g, '') + '")' } }
+        return car.picStyle.css
+      }
       scope.carSpecs = function (car) {
         var i = car.info || {}, rows = []
         if (car.specRows && car.specRows.src === i) return car.specRows.list
