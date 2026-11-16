@@ -3186,6 +3186,13 @@ test('the phone says when a newer release is out (the helper looks it up)', func
     local reread = false
     for i = n + 2, #asked do if asked[i][1] == '/v1/info' then reread = true end end
     assert(reread, 'info read again after the check')
+    -- GitHub is slow: the helper still checks, so the game reads again in a few seconds, not in 15 minutes
+    local n2 = #asked
+    asked[#asked][2]({ version = core.VERSION, update = { latest = core.VERSION, checking = true } })
+    advance(core, 2 * core.UPDATE_PENDING_S + 2)
+    local again = false
+    for i = n2 + 1, #asked do if asked[i][1] == '/v1/info' then again = true end end
+    assert(again, 'info read again while the check was pending')
     info[2]({ version = core.VERSION, update = { latest = '99.0.0' } })
     local u = core.phoneState().update
     assert(u and u.available and u.modOld and u.helperOld and u.latest == '99.0.0' and not u.hidden)
@@ -3205,6 +3212,12 @@ test('the phone says when a newer release is out (the helper looks it up)', func
   end)
   helper.ask, helper.enabled = ask, enabled
   assert(ok, why)
+end)
+
+test('a rush taxi ride is never ended by a rough ride; only the speed counts', function()
+  local core = fresh()
+  assert(core.speedOnly({ taxi = { mode = 'rush' } }) and not core.speedOnly({ taxi = { mode = 'comfort' } }))
+  assert(not core.speedOnly({ kind = 'food' }) and not core.speedOnly(nil))
 end)
 
 test('the phone starts a helper that is not running through BeamNG.Earth\'s add-on list', function()
@@ -3239,6 +3252,17 @@ test('the phone starts a helper that is not running through BeamNG.Earth\'s add-
     assert(sent[1] == 'start' and sent[2] == 'autostart_on' and #sent == 2)
     core.phoneAction('helperHide')
     assert(core.phoneState().helperStart == nil, 'hidden')
+    -- closing the notice while the install runs: it still starts once installed (from the update loop)
+    s.helperStartHidden, card.installed, sent = nil, false, {}
+    core.phoneAction('helperStart')
+    core.phoneAction('helperHide')
+    card.installed = true
+    advance(core, 2)
+    assert(sent[2] == 'start' and sent[3] == 'autostart_on', 'started while hidden: ' .. table.concat(sent, ','))
+    -- only cameras / radio asked (Czech data covers the rest): a failed connection still offers Start
+    s.helperStartHidden, h.msg, h.down = nil, nil, 'connection refused'
+    assert(core.phoneState().helperStart, 'offered on a failed camera ask')
+    h.down = nil
     -- no BeamNG.Earth add-on list: nothing offered
     package.loaded['beamngEarth/addons'] = nil
     s.helperStartHidden = nil
@@ -3893,10 +3917,107 @@ test('Restart career says so when the old save cannot be replaced', function()
   assert(out.restarted and out.restartWarning and out.restartWarning:find('installer'), 'the player hears the old save stayed')
   assert(not s.career.garage.started)
   core, s = fresh()
+  core.settingsDo('cameras', false)
   failPath = '/settings/cargoEarth/career.json'
   out = core.settingsDo('restart', 'DELETE')
   failPath = nil
   assert(out.restarted and out.restartWarning, 'a failed new save is reported too')
+end)
+
+test('an old single save becomes Career 1 and more careers get their own names and files', function()
+  local core, s = fresh()
+  local garage = require('cargoEarth/garage')
+  disk['/settings/cargoEarth/career.json'] = {money = 4321, delivered = 7, history = {}, savedAt = 100,
+    garage = {started = true, car = {model = 'pigeon', key = 'base', name = 'Old Pigeon'}, inventory = {}, parked = {}}}
+  package.loaded['cargoEarth/core'] = nil
+  core = require('cargoEarth/core')
+  core.G = adapter()
+  core.G.configs = function() return {{model = 'pigeon', key = 'base', value = 900, brand = 'Ibishu', name = 'Pigeon'}} end
+  core.onExtensionLoaded()
+  s = core.state()
+  s.idx, s.loadError = idx, nil
+  local st = core.phoneState()
+  assert(st.screen == 'resume' and st.saveName == 'Career 1', 'the old save is Career 1, waiting to be loaded')
+  assert(#st.saves == 1 and st.saves[1].money == 4321 and st.saves[1].car == 'Old Pigeon')
+  assert(disk['/settings/cargoEarth/saves.json'].slots[1].path == '/settings/cargoEarth/career.json', 'nothing is copied')
+  assert(st.newName == 'Career 2')
+  -- a new career with a name, from the resume screen
+  st = core.phoneAction('newCareer', '  Prague   courier ')
+  assert(s.career.garage.started and s.career.money == garage.START_MONEY and not s.pendingCareer)
+  assert(st.screen ~= 'resume' and st.screen ~= 'choose')
+  local list = disk['/settings/cargoEarth/saves.json']
+  assert(#list.slots == 2 and list.slots[2].name == 'Prague courier' and list.last == 2)
+  assert(disk[list.slots[2].path].money == garage.START_MONEY, 'the new career has its own file')
+  assert(disk['/settings/cargoEarth/career.json'].money == 4321, 'Career 1 is untouched')
+  -- pause, pick Career 1, it loads
+  core.settingsDo('pause')
+  st = core.phoneState()
+  assert(st.screen == 'resume' and #st.saves == 2 and st.saves[1].name == 'Prague courier', 'last played first')
+  core.phoneAction('loadSave', 1)
+  assert(not s.pendingCareer and s.career.money == 4321 and s.career.delivered == 7, 'Career 1 is back')
+  s.career.money = 5000
+  core.settingsDo('cameras', false)
+  assert(disk['/settings/cargoEarth/career.json'].money == 5000 and disk[list.slots[2].path].money == garage.START_MONEY)
+  -- the running career cannot be deleted from the list; another can, from the start screen
+  core.settingsDo('pause')
+  core.phoneAction('deleteSave', 2)
+  st = core.phoneState()
+  assert(#st.saves == 1 and st.saves[1].name == 'Career 1' and st.saveMsg == 'Prague courier deleted.')
+  -- free play from the start screen keeps the career on disk
+  st = core.phoneAction('freePlay')
+  assert(not s.pendingCareer and s.career.play == 'free' and not s.career.garage.started and st.freePlay)
+  assert(disk['/settings/cargoEarth/career.json'].money == 5000, 'free play does not write over a career')
+  assert(disk['/settings/cargoEarth/freeplay.json'].play == 'free')
+  st = core.phoneAction('careerInfo')
+  assert(st.screen == 'choose' and #st.saves == 1)
+  core.phoneAction('loadSave', 1)
+  assert(s.career.money == 5000 and s.career.garage.started)
+end)
+
+test('a free-play save from before the slots gives only its settings; the first career is Career 1', function()
+  local core, s = fresh()
+  disk['/settings/cargoEarth/career.json'] = {money = 80, play = 'free', currency = 'EUR', history = {}, garage = {inventory = {}, parked = {}}}
+  package.loaded['cargoEarth/core'] = nil
+  core = require('cargoEarth/core')
+  core.G = adapter()
+  core.G.configs = function() return {{model = 'pigeon', key = 'base', value = 900, brand = 'Ibishu', name = 'Pigeon'}} end
+  core.onExtensionLoaded()
+  s = core.state()
+  s.idx, s.loadError = idx, nil
+  advance(core, 2)
+  local st = core.phoneState()
+  assert(st.screen == 'choose' and #st.saves == 0 and st.newName == 'Career 1' and s.career.currency == 'EUR')
+  core.phoneAction('startCareer', '')
+  local list = disk['/settings/cargoEarth/saves.json']
+  assert(#list.slots == 1 and list.slots[1].name == 'Career 1' and s.career.garage.started)
+end)
+
+test('a career list that could not be written is written again before the save counts', function()
+  local core, s = fresh()
+  failPath = '/settings/cargoEarth/saves.json'
+  core.settingsDo('cameras', false)
+  assert(s.slot == 1 and s.saveError, 'the career is not called saved while the list is missing')
+  failPath = nil
+  advance(core, 20)
+  assert(not s.saveError and disk['/settings/cargoEarth/saves.json'].slots[1].id == 1, 'the list is written on the retry')
+  -- a resume that failed for a while can be tried again; an unreadable save cannot
+  core.settingsDo('pause')
+  s.resumeError = 'The saved location did not load. Try again when the world is ready.'
+  local st = core.phoneState()
+  assert(st.screen == 'resume' and not st.resumeBlocked)
+end)
+
+test('a career saved without a name gets a slot; a missing save is said, not loaded', function()
+  local saves = require('cargoEarth/saves')
+  assert(saves.cleanName(string.rep('ř', 20)) == string.rep('ř', 16), 'names are cut between letters')
+  assert(saves.cleanName(' \t ') == nil)
+  local core, s = fresh()
+  core.settingsDo('cameras', false)
+  assert(s.slot == 1 and disk['/settings/cargoEarth/saves.json'].slots[1].name == 'Career 1')
+  core.settingsDo('pause')
+  for _, suffix in ipairs({'', '.backup1', '.backup2', '.legacy'}) do disk['/settings/cargoEarth/career.json' .. suffix] = nil end
+  core.phoneAction('loadSave', 1)
+  assert(s.loadBlocked and core.phoneState().resumeError:find('not found'))
 end)
 
 test('cancelling a picked-up meal takes its weight out of the car', function()
@@ -4312,3 +4433,35 @@ test('a save whose car mod is gone: another owned car, else a base Pigeon; the m
   assert(garage.fallbackCar(G, g) == nil and g.car.model == 'modcar')
 end)
 
+
+test('used-car list: picture and numbers come from the game list without a spawn, mod cars fall back', function()
+  local gamecar = require('cargoEarth/gamecar')
+  local oldCv = core_vehicles
+  local asked = 0
+  core_vehicles = { getModel = function(m)
+    asked = asked + 1
+    if m == 'pigeon' then
+      return { model = { Brand = 'Ibishu', Country = 'Japan', preview = '/vehicles/pigeon/default.jpg' }, configs = {
+        base = { key = 'base', preview = '/vehicles/pigeon/base.jpg', Power = 40, Torque = 80, Weight = 610,
+          ['Top Speed'] = 25, ['0-100 km/h'] = 21.34, Drivetrain = 'RWD', Transmission = 'Manual', ['Fuel Type'] = 'Gasoline',
+          aggregates = { ['Body Style'] = { Pickup = true }, Years = { min = 1990, max = 2004 } } } } }
+    elseif m == 'modcar' then
+      return { model = { preview = '/ui/images/appDefault.png' }, configs = { a = { key = 'a', preview = '/ui/images/appDefault.png' } } }
+    end
+    return {}
+  end }
+  local ok, err = pcall(function()
+    gamecar._reset()
+    local i = gamecar.carInfo('pigeon', 'base')
+    assert(i.preview == '/vehicles/pigeon/base.jpg' and i.power == 40 and i.weight == 610 and i.topSpeed == 90)
+    assert(i.sprint == 21.3 and i.drivetrain == 'RWD' and i.body == 'Pickup' and i.brand == 'Ibishu' and i.years.min == 1990)
+    gamecar.carInfo('pigeon', 'base')
+    assert(asked == 1, 'cached per config')
+    local m = gamecar.carInfo('modcar', 'a')
+    assert(m and m.preview == nil and m.power == nil, 'the game\'s default picture means no picture')
+    assert(gamecar.carInfo('gone', 'x') == nil and gamecar.carInfo(nil, 'x') == nil)
+  end)
+  core_vehicles = oldCv
+  gamecar._reset()
+  assert(ok, err)
+end)

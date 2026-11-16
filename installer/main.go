@@ -763,14 +763,18 @@ func removeHelper() error {
 
 // ------------------------------------------------------------------ the career save
 
-// saveFiles lists career.json and the copies the mod keeps beside it
-// (.pending, .backup1, .backup2, .legacy). config.json is a setting, not progress, and stays.
+// saveFiles lists every career save (career.json, career-2.json, ...), the copies the mod keeps beside them
+// (.pending, .backup1, .backup2, .legacy), the list of careers (saves.json) and the free-play save.
+// config.json is a setting, not progress, and stays.
 func saveFiles(user string) []string {
 	dir := filepath.Join(user, "settings", "cargoEarth")
 	var found []string
-	for _, name := range []string{"career.json", "career.json.pending", "career.json.backup1", "career.json.backup2", "career.json.legacy"} {
-		if p := filepath.Join(dir, name); fileExists(p) {
-			found = append(found, p)
+	for _, pattern := range []string{"career.json*", "career-*.json*", "saves.json", "freeplay.json*"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+		for _, p := range matches {
+			if fileExists(p) {
+				found = append(found, p)
+			}
 		}
 	}
 	return found

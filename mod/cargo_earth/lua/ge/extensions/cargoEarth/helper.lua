@@ -130,9 +130,17 @@ end
 
 local function step(now) return stepReq(req, now) end
 
+-- Did the helper answer at all? A connection that failed (not an HTTP error, which the helper itself sends) marks it
+-- down (st.down, for the phone's Start helper button); any answer clears that.
+local function seen(data, err)
+  if data or (type(err) == 'string' and err:match('^HTTP ')) then st.down = nil
+  elseif err then st.down = tostring(err) end
+end
+
 local function finish(data, err, now, lat, lon, onArea)
   local r = req
   close()
+  seen(data, err)
   if r.what == 'ask' then
     if r.on then r.on(data, err) end
     return
@@ -237,6 +245,7 @@ function M.pump(now)
       if not q then return end
       local r, err = open(q[1], now)
       if not r then
+        seen(nil, tostring(err))
         if q[2] then q[2](nil, tostring(err)) end
         return
       end
@@ -248,6 +257,7 @@ function M.pump(now)
       local r = fast
       pcall(function() r.sock:close() end)
       fast = nil
+      seen(data, err)
       if r.on then r.on(data, err) end
     elseif reading then
       return       -- the helper is still answering: next frame
@@ -271,12 +281,18 @@ function M.tick(lat, lon, now, onArea, onCameras, onlyCameras)
   if #queue > 0 then
     local q = table.remove(queue, 1)
     local ok, err = start(q[1], 'ask', nil, now)
-    if ok then req.on = q[2] elseif q[2] then q[2](nil, tostring(err)) end
+    if ok then req.on = q[2] else
+      seen(nil, tostring(err))
+      if q[2] then q[2](nil, tostring(err)) end
+    end
     return
   end
   if onCameras and now >= nextCameras then
-    local ok = start(string.format('/v1/cameras?lat=%.5f&lon=%.5f', lat, lon), 'cameras', nil, now)
-    if ok then req.on = onCameras else st.cameras, nextCameras = 'off', now + M.RETRY_S end
+    local ok, err = start(string.format('/v1/cameras?lat=%.5f&lon=%.5f', lat, lon), 'cameras', nil, now)
+    if ok then req.on = onCameras else
+      seen(nil, tostring(err))
+      st.cameras, nextCameras = 'off', now + M.RETRY_S
+    end
     return
   end
   if onlyCameras then return end

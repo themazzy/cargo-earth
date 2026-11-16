@@ -109,6 +109,23 @@ function pagePlayer() {
 angular.module('beamng.apps')
 .directive('cargoEarthPhone', [function () {
   var STATE = 'cargoEarth_core and cargoEarth_core.phoneState() or nil'
+  // the careers on the start screens (resume and first run): load one, delete one (asks first)
+  var SAVES_HTML =
+    '<div class="cep-label" ng-if="s.saves.length">Your careers</div>' +
+    '<div class="cep-li" ng-repeat="v in s.saves track by v.id" ng-class="{on: v.current && s.screen === \'resume\'}">' +
+      '<div><div class="cep-name">{{ v.name }}</div>' +
+        '<small ng-if="v.unreadable">This save cannot be read.</small>' +
+        '<small ng-if="!v.unreadable">{{ fmt.money(v.money) }}{{ v.car ? " · " + v.car : "" }}{{ v.hours ? " · " + v.hours + " h" : "" }}</small>' +
+        '<small ng-if="v.when">Played {{ v.when }}</small></div>' +
+      '<div class="cep-row" style="flex:none;gap:4px">' +
+        '<button class="cep-sm" style="flex:none;white-space:nowrap" ng-if="!(v.current && s.screen === \'resume\')" ng-click="act(\'loadSave\', v.id)">Load</button>' +
+        '<button class="cep-sm" style="flex:none;white-space:nowrap" ng-class="delAsk === v.id ? \'go\' : \'ghost\'" ng-click="askDelete(v.id)" ' +
+          'title="Delete this career" aria-label="Delete {{ v.name }}">{{ delAsk === v.id ? "Delete?" : "✕" }}</button></div></div>' +
+    '<div class="cep-sub" ng-if="s.saveMsg">{{ s.saveMsg }}</div>'
+  // a new career: its name (the field starts empty; the suggestion is used when nothing is typed)
+  var NEW_CAREER_HTML =
+    '<div class="cep-row" style="margin-top:6px"><input class="cep-input" type="text" maxlength="32" autocomplete="off" spellcheck="false" ' +
+      'aria-label="Name of the new career" placeholder="{{ s.newName }}" ng-model="newSave.name"></div>'
   var CSS =
     '.cep{--ink:#1d1b19;--paper:#fbf7f2;--card:#fff;--muted:#7b726a;--line:#e8e0d7;--tomato:#e8452c;--ok:#2f8f5b;--warn:#c98a10;' +
     'width:100%;height:100%;box-sizing:border-box;padding:9px;background:#141312;border-radius:34px;' +
@@ -241,6 +258,17 @@ angular.module('beamng.apps')
     '.cep-pump-row small{font-size:10px;font-weight:500;color:inherit;opacity:.85}' +
     '.cep-step2{display:flex;align-items:center;gap:8px}.cep-step2 b{min-width:62px;text-align:center;font-variant-numeric:tabular-nums}' +
     '.cep-li>div{min-width:0}' +
+    // used-car pictures: the game's config preview over a plain car outline (shown when a mod car has no picture)
+    '.cep-thumb{position:relative;flex:0 0 auto;width:78px;height:48px;border:0;padding:0;border-radius:8px;overflow:hidden;cursor:pointer;' +
+    'background:var(--line) url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 32%27><path fill=%27%23999%27 d=%27M8 21l3-7c1-2 3-3 5-3h22c2 0 4 1 6 3l5 5 7 1c1 0 2 1 2 2v3c0 1-1 2-2 2h-4a5 5 0 0 0-10 0H23a5 5 0 0 0-10 0H9c-1 0-2-1-2-2z%27/></svg>") center/70% no-repeat}' +
+    // a background picture, not <img>: Angular's img sanitizer (dash phone page) refuses local:// game files, and a
+    // missing file just leaves the outline underneath showing
+    '.cep-thumb i{position:absolute;top:0;left:0;right:0;bottom:0;background:center/cover no-repeat}' +
+    '.cep-thumb.big{width:100%;height:0;padding-top:56%;cursor:default;margin-bottom:6px}.cep-thumb.big i{background-size:contain}' +
+    '.cep-cartop{display:flex;gap:8px;align-items:flex-start}.cep-cartop>div{flex:1;min-width:0}' +
+    '.cep-cardetail{flex:0 0 100%;border-top:1px solid var(--line);padding-top:8px}' +
+    '.cep-specs{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:12px}.cep-specs span{color:var(--muted)}.cep-specs b{font-weight:700}' +
+    '.cep-specs div{display:flex;justify-content:space-between;gap:6px;min-width:0}' +
     '.cep-radio-now{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:10px 12px}.cep-radio-now .cep-name{font-size:16px;white-space:normal}' +
     '.cep-radio-now>.cep-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.cep-scroll .cep-name{white-space:normal;overflow-wrap:anywhere}' +
     '.cep-radio-ctl{display:flex;gap:6px;align-items:center}.cep-radio-ctl .cep-btn{flex:1;margin-top:0;padding:10px 6px}' +
@@ -932,12 +960,15 @@ angular.module('beamng.apps')
           '<div class="cep-sub" ng-if="!cars.length">No cars for sale. New ones come every few minutes.</div>' +
           '<div class="cep-sub" ng-if="cars.length && !shownCars().length">No car fits these filters. ' +
             '<button class="cep-chip" ng-click="cf.kind = null; cf.afford = false">Show all</button></div>' +
-          '<div class="cep-li" ng-repeat="c in shownCars() track by c.id" style="align-items:flex-start;cursor:default"><div style="flex:1;min-width:0">' +
+          '<div class="cep-li" ng-repeat="c in shownCars() track by c.id" style="align-items:flex-start;cursor:default;flex-wrap:wrap"><div style="flex:1;min-width:0">' +
+            // the picture and numbers come from the game's vehicle list: nothing is spawned (Look at it does that)
+            '<div class="cep-cartop"><button class="cep-thumb" ng-click="cf.detail = (cf.detail === c.id ? null : c.id)" ' +
+              'aria-label="Show details" title="Show details"><i ng-if="c.info.preview" ng-style="carPic(c)"></i></button><div>' +
             '<div class="cep-name" style="white-space:normal">{{ c.name }} <span class="cep-adr" ng-if="c.isNew" style="background:var(--ok)">NEW</span></div>' +
             '<div class="cep-kind" ng-if="kindOf(c)"><b>{{ kindOf(c).name }}</b>' +
               '<button class="cep-q" ng-class="{on: cf.help === c.id}" ng-click="cf.help = (cf.help === c.id ? null : c.id)" ' +
                 'aria-label="Jobs this vehicle can do" title="Jobs this vehicle can do">?</button>' +
-              '<span>{{ kindOf(c).fits }}</span></div>' +
+              '<span>{{ kindOf(c).fits }}</span></div></div></div>' +
             '<div class="cep-jobs" ng-if="cf.help === c.id && kindOf(c)"><div class="cep-label">Jobs it can do</div>' +
               '<ul><li ng-repeat="j in kindOf(c).jobs">{{ j }}</li></ul>' +
               '<div class="cep-sub" ng-if="kindOf(c).locked">{{ kindOf(c).locked }}</div></div>' +
@@ -948,7 +979,15 @@ angular.module('beamng.apps')
             '<div style="display:flex;flex-direction:column;gap:5px;align-items:stretch" ng-if="!g.preview">' +
             '<button class="cep-sm" ng-class="{ghost: carPrice(c) > market.money}" ng-click="buyCar(c.id)">' +
               'Buy {{ fmt.money(carPrice(c)) }}</button>' +
-            '<button class="cep-sm ghost" ng-click="look(c.id)">Look at it</button></div></div>' +
+            '<button class="cep-sm ghost" ng-click="look(c.id)">Look at it</button></div>' +
+            '<button class="cep-sm ghost" style="flex:0 0 100%;min-height:26px;padding:4px" ng-if="cf.detail !== c.id" ' +
+              'ng-click="cf.detail = c.id">Details ▾</button>' +
+            '<div class="cep-cardetail" ng-if="cf.detail === c.id">' +
+              '<div class="cep-thumb big" role="img" aria-label="{{ c.name }}"><i ng-if="c.info.preview" ng-style="carPic(c)"></i></div>' +
+              '<div class="cep-specs"><div ng-repeat="r in carSpecs(c) track by r[0]"><span>{{ r[0] }}</span><b>{{ r[1] }}</b></div></div>' +
+              '<div class="cep-sub" ng-if="!carSpecs(c).length">The game has no details for this car.</div>' +
+              '<button class="cep-sm ghost" style="width:100%;margin-top:6px;min-height:26px;padding:4px" ng-click="cf.detail = null">Hide details ▴</button>' +
+            '</div></div>' +
         '</div>' +
         '<div class="cep-actionbar" aria-label="Garage car actions" ng-if="g.started && gview === \'home\' && !g.preview && !g.parts">' +
           '<button class="cep-btn" ng-if="g.car && !g.own" ng-click="gdo(\'bring\')">Bring my car</button>' +
@@ -1020,17 +1059,17 @@ angular.module('beamng.apps')
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-if="st.dash.nudged" ng-click="sdo(\'dash\', \'reset\')">Back to where it started</button>' +
           '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'measure\')">Measure this car again</button></div></div>' +
         '<button class="cep-sm ghost" ng-if="!st.paused" ng-click="sdo(\'reset\')">Reset settings</button>' +
-        '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
-        '<button class="cep-sm ghost" ng-if="st.canRestart && !restart.open" ng-click="restartOpen()">Restart career</button>' +
+        '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and switch career</button>' +
+        '<button class="cep-sm ghost" ng-if="st.canRestart && !restart.open" ng-click="restartOpen()">Delete this career</button>' +
         '<div class="cep-card" ng-if="st.canRestart && restart.open">' +
-          '<div class="cep-name">Restart career</div>' +
+          '<div class="cep-name">Delete this career</div>' +
           '<div class="cep-sub">This deletes your whole career: money, cars, home, firm, reputation and progress. ' +
-            'It cannot be undone. Your settings stay.</div>' +
+            'It cannot be undone. Your settings and other careers stay.</div>' +
           '<div class="cep-sub" style="margin-top:6px">Type {{ st.restartWord }} to confirm.</div>' +
           '<div class="cep-row" style="margin-top:6px"><input class="cep-input" type="text" maxlength="12" autocomplete="off" spellcheck="false" ' +
             'aria-label="Type {{ st.restartWord }} to confirm" placeholder="{{ st.restartWord }}" ng-model="restart.word"></div>' +
           '<div class="cep-sub" ng-if="restart.error">{{ restart.error }}</div>' +
-          '<div class="cep-row"><button class="cep-sm go" ng-disabled="restart.word !== st.restartWord" ng-click="restartGo()">Delete and restart</button>' +
+          '<div class="cep-row"><button class="cep-sm go" ng-disabled="restart.word !== st.restartWord" ng-click="restartGo()">Delete career</button>' +
           '<button class="cep-sm ghost" ng-click="restartClose()">Cancel</button></div></div>' +
         '<div class="cep-label">Help</div>' +
         '<div class="cep-li" style="padding:6px 10px"><div><div class="cep-name" style="font-size:12px">Updates</div>' +
@@ -1070,14 +1109,20 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
       '</div></div>' +
 
-      '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'resume\'"><div class="cep-center">' +
-        '<div class="cep-big">Resume Cargo Earth</div>' +
+      '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'resume\'"><div class="cep-scroll">' +
+        '<div class="cep-card"><div class="cep-label">{{ s.saveName || "Your career" }}</div>' +
         '<div class="cep-sub">{{ s.savedCar ? "Back to your " + s.savedCar + ", where you left off." : "Continue where you left off." }}</div>' +
         '<div class="cep-sub" ng-if="!s.resumeHasLocation">This save has no location, so you continue from here.</div>' +
         '<div class="cep-sub" ng-if="!s.resumeLoading && s.status !== \'ok\'">{{ s.status }}</div>' +
         '<div class="cep-sub" ng-if="s.resumeError">{{ s.resumeError }}</div></div>' +
-        '<button class="cep-btn go" ng-disabled="s.resumeLoading || s.status !== \'ok\'" ng-click="act(\'resume\')">' +
-          '{{ s.resumeLoading ? "Loading saved location…" : "Load latest save" }}</button></div>' +
+        SAVES_HTML +
+        '<div class="cep-card"><div class="cep-label">New career</div>' +
+          '<div class="cep-sub">An old {{ s.choice.starter || "car" }} and a fresh start. Your other careers stay.</div>' + NEW_CAREER_HTML +
+          '<div class="cep-row" style="margin-top:6px"><button class="cep-sm go" ng-disabled="s.savesFull" ng-click="newCareer()">Start new career</button></div></div></div>' +
+        '<div class="cep-actionbar" aria-label="Resume options">' +
+          '<button class="cep-btn go" ng-disabled="s.resumeLoading || s.status !== \'ok\' || s.resumeBlocked" ng-click="act(\'resume\')">' +
+          '{{ s.resumeLoading ? "Loading saved location…" : "Load " + (s.saveName || "latest save") }}</button>' +
+          '<button class="cep-btn ghost" ng-click="act(\'freePlay\')">Just drive</button></div></div>' +
 
       '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'parts\'"><div class="cep-center">' +
         '<div class="cep-big">Parts preview open</div><div class="cep-sub">Confirm or drop your parts changes to take orders again.</div></div>' +
@@ -1094,8 +1139,10 @@ angular.module('beamng.apps')
         '</div>' +
         '<div class="cep-card"><div class="cep-label">Free play</div>' +
           '<div class="cep-sub">Orders in any car, just for fun. Nothing carries over.</div>' +
-        '</div></div>' +
-        '<div class="cep-actionbar" aria-label="Start options"><button class="cep-btn go" ng-click="act(\'startCareer\')">Start my career</button>' +
+        '</div>' +
+        '<div class="cep-card"><div class="cep-label">Name your career</div>' + NEW_CAREER_HTML + '</div>' +
+        SAVES_HTML + '</div>' +
+        '<div class="cep-actionbar" aria-label="Start options"><button class="cep-btn go" ng-disabled="s.savesFull" ng-click="newCareer()">Start my career</button>' +
           '<button class="cep-btn ghost" ng-click="act(\'freePlay\')">Just drive</button></div></div>' +
 
       // offline: the job type can be switched here too (Settings has the same switch)
@@ -1540,6 +1587,19 @@ angular.module('beamng.apps')
           (b.nearestKm !== undefined ? ' Nearest start: ' + b.nearestKm.toFixed(1) + ' km away.' : '')
         return 'No usable bus routes found in the checked areas. Try another part of town or retry the search.'
       }
+      // career saves: the New career name, and Delete asks once before it deletes
+      scope.newSave = {name: ''}
+      scope.delAsk = null
+      scope.newCareer = function () {
+        var name = (scope.newSave.name || '').trim()
+        scope.newSave.name = ''
+        scope.act('newCareer', name)
+      }
+      scope.askDelete = function (id) {
+        if (scope.delAsk === id) { scope.delAsk = null; scope.act('deleteSave', id); return }
+        scope.delAsk = id
+        setTimeout(function () { scope.$evalAsync(function () { if (scope.delAsk === id) scope.delAsk = null }) }, 4000)
+      }
       scope.act = function (name, value) {
         scope.cancelAsk = false
         var arg = value === undefined ? '' : ', ' + bngApi.serializeToLua(value)
@@ -1569,7 +1629,7 @@ angular.module('beamng.apps')
       scope.careerView = 'progress'
       scope.endCompanyAsk = false
       scope.g = null; scope.gview = 'home'; scope.cars = []; scope.st = null
-      scope.cf = { text: '', kind: null, afford: false, sort: 'price', help: null }
+      scope.cf = { text: '', kind: null, afford: false, sort: 'price', help: null, detail: null }
       scope.purchase = { keep: true }
       scope.fmt.int = function (v) { return Math.round(v || 0).toLocaleString('cs-CZ') }
       // weight for the phone: one decimal under 10 kg (a meal), whole kg up to a tonne, then tonnes
@@ -1890,6 +1950,31 @@ angular.module('beamng.apps')
         list.sort(function (a, b) { return by(a, b) || a.id - b.id })
         shown.src = scope.cars; shown.key = key; shown.list = list
         return list
+      }
+      // the details card's rows, from the game's own vehicle info (mod cars often lack some, so only known ones show)
+      scope.carPic = function (car) {
+        var p = car.info && car.info.preview
+        if (car.picStyle && car.picStyle.src === p) return car.picStyle.css
+        car.picStyle = { src: p, css: { 'background-image': 'url("' + String(p).replace(/["\\]/g, '') + '")' } }
+        return car.picStyle.css
+      }
+      scope.carSpecs = function (car) {
+        var i = car.info || {}, rows = []
+        if (car.specRows && car.specRows.src === i) return car.specRows.list
+        var num = function (n) { return Math.round(n).toLocaleString('cs-CZ') }
+        if (i.brand) rows.push(['Make', i.brand + (i.country ? ' · ' + i.country : '')])
+        if (i.years) rows.push(['Years', i.years.min === i.years.max ? String(i.years.min) : i.years.min + '–' + i.years.max])
+        if (i.body) rows.push(['Body', i.body])
+        if (i.power) rows.push(['Power', num(i.power) + ' hp'])
+        if (i.torque) rows.push(['Torque', num(i.torque) + ' Nm'])
+        if (i.weight) rows.push(['Weight', num(i.weight) + ' kg'])
+        if (i.topSpeed) rows.push(['Top speed', num(i.topSpeed) + ' km/h'])
+        if (i.sprint) rows.push(['0–100 km/h', i.sprint + ' s'])
+        if (i.drivetrain) rows.push(['Drive', i.drivetrain])
+        if (i.gearbox) rows.push(['Gearbox', i.gearbox])
+        if (i.fuel) rows.push(['Fuel', i.fuel])
+        car.specRows = { src: i, list: rows }
+        return rows
       }
       scope.buyCar = function (id) { scope.gdo('buyListing', id, scope.purchase.keep || !scope.market.tradeIn) }
       scope.look = function (id) { scope.gdo('preview', id, scope.purchase.keep || !scope.market.tradeIn) } // stays on the car list
