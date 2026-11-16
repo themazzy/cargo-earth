@@ -3922,6 +3922,8 @@ function M.garageDealer(filter)
   local g = S.career.garage
   garage.marketTick(M.G, g, 0)
   local cars = garage.market(g, filter)
+  -- picture + numbers for each listing, read from the game's vehicle list (no spawn); a missing one stays nil
+  for _, c in ipairs(cars) do c.info = M.G.carInfo and M.G.carInfo(c.model, c.key) or nil end
   local inCar = g.car and not g.car.loaner and garage.inOwnCar(M.G, g)
   return { cars = cars, tradeIn = inCar and math.floor(garage.carWorth(M.G, g) * garage.TRADE_IN / 5 + 0.5) * 5 or 0,
     money = S.career.money or 0, debt = g.debt or 0, kinds = M.vehicleKinds() }

@@ -173,6 +173,47 @@ function M.modelExists(model)
   if not ok or type(md) ~= 'table' then return nil end
   return md.model ~= nil
 end
+-- What the used-car list shows about a config without spawning it, like the game's own dealership: the config's
+-- picture (core_vehicles gives a path inside the game files, e.g. /vehicles/pigeon/base.jpg; a mod car without one
+-- falls back to its model picture, else nil) and the info numbers. Cached per model/key; never errors.
+local infoCache = {}
+local function num(v) v = tonumber(v) return v and v > 0 and v or nil end
+local function word(v) if type(v) == 'table' then v = next(v) end return type(v) == 'string' and v ~= '' and v or nil end
+function M.carInfo(model, key)
+  if type(model) ~= 'string' or type(key) ~= 'string' then return nil end
+  local id = model .. '/' .. key
+  if infoCache[id] ~= nil then return infoCache[id] or nil end
+  local cv = ext('core_vehicles')
+  local out = false
+  if cv and cv.getModel then
+    local ok, md = pcall(cv.getModel, model)
+    if ok and type(md) == 'table' and md.model then
+      local c = type(md.configs) == 'table' and md.configs[key] or nil
+      if not c then for _, x in pairs(md.configs or {}) do if type(x) == 'table' and x.key == key then c = x break end end end
+      c = type(c) == 'table' and c or {}
+      local m = type(md.model) == 'table' and md.model or {}
+      local agg = type(c.aggregates) == 'table' and c.aggregates or {}
+      local years = type(c.Years) == 'table' and c.Years or type(agg.Years) == 'table' and agg.Years or type(m.Years) == 'table' and m.Years or nil
+      local pic   -- the game answers '/ui/images/appDefault.png' when a config has no picture: try the model's
+      for _, p in ipairs({ c.preview or false, m.preview or false, md.preview or false }) do
+        if type(p) == 'string' and p ~= '' and not p:find('appDefault', 1, true) then pic = p break end
+      end
+      out = {
+        preview = pic,
+        power = num(c.Power), torque = num(c.Torque), weight = num(c.Weight),
+        topSpeed = num(c['Top Speed']) and math.floor(num(c['Top Speed']) * 3.6 + 0.5) or nil,   -- m/s -> km/h
+        sprint = num(c['0-100 km/h']) and math.floor(num(c['0-100 km/h']) * 10 + 0.5) / 10 or nil,
+        drivetrain = word(c.Drivetrain), gearbox = word(c.Transmission), fuel = word(c['Fuel Type']),
+        body = word(c['Body Style']) or word(agg['Body Style']), brand = word(c.Brand) or word(m.Brand),
+        country = word(c.Country) or word(m.Country),
+        years = years and num(years.min) and { min = num(years.min), max = num(years.max) or num(years.min) } or nil,
+      }
+    end
+  end
+  infoCache[id] = out
+  return out or nil
+end
+
 function M.ownedVehicle()
   local v = ownedId and getObjectByID and getObjectByID(ownedId)
   if v then return describe(v, vehData(ownedId)) end
@@ -644,7 +685,7 @@ function M.road(x, y, z)
   return map.getMap(), a, b, tonumber(d) or math.huge
 end
 
-function M._reset() configsCache, jbeamIO = nil, nil end
+function M._reset() configsCache, jbeamIO, infoCache = nil, nil, {} end
 
 return M
 
