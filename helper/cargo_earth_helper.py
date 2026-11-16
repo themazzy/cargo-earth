@@ -1765,6 +1765,7 @@ class Updates:
     def info(self):
         with self.lock:
             out = dict(self.state)
+            out["checking"] = self.busy   # a /v1/update/check still waits for GitHub: the game reads again soon
         if not self.enabled:
             out["error"] = "update check turned off"
         out["helper"] = VERSION

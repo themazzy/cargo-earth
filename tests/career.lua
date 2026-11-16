@@ -3186,6 +3186,13 @@ test('the phone says when a newer release is out (the helper looks it up)', func
     local reread = false
     for i = n + 2, #asked do if asked[i][1] == '/v1/info' then reread = true end end
     assert(reread, 'info read again after the check')
+    -- GitHub is slow: the helper still checks, so the game reads again in a few seconds, not in 15 minutes
+    local n2 = #asked
+    asked[#asked][2]({ version = core.VERSION, update = { latest = core.VERSION, checking = true } })
+    advance(core, 2 * core.UPDATE_PENDING_S + 2)
+    local again = false
+    for i = n2 + 1, #asked do if asked[i][1] == '/v1/info' then again = true end end
+    assert(again, 'info read again while the check was pending')
     info[2]({ version = core.VERSION, update = { latest = '99.0.0' } })
     local u = core.phoneState().update
     assert(u and u.available and u.modOld and u.helperOld and u.latest == '99.0.0' and not u.hidden)
@@ -3205,6 +3212,12 @@ test('the phone says when a newer release is out (the helper looks it up)', func
   end)
   helper.ask, helper.enabled = ask, enabled
   assert(ok, why)
+end)
+
+test('a rush taxi ride is never ended by a rough ride; only the speed counts', function()
+  local core = fresh()
+  assert(core.speedOnly({ taxi = { mode = 'rush' } }) and not core.speedOnly({ taxi = { mode = 'comfort' } }))
+  assert(not core.speedOnly({ kind = 'food' }) and not core.speedOnly(nil))
 end)
 
 test('the phone starts a helper that is not running through BeamNG.Earth\'s add-on list', function()
@@ -3239,6 +3252,17 @@ test('the phone starts a helper that is not running through BeamNG.Earth\'s add-
     assert(sent[1] == 'start' and sent[2] == 'autostart_on' and #sent == 2)
     core.phoneAction('helperHide')
     assert(core.phoneState().helperStart == nil, 'hidden')
+    -- closing the notice while the install runs: it still starts once installed (from the update loop)
+    s.helperStartHidden, card.installed, sent = nil, false, {}
+    core.phoneAction('helperStart')
+    core.phoneAction('helperHide')
+    card.installed = true
+    advance(core, 2)
+    assert(sent[2] == 'start' and sent[3] == 'autostart_on', 'started while hidden: ' .. table.concat(sent, ','))
+    -- only cameras / radio asked (Czech data covers the rest): a failed connection still offers Start
+    s.helperStartHidden, h.msg, h.down = nil, nil, 'connection refused'
+    assert(core.phoneState().helperStart, 'offered on a failed camera ask')
+    h.down = nil
     -- no BeamNG.Earth add-on list: nothing offered
     package.loaded['beamngEarth/addons'] = nil
     s.helperStartHidden = nil
