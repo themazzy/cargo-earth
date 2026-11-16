@@ -45,7 +45,6 @@ local currency = require('cargoEarth/currency')
 local dash = require('cargoEarth/dash')
 
 local DATA_DIR = '/lua/ge/extensions/cargoEarth/data/'
-local SAVE = '/settings/cargoEarth/career.json'
 local CONFIG = '/settings/cargoEarth/config.json'
 
 -- per mode: arrival radius (m), seconds standing still there, cancel fee (CZK)
@@ -100,6 +99,7 @@ local S = {
   career = { money = 0, delivered = 0, km = 0, history = {}, garage = nil },
   stopT = 0, tick = 0, dist = nil, log = {}, config = {}, window = false, phoneHidden = false,
   clock = 0,
+  slot = nil, saves = nil, saveInfo = {},   -- the running career's save slot (cargoEarth/saves), the list, what it shows
   -- the phone: orders ring in one at a time while online
   phone = { online = false, incoming = nil, nextPingAt = 0, declined = {}, lastDone = nil },
 }
@@ -441,8 +441,10 @@ local function saveCareer()
   c.options = S.optsByMode
   economy.reconcile(c)
   economy.compact(c)
-  local ok, saved = pcall(persistence.save, jsonWriteFile, jsonReadFile, SAVE, c)
+  local path = M.savePath(c)
+  local ok, saved = pcall(persistence.save, jsonWriteFile, jsonReadFile, path, c)
   if ok and saved then
+    if S.slot then S.saveInfo[S.slot] = require('cargoEarth/saves').summary(c) end
     S.saveRetryAt, S.saveError = nil, nil
     S.nextAutosaveActive = (c.activeSeconds or 0) + 60
     return true
@@ -648,25 +650,17 @@ function M.restartCareer(word)
     if earth.status() == 'ok' then earth.gpsClear() end
     marker.reset()
   end
-  local fresh = { money = 0, delivered = 0, km = 0, history = {}, garage = garage.new(), backupAt = 0 }
-  for _, k in ipairs(M.KEEP_ON_START) do fresh[k] = from[k] end
-  -- the old save and every copy of it; one that cannot be removed is overwritten with the new, empty career below
-  local left = {}
-  for _, suffix in ipairs({ '', '.pending', '.backup1', '.backup2', '.legacy' }) do
-    local path = SAVE .. suffix
-    if FS and FS.removeFile and (not FS.fileExists or FS:fileExists(path)) then pcall(FS.removeFile, FS, path) end
-    if suffix ~= '' and suffix ~= '.pending' and (not FS or not FS.fileExists or FS:fileExists(path)) then left[#left + 1] = path end
+  -- this career's save and every copy of it; one that cannot be removed is overwritten with an empty career below
+  local left, stored = M.deleteSlotFiles(S.slot), true
+  if S.slot then
+    local saves = require('cargoEarth/saves')
+    saves.remove(M.saveIndex(), S.slot)
+    S.saveInfo[S.slot] = nil
+    stored = saves.write(jsonWriteFile, M.saveIndex())
   end
-  S.pendingCareer, S.resumeError, S.resumeTrip, S.loadBlocked, S.saveError = nil, nil, nil, nil, nil
-  S.parts, S.job, S.phase, S.orders, S.preferredDelivery = nil, nil, 'idle', {}, nil
-  S.offers, S.offerStats, S.offeredAt = {}, nil, nil
-  local ph = S.phone
-  ph.online, ph.incoming, ph.lastDone, ph.lastFailure, ph.cancelAskUntil = false, nil, nil, nil, nil
-  S.stopT, S.dist, S.roadM, S.etaS, S.inCareerWorld = 0, nil, nil, nil, true
-  fuelWatch, fuelPending, gamePump = nil, nil, nil
-  loadCareer(fresh)
-  -- backupAt 0 with no play time: this first save copies nothing into the backups
-  local stored = saveCareer() == true
+  local fresh = M.freshFree(from)
+  -- backupAt 0 with no play time: this first save copies nothing into the backups (it goes to freeplay.json)
+  stored = saveCareer() == true and stored
   for _, path in ipairs(left) do
     local ok, written = pcall(jsonWriteFile, path, fresh, false, nil, true)
     if not ok or not written then stored = false end
@@ -679,6 +673,145 @@ function M.restartCareer(word)
   end
   say('Career deleted. Choose how to play on the phone.')
   return true
+end
+
+------------------------------------------------------------------------------------------ career save slots
+-- Several careers, each with a name and its own save (cargoEarth/saves). The phone's start screen lists them: load one,
+-- start a new one with a name, or just drive (free play).
+
+-- the list in saves.json, read once (an old single save becomes "Career 1" here)
+function M.saveIndex()
+  if not S.saves then
+    local saves = require('cargoEarth/saves')
+    local idx, migrated, free = saves.open(jsonReadFile, function(p) return persistence.load(jsonReadFile, p) end,
+      function(p) return FS and FS.fileExists and FS:fileExists(p) or false end, os.time())
+    S.saves, S.freeSave = idx, free
+    if migrated and not saves.write(jsonWriteFile, idx) then problem('W', 'Could not write the list of careers (saves.json).') end
+  end
+  return S.saves
+end
+
+-- Where the running career is written: its slot, or freeplay.json when no career runs. A career running without a
+-- slot (it never had a name) gets one.
+function M.savePath(c)
+  local saves = require('cargoEarth/saves')
+  local idx = M.saveIndex()
+  local slot = S.slot and saves.find(idx, S.slot)
+  if not slot and saves.isCareer(c) then
+    slot = saves.create(idx, nil, os.time())
+    S.slot = slot.id
+    saves.write(jsonWriteFile, idx)
+  end
+  return slot and slot.path or saves.FREE
+end
+
+-- Removes a slot's files; returns the ones that may still be there.
+function M.deleteSlotFiles(id)
+  local saves = require('cargoEarth/saves')
+  local slot = id and saves.find(M.saveIndex(), id)
+  local left = {}
+  if not slot then return left end
+  for _, suffix in ipairs(saves.SUFFIXES) do
+    local path = slot.path .. suffix
+    if FS and FS.removeFile and (not FS.fileExists or FS:fileExists(path)) then pcall(FS.removeFile, FS, path) end
+    if suffix ~= '.pending' and (not FS or not FS.fileExists or FS:fileExists(path)) then left[#left + 1] = path end
+  end
+  return left
+end
+
+-- No career running: the start screen with the player's settings (from: a career or save to take them from).
+function M.freshFree(from)
+  local fresh = { money = 0, delivered = 0, km = 0, history = {}, garage = garage.new(), backupAt = 0 }
+  for _, k in ipairs(M.KEEP_ON_START) do fresh[k] = type(from) == 'table' and from[k] or nil end
+  S.slot = nil
+  S.pendingCareer, S.resumeError, S.resumeTrip, S.loadBlocked, S.saveError = nil, nil, nil, nil, nil
+  S.parts, S.job, S.phase, S.orders, S.preferredDelivery = nil, nil, 'idle', {}, nil
+  S.offers, S.offerStats, S.offeredAt = {}, nil, nil
+  local ph = S.phone
+  ph.online, ph.incoming, ph.lastDone, ph.lastFailure, ph.cancelAskUntil = false, nil, nil, nil, nil
+  S.stopT, S.dist, S.roadM, S.etaS, S.inCareerWorld = 0, nil, nil, nil, true
+  fuelWatch, fuelPending, gamePump = nil, nil, nil
+  loadCareer(fresh)
+  return fresh
+end
+
+-- A career from the list waits to be loaded (the resume screen): read, but not in the world yet.
+function M.pendSave(id)
+  local saves = require('cargoEarth/saves')
+  local idx = M.saveIndex()
+  local slot = saves.find(idx, id)
+  if not slot then return false end
+  local saved, recovery = persistence.load(jsonReadFile, slot.path)
+  if not saved and not recovery then
+    recovery = FS and FS.fileExists and FS:fileExists(slot.path)
+      and 'This career save and its backups could not be read. Your files have been left untouched.'
+      or 'The save of this career was not found in settings/cargoEarth.'
+  end
+  S.slot, S.resumeTrip, S.resumeError, S.loadBlocked, S.saveError = slot.id, nil, nil, nil, nil
+  if type(saved) == 'table' then S.pendingCareer = saved else S.pendingCareer, S.resumeError, S.loadBlocked = {}, recovery, recovery end
+  if recovery then S.saveError = recovery end
+  S.saveInfo[slot.id] = saved and saves.summary(saved) or { unreadable = true }
+  if idx.last ~= slot.id then
+    idx.last = slot.id
+    saves.write(jsonWriteFile, idx)
+  end
+  return true
+end
+
+-- The careers for the phone's start screens, last played first.
+function M.savesList()
+  local saves = require('cargoEarth/saves')
+  local out = {}
+  for _, slot in ipairs(M.saveIndex().slots) do
+    local info = S.saveInfo[slot.id]
+    if not info then
+      local c = persistence.load(jsonReadFile, slot.path)
+      info = saves.summary(c)
+      S.saveInfo[slot.id] = info
+    end
+    out[#out + 1] = { id = slot.id, name = slot.name, money = info.money, car = info.car, hours = info.hours,
+      delivered = info.delivered, unreadable = info.unreadable, savedAt = info.savedAt or slot.created or 0,
+      when = info.savedAt and os.date('%d.%m. %H:%M', info.savedAt) or nil, current = slot.id == S.slot or nil }
+  end
+  table.sort(out, function(a, b) return a.savedAt > b.savedAt end)
+  return out
+end
+
+-- The start screens' buttons. loadSave (id), newCareer (name), deleteSave (id), saveName (the running career's name).
+function M.savesDo(a, arg)
+  local saves = require('cargoEarth/saves')
+  local idx = M.saveIndex()
+  local pending = S.pendingCareer
+  S.saveMsg = nil
+  if a == 'loadSave' then
+    if not pending and S.career.garage.started then return end   -- Settings: pause first
+    if not saves.find(idx, arg) then return end
+    if not pending then
+      if S.job then S.saveMsg = 'Finish or cancel your order first.' return end
+      if S.career.savedAt then saveCareer() end   -- the free play settings
+      clearFreight()
+      releaseStorage()
+      trailers.remove()
+      marker.reset()
+      if earth.status() == 'ok' then earth.gpsClear() end
+    end
+    if M.pendSave(arg) and not S.loadBlocked then requestResume() end
+  elseif a == 'newCareer' then
+    if saves.full(idx) then S.saveMsg = 'You have ' .. saves.MAX .. ' careers. Delete one first.' return end
+    if pending then M.freshFree(next(pending) ~= nil and pending or S.career) end
+    local ok, msg = M.garageStart(nil, arg)
+    if not ok then S.saveMsg = msg end
+  elseif a == 'deleteSave' then
+    local slot = saves.find(idx, arg)
+    if not slot or (slot.id == S.slot and not pending) then return end
+    local left = M.deleteSlotFiles(slot.id)
+    saves.remove(idx, slot.id)
+    S.saveInfo[slot.id] = nil
+    if not saves.write(jsonWriteFile, idx) then S.saveMsg = 'The list of careers could not be saved.' end
+    for _, path in ipairs(left) do pcall(jsonWriteFile, path, { deleted = true }, false, nil, true) end
+    if pending and slot.id == S.slot then M.freshFree(next(pending) ~= nil and pending or S.career) end
+    S.saveMsg = S.saveMsg or (slot.name .. ' deleted.')
+  end
 end
 
 local function modeReady()
@@ -2506,6 +2639,14 @@ function M.phoneState()
       currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
       fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
       canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo() }
+  if S.pendingCareer or (not S.career.garage.started and S.career.play ~= 'free' and not c.employment) then
+    -- the careers to pick from, on the resume and first-run screens
+    local saves = require('cargoEarth/saves')
+    out.saves, out.newName, out.savesFull = M.savesList(), saves.suggestName(M.saveIndex()), saves.full(M.saveIndex()) or nil
+    out.saveMsg, out.choice = S.saveMsg, M.careerChoice()
+    local slot = S.slot and saves.find(M.saveIndex(), S.slot)
+    out.saveName = slot and slot.name or nil
+  end
   if S.pendingCareer then
     out.screen, out.money = 'resume', S.pendingCareer.money or 0
     local savedGarage = S.pendingCareer.garage
@@ -2646,8 +2787,19 @@ function M.phoneAction(a, orderId)
     M.helperStartDo(a)
     return M.phoneState()
   end
+  if a == 'loadSave' or a == 'newCareer' or a == 'deleteSave' then
+    M.savesDo(a, orderId)
+    return M.phoneState()
+  end
   if S.pendingCareer then
-    if a == 'resume' then requestResume() end
+    if a == 'resume' then requestResume()
+    elseif a == 'freePlay' then
+      -- the saved career stays on disk; free play starts with its settings
+      local p = S.pendingCareer
+      M.freshFree(next(p) ~= nil and p or S.career)
+      S.career.play = 'free'
+      saveCareer()
+    end
     return M.phoneState()
   end
   if S.parts and (a == 'online' or a == 'accept') then return M.phoneState() end
@@ -2662,7 +2814,7 @@ function M.phoneAction(a, orderId)
     return M.phoneState()
   elseif a == 'startCareer' then
     ph.online, ph.incoming = false, nil
-    M.garageStart()
+    M.savesDo('newCareer', orderId)
     return M.phoneState()
   elseif unchosen and (a == 'online' or a == 'accept') then
     return M.phoneState()
@@ -3627,9 +3779,11 @@ local function garageSay(ok, msg)
   return ok, msg
 end
 
-function M.garageStart(model)
+function M.garageStart(model, name)
   if S.career.employment then return false, 'End company work first.' end
   if S.career.garage.started then return false, 'Your career has already started.' end
+  local saves = require('cargoEarth/saves')
+  if saves.full(M.saveIndex()) then return false, 'You have ' .. saves.MAX .. ' careers. Delete one first.' end
   if S.job then M.cancel(true, true) end   -- a new career: orders from before go
   -- Free play keeps nothing: the career starts from a clean save with only the player's settings.
   local fresh = { money = 0, delivered = 0, km = 0, history = {}, garage = garage.new() }
@@ -3640,6 +3794,10 @@ function M.garageStart(model)
   local money = fresh.money
   fresh.money = 0
   loadCareer(fresh)
+  -- its own save slot, with the name the player gave it
+  local slot = saves.create(M.saveIndex(), name, os.time())
+  S.slot = slot.id
+  saves.write(jsonWriteFile, M.saveIndex())
   economy.post(fresh, money, 'garage', economy.nextId(fresh, 'start'), 'Career start')
   usedAt, conditionAt = S.clock + 1, nil
   fresh.garage.car.fuel = { start = 0.5 }   -- the old starter car comes with half a tank
@@ -4276,7 +4434,7 @@ function M.settingsState()
   end
   -- paused: a saved career waits on the resume screen. Only what lives outside the career can change then
   -- (the dash phone, help); the job's settings belong to the save and open once it is loaded.
-  local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil, window = S.window,
+  local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil and S.career.garage.started == true, window = S.window,
     reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
     canRestart = S.pendingCareer ~= nil or S.career.garage.started == true or nil, restartWord = M.RESTART_WORD }
   for _, d in ipairs(M.SETTINGS[S.mode] or {}) do
@@ -4646,13 +4804,14 @@ function M.onExtensionLoaded()
   if okIo and not dash.install(jbeamIO) then log('W', 'cargoEarth', 'dash phone: the game\'s jbeam part lookup was not found') end
   loadPacks()
   loadConfig()
-  local saved, recovery = persistence.load(jsonReadFile, SAVE)
-  if not saved and not recovery and FS.fileExists and FS:fileExists(SAVE) then
-    recovery = 'The career save and its backups could not be read. Your files have been left untouched.'
+  -- the last played career waits on the resume screen (with the others to pick from); none: the first-run choice
+  local saves = require('cargoEarth/saves')
+  local idx = M.saveIndex()
+  if not (idx.last and M.pendSave(idx.last)) then
+    local free = S.freeSave or persistence.load(jsonReadFile, saves.FREE)
+    if type(free) == 'table' then M.freshFree(free) end
   end
-  if type(saved) == 'table' then S.pendingCareer = saved end
-  if recovery then S.saveError = recovery end
-  if not saved and recovery then S.pendingCareer, S.resumeError, S.loadBlocked = {}, recovery, recovery end
+  S.freeSave = nil
   if S.loadError then problem('E', S.loadError) end
 end
 

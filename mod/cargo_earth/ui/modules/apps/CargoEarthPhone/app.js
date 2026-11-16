@@ -109,6 +109,23 @@ function pagePlayer() {
 angular.module('beamng.apps')
 .directive('cargoEarthPhone', [function () {
   var STATE = 'cargoEarth_core and cargoEarth_core.phoneState() or nil'
+  // the careers on the start screens (resume and first run): load one, delete one (asks first)
+  var SAVES_HTML =
+    '<div class="cep-label" ng-if="s.saves.length">Your careers</div>' +
+    '<div class="cep-li" ng-repeat="v in s.saves track by v.id" ng-class="{on: v.current && s.screen === \'resume\'}">' +
+      '<div><div class="cep-name">{{ v.name }}</div>' +
+        '<small ng-if="v.unreadable">This save cannot be read.</small>' +
+        '<small ng-if="!v.unreadable">{{ fmt.money(v.money) }}{{ v.car ? " · " + v.car : "" }}{{ v.hours ? " · " + v.hours + " h" : "" }}</small>' +
+        '<small ng-if="v.when">Played {{ v.when }}</small></div>' +
+      '<div class="cep-row" style="flex:none;gap:4px">' +
+        '<button class="cep-sm" style="flex:none;white-space:nowrap" ng-if="!(v.current && s.screen === \'resume\')" ng-click="act(\'loadSave\', v.id)">Load</button>' +
+        '<button class="cep-sm" style="flex:none;white-space:nowrap" ng-class="delAsk === v.id ? \'go\' : \'ghost\'" ng-click="askDelete(v.id)" ' +
+          'title="Delete this career" aria-label="Delete {{ v.name }}">{{ delAsk === v.id ? "Delete?" : "✕" }}</button></div></div>' +
+    '<div class="cep-sub" ng-if="s.saveMsg">{{ s.saveMsg }}</div>'
+  // a new career: its name (the field starts empty; the suggestion is used when nothing is typed)
+  var NEW_CAREER_HTML =
+    '<div class="cep-row" style="margin-top:6px"><input class="cep-input" type="text" maxlength="32" autocomplete="off" spellcheck="false" ' +
+      'aria-label="Name of the new career" placeholder="{{ s.newName }}" ng-model="newSave.name"></div>'
   var CSS =
     '.cep{--ink:#1d1b19;--paper:#fbf7f2;--card:#fff;--muted:#7b726a;--line:#e8e0d7;--tomato:#e8452c;--ok:#2f8f5b;--warn:#c98a10;' +
     'width:100%;height:100%;box-sizing:border-box;padding:9px;background:#141312;border-radius:34px;' +
@@ -1042,17 +1059,17 @@ angular.module('beamng.apps')
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-if="st.dash.nudged" ng-click="sdo(\'dash\', \'reset\')">Back to where it started</button>' +
           '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'measure\')">Measure this car again</button></div></div>' +
         '<button class="cep-sm ghost" ng-if="!st.paused" ng-click="sdo(\'reset\')">Reset settings</button>' +
-        '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and pause career</button>' +
-        '<button class="cep-sm ghost" ng-if="st.canRestart && !restart.open" ng-click="restartOpen()">Restart career</button>' +
+        '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and switch career</button>' +
+        '<button class="cep-sm ghost" ng-if="st.canRestart && !restart.open" ng-click="restartOpen()">Delete this career</button>' +
         '<div class="cep-card" ng-if="st.canRestart && restart.open">' +
-          '<div class="cep-name">Restart career</div>' +
+          '<div class="cep-name">Delete this career</div>' +
           '<div class="cep-sub">This deletes your whole career: money, cars, home, firm, reputation and progress. ' +
-            'It cannot be undone. Your settings stay.</div>' +
+            'It cannot be undone. Your settings and other careers stay.</div>' +
           '<div class="cep-sub" style="margin-top:6px">Type {{ st.restartWord }} to confirm.</div>' +
           '<div class="cep-row" style="margin-top:6px"><input class="cep-input" type="text" maxlength="12" autocomplete="off" spellcheck="false" ' +
             'aria-label="Type {{ st.restartWord }} to confirm" placeholder="{{ st.restartWord }}" ng-model="restart.word"></div>' +
           '<div class="cep-sub" ng-if="restart.error">{{ restart.error }}</div>' +
-          '<div class="cep-row"><button class="cep-sm go" ng-disabled="restart.word !== st.restartWord" ng-click="restartGo()">Delete and restart</button>' +
+          '<div class="cep-row"><button class="cep-sm go" ng-disabled="restart.word !== st.restartWord" ng-click="restartGo()">Delete career</button>' +
           '<button class="cep-sm ghost" ng-click="restartClose()">Cancel</button></div></div>' +
         '<div class="cep-label">Help</div>' +
         '<div class="cep-li" style="padding:6px 10px"><div><div class="cep-name" style="font-size:12px">Updates</div>' +
@@ -1092,14 +1109,20 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
       '</div></div>' +
 
-      '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'resume\'"><div class="cep-center">' +
-        '<div class="cep-big">Resume Cargo Earth</div>' +
+      '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'resume\'"><div class="cep-scroll">' +
+        '<div class="cep-card"><div class="cep-label">{{ s.saveName || "Your career" }}</div>' +
         '<div class="cep-sub">{{ s.savedCar ? "Back to your " + s.savedCar + ", where you left off." : "Continue where you left off." }}</div>' +
         '<div class="cep-sub" ng-if="!s.resumeHasLocation">This save has no location, so you continue from here.</div>' +
         '<div class="cep-sub" ng-if="!s.resumeLoading && s.status !== \'ok\'">{{ s.status }}</div>' +
         '<div class="cep-sub" ng-if="s.resumeError">{{ s.resumeError }}</div></div>' +
-        '<button class="cep-btn go" ng-disabled="s.resumeLoading || s.status !== \'ok\'" ng-click="act(\'resume\')">' +
-          '{{ s.resumeLoading ? "Loading saved location…" : "Load latest save" }}</button></div>' +
+        SAVES_HTML +
+        '<div class="cep-card"><div class="cep-label">New career</div>' +
+          '<div class="cep-sub">An old {{ s.choice.starter || "car" }} and a fresh start. Your other careers stay.</div>' + NEW_CAREER_HTML +
+          '<div class="cep-row" style="margin-top:6px"><button class="cep-sm go" ng-disabled="s.savesFull" ng-click="newCareer()">Start new career</button></div></div></div>' +
+        '<div class="cep-actionbar" aria-label="Resume options">' +
+          '<button class="cep-btn go" ng-disabled="s.resumeLoading || s.status !== \'ok\' || s.resumeError" ng-click="act(\'resume\')">' +
+          '{{ s.resumeLoading ? "Loading saved location…" : "Load " + (s.saveName || "latest save") }}</button>' +
+          '<button class="cep-btn ghost" ng-click="act(\'freePlay\')">Just drive</button></div></div>' +
 
       '<div class="cep-body" ng-if="tab === \'orders\' && s.screen === \'parts\'"><div class="cep-center">' +
         '<div class="cep-big">Parts preview open</div><div class="cep-sub">Confirm or drop your parts changes to take orders again.</div></div>' +
@@ -1116,8 +1139,10 @@ angular.module('beamng.apps')
         '</div>' +
         '<div class="cep-card"><div class="cep-label">Free play</div>' +
           '<div class="cep-sub">Orders in any car, just for fun. Nothing carries over.</div>' +
-        '</div></div>' +
-        '<div class="cep-actionbar" aria-label="Start options"><button class="cep-btn go" ng-click="act(\'startCareer\')">Start my career</button>' +
+        '</div>' +
+        '<div class="cep-card"><div class="cep-label">Name your career</div>' + NEW_CAREER_HTML + '</div>' +
+        SAVES_HTML + '</div>' +
+        '<div class="cep-actionbar" aria-label="Start options"><button class="cep-btn go" ng-disabled="s.savesFull" ng-click="newCareer()">Start my career</button>' +
           '<button class="cep-btn ghost" ng-click="act(\'freePlay\')">Just drive</button></div></div>' +
 
       // offline: the job type can be switched here too (Settings has the same switch)
@@ -1561,6 +1586,19 @@ angular.module('beamng.apps')
         if (b.found) return b.found + ' routes found, but none start within ' + b.radiusKm + ' km.' +
           (b.nearestKm !== undefined ? ' Nearest start: ' + b.nearestKm.toFixed(1) + ' km away.' : '')
         return 'No usable bus routes found in the checked areas. Try another part of town or retry the search.'
+      }
+      // career saves: the New career name, and Delete asks once before it deletes
+      scope.newSave = {name: ''}
+      scope.delAsk = null
+      scope.newCareer = function () {
+        var name = (scope.newSave.name || '').trim()
+        scope.newSave.name = ''
+        scope.act('newCareer', name)
+      }
+      scope.askDelete = function (id) {
+        if (scope.delAsk === id) { scope.delAsk = null; scope.act('deleteSave', id); return }
+        scope.delAsk = id
+        setTimeout(function () { scope.$evalAsync(function () { if (scope.delAsk === id) scope.delAsk = null }) }, 4000)
       }
       scope.act = function (name, value) {
         scope.cancelAsk = false

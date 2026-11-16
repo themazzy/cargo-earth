@@ -3917,10 +3917,92 @@ test('Restart career says so when the old save cannot be replaced', function()
   assert(out.restarted and out.restartWarning and out.restartWarning:find('installer'), 'the player hears the old save stayed')
   assert(not s.career.garage.started)
   core, s = fresh()
+  core.settingsDo('cameras', false)
   failPath = '/settings/cargoEarth/career.json'
   out = core.settingsDo('restart', 'DELETE')
   failPath = nil
   assert(out.restarted and out.restartWarning, 'a failed new save is reported too')
+end)
+
+test('an old single save becomes Career 1 and more careers get their own names and files', function()
+  local core, s = fresh()
+  local garage = require('cargoEarth/garage')
+  disk['/settings/cargoEarth/career.json'] = {money = 4321, delivered = 7, history = {}, savedAt = 100,
+    garage = {started = true, car = {model = 'pigeon', key = 'base', name = 'Old Pigeon'}, inventory = {}, parked = {}}}
+  package.loaded['cargoEarth/core'] = nil
+  core = require('cargoEarth/core')
+  core.G = adapter()
+  core.G.configs = function() return {{model = 'pigeon', key = 'base', value = 900, brand = 'Ibishu', name = 'Pigeon'}} end
+  core.onExtensionLoaded()
+  s = core.state()
+  s.idx, s.loadError = idx, nil
+  local st = core.phoneState()
+  assert(st.screen == 'resume' and st.saveName == 'Career 1', 'the old save is Career 1, waiting to be loaded')
+  assert(#st.saves == 1 and st.saves[1].money == 4321 and st.saves[1].car == 'Old Pigeon')
+  assert(disk['/settings/cargoEarth/saves.json'].slots[1].path == '/settings/cargoEarth/career.json', 'nothing is copied')
+  assert(st.newName == 'Career 2')
+  -- a new career with a name, from the resume screen
+  st = core.phoneAction('newCareer', '  Prague   courier ')
+  assert(s.career.garage.started and s.career.money == garage.START_MONEY and not s.pendingCareer)
+  assert(st.screen ~= 'resume' and st.screen ~= 'choose')
+  local list = disk['/settings/cargoEarth/saves.json']
+  assert(#list.slots == 2 and list.slots[2].name == 'Prague courier' and list.last == 2)
+  assert(disk[list.slots[2].path].money == garage.START_MONEY, 'the new career has its own file')
+  assert(disk['/settings/cargoEarth/career.json'].money == 4321, 'Career 1 is untouched')
+  -- pause, pick Career 1, it loads
+  core.settingsDo('pause')
+  st = core.phoneState()
+  assert(st.screen == 'resume' and #st.saves == 2 and st.saves[1].name == 'Prague courier', 'last played first')
+  core.phoneAction('loadSave', 1)
+  assert(not s.pendingCareer and s.career.money == 4321 and s.career.delivered == 7, 'Career 1 is back')
+  s.career.money = 5000
+  core.settingsDo('cameras', false)
+  assert(disk['/settings/cargoEarth/career.json'].money == 5000 and disk[list.slots[2].path].money == garage.START_MONEY)
+  -- the running career cannot be deleted from the list; another can, from the start screen
+  core.settingsDo('pause')
+  core.phoneAction('deleteSave', 2)
+  st = core.phoneState()
+  assert(#st.saves == 1 and st.saves[1].name == 'Career 1' and st.saveMsg == 'Prague courier deleted.')
+  -- free play from the start screen keeps the career on disk
+  st = core.phoneAction('freePlay')
+  assert(not s.pendingCareer and s.career.play == 'free' and not s.career.garage.started and st.freePlay)
+  assert(disk['/settings/cargoEarth/career.json'].money == 5000, 'free play does not write over a career')
+  assert(disk['/settings/cargoEarth/freeplay.json'].play == 'free')
+  st = core.phoneAction('careerInfo')
+  assert(st.screen == 'choose' and #st.saves == 1)
+  core.phoneAction('loadSave', 1)
+  assert(s.career.money == 5000 and s.career.garage.started)
+end)
+
+test('a free-play save from before the slots gives only its settings; the first career is Career 1', function()
+  local core, s = fresh()
+  disk['/settings/cargoEarth/career.json'] = {money = 80, play = 'free', currency = 'EUR', history = {}, garage = {inventory = {}, parked = {}}}
+  package.loaded['cargoEarth/core'] = nil
+  core = require('cargoEarth/core')
+  core.G = adapter()
+  core.G.configs = function() return {{model = 'pigeon', key = 'base', value = 900, brand = 'Ibishu', name = 'Pigeon'}} end
+  core.onExtensionLoaded()
+  s = core.state()
+  s.idx, s.loadError = idx, nil
+  advance(core, 2)
+  local st = core.phoneState()
+  assert(st.screen == 'choose' and #st.saves == 0 and st.newName == 'Career 1' and s.career.currency == 'EUR')
+  core.phoneAction('startCareer', '')
+  local list = disk['/settings/cargoEarth/saves.json']
+  assert(#list.slots == 1 and list.slots[1].name == 'Career 1' and s.career.garage.started)
+end)
+
+test('a career saved without a name gets a slot; a missing save is said, not loaded', function()
+  local saves = require('cargoEarth/saves')
+  assert(saves.cleanName(string.rep('ř', 20)) == string.rep('ř', 16), 'names are cut between letters')
+  assert(saves.cleanName(' \t ') == nil)
+  local core, s = fresh()
+  core.settingsDo('cameras', false)
+  assert(s.slot == 1 and disk['/settings/cargoEarth/saves.json'].slots[1].name == 'Career 1')
+  core.settingsDo('pause')
+  for _, suffix in ipairs({'', '.backup1', '.backup2', '.legacy'}) do disk['/settings/cargoEarth/career.json' .. suffix] = nil end
+  core.phoneAction('loadSave', 1)
+  assert(s.loadBlocked and core.phoneState().resumeError:find('not found'))
 end)
 
 test('cancelling a picked-up meal takes its weight out of the car', function()
