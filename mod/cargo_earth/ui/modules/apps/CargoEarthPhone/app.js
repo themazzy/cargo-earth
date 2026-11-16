@@ -241,6 +241,15 @@ angular.module('beamng.apps')
     '.cep-pump-row small{font-size:10px;font-weight:500;color:inherit;opacity:.85}' +
     '.cep-step2{display:flex;align-items:center;gap:8px}.cep-step2 b{min-width:62px;text-align:center;font-variant-numeric:tabular-nums}' +
     '.cep-li>div{min-width:0}' +
+    // used-car pictures: the game's config preview over a plain car outline (shown when a mod car has no picture)
+    '.cep-thumb{position:relative;flex:0 0 auto;width:78px;height:48px;border:0;padding:0;border-radius:8px;overflow:hidden;cursor:pointer;' +
+    'background:var(--line) url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 32%27><path fill=%27%23999%27 d=%27M8 21l3-7c1-2 3-3 5-3h22c2 0 4 1 6 3l5 5 7 1c1 0 2 1 2 2v3c0 1-1 2-2 2h-4a5 5 0 0 0-10 0H23a5 5 0 0 0-10 0H9c-1 0-2-1-2-2z%27/></svg>") center/70% no-repeat}' +
+    '.cep-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}' +
+    '.cep-thumb.big{width:100%;height:0;padding-top:56%;cursor:default;margin-bottom:6px}.cep-thumb.big img{object-fit:contain;background:var(--card)}' +
+    '.cep-cartop{display:flex;gap:8px;align-items:flex-start}.cep-cartop>div{flex:1;min-width:0}' +
+    '.cep-cardetail{flex:0 0 100%;border-top:1px solid var(--line);padding-top:8px}' +
+    '.cep-specs{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:12px}.cep-specs span{color:var(--muted)}.cep-specs b{font-weight:700}' +
+    '.cep-specs div{display:flex;justify-content:space-between;gap:6px;min-width:0}' +
     '.cep-radio-now{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:10px 12px}.cep-radio-now .cep-name{font-size:16px;white-space:normal}' +
     '.cep-radio-now>.cep-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.cep-scroll .cep-name{white-space:normal;overflow-wrap:anywhere}' +
     '.cep-radio-ctl{display:flex;gap:6px;align-items:center}.cep-radio-ctl .cep-btn{flex:1;margin-top:0;padding:10px 6px}' +
@@ -932,12 +941,16 @@ angular.module('beamng.apps')
           '<div class="cep-sub" ng-if="!cars.length">No cars for sale. New ones come every few minutes.</div>' +
           '<div class="cep-sub" ng-if="cars.length && !shownCars().length">No car fits these filters. ' +
             '<button class="cep-chip" ng-click="cf.kind = null; cf.afford = false">Show all</button></div>' +
-          '<div class="cep-li" ng-repeat="c in shownCars() track by c.id" style="align-items:flex-start;cursor:default"><div style="flex:1;min-width:0">' +
+          '<div class="cep-li" ng-repeat="c in shownCars() track by c.id" style="align-items:flex-start;cursor:default;flex-wrap:wrap"><div style="flex:1;min-width:0">' +
+            // the picture and numbers come from the game's vehicle list: nothing is spawned (Look at it does that)
+            '<div class="cep-cartop"><button class="cep-thumb" ng-click="cf.detail = (cf.detail === c.id ? null : c.id)" ' +
+              'aria-label="Show details" title="Show details"><img ng-if="c.info.preview" ng-src="{{ c.info.preview }}" alt="" ' +
+              'onerror="this.style.display=\'none\'"></button><div>' +
             '<div class="cep-name" style="white-space:normal">{{ c.name }} <span class="cep-adr" ng-if="c.isNew" style="background:var(--ok)">NEW</span></div>' +
             '<div class="cep-kind" ng-if="kindOf(c)"><b>{{ kindOf(c).name }}</b>' +
               '<button class="cep-q" ng-class="{on: cf.help === c.id}" ng-click="cf.help = (cf.help === c.id ? null : c.id)" ' +
                 'aria-label="Jobs this vehicle can do" title="Jobs this vehicle can do">?</button>' +
-              '<span>{{ kindOf(c).fits }}</span></div>' +
+              '<span>{{ kindOf(c).fits }}</span></div></div></div>' +
             '<div class="cep-jobs" ng-if="cf.help === c.id && kindOf(c)"><div class="cep-label">Jobs it can do</div>' +
               '<ul><li ng-repeat="j in kindOf(c).jobs">{{ j }}</li></ul>' +
               '<div class="cep-sub" ng-if="kindOf(c).locked">{{ kindOf(c).locked }}</div></div>' +
@@ -948,7 +961,16 @@ angular.module('beamng.apps')
             '<div style="display:flex;flex-direction:column;gap:5px;align-items:stretch" ng-if="!g.preview">' +
             '<button class="cep-sm" ng-class="{ghost: carPrice(c) > market.money}" ng-click="buyCar(c.id)">' +
               'Buy {{ fmt.money(carPrice(c)) }}</button>' +
-            '<button class="cep-sm ghost" ng-click="look(c.id)">Look at it</button></div></div>' +
+            '<button class="cep-sm ghost" ng-click="look(c.id)">Look at it</button></div>' +
+            '<button class="cep-sm ghost" style="flex:0 0 100%;min-height:26px;padding:4px" ng-if="cf.detail !== c.id" ' +
+              'ng-click="cf.detail = c.id">Details ▾</button>' +
+            '<div class="cep-cardetail" ng-if="cf.detail === c.id">' +
+              '<div class="cep-thumb big"><img ng-if="c.info.preview" ng-src="{{ c.info.preview }}" alt="{{ c.name }}" ' +
+                'onerror="this.style.display=\'none\'"></div>' +
+              '<div class="cep-specs"><div ng-repeat="r in carSpecs(c) track by r[0]"><span>{{ r[0] }}</span><b>{{ r[1] }}</b></div></div>' +
+              '<div class="cep-sub" ng-if="!carSpecs(c).length">The game has no details for this car.</div>' +
+              '<button class="cep-sm ghost" style="width:100%;margin-top:6px;min-height:26px;padding:4px" ng-click="cf.detail = null">Hide details ▴</button>' +
+            '</div></div>' +
         '</div>' +
         '<div class="cep-actionbar" aria-label="Garage car actions" ng-if="g.started && gview === \'home\' && !g.preview && !g.parts">' +
           '<button class="cep-btn" ng-if="g.car && !g.own" ng-click="gdo(\'bring\')">Bring my car</button>' +
@@ -1569,7 +1591,7 @@ angular.module('beamng.apps')
       scope.careerView = 'progress'
       scope.endCompanyAsk = false
       scope.g = null; scope.gview = 'home'; scope.cars = []; scope.st = null
-      scope.cf = { text: '', kind: null, afford: false, sort: 'price', help: null }
+      scope.cf = { text: '', kind: null, afford: false, sort: 'price', help: null, detail: null }
       scope.purchase = { keep: true }
       scope.fmt.int = function (v) { return Math.round(v || 0).toLocaleString('cs-CZ') }
       // weight for the phone: one decimal under 10 kg (a meal), whole kg up to a tonne, then tonnes
@@ -1890,6 +1912,25 @@ angular.module('beamng.apps')
         list.sort(function (a, b) { return by(a, b) || a.id - b.id })
         shown.src = scope.cars; shown.key = key; shown.list = list
         return list
+      }
+      // the details card's rows, from the game's own vehicle info (mod cars often lack some, so only known ones show)
+      scope.carSpecs = function (car) {
+        var i = car.info || {}, rows = []
+        if (car.specRows && car.specRows.src === i) return car.specRows.list
+        var num = function (n) { return Math.round(n).toLocaleString('cs-CZ') }
+        if (i.brand) rows.push(['Make', i.brand + (i.country ? ' · ' + i.country : '')])
+        if (i.years) rows.push(['Years', i.years.min === i.years.max ? String(i.years.min) : i.years.min + '–' + i.years.max])
+        if (i.body) rows.push(['Body', i.body])
+        if (i.power) rows.push(['Power', num(i.power) + ' hp'])
+        if (i.torque) rows.push(['Torque', num(i.torque) + ' Nm'])
+        if (i.weight) rows.push(['Weight', num(i.weight) + ' kg'])
+        if (i.topSpeed) rows.push(['Top speed', num(i.topSpeed) + ' km/h'])
+        if (i.sprint) rows.push(['0–100 km/h', i.sprint + ' s'])
+        if (i.drivetrain) rows.push(['Drive', i.drivetrain])
+        if (i.gearbox) rows.push(['Gearbox', i.gearbox])
+        if (i.fuel) rows.push(['Fuel', i.fuel])
+        car.specRows = { src: i, list: rows }
+        return rows
       }
       scope.buyCar = function (id) { scope.gdo('buyListing', id, scope.purchase.keep || !scope.market.tradeIn) }
       scope.look = function (id) { scope.gdo('preview', id, scope.purchase.keep || !scope.market.tradeIn) } // stays on the car list

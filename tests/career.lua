@@ -4312,3 +4312,35 @@ test('a save whose car mod is gone: another owned car, else a base Pigeon; the m
   assert(garage.fallbackCar(G, g) == nil and g.car.model == 'modcar')
 end)
 
+
+test('used-car list: picture and numbers come from the game list without a spawn, mod cars fall back', function()
+  local gamecar = require('cargoEarth/gamecar')
+  local oldCv = core_vehicles
+  local asked = 0
+  core_vehicles = { getModel = function(m)
+    asked = asked + 1
+    if m == 'pigeon' then
+      return { model = { Brand = 'Ibishu', Country = 'Japan', preview = '/vehicles/pigeon/default.jpg' }, configs = {
+        base = { key = 'base', preview = '/vehicles/pigeon/base.jpg', Power = 40, Torque = 80, Weight = 610,
+          ['Top Speed'] = 25, ['0-100 km/h'] = 21.34, Drivetrain = 'RWD', Transmission = 'Manual', ['Fuel Type'] = 'Gasoline',
+          aggregates = { ['Body Style'] = { Pickup = true }, Years = { min = 1990, max = 2004 } } } } }
+    elseif m == 'modcar' then
+      return { model = { preview = '/ui/images/appDefault.png' }, configs = { a = { key = 'a', preview = '/ui/images/appDefault.png' } } }
+    end
+    return {}
+  end }
+  local ok, err = pcall(function()
+    gamecar._reset()
+    local i = gamecar.carInfo('pigeon', 'base')
+    assert(i.preview == '/vehicles/pigeon/base.jpg' and i.power == 40 and i.weight == 610 and i.topSpeed == 90)
+    assert(i.sprint == 21.3 and i.drivetrain == 'RWD' and i.body == 'Pickup' and i.brand == 'Ibishu' and i.years.min == 1990)
+    gamecar.carInfo('pigeon', 'base')
+    assert(asked == 1, 'cached per config')
+    local m = gamecar.carInfo('modcar', 'a')
+    assert(m and m.preview == nil and m.power == nil, 'the game\'s default picture means no picture')
+    assert(gamecar.carInfo('gone', 'x') == nil and gamecar.carInfo(nil, 'x') == nil)
+  end)
+  core_vehicles = oldCv
+  gamecar._reset()
+  assert(ok, err)
+end)
