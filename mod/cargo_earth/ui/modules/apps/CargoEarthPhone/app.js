@@ -1120,7 +1120,7 @@ angular.module('beamng.apps')
           '<div class="cep-sub">An old {{ s.choice.starter || "car" }} and a fresh start. Your other careers stay.</div>' + NEW_CAREER_HTML +
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm go" ng-disabled="s.savesFull" ng-click="newCareer()">Start new career</button></div></div></div>' +
         '<div class="cep-actionbar" aria-label="Resume options">' +
-          '<button class="cep-btn go" ng-disabled="s.resumeLoading || s.status !== \'ok\' || s.resumeError" ng-click="act(\'resume\')">' +
+          '<button class="cep-btn go" ng-disabled="s.resumeLoading || s.status !== \'ok\' || s.resumeBlocked" ng-click="act(\'resume\')">' +
           '{{ s.resumeLoading ? "Loading saved location…" : "Load " + (s.saveName || "latest save") }}</button>' +
           '<button class="cep-btn ghost" ng-click="act(\'freePlay\')">Just drive</button></div></div>' +
 

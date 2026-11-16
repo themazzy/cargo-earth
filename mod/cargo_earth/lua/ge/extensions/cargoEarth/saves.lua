@@ -62,12 +62,13 @@ local function pathTaken(idx, path)
   return false
 end
 
--- A new slot: career.json when it is free, else career-<n>.json. Not written; the caller writes the index.
-function M.create(idx, name, now)
+-- A new slot: career.json when it is free, else career-<n>.json; never a file already on disk (exists, optional).
+-- Not written; the caller writes the index.
+function M.create(idx, name, now, exists)
   local id = math.max(tonumber(idx.next) or 1, 1)
   local path = M.LEGACY
   local n = id
-  while pathTaken(idx, path) do
+  while pathTaken(idx, path) or (exists and exists(path)) do
     path = M.DIR .. 'career-' .. n .. '.json'
     n = n + 1
   end

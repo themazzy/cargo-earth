@@ -443,6 +443,7 @@ local function saveCareer()
   economy.compact(c)
   local path = M.savePath(c)
   local ok, saved = pcall(persistence.save, jsonWriteFile, jsonReadFile, path, c)
+  if ok and saved and S.indexDirty then saved = M.writeIndex() end
   if ok and saved then
     if S.slot then S.saveInfo[S.slot] = require('cargoEarth/saves').summary(c) end
     S.saveRetryAt, S.saveError = nil, nil
@@ -656,7 +657,7 @@ function M.restartCareer(word)
     local saves = require('cargoEarth/saves')
     saves.remove(M.saveIndex(), S.slot)
     S.saveInfo[S.slot] = nil
-    stored = saves.write(jsonWriteFile, M.saveIndex())
+    stored = M.writeIndex()
   end
   local fresh = M.freshFree(from)
   -- backupAt 0 with no play time: this first save copies nothing into the backups (it goes to freeplay.json)
@@ -686,9 +687,17 @@ function M.saveIndex()
     local idx, migrated, free = saves.open(jsonReadFile, function(p) return persistence.load(jsonReadFile, p) end,
       function(p) return FS and FS.fileExists and FS:fileExists(p) or false end, os.time())
     S.saves, S.freeSave = idx, free
-    if migrated and not saves.write(jsonWriteFile, idx) then problem('W', 'Could not write the list of careers (saves.json).') end
+    if migrated and not M.writeIndex() then problem('W', 'Could not write the list of careers (saves.json).') end
   end
   return S.saves
+end
+
+-- Writes saves.json. A failed write is tried again with the next save (S.indexDirty), which counts as failed until then:
+-- a career missing from the list would be lost on the next start.
+function M.writeIndex()
+  local ok = require('cargoEarth/saves').write(jsonWriteFile, M.saveIndex())
+  S.indexDirty = not ok or nil
+  return ok
 end
 
 -- Where the running career is written: its slot, or freeplay.json when no career runs. A career running without a
@@ -698,12 +707,14 @@ function M.savePath(c)
   local idx = M.saveIndex()
   local slot = S.slot and saves.find(idx, S.slot)
   if not slot and saves.isCareer(c) then
-    slot = saves.create(idx, nil, os.time())
+    slot = saves.create(idx, nil, os.time(), M.fileThere)
     S.slot = slot.id
-    saves.write(jsonWriteFile, idx)
+    M.writeIndex()
   end
   return slot and slot.path or saves.FREE
 end
+
+function M.fileThere(p) return FS and FS.fileExists and FS:fileExists(p) or false end
 
 -- Removes a slot's files; returns the ones that may still be there.
 function M.deleteSlotFiles(id)
@@ -753,7 +764,7 @@ function M.pendSave(id)
   S.saveInfo[slot.id] = saved and saves.summary(saved) or { unreadable = true }
   if idx.last ~= slot.id then
     idx.last = slot.id
-    saves.write(jsonWriteFile, idx)
+    M.writeIndex()
   end
   return true
 end
@@ -807,7 +818,7 @@ function M.savesDo(a, arg)
     local left = M.deleteSlotFiles(slot.id)
     saves.remove(idx, slot.id)
     S.saveInfo[slot.id] = nil
-    if not saves.write(jsonWriteFile, idx) then S.saveMsg = 'The list of careers could not be saved.' end
+    if not M.writeIndex() then S.saveMsg = 'The list of careers could not be saved.' end
     for _, path in ipairs(left) do pcall(jsonWriteFile, path, { deleted = true }, false, nil, true) end
     if pending and slot.id == S.slot then M.freshFree(next(pending) ~= nil and pending or S.career) end
     S.saveMsg = S.saveMsg or (slot.name .. ' deleted.')
@@ -2653,7 +2664,7 @@ function M.phoneState()
     out.savedCar = type(savedGarage) == 'table' and type(savedGarage.car) == 'table' and savedGarage.car.name or nil
     out.resumeLoading = S.resumeTrip ~= nil
     out.resumeHasLocation = validLocation(S.pendingCareer.location)
-    out.resumeError = S.resumeError
+    out.resumeError, out.resumeBlocked = S.resumeError, S.loadBlocked and true or nil
     return out
   end
   if S.mode == 'trucking' then out.trucking = truckingState() end
@@ -3795,9 +3806,9 @@ function M.garageStart(model, name)
   fresh.money = 0
   loadCareer(fresh)
   -- its own save slot, with the name the player gave it
-  local slot = saves.create(M.saveIndex(), name, os.time())
+  local slot = saves.create(M.saveIndex(), name, os.time(), M.fileThere)
   S.slot = slot.id
-  saves.write(jsonWriteFile, M.saveIndex())
+  M.writeIndex()
   economy.post(fresh, money, 'garage', economy.nextId(fresh, 'start'), 'Career start')
   usedAt, conditionAt = S.clock + 1, nil
   fresh.garage.car.fuel = { start = 0.5 }   -- the old starter car comes with half a tank

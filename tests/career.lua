@@ -3992,6 +3992,21 @@ test('a free-play save from before the slots gives only its settings; the first 
   assert(#list.slots == 1 and list.slots[1].name == 'Career 1' and s.career.garage.started)
 end)
 
+test('a career list that could not be written is written again before the save counts', function()
+  local core, s = fresh()
+  failPath = '/settings/cargoEarth/saves.json'
+  core.settingsDo('cameras', false)
+  assert(s.slot == 1 and s.saveError, 'the career is not called saved while the list is missing')
+  failPath = nil
+  advance(core, 20)
+  assert(not s.saveError and disk['/settings/cargoEarth/saves.json'].slots[1].id == 1, 'the list is written on the retry')
+  -- a resume that failed for a while can be tried again; an unreadable save cannot
+  core.settingsDo('pause')
+  s.resumeError = 'The saved location did not load. Try again when the world is ready.'
+  local st = core.phoneState()
+  assert(st.screen == 'resume' and not st.resumeBlocked)
+end)
+
 test('a career saved without a name gets a slot; a missing save is said, not loaded', function()
   local saves = require('cargoEarth/saves')
   assert(saves.cleanName(string.rep('ř', 20)) == string.rep('ř', 16), 'names are cut between letters')
