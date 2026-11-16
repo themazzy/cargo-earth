@@ -23,12 +23,12 @@ module.exports = function auditPhoneLayout (directive) {
     for (const node of found) assert(!scrollAncestor(node), name + ' is buried in scrolling content')
     actionGroups++
   }
-  for (const command of ['accept', 'decline', 'resume', 'startCareer', 'freePlay', 'dismiss', 'busDoors',
+  for (const command of ['accept', 'decline', 'resume', 'freePlay', 'dismiss', 'busDoors',
     'busSkip', 'busEnd', 'busRetry', 'busCancelSelection', 'towLoad', 'towHitch', 'restoreTrailer']) {
     pinned(command, click => click === "act('" + command + "')")
   }
   const screenForAction = {
-    accept: ['incoming'], decline: ['incoming'], resume: ['resume'], startCareer: ['choose'], freePlay: ['choose'],
+    accept: ['incoming'], decline: ['incoming'], resume: ['resume'], freePlay: ['choose', 'resume'],
     dismiss: ['done', 'failed'], busDoors: ['active'], busSkip: ['active'], busEnd: ['active', 'offline'],
     busRetry: ['offline'], busCancelSelection: ['offline'], towLoad: ['active'], towHitch: ['active'], restoreTrailer: ['active']
   }
@@ -39,6 +39,8 @@ module.exports = function auditPhoneLayout (directive) {
         command + ' escaped its screen when it was moved out of the scroller')
     }
   }
+  pinned('start a named career', click => click === 'newCareer()', n =>
+    (n.ancestors.find(a => a.classes.has('cep-body')).attrs['ng-if'] || '').includes("s.screen === 'choose'"))
   pinned('navigate', click => click === "act('gps')")
   pinned('cancel or view contract', click => click === 'confirmCancel()')
   pinned('parts checkout', click => click.startsWith("gdo('buyParts'"))
