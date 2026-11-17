@@ -418,6 +418,19 @@ class NetworkAndStorageTests(unittest.TestCase):
                 time.sleep(0.01)
             self.assertEqual((ready["state"], ready["ready"], ready["errors"]), ("ready", 1, []))
 
+    def test_bus_refresh_failure_keeps_only_local_cached_lines(self):
+        with cache_dir() as cache:
+            lines = helper.BusLines(str(cache), lambda box: {"elements": [], "remark": "Query timed out"})
+            key = "1250_350"
+            cached = {"at": 0, "format": lines.CACHE_VERSION, "lines": [{"id": "r123"}]}
+            Path(lines.path(key)).write_text(json.dumps(cached), encoding="utf-8")
+            lines._work(key)
+            result = lines.near(50.02, 14.02)
+            self.assertEqual((result["state"], result["lines"]), ("failed", [{"id": "r123"}]))
+            lines.fetch = lambda box: {"elements": []}
+            lines._work(key)
+            self.assertEqual(lines.near(50.02, 14.02)["lines"], [])
+
     def test_bus_cache_from_before_error_validation_is_refetched(self):
         with cache_dir() as cache:
             calls = []

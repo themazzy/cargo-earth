@@ -1669,13 +1669,7 @@ function M.busState()
   local out = { state = S.busIdx and S.busIdx.state or 'loading', helper = helper.status().state, collectFee = bus.COLLECT_FEE }
   out.progress, out.error = S.busIdx and S.busIdx.progress, S.busIdx and S.busIdx.error
   out.found = S.busIdx and #(S.busIdx.lines or {}) or 0
-  if p and S.busIdx then
-    for _, line in ipairs(S.busIdx.lines or {}) do
-      local d = bus.depotFor(S.busIdx, line)
-      local km = jobs.km(p.lat, p.lon, d.g[1], d.g[2])
-      if not out.nearestKm or km < out.nearestKm then out.nearestKm = km end
-    end
-  end
+  out.nearestKm = S.busIdx and S.busIdx.nearestKm
   out.radiusKm = bus.NEAR_KM
   if S.busDepot and not shift then
     local d = S.busDepot
@@ -1696,7 +1690,7 @@ function M.busState()
   for _, o in ipairs(not shift and S.busBoard or {}) do
     local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
     out.lines[#out.lines + 1] = { id = o.id, ref = o.bus.ref, name = o.bus.name, from = o.bus.from, to = o.bus.to,
-      stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.SHARE / 5 + 0.5) * 5,
+      singleDirection = o.bus.singleDirection, limited = o.bus.limited, stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.SHARE / 5 + 0.5) * 5,
       fares = math.floor((o.fares or 0) * employment.SHARE / 5 + 0.5) * 5, minutes = o.minutes, depot = o.yard.n,
       depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= bus.DEPOT_RADIUS and not p.camera
         and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour }
