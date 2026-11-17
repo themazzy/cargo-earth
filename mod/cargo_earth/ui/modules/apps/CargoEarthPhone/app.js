@@ -1182,6 +1182,8 @@ angular.module('beamng.apps')
           '<div class="cep-keyval"><strong style="white-space:normal"><span class="cep-busref" ng-style="l.colour ? {background: l.colour} : {}">{{ l.ref || "Bus" }}</span> to {{ l.to }}</strong>' +
             '<strong style="white-space:nowrap">{{ fmt.money(l.pay) }}</strong></div>' +
           '<div class="cep-sub">From {{ l.from }} · {{ l.stops }} stops · {{ fmt.km(l.km) }} · about {{ l.minutes }} min<span ng-if="l.fares"> · plus about {{ fmt.money(l.fares) }} in fares</span></div>' +
+          '<div class="cep-sub" ng-if="l.singleDirection">Only this direction found in local map data.</div>' +
+          '<div class="cep-sub" ng-if="l.limited">This shift serves the first {{ l.stops }} mapped stops.</div>' +
           '<div class="cep-sub">Bus at {{ l.depot }}<span ng-if="l.depotM !== undefined"> · {{ fmt.dist(l.depotM).v }}{{ fmt.dist(l.depotM).u }} away</span></div>' +
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'busGps\', l.id)">Route</button>' +
             '<button class="cep-sm go" ng-click="act(\'busStart\', l.id)">Choose line</button></div></div>' +
@@ -1577,14 +1579,16 @@ angular.module('beamng.apps')
         if (!b) return ''
         if (b.state === 'old') return 'Update the Cargo Earth helper to get bus lines.'
         if (b.state === 'off') return 'Cannot reach the Cargo Earth helper. Check that it is running.'
-        if (b.state === 'failed') return 'Bus search failed. Check the error below, then retry.'
+        if (b.state === 'failed') return b.lines && b.lines.length
+          ? 'Search incomplete. Previously found lines are available below.'
+          : 'Bus search failed. Check the error below, then retry.'
         var p = b.progress || {}
         if (b.state !== 'ready') return p.queued && p.queued === p.loading
           ? 'Bus search is queued for OpenStreetMap. You can drive while this loads.'
           : 'Loading bus lines from OpenStreetMap. You can drive while this loads.'
         if (b.lines && b.lines.length) return 'Choose a line, then drive to its depot to start.'
-        if (b.found) return b.found + ' routes found, but none start within ' + b.radiusKm + ' km.' +
-          (b.nearestKm !== undefined ? ' Nearest start: ' + b.nearestKm.toFixed(1) + ' km away.' : '')
+        if (b.found) return b.found + ' routes found, but none have a stop within ' + b.radiusKm + ' km.' +
+          (b.nearestKm !== undefined ? ' Nearest stop: ' + b.nearestKm.toFixed(1) + ' km away.' : '')
         return 'No usable bus routes found in the checked areas. Try another part of town or retry the search.'
       }
       // career saves: the New career name, and Delete asks once before it deletes

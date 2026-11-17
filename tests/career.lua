@@ -2626,6 +2626,38 @@ local function busData()
   }, depots = { { id = 'w7', name = 'Bus Garage', kind = 'depot', lat = 50.0005, lon = 14.0005 } } }
 end
 
+test('bus discovery uses nearby stops and only offers mapped directions', function()
+  local data, idx = busData(), bus.index()
+  local line = data.lines[1]
+  line.stops = {}
+  -- Model the reported Kottayam case: the first stop is beyond 4 km and the last is nearby.
+  for i = 1, 28 do
+    local f = (i - 1) / 27
+    line.stops[i] = { 'Stop ' .. i, 9.55902 + 0.03155*f, 76.492311 + 0.029039*f }
+  end
+  local function offers()
+    bus.set(idx, data)
+    return bus.board(idx, 9.591238, 76.514068)
+  end
+  local board = offers()
+  assert(#board == 1 and board[1].bus.singleDirection and board[1].pickupKm > 4)
+  assert(board[1].bus.stops == 28 and board[1].bus.to == 'Stop 28')
+  local reverse = { id = 'mapped-return', ref = line.ref, operator = line.operator, stops = {} }
+  for i = #line.stops, 1, -1 do
+    local stop = line.stops[i]
+    table.insert(reverse.stops, { stop[1] .. ' inbound', stop[2], stop[3] + 0.0002 })
+  end
+  table.insert(data.lines, reverse)
+  board = offers()
+  assert(#board == 2 and not board[1].bus.singleDirection and not board[2].bus.singleDirection)
+  for _, offer in ipairs(board) do
+    if offer.id == 'bus:mapped-return' then
+      assert(offer.jobs[1].bus.stops[1].g[2] == reverse.stops[1][3])
+      assert(offer.bus.from == 'Stop 28 inbound' and offer.bus.to == 'Stop 1 inbound')
+    end
+  end
+end)
+
 test('bus lines: offers at the depot, passengers on and off, fares', function()
   local idx = bus.index()
   bus.set(idx, busData())

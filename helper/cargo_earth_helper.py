@@ -849,7 +849,7 @@ class Areas:
 
 ######################################################################################## speed cameras (OpenStreetMap)
 
-OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
+OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"]
 OVERPASS_TIMEOUT_S = 40       # fail over without blocking the queue for minutes per mirror
 OVERPASS_ONE = threading.Condition()
 OVERPASS_WAITING = []
@@ -963,7 +963,7 @@ class OsmCells:
 
     def _overpass(self, box, progress=lambda **fields: None):
         q = self.query(box)
-        err = None
+        errors = []
         with overpass_slot(0 if self.NAME == "lines" else 1):
             for attempt, base in enumerate(OVERPASS, 1):
                 progress(phase="fetching", server=urllib.parse.urlsplit(base).hostname, attempt=attempt)
@@ -977,14 +977,14 @@ class OsmCells:
                         raise ValueError(str(data["remark"])[:300])
                     return data
                 except Exception as e2:  # noqa: BLE001 - the next mirror
-                    err = e2
-        raise err
+                    errors.append(f"{urllib.parse.urlsplit(base).hostname}: {str(e2)[:110] or type(e2).__name__}")
+        raise RuntimeError("; ".join(errors))
 
-    def _load(self, key):
+    def _load(self, key, allow_expired=False):
         try:
             with open(self.path(key), "rb") as f:
                 data = json.loads(f.read(self.MAX_BYTES))
-            if (data.get("format", 1) == self.CACHE_VERSION and time.time() - data["at"] < self.DAYS * 86400
+            if (data.get("format", 1) == self.CACHE_VERSION and (allow_expired or time.time() - data["at"] < self.DAYS * 86400)
                     and isinstance(data[self.NAME], list)):
                 return data[self.NAME]
         except (OSError, ValueError, KeyError, TypeError):
@@ -1036,7 +1036,8 @@ class OsmCells:
                     self.state.pop(key, None)
                     self.fail_at.pop(key, None)
                     try:
-                        os.remove(self.path(key))
+                        if not self._load(key, allow_expired=True):
+                            os.remove(self.path(key))
                     except FileNotFoundError:
                         pass
                     rows = None
@@ -1217,7 +1218,14 @@ class BusLines(OsmCells):
         """The lines once each (a line crosses cells), and the depots apart: {"state", "cells", "lines", "depots"}."""
         out = super().near(lat, lon, retry)
         lines, depots, seen = [], [], set()
-        for row in out["lines"]:
+        rows = out["lines"]
+        if out["state"] != "ready":
+            for key in out["cells"]:
+                with self.lock:
+                    pending = not isinstance(self.state.get(key), list)
+                if pending:
+                    rows.extend(self._load(key, allow_expired=True) or [])
+        for row in rows:
             if row.get("id") in seen:
                 continue
             seen.add(row.get("id"))

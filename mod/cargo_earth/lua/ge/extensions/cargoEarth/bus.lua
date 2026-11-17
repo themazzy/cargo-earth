@@ -6,9 +6,8 @@
 local jobs = require('cargoEarth/jobs')
 local M = {}
 
-M.NEAR_KM = 4            -- lines whose depot is this close to the player are offered
+M.NEAR_KM = 4            -- lines with a mapped stop this close to the player are offered
 M.DEPOT_KM = 3           -- a bus station or depot this close to the first stop is where the bus is lent
-M.OFFERS = 6
 M.ROAD_FACTOR = 1.25     -- the line's straight stop-to-stop km to road km (until the GPS knows the road)
 -- Pay goes by the timetable's minutes, as a driver's wage does, plus a little per stop and the fares.
 M.BASE, M.PER_MIN, M.PER_STOP, M.PER_PASSENGER = 60, 7, 3, 2   -- about 500-620 CZK/h with fares, near van freight
@@ -198,26 +197,75 @@ end
 -- Minutes the bus was behind the timetable over the whole line.
 function M.lateMinutes(job) return job.bus.late or 0 end
 
+local function nearbyStopKm(line, lat, lon)
+  local nearest = math.huge
+  for _, stop in ipairs(line.stops) do
+    nearest = math.min(nearest, jobs.km(lat, lon, stop.g[1], stop.g[2]))
+  end
+  return nearest
+end
+
+-- Match distinct mapped relations at opposite termini. Platforms can be across the road.
+-- A shared route number alone also matches branches and short workings.
+local function stopDistance(a, b)
+  return jobs.km(a.g[1], a.g[2], b.g[1], b.g[2])
+end
+
+local function oppositeStops(first, last, a, b)
+  local startKm, endKm = stopDistance(first, b), stopDistance(last, a)
+  return startKm <= 0.5 and endKm <= 0.5 and startKm < stopDistance(first, a) and endKm < stopDistance(last, b)
+end
+
+local function mappedReturn(line, other)
+  if line.id == other.id or (line.operator ~= '' and other.operator ~= '' and line.operator ~= other.operator) then return false end
+  local s, t = line.stops, other.stops
+  if oppositeStops(s[1], s[#s], t[1], t[#t]) then return true end
+  -- Loops can share both termini. Check points around the loop to distinguish its two orientations.
+  if stopDistance(s[1], s[#s]) > 0.5 or stopDistance(s[1], t[1]) > 0.5 or stopDistance(t[1], t[#t]) > 0.5 then return false end
+  local i, k = math.floor(#s / 4), math.floor(#t / 4)
+  return oppositeStops(s[1+i], s[#s-i], t[1+k], t[#t-k])
+end
+
 -- Lines near the player as company offers (cargoEarth/employment): one job each, the depot as the yard.
 function M.board(idx, lat, lon)
   if type(idx) ~= 'table' or not finite(lat) or not finite(lon) then return {} end
-  local rows = {}
+  local rows, groups, nearest = {}, {}, nil
   for _, line in ipairs(idx.lines or {}) do
-    local depot = M.depotFor(idx, line)
-    local k = jobs.km(lat, lon, depot.g[1], depot.g[2])
-    if k <= M.NEAR_KM then rows[#rows + 1] = { line = line, depot = depot, km = k } end
+    local k = nearbyStopKm(line, lat, lon)
+    nearest = math.min(nearest or k, k)
+    groups[line.ref] = groups[line.ref] or {}
+    table.insert(groups[line.ref], { line = line, km = k })
+  end
+  for _, group in pairs(groups) do
+    for _, row in ipairs(group) do
+      if row.km <= M.NEAR_KM then
+        row.offer = true
+        for _, other in ipairs(group) do
+          if mappedReturn(row.line, other.line) then
+            row.hasReturn, other.hasReturn, other.offer = true, true, true
+          end
+        end
+      end
+    end
+    for _, row in ipairs(group) do
+      if row.offer then
+        row.depot = M.depotFor(idx, row.line)
+        rows[#rows + 1] = row
+      end
+    end
   end
   table.sort(rows, function(a, b) if a.km == b.km then return a.line.id < b.line.id end return a.km < b.km end)
   local out = {}
   for _, r in ipairs(rows) do
-    if #out >= M.OFFERS then break end
     local j = M.job(r.line, r.depot)
     local operator = r.line.operator ~= '' and r.line.operator or 'City buses'
     out[#out + 1] = { id = 'bus:' .. r.line.id, companyId = 'bus:' .. operator, tier = 'bus', vehicle = 'City bus',
-      name = operator, yard = r.depot, jobs = { j }, jobCount = 1, gross = j.pay, km = j.km, pickupKm = r.km,
+      name = operator, yard = r.depot, jobs = { j }, jobCount = 1, gross = j.pay, km = j.km, pickupKm = jobs.km(lat, lon, r.depot.g[1], r.depot.g[2]),
       minutes = j.minutes, wages = j.pay, fares = M.PER_PASSENGER * M.expectedRiders(#j.bus.stops), bus = { ref = r.line.ref, name = j.bus.name, from = j.from.n,
-      to = j.bus.stops[#j.bus.stops].n, stops = #j.bus.stops, colour = r.line.colour } }
+      to = j.bus.stops[#j.bus.stops].n, stops = #j.bus.stops, limited = #r.line.stops > #j.bus.stops,
+      singleDirection = not r.hasReturn, colour = r.line.colour } }
   end
+  idx.nearestKm = nearest
   return out
 end
 
