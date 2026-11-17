@@ -2020,7 +2020,7 @@ local function tick(dt)
     local t = S.job.tow
     S.towCheckAt = S.clock + 1
     if not t.damage0 and t.spawnedAt and S.clock >= t.spawnedAt + 3 then t.damage0 = trailers.towedDamage() end
-    if trailers.towedCount() > 0 then
+    if trailers.towedCount() > 0 and not trailers.restoringTow() then
       local n = tow.onBoard(trailers.towedDistances())
       if n < (t.onBoard or #t.cars) then say('A car slid off the trailer! Put it back on from the phone (Work).', 6) end
       t.onBoard = n
@@ -2639,6 +2639,17 @@ local function limitHere(p)
   return roadLimit.value
 end
 
+-- nil when no recovery is needed, zero for missing equipment, otherwise the price to reload a dropped car.
+local function towRecoveryFee(j)
+  if trailers.restoringTow() then return nil end
+  if not trailers.id() then return 0 end
+  local distances = trailers.towedDistances()
+  for _, d in pairs(distances) do
+    if d > tow.ON_BOARD_M then return M.TOW_RELOAD_FEE end
+  end
+  if tow.onBoard(distances) < #j.tow.cars then return 0 end
+end
+
 function M.phoneState()
   local c, ph = S.career, S.phone
   local today = (type(c.today) == 'table' and c.today.date == os.date('%Y-%m-%d')) and c.today or { earned = 0, count = 0 }
@@ -2721,13 +2732,14 @@ function M.phoneState()
     local busDue, busMin
     if j.bus then busDue, busMin = require('cargoEarth/bus').due(j, M.elapsed(j)) left = busDue end
     out.screen = 'active'
+    local reloadFee = j.tow and S.phase == 'toDelivery' and towRecoveryFee(j) or nil
     out.active = { phase = S.phase, kind = j.kind or 'cargo', cargo = j.cargoName, items = j.items, from = place(j.from), to = place(j.to),
         orderType = j.orderType, handling = cargo.supports(j) and cargo.handling(j) or nil,
       freight = j.haul, freightStatus = S.freightStatus, route = j.route and parcel.state(j),
-      canRestoreTrailer = j.trailer and ((not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested))
-        or (j.tow and S.phase == 'toDelivery' and (j.tow.onBoard or #j.tow.cars) < #j.tow.cars)) or nil,
+      canRestoreTrailer = j.trailer and ((not j.tow and not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested))
+        or reloadFee ~= nil) or nil,
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
-      special = special.info(j), tow = tow.info(j), taxi = require('cargoEarth/taxi').info(j), reloadFee = j.tow and M.TOW_RELOAD_FEE or nil,
+      special = special.info(j), tow = tow.info(j), taxi = require('cargoEarth/taxi').info(j), reloadFee = reloadFee,
       towWaiting = j.tow and j.tow.waiting and S.phase == 'toPickup' or nil,
       towHitch = j.tow and j.tow.stage == 'hitch' and S.phase == 'toPickup' or nil,
       here = j.tow and j.tow.stage and S.phase == 'toPickup' and { name = j.to.n, label = 'Get the trailer here', town = j.to.town or '' } or nil,
@@ -4717,18 +4729,20 @@ function M.spawnTrailer(atPickup)
   local j, p = S.job, earth.pose()
   if not j or not j.trailer or not p or p.camera or earth.status() ~= 'ok' then return end
   if j.tow then
-    -- the trailer is gone (a reload) or a car slid off: load the cars on again, for a fee
+    -- Only a car physically present off the deck incurs the recovery fee.
     if S.phase ~= 'toDelivery' then return end
     if (p.speed or 0) > M.STOP_SPEED then say('Stop before loading the cars again.') return end
-    if (S.career.money or 0) < M.TOW_RELOAD_FEE then say('Not enough money to load the cars again.') return end
+    local fee = towRecoveryFee(j)
+    if fee == nil then return end
+    if fee > 0 and (S.career.money or 0) < fee then say('Not enough money to load the cars again.') return end
     -- the damage done so far stays counted: the cars spawned again come without it
     local before = j.tow.damage0 and math.max(0, trailers.towedDamage() - j.tow.damage0) or 0
     local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars, tow.wreckPlan(j))
     if not ok then say('The cars could not be loaded: ' .. tostring(why)) return end
-    economy.post(S.career, -M.TOW_RELOAD_FEE, 'cancel_fee', economy.nextId(S.career, 'cancel_fee'), 'Tow: loading the cars again')
+    if fee > 0 then economy.post(S.career, -fee, 'cancel_fee', economy.nextId(S.career, 'cancel_fee'), 'Tow: loading the cars again') end
     j.tow.damageDone = (j.tow.damageDone or 0) + before
     j.trailerSpawned, j.tow.spawnedAt, j.tow.damage0, j.tow.onBoard = true, S.clock, nil, #j.tow.cars
-    say(string.format('The cars are back on the trailer (%d CZK). Couple it again.', M.TOW_RELOAD_FEE))
+    say(string.format('The cars are back on the trailer (%d CZK). Couple it again.', fee))
     saveCareer()
     return
   end
@@ -5233,6 +5247,7 @@ function M.onBeamNGEarthRebased()
 end
 
 function M.onBeamNGEarthTeleported(info)
+  trailers.onTeleported()
   S.odometerPose = nil
   stopForceWatch()
   marker.reset()

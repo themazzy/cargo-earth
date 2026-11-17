@@ -1390,7 +1390,7 @@ angular.module('beamng.apps')
         '<button class="cep-btn go" ng-if="s.active.towHitch" ng-click="act(\'towHitch\')">Hitch trailer again</button>' +
         '<button class="cep-btn go" ng-if="s.active.towWaiting" ng-click="act(\'towLoad\')">Load {{ s.active.tow.cars > 1 ? "cars" : "car" }} on trailer</button>' +
         '<button class="cep-btn go" ng-if="s.active.canRestoreTrailer && !s.active.towWaiting && !s.active.towHitch" ng-click="act(\'restoreTrailer\')">' +
-          '{{ s.active.tow ? "Reload cars: " + fmt.money(s.active.reloadFee) : "Restore assigned trailer" }}</button>' +
+          '{{ s.active.tow ? (s.active.reloadFee ? "Reload cars: " + fmt.money(s.active.reloadFee) : "Restore tow load (free)") : "Restore assigned trailer" }}</button>' +
         '<button class="cep-sm ghost" ng-if="!s.company" ng-click="act(s.online ? \'offline\' : \'online\')">' +
           '{{ s.online ? "Go offline" : "Go online" }}</button>' +
         '<div class="cep-row"><button class="cep-btn ghost" ng-click="confirmCancel()">{{ s.company ? "Company contract" : ((cancelAsk || s.active.cancelAsk) ? "Cancel −" + fmt.money(s.active.cancelFee) + "?" : "Cancel order") }}</button>' +
