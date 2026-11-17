@@ -4735,14 +4735,20 @@ function M.spawnTrailer(atPickup)
     local fee = towRecoveryFee(j)
     if fee == nil then return end
     if fee > 0 and (S.career.money or 0) < fee then say('Not enough money to load the cars again.') return end
-    -- the damage done so far stays counted: the cars spawned again come without it
-    local before = j.tow.damage0 and math.max(0, trailers.towedDamage() - j.tow.damage0) or 0
-    local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars, tow.wreckPlan(j))
-    if not ok then say('The cars could not be loaded: ' .. tostring(why)) return end
-    if fee > 0 then economy.post(S.career, -fee, 'cancel_fee', economy.nextId(S.career, 'cancel_fee'), 'Tow: loading the cars again') end
-    j.tow.damageDone = (j.tow.damageDone or 0) + before
-    j.trailerSpawned, j.tow.spawnedAt, j.tow.damage0, j.tow.onBoard = true, S.clock, nil, #j.tow.cars
-    say(string.format('The cars are back on the trailer (%d CZK). Couple it again.', fee))
+    if trailers.id() then
+      local ok, why = trailers.recoverTowed(j.tow.cars, tow.wreckPlan(j))
+      if not ok then say(why) return end
+      if fee > 0 then economy.post(S.career, -fee, 'cancel_fee', economy.nextId(S.career, 'cancel_fee'), 'Tow: loading the cars again') end
+      say(string.format('The cars are back on your trailer (%d CZK).', fee))
+    else
+      local before = j.tow.damage0 and math.max(0, trailers.towedDamage() - j.tow.damage0) or 0
+      local ok, why = trailers.spawnTow(tow.CLASSES[j.tow.class].trailer, j.tow.cars, tow.wreckPlan(j))
+      if not ok then say('The cars could not be loaded: ' .. tostring(why)) return end
+      j.tow.damageDone = (j.tow.damageDone or 0) + before
+      j.tow.spawnedAt, j.tow.damage0 = S.clock, nil
+      say('Tow trailer restored for free. Couple it again.')
+    end
+    j.trailerSpawned, j.tow.onBoard = true, #j.tow.cars
     saveCareer()
     return
   end
