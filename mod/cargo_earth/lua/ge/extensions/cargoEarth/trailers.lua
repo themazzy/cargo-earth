@@ -29,6 +29,9 @@ local towed = {}     -- vehicle ids of the cars on a tow job's trailer
 local loaded = {}    -- [vehicle id] = true for the towed cars that were put on the deck (Load, or spawned there)
 -- Jan: the broken-down cars are spawned (and crumpled) out of sight when the job starts, then put by the road before
 -- the player gets there: no spawn lag and no crumple at the pickup.
+local deckPose = {}  -- last stable position and orientation of each loaded car in trailer coordinates
+local lastTrailerPos, teleportFinished, worldWasMoving
+local restorePose = {}  -- placement retries retain the original pose
 local staged = {}    -- [vehicle id] = seconds until it is hidden (setActive 0), or 0 once hidden
 local placedOut = false   -- the staged cars stand by the road at the pickup
 
@@ -205,6 +208,7 @@ local function removeTowed()
     local o = scenetree.findObjectById(tid)
     if o then o:delete() end
   end
+  deckPose, restorePose, lastTrailerPos, teleportFinished, worldWasMoving = {}, {}, nil, false, false
   towed, loaded, staged, placedOut = {}, {}, {}, false
 end
 
@@ -308,6 +312,25 @@ local function centred(o, p, dir)
   return vec3(p.x - dir.x * f - right.x * r, p.y - dir.y * f - right.y * r, p.z)
 end
 
+local function trailerFrame(trailer)
+  local forward = trailer:getDirectionVector():normalized()
+  local right = forward:cross(trailer:getDirectionVectorUp()):normalized()
+  return { pos = trailer:getPosition(), forward = forward, right = right, up = right:cross(forward) }
+end
+
+local function relative(frame, v)
+  return vec3(v:dot(frame.right), v:dot(frame.forward), v:dot(frame.up))
+end
+
+local function worldVector(frame, v)
+  return frame.right * v.x + frame.forward * v.y + frame.up * v.z
+end
+
+local function remember(frame, car)
+  deckPose[car:getID()] = { pos = relative(frame, car:getPosition() - frame.pos),
+    dir = relative(frame, car:getDirectionVector()), up = relative(frame, car:getDirectionVectorUp()) }
+end
+
 local function spawnCar(model, p, dir, wreck, onDeckSpot, air)
   local ok, v = pcall(core_vehicles.spawnNewVehicle, model, { pos = p, rot = quatFromDir(dir, vec3(0, 0, 1)),
     autoEnterVehicle = false })
@@ -319,18 +342,23 @@ local function spawnCar(model, p, dir, wreck, onDeckSpot, air)
     pcall(function() v:setPosition(vec3(c.x, c.y, p.z + lift)) end)
   end
   towed[#towed + 1] = v:getID()
-  if onDeckSpot then loaded[v:getID()] = true end
+  if onDeckSpot then
+    loaded[v:getID()] = true
+    local frame = trailerFrame(obj())
+    remember(frame, v)
+    lastTrailerPos = frame.pos
+  end
   v:queueLuaCommand(PARK_CMD .. wreckCmd(wreck, onDeckSpot, air))
   return true
 end
 
 -- Move a car without a reset, so it keeps its damage: the game's own way (spawn.lua setSafePositionRec: the car's
 -- cluster moved and turned about its ref node, its speed zeroed). p: where its ref node goes; dir: it faces this way.
-local function moveKeep(o, p, dir)
+local function moveKeep(o, p, dir, up)
   return pcall(function()
     local ref = o:getRefNodeId()
     local cur = quatFromDir(vec3(o:getDirectionVector()), vec3(o:getDirectionVectorUp()))
-    local diff = cur:inversed() * quatFromDir(dir, vec3(0, 0, 1))
+    local diff = cur:inversed() * quatFromDir(dir, up or vec3(0, 0, 1))
     o:setClusterPosRelRot(ref, p.x, p.y, p.z, diff.x, diff.y, diff.z, diff.w)
     o:applyClusterVelocityScaleAdd(ref, 0, 0, 0, 0)
   end)
@@ -428,40 +456,60 @@ function M.hitchFailed()
 end
 function M.latching() return latch ~= nil end
 
--- Every frame (core onUpdate): couples the trailer that was just spawned once the game knows its couplers.
-local follow = nil   -- { trailer position, { car on the deck = true } } of the last frame
-
--- A teleport (BeamNG.Earth's map, the game's own) takes the player and the coupled trailer but not the cars on the
--- deck: when the trailer jumps, the cars that were on it are put back on its deck.
-local function followTick()
-  local trailer = obj()
-  if not trailer or #towed == 0 then follow = nil return end
-  local pos = trailer:getPosition()
-  if follow and (pos - follow[1]):length() > M.TELEPORT_M then
-    local spots, dir = M.deckSpotsFor(trailer, #towed)
-    local moved = 0
-    for i, tid in ipairs(towed) do
-      local o = scenetree.findObjectById(tid)
-      -- left behind only: an origin rebase moves the cars with the world, they are still by the deck (no reset)
-      if o and follow[2][tid] and (o:getPosition() - pos):length() > M.DECK_NEAR_M then
-        M.moveCarTo(o, spots[i], dir)
-        moved = moved + 1
-      end
-    end
-    if moved > 0 then log('I', 'cargoEarth', 'trailer teleported: the cars on its deck went along') end
-  end
-  local on = {}
-  for _, tid in ipairs(towed) do
-    local o = scenetree.findObjectById(tid)
-    -- only cars that were loaded and still sit by the deck (a waiting car parked next to it, or one that slid
-    -- off, is not cargo)
-    if o and loaded[tid] and (o:getPosition() - pos):length() <= M.DECK_NEAR_M then on[tid] = true end
-  end
-  follow = { pos, on }
+function M.onTeleported()
+  if next(deckPose) then teleportFinished = true end
 end
 
--- BeamNG.Earth moved the world origin: positions jumped without a teleport
-function M.onRebased() follow = nil end
+function M.onRebased()
+  lastTrailerPos = nil
+end
+
+local function followTick()
+  if not next(loaded) then return end
+  local earth = require('cargoEarth/earth')
+  if earth.towWorldMoving() then worldWasMoving = true return end
+  -- The finish hook may run later in the first ready frame.
+  if worldWasMoving then
+    worldWasMoving = false
+    if not teleportFinished then return end
+  end
+  local trailer = obj()
+  if not trailer then
+    teleportFinished, restorePose = false, {}
+    return
+  end
+  local frame = trailerFrame(trailer)
+  local jumped = lastTrailerPos and (frame.pos - lastTrailerPos):length() > M.TELEPORT_M
+  if teleportFinished or jumped then
+    for tid, pose in pairs(deckPose) do restorePose[tid] = pose end
+  end
+  teleportFinished, lastTrailerPos = false, frame.pos
+  for tid in pairs(loaded) do
+    local car = scenetree.findObjectById(tid)
+    if not car then
+      restorePose[tid] = nil
+    else
+      local pose = restorePose[tid]
+      if pose then
+        local target = frame.pos + worldVector(frame, pose.pos)
+        local aligned = (relative(frame, car:getDirectionVector()) - pose.dir):length() < 0.02
+            and (relative(frame, car:getDirectionVectorUp()) - pose.up):length() < 0.02
+        if ((car:getPosition() - target):length() < 0.15 and aligned) or
+            moveKeep(car, target, worldVector(frame, pose.dir), worldVector(frame, pose.up)) then
+          restorePose[tid] = nil
+        end
+      elseif (car:getPosition() - frame.pos):length() <= require('cargoEarth/tow').ON_BOARD_M then
+        remember(frame, car)
+      else
+        deckPose[tid] = nil
+      end
+    end
+  end
+end
+
+function M.restoringTow()
+  return teleportFinished or next(restorePose) ~= nil or (next(loaded) ~= nil and require('cargoEarth/earth').towWorldMoving())
+end
 
 local function stagedTick(dt)
   for tid, left in pairs(staged) do
@@ -816,6 +864,9 @@ function M.loadTowed(cars, wrecks)
     local o = scenetree.findObjectById(tid)
     if not (o and moveCar(o, spots[i], dir)) then moved = false break end
     loaded[tid] = true
+    local frame = trailerFrame(trailer)
+    remember(frame, o)
+    lastTrailerPos = frame.pos
   end
   if moved then return true end
   removeTowed()

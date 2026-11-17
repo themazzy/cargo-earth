@@ -2564,12 +2564,16 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     assert(not core.phoneState().active.towWaiting)
     advance(core)
     assert(job.tow.damage0 == 500, 'damage before the tow is not yours ' .. tostring(job.tow.damage0) .. ' ' .. tostring(job.tow.spawnedAt) .. ' ' .. tostring(s.clock))
+    local balance = c.money
+    core.phoneAction('restoreTrailer')
+    assert(c.money == balance and spawned == 0, 'an already loaded car cannot be charged again')
     -- it is damaged and slides off
     damage = damage + 300
     distances = { 12 }
     advance(core, 4)
     local state = core.phoneState()
     assert(job.tow.onBoard == 0 and state.active.tow.onBoard == 0 and state.active.canRestoreTrailer)
+    assert(state.active.reloadFee == 150)
     pose.lat, pose.lon = job.to.g[1], job.to.g[2]
     advance(core)
     assert(s.job == job, 'not delivered without the car')

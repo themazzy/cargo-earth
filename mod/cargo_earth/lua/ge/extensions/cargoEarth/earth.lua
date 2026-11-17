@@ -8,6 +8,11 @@ local function api()
   return nil
 end
 
+function M.towWorldMoving()
+  local a = api()
+  return a and (not a.ready() or (a.rebasing and a.rebasing()))
+end
+
 function M.available() return api() ~= nil end
 
 -- A feature of a newer modding API (BeamNG.Earth 1.10: 'gpsRoute', 'transform', 'rebase', ...); false on an older one.
