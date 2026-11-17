@@ -2695,7 +2695,7 @@ test('bus timetable: each stop has its own time from its distance, late minutes 
   -- a skipped stop starts the next one's time too
   bus.skip(j, due + 500)
   assert(j.bus.at == 4 and j.bus.legStart == due + 500)
-  local st = bus.state(j, nil, 0, due + 500)
+  local st = bus.state(j, nil, due + 500)
   assert(st.dueMin == j.bus.stops[4].min and st.late == 2)
   -- a line saved before the timetable existed: its stops have no times, nothing counts as late
   j.bus.stops[5].min = nil
@@ -2712,7 +2712,7 @@ test('bus comfort: passengers feel harsh moments and bumps, an empty bus does no
   assert(bus.harsh(j) == bus.HARSH_LOSS and bus.comfort(j) == 100 - bus.HARSH_LOSS)
   assert(bus.bump(j, 3) == 0, 'below a bump')
   assert(bus.bump(j, 99) == bus.BUMP_LOSS[2])
-  assert(bus.state(j, nil, 0, 60).comfort == bus.comfort(j))
+  assert(bus.state(j, nil, 60).comfort == bus.comfort(j))
   for _ = 1, 40 do bus.harsh(j) end
   assert(bus.comfort(j) == 0)
 end)
@@ -2899,10 +2899,41 @@ test('the native bus doors and phone share boarding; closing early cancels witho
   assert(not s.busDwell and j.bus.at == 1 and j.bus.boarded == 0)
   core.phoneAction('busDoors')
   assert(s.busDwell and commands == 1, 'the phone opens the same boarding flow')
+  local function interrupted()
+    assert(not s.busDwell and j.bus.at == 1 and j.bus.boarded == 0 and j.bus.onBoard == 0)
+  end
+  pose.lat = pose.lat + 0.01
+  core.onUpdate(0.01, 0.01)
+  interrupted()
+  pose.lat = stop.g[1]
+  core.phoneAction('busDoors')
+  local originalId = core.G.playerId
+  core.G.playerId = function() return watched.id + 1 end
+  core.onUpdate(0.01, 0.01)
+  interrupted()
+  core.G.playerId = originalId
+  core.phoneAction('busDoors')
+  local earth = require('cargoEarth/earth')
+  local originalPose = earth.pose
+  earth.pose = function() return nil end
+  core.onUpdate(0.01, 0.01)
+  interrupted()
+  earth.pose = originalPose
+  core.phoneAction('busDoors')
+  core.onBeamNGEarthTeleported(stop)
+  interrupted()
+  core.phoneAction('busDoors')
+  core.onUpdate(0.5, 0.25)
+  local remaining, fraction = s.busDwell.remaining, core.stopInfo().frac
+  assert(remaining == s.busDwell.duration - 0.25)
+  for _ = 1, 40 do core.onUpdate(0.5, 0) end
+  assert(s.busDwell.remaining == remaining and core.stopInfo().frac == fraction)
+  assert(core.stopInfo().leftS == math.ceil(remaining) and core.busState().line.doors.left == math.ceil(remaining))
+  local beforeClose = commands
   advance(core, 4)
   assert(core.stopInfo().frac > 0 and core.stopInfo().leftS == core.busState().line.doors.left)
   advance(core, 32)
-  assert(j.bus.at == 2 and not s.busDwell and commands == 2)
+  assert(j.bus.at == 2 and not s.busDwell and commands == beforeClose + 1)
   pose.lat, pose.lon = j.bus.stops[2].g[1], j.bus.stops[2].g[2]
   advance(core, 40)
   assert(j.bus.at == 2 and not core.stopInfo().stopping and core.stopInfo().stopS == 0,

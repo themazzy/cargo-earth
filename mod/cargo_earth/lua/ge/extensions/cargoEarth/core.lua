@@ -1647,14 +1647,14 @@ end
 -- The phone and upper overlay share this stop state and the boarding clock.
 function M.busStopInfo()
   local j, p = S.job, earth.pose()
-  if not (j and j.bus and p) then return nil end
+  if not (j and j.bus and validLocation(p)) then return nil end
   local stop = j.bus.stops[j.bus.at]
   local meters = jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000
   local inside = meters <= rules(j).arriveM
   local parked = not p.camera and (p.speed or 0) <= M.STOP_SPEED and garage.inOwnCar(M.G, S.career.garage)
   local d = S.busDwell
   local duration = d and d.duration or 0
-  local left = d and math.max(0, d.untilT - S.clock) or 0
+  local left = d and d.remaining or 0
   return {bus = true, inZone = inside, canDoors = inside and parked and not d or false, stopping = d ~= nil,
     distM = math.floor(meters + 0.5), stopS = duration, leftS = math.ceil(left),
     frac = duration > 0 and math.max(0, math.min(1, 1 - left / duration)) or 0,
@@ -1687,7 +1687,7 @@ function M.busState()
       atDepot = employment.atYard(c, p), handover = shift.handover }
   end
   if S.job and S.job.bus then
-    out.line = bus.state(S.job, S.busDwell, S.clock, M.elapsed(S.job))
+    out.line = bus.state(S.job, S.busDwell, M.elapsed(S.job))
     local stop = M.busStopInfo()
     out.canDoors, out.stop = stop and stop.canDoors, stop
     return out
@@ -1707,14 +1707,15 @@ end
 
 -- At a stop: the doors open, people get off and on, and the doors close again after a few seconds (stay stopped).
 function M.busDoors(fromVehicle)
-  local j, p = S.job, earth.pose()
-  if not (j and j.bus) or S.busDwell then return end
+  local j = S.job
+  if not (j and j.bus) or S.busDwell or earth.status() ~= 'ok' then return end
+  local vehicle = M.G.playerId()
   local stop = M.busStopInfo()
-  if not stop or not stop.canDoors then say('Park your bus at the current stop first.') return end
+  if not vehicle or not stop or not stop.canDoors then say('Park your bus at the current stop first.') return end
   local bus = require('cargoEarth/bus')
   local late = bus.arrived(j, M.elapsed(j))
   local off, on, dwell = bus.passengers(j, M.random)
-  S.busDwell = { off = off, on = on, untilT = S.clock + dwell, duration = dwell, at = j.bus.at, job = j }
+  S.busDwell = { off = off, on = on, remaining = dwell, duration = dwell, at = j.bus.at, job = j, vehicle = vehicle }
   if not fromVehicle and M.G.busDoors then M.G.busDoors(true) end
   M.busSeats(j, j.bus.onBoard - off)   -- those getting off leave their seats first
   say(string.format('Doors open at %s: %d off, %d on.%s', j.bus.stops[j.bus.at].n, off, on,
@@ -1788,21 +1789,31 @@ function M.busSeats(j, n)
   end
 end
 
-function M.busTick(p)
+function M.interruptBoarding()
   local d, j = S.busDwell, S.job
-  -- now and then, so a loaded save or a reset bus gets its passengers back
-  if not d and j and j.bus and S.clock >= (S.busSeatsAt or 0) then M.busSeats(j, j.bus.onBoard) end
-  if not d then return end
-  if not (j and j.bus) or d.job ~= j or j.bus.at ~= d.at then S.busDwell = nil return end
-  if p and (p.speed or 0) > M.STOP_SPEED then
-    -- drove off with the doors open: nobody got on or off, open them again at the stop
-    S.busDwell = nil
+  S.busDwell = nil
+  if not d or d.job ~= j then return end
+  if d.vehicle == M.G.playerId() then
     if M.G.busDoors then M.G.busDoors(false) end
     M.busSeats(j, j.bus.onBoard)
-    say('You drove off with the doors open. Stop and open them again.', 5)
+  end
+  say('Boarding interrupted. Park at the stop and open the doors again.', 5)
+end
+
+function M.busTick(p, dt)
+  local d, j = S.busDwell, S.job
+  if not d then return end
+  if not (j and j.bus) or d.job ~= j or j.bus.at ~= d.at then S.busDwell = nil return end
+  -- The assigned vehicle was verified when the doors opened. Read its id each frame
+  -- without fetching a full garage vehicle description or building the phone state.
+  local g = j.bus.stops[d.at].g
+  if not validLocation(p) or p.camera or (p.speed or 0) > M.STOP_SPEED or d.vehicle ~= M.G.playerId()
+    or jobs.km(p.lat, p.lon, g[1], g[2]) * 1000 > rules(j).arriveM then
+    M.interruptBoarding()
     return
   end
-  if S.clock < d.untilT then return end
+  d.remaining = math.max(0, d.remaining - dt)
+  if d.remaining > 0 then return end
   S.busDwell = nil
   if M.G.busDoors then M.G.busDoors(false) end
   local bus = require('cargoEarth/bus')
@@ -2054,7 +2065,9 @@ local function tick(dt)
     S.roadM, S.etaS = nil, nil
   end
   if S.job.bus then
-    M.busTick(p)
+    if not S.busDwell and S.clock >= (S.busSeatsAt or 0) and garage.inOwnCar(M.G, S.career.garage) then
+      M.busSeats(S.job, S.job.bus.onBoard)
+    end
     S.dist = S.job and distToTarget(p) or nil
     return -- refresh GPS metrics above, but bus stops advance through doors instead of the cargo timer
   end
@@ -5107,6 +5120,10 @@ function M.onUpdate(dtReal, dtSim)
   local activeDt = careerClock.advance(S.career, dtReal, dtSim, worldReady and not S.parts)
   S.workTick = (S.workTick or 0) + activeDt
   local pose = activeDt > 0 and earth.pose() or nil
+  if S.busDwell then
+    local busPose = worldReady and (pose or earth.pose()) or nil
+    M.busTick(busPose, S.parts and 0 or math.max(0, dtSim or dtReal or 0))
+  end
   -- Hired drivers work while you do: on an order or contract, or driving. Standing idle earns nothing.
   if S.job or S.career.employment or (pose and not pose.camera and (pose.speed or 0) > M.STOP_SPEED) then
     S.driverTick = (S.driverTick or 0) + activeDt
@@ -5253,6 +5270,7 @@ function M.onBeamNGEarthRebased()
 end
 
 function M.onBeamNGEarthTeleported(info)
+  if S.busDwell then M.interruptBoarding() end
   trailers.onTeleported()
   S.odometerPose = nil
   stopForceWatch()
