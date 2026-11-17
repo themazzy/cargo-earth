@@ -339,7 +339,7 @@ function M.linePay(job)
 end
 
 -- For the phone: the line, where you are on it and the next few stops.
-function M.state(job, dwell, clock, nowS)
+function M.state(job, dwell, nowS)
   if not job or not job.bus then return nil end
   local b, next = job.bus, {}
   local dueS, dueMin = M.due(job, nowS)
@@ -347,7 +347,7 @@ function M.state(job, dwell, clock, nowS)
   return { ref = b.ref, name = b.name, colour = b.colour, at = b.at, count = #b.stops, onBoard = b.onBoard,
     boarded = b.boarded, skipped = b.skipped or 0, next = next, dueS = math.floor(dueS + 0.5), dueMin = dueMin,
     late = math.floor(M.lateMinutes(job) + 0.5), comfort = M.comfort(job), last = M.last(job), capacity = M.CAPACITY,
-    doors = dwell and { off = dwell.off, on = dwell.on, left = math.max(0, math.ceil(dwell.untilT - (clock or 0))) } or nil }
+    doors = dwell and { off = dwell.off, on = dwell.on, left = math.ceil(dwell.remaining) } or nil }
 end
 
 return M
