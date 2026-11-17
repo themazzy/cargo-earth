@@ -2474,7 +2474,7 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   withStation(s, 50.1, 14)
   -- the game side, stubbed: what trailers.lua would do in BeamNG
   local saved = {}
-  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
+  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'recoverTowed', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
     'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow', 'ownTowTrailer', 'adopt',
     'stageTowed', 'towedStaged', 'towedPlaced', 'placeTowed' }) do
     saved[k] = trailers[k]
@@ -2490,6 +2490,12 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   trailers.ownTowTrailer = function() return 9, 'tiltdeck' end
   trailers.adopt = function() return true end
   local spawned, distances, damage = 0, {}, 0
+  local hitched = false
+  trailers.recoverTowed = function()
+    if not hitched then return false, 'Hitch the job trailer to your vehicle first.' end
+    distances = { 1 }
+    return true
+  end
   trailers.existing = function(list) return { list[1] } end
   trailers.towModel = function() return 'cartrailer' end
   trailers.spawnTow = function(kind, cars) spawned = spawned + 1 distances = { 1 } return kind == 'cartrailer' and #cars == 1 end
@@ -2579,8 +2585,12 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     assert(s.job == job, 'not delivered without the car')
     c.money = 1000
     core.phoneAction('restoreTrailer')
-    assert(spawned == 1 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
-    damage = 0                      -- the cars spawned again are undamaged; the 300 stays counted
+    assert(spawned == 0 and c.money == 1000 and distances[1] == 12)
+    hitched = true
+    core.phoneAction('restoreTrailer')
+    core.phoneAction('restoreTrailer')
+    assert(spawned == 0 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
+    assert(job.tow.damage0 == 500 and damage == 800)
     advance(core, 8)
     damage = damage + 600           -- 10 % worse on the way, 5 % before the reload
     advance(core, 30)

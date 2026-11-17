@@ -87,3 +87,33 @@ trailer.p=trailer.p+shift
 tick()
 assert(car.p==dropped and not trailers.restoringTow())
 print('Tow teleport: immediate load, short hop, late hook, retry, rebase, long jump and dropped cargo passed')
+
+-- The same adopted rig can recover a dropped car without disturbing its other load.
+trailer.p=vec3(0,0,0)
+assert(trailers.adopt('cartrailer'))
+local second=vehicle(3)
+objects[3]=second
+local spawned=0
+core_vehicles.spawnNewVehicle=function()
+  spawned=spawned+1
+  return spawned==1 and car or second
+end
+local models={'covet','pessima'}
+assert(trailers.loadTowed(models))
+local untouched=car.p
+second.p=vec3(20,0,0)
+local player=vehicle(4)
+getPlayerVehicle=function() return player end
+local attached=false
+trailers.coupled=function(vid) return attached and vid==4 end
+local ok,why=trailers.recoverTowed(models)
+assert(not ok and why:find('Hitch') and second.p.x==20)
+attached=true
+second.unavailable=true
+assert(not trailers.recoverTowed(models))
+assert(second.p.x==20 and car.p==untouched)
+second.unavailable=false
+assert(trailers.recoverTowed(models))
+assert(trailers.id()==1 and trailers.adopted() and spawned==2)
+assert(car.p==untouched and second.p:length()<6 and trailers.towedCount()==2)
+print('Tow recovery: original trailer, dropped car only, hitch requirement and retry passed')

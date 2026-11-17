@@ -331,7 +331,7 @@ local function remember(frame, car)
     dir = relative(frame, car:getDirectionVector()), up = relative(frame, car:getDirectionVectorUp()) }
 end
 
-local function spawnCar(model, p, dir, wreck, onDeckSpot, air)
+local function spawnCar(model, p, dir, wreck, onDeckSpot, air, slot)
   local ok, v = pcall(core_vehicles.spawnNewVehicle, model, { pos = p, rot = quatFromDir(dir, vec3(0, 0, 1)),
     autoEnterVehicle = false })
   if not ok or not v then return false end
@@ -341,7 +341,7 @@ local function spawnCar(model, p, dir, wreck, onDeckSpot, air)
     local c = centred(v, p, dir)
     pcall(function() v:setPosition(vec3(c.x, c.y, p.z + lift)) end)
   end
-  towed[#towed + 1] = v:getID()
+  towed[slot or (#towed + 1)] = v:getID()
   if onDeckSpot then
     loaded[v:getID()] = true
     local frame = trailerFrame(obj())
@@ -873,6 +873,39 @@ function M.loadTowed(cars, wrecks)
   local placed = onDeck(trailer, cars, wrecks)
   backToPlayer(veh)
   if placed < #cars then removeTowed() return false, 'a broken-down car could not be put on the trailer' end
+  return true
+end
+
+-- Recover only the cars missing from their slots. Existing vehicles use the damage-preserving move.
+function M.recoverTowed(cars, wrecks)
+  local trailer = obj()
+  local player = getPlayerVehicle and getPlayerVehicle(0)
+  if not (trailer and player and M.coupled(player:getID())) then
+    return false, 'Hitch the job trailer to your vehicle first.'
+  end
+  local spots, dir = deckSpots(trailer, #cars)
+  local frame = trailerFrame(trailer)
+  for i, model in ipairs(cars) do
+    local tid = towed[i]
+    local car = tid and scenetree.findObjectById(tid)
+    if not car then
+      if not spawnCar(model, spots[i], dir, wrecks and wrecks[i], true, false, i) then
+        return false, 'Could not restore the missing car. Try again.'
+      end
+      if tid and tid ~= towed[i] then loaded[tid], deckPose[tid], restorePose[tid] = nil, nil, nil end
+    end
+  end
+  for i, tid in ipairs(towed) do
+    local car = scenetree.findObjectById(tid)
+    if not car then return false, 'The car is unavailable. Try again.' end
+    if (car:getPosition() - frame.pos):length() > require('cargoEarth/tow').ON_BOARD_M then
+      local target = centred(car, spots[i], dir)
+      target.z = spots[i].z + lowestBelow(car)
+      if not moveKeep(car, target, dir) then return false, 'Could not reload the car. Try again.' end
+      remember(frame, car)
+      loaded[tid], lastTrailerPos = true, frame.pos
+    end
+  end
   return true
 end
 
