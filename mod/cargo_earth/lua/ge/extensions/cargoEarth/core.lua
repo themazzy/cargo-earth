@@ -2163,6 +2163,9 @@ local function tick(dt)
     end
   end
   S.dist = distToTarget(p)
+  -- the stop zone is only a few metres tall: on a bridge over the stop (or a road under it) it doesn't count
+  local d = target()
+  S.offLevel = (d and marker.offLevel and not S.job.bus and marker.offLevel(p, d)) or nil
   -- the road distance of the GPS route, for the phone and window (arrival still uses the straight distance)
   local rt = earth.route()
   if rt and not rt.planning and type(rt.remaining) == 'number' and rt.remaining >= 0 then
@@ -2182,7 +2185,7 @@ local function tick(dt)
     S.dist = S.job and distToTarget(p) or nil
     return -- refresh GPS metrics above, but bus stops advance through doors instead of the cargo timer
   end
-  if not S.dist or S.dist > arrivalRadius(S.job) or (p.speed or 0) > M.STOP_SPEED or p.camera
+  if not S.dist or S.dist > arrivalRadius(S.job) or S.offLevel or (p.speed or 0) > M.STOP_SPEED or p.camera
     or ((S.job.kind == 'food' or S.job.taxi) and not garage.inOwnCar(M.G, S.career.garage)) or M.towWaiting() then
     S.stopT = 0
     return
@@ -2198,7 +2201,7 @@ local function stopInfo()
   if S.job and S.job.bus then return M.busStopInfo() end
   if not S.job or not S.dist or M.towWaiting() then return nil end
   local r = rules(S.job)
-  local inZone = S.dist <= arrivalRadius(S.job)
+  local inZone = S.dist <= arrivalRadius(S.job) and not S.offLevel
   local t = S.stopT > 0 and math.min(r.stopS, S.stopT + S.tick) or 0
   return { inZone = inZone, stopping = inZone and S.stopT > 0, frac = t / r.stopS, leftS = math.max(0, r.stopS - t),
     stopS = r.stopS, pickup = S.phase == 'toPickup' }

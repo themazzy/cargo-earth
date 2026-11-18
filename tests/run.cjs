@@ -50,3 +50,5 @@ run(fs.readFileSync('tests/vehicle-state.lua', 'utf8'), 'tests/vehicle-state.lua
 run(fs.readFileSync('tests/gforce.lua', 'utf8'), 'tests/gforce.lua')
 
 run(fs.readFileSync('tests/taxi.lua', 'utf8'), 'tests/taxi.lua')
+
+run(fs.readFileSync('tests/marker.lua', 'utf8'), 'tests/marker.lua')
