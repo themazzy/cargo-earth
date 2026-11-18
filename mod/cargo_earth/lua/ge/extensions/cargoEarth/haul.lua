@@ -2,8 +2,8 @@
 local M = {}
 
 M.tiers = {
-  van = { name = 'Van', minKm = 3, maxKm = 45, base = 80, rate = 11, speed = 40, slack = 12, kg = 1000, parcel = 96 },
-  rigid = { name = 'Rigid truck', minKm = 12, maxKm = 125, base = 120, rate = 15, speed = 50, slack = 20,
+  van = { name = 'Van', minKm = 3, maxKm = 45, base = 150, rate = 18, speed = 40, slack = 12, kg = 1000, parcel = 96 },
+  rigid = { name = 'Rigid truck', minKm = 12, maxKm = 125, base = 250, rate = 22, speed = 50, slack = 20,
     kg = 8000, parcel = 640, bulk = 4200 },
   semi = { name = 'Articulated truck', minKm = 20, maxKm = 250, base = 300, rate = 22, speed = 55, slack = 30,
     kg = 22000, parcel = 1600, bulk = 16000 },
@@ -14,7 +14,8 @@ M.tiers = {
 }
 M.SEMI_BULK_L = 12800   -- the dry-bulk trailer's 16 aggregate boxes of 800 L
 M.SMALL = { car = true, suv = true }   -- these tiers take no board of company freight
--- Pay per hour (0.3.5, Jan): courier ~450 CZK, van ~590, rigid ~850, semi ~1,250-1,700. Car prices follow courier pay,
+-- Pay per hour (career review 2026-11-18, net of fuel): food ~500 CZK, taxi/bus ~550, parts runs ~580, own van ~720-800,
+-- own box truck ~1,150, own tractor ~1,370-1,580. Each step up earns more than the one before. Car prices follow courier pay,
 -- so trucks are the reward for progressing without making cars nearly free.
 -- A loaner runs on the company's fuel card. In your own vehicle you buy the fuel, so the job pays this much
 -- more per road km (about 9, 22 and 32 L/100 km of diesel).

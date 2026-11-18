@@ -3023,11 +3023,30 @@ test('bus names: escapes that lost their backslash on the way into the game are 
   assert(idx.lines[1].stops[1].n == 'Ovčáry' and idx.lines[1].to == 'Nedomice, Škola' and idx.depots[1].n == 'Garáž')
 end)
 
+test('career review: company trucks keep a bigger share, and each work type says what it needs', function()
+  assert(employment.shareFor('van') == 0.8 and employment.shareFor('bus') == 0.8)
+  assert(employment.shareFor('rigid') == 0.65 and employment.shareFor('semi') == 0.65)
+  local progress = require('cargoEarth/progress')
+  local function byId(list) local out = {} for _, w in ipairs(list) do out[w.id] = w end return out end
+  local w = byId(progress.workTypes({ hauls = { van = 2 } }, { owned = { car = true } }))
+  assert(w.food.ready and w.taxi.ready and w.bus.ready and w.company.ready)
+  assert(not w.parcel.ready and w.parcel.missing == 'You own no van.')
+  assert(not w.rigid.ready and not w.semi.ready and not w.firm.ready and not w.drivers.ready)
+  w = byId(progress.workTypes({ hauls = { van = 2 } }, { owned = { rigid = true } }))
+  assert(w.rigid.missing == 'Van hauls: 2 of 5.', 'an owned box truck still waits for the van hauls')
+  w = byId(progress.workTypes({ hauls = { van = 5, rigid = 10 } }, { owned = { semi = true }, firm = true, independent = true }))
+  assert(w.semi.ready and w.firm.ready and w.drivers.ready and w.independent.ready)
+  w = byId(progress.workTypes({}, { firmReq = { { label = 'Founding fee', detail = '100 CZK of 6000 CZK', done = false } } }))
+  assert(w.firm.missing == 'Founding fee: 100 CZK of 6000 CZK.')
+  local core = fresh()
+  assert(#core.careerState().work == #progress.WORK and core.careerState().ranks[4].perk ~= nil)
+end)
+
 test('bus board: the fares a line is expected to bring are shown with its pay', function()
   local idx = bus.index()
   bus.set(idx, busData())
   local o = bus.board(idx, 50, 14)[1]
-  assert(o.fares == bus.PER_PASSENGER * bus.expectedRiders(5) and o.fares > 0)
+  assert(o.fares == math.floor(bus.PER_PASSENGER * bus.expectedRiders(5) + 0.5) and o.fares > 0)
 end)
 
 test('speed cameras are paused even for a save that previously enabled them', function()

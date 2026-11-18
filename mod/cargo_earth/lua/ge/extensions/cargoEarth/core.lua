@@ -1031,6 +1031,11 @@ function M.generate()
       for _, offer in ipairs(S.offers) do
         offer.fuelAllowance = math.floor(offer.km * haul.FUEL_ALLOWANCE.car / 5 + 0.5) * 5
         offer.pay = offer.pay + offer.fuelAllowance
+        local carRate = require('cargoEarth/taxi').carRate(S.career.garage.car and S.career.garage.car.value)
+        if carRate > 0 then
+          offer.carRate, offer.carBonus = carRate, math.floor(offer.pay * carRate / 5 + 0.5) * 5
+          offer.pay = offer.pay + offer.carBonus
+        end
         if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
       end
     end
@@ -2294,7 +2299,7 @@ local function incomingInfo(inc)
     trailerBonus = j.trailerBonus,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
-    fuelAllowance = j.fuelAllowance,
+    fuelAllowance = j.fuelAllowance, carBonus = j.carBonus, carRate = j.carRate,
     trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or (j.haul and j.haul.trailerName) or (S.idx and S.idx.trailers[j.trailer]) or j.trailer) or nil,
     leftS = math.max(0, math.floor(inc.expiresAt - S.clock + 0.5)), totalS = M.PHONE.acceptS }
 end
@@ -2389,6 +2394,16 @@ function M.careerState()
   end
   state.reputation = rating.state(S.career)
   state.fines = S.career.fines
+  -- every kind of work, what it needs and whether you have it (issue #123)
+  local owned, g = {}, S.career.garage or {}
+  if g.car and not g.car.loaner and not g.car.standIn then owned[upkeep.tier(g.car)] = true end
+  for _, car in ipairs(g.parked or {}) do if not car.loaner then owned[upkeep.tier(car)] = true end end
+  local trusted = false
+  for _, co in pairs(S.career.companies or {}) do
+    if type(co) == 'table' and (co.reputation or 0) >= employment.INDEPENDENT_REP then trusted = true end
+  end
+  state.work = progress.workTypes(S.career, { owned = owned, firm = fleet.unlocked(S.career), independent = trusted,
+    firmReq = (firm.requirements(S.career, state.debt)), vanGoal = haul.VAN_GOAL, rigidGoal = haul.RIGID_GOAL })
   return state
 end
 

@@ -28,7 +28,7 @@ M.WORKSHOP_KM = { 3, 30 }  -- straight km from the car to a workshop
 M.ON_BOARD_M = 6           -- a car this close to the trailer's centre is still on it
 M.DAMAGE_PER_PCT = 60      -- this much new damage on a towed car costs 1 % of the pay
 M.MAX_LOSS = 80
-M.BORROW_RATE = 0.5        -- share of the tow rate paid per km of the legs to and from the workshop with no car on
+M.BORROW_RATE = 1.0        -- share of the tow rate paid per km of the legs to and from the workshop with no car on
 M.HITCH_MINUTES = 5        -- time allowed for hitching the borrowed trailer
 
 -- How the broken-down cars look (done by the vehicle-side cargoEarth_wreck after they spawn): a bent end, broken-off

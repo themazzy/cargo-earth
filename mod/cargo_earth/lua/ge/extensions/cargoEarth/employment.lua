@@ -6,6 +6,10 @@ local haul = require('cargoEarth/haul')
 local economy = require('cargoEarth/economy')
 local garage = require('cargoEarth/garage')
 local M = { SHARE = 0.8, RADIUS = 60, PREPARE_TIMEOUT = 25, INDEPENDENT_REP = 20 }
+-- The driver's share of a contract by the company vehicle (career review 2026-11-18): a lent box truck or tractor keeps
+-- more for the company (its fuel, repairs and the truck itself), so your own truck earns clearly more than a loaner.
+M.TIER_SHARE = { rigid = 0.65, semi = 0.65 }
+function M.shareFor(tier) return M.TIER_SHARE[tier] or M.SHARE end
 -- Company vehicles by tier: the van always, the box truck and the tractor once freight progress unlocks them.
 -- The contracts stay short (two deliveries out of one yard) so a shift fits one sitting even in a truck.
 M.KM = { van = { 1, 20 }, rigid = { 12, 40 }, semi = { 20, 60 } }
@@ -66,7 +70,7 @@ local function tierBoard(idx, pose, tier, board)
         end
       end
       if #offer.jobs == 2 then
-        offer.wages = math.floor(offer.gross * M.SHARE + 0.5)
+        offer.wages = math.floor(offer.gross * M.shareFor(tier) + 0.5)
         offer.minutes = math.ceil(offer.km / (tier == 'van' and 35 or t.speed) * 60 + (tier == 'van' and 8 or t.slack))
         board[#board + 1] = offer
         added = added + 1
@@ -110,7 +114,7 @@ function M.begin(c, offer, personal, companyGarage, mode, independent)
   if independent and reputation < M.INDEPENDENT_REP then return false, 'Build 20 reputation with this company to unlock independent contracts.' end
   local shift = { id = economy.nextId(c, 'shift'), companyId = companyId, tier = offer.tier or 'van', companyName = offer.name, yard = offer.yard,
     jobs = M.copyJobs(offer.jobs), index = 1, completed = 0, failed = 0, quality = 0, vehicleDamage = 0, gross = 0, phase = independent and 'working' or 'preparing',
-    personalGarage = personal, previousMode = mode, ownerOperator = independent == true, share = independent and 1 or M.SHARE }
+    personalGarage = personal, previousMode = mode, ownerOperator = independent == true, share = independent and 1 or M.shareFor(offer.tier or 'van') }
   c.employment = shift
   return true
 end

@@ -9,7 +9,7 @@ M.NEAR_KM = 1.5          -- the passenger waits this close to you (straight km)
 M.KM = { 1.5, 12 }       -- nominal range, converted to road km below
 M.ROAD_FACTOR = 1.3
 M.defaults = { nearKm = M.NEAR_KM, minKm = M.KM[1] * M.ROAD_FACTOR, maxKm = M.KM[2] * M.ROAD_FACTOR }
-M.BASE, M.PER_KM = 50, 18
+M.BASE, M.PER_KM = 45, 13   -- career review 2026-11-18: about 550 CZK/h in an ordinary car, near food
 M.PASSENGER_BONUS = 0.20 -- each passenger after the first adds 20% to the base-and-distance fare
 M.SPEED_KMH, M.SLACK_MIN = 35, 6
 M.OFFERS = 3
@@ -26,6 +26,16 @@ M.MODES = {
   comfort = { name = 'Comfort', time = 1.3, pay = 1.0, late = 0.5, floor = 0.3, slope = 0.007, fastTip = 0, smoothTip = 0.15, share = 0.5 },
   rush = { name = 'Rush', time = 0.8, pay = 1.25, late = 2.5, floor = 1, slope = 0, fastTip = 2, smoothTip = 0, share = 0.5, speedOnly = true },
 }
+
+-- A nicer car earns a higher fare (Jan, 2026-11-18): the car's value in CZK (garage g.car.value) adds CAR_STEP of the
+-- fare for every doubling above CAR_FROM, at most CAR_MAX. 20 000: +15 %, 40 000: +30 %, 80 000 and more: +45 %.
+M.CAR_FROM, M.CAR_STEP, M.CAR_MAX = 10000, 0.15, 0.45
+function M.carRate(value)
+  value = tonumber(value) or 0
+  if value <= M.CAR_FROM then return 0 end
+  local rate = math.log(value / M.CAR_FROM) / math.log(2) * M.CAR_STEP
+  return math.floor(math.min(M.CAR_MAX, rate) * 100 + 0.5) / 100
+end
 
 -- The rules of a ride's mode (an older ride without one counts as comfort).
 function M.mode(job)
