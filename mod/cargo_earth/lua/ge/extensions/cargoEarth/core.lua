@@ -2395,14 +2395,20 @@ function M.careerState()
   state.reputation = rating.state(S.career)
   state.fines = S.career.fines
   -- every kind of work, what it needs and whether you have it (issue #123)
-  local owned, g = {}, S.career.garage or {}
+  local owned, g = {}, personal or {}   -- during a company shift the garage you own waits in the shift
   if g.car and not g.car.loaner and not g.car.standIn then owned[upkeep.tier(g.car)] = true end
   for _, car in ipairs(g.parked or {}) do if not car.loaner then owned[upkeep.tier(car)] = true end end
   local trusted = false
   for _, co in pairs(S.career.companies or {}) do
     if type(co) == 'table' and (co.reputation or 0) >= employment.INDEPENDENT_REP then trusted = true end
   end
+  -- taxi and tow depend on the vehicle you are in: its passenger seats and its tow hitch (or fifth wheel)
+  local okTaxi, taxiNow = pcall(M.taxiState)
+  local v, tier = freightCarrier()
+  local towOk = v ~= nil and tow.class(tier, tow.hasHitch(v)) ~= nil
   state.work = progress.workTypes(S.career, { owned = owned, firm = fleet.unlocked(S.career), independent = trusted,
+    taxi = okTaxi and type(taxiNow) == 'table' and { ready = taxiNow.eligible == true, why = taxiNow.hint } or nil,
+    tow = { ready = towOk, why = 'The vehicle you drive has no tow hitch.' },
     firmReq = (firm.requirements(S.career, state.debt)), vanGoal = haul.VAN_GOAL, rigidGoal = haul.RIGID_GOAL })
   return state
 end

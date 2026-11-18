@@ -87,7 +87,8 @@ end
 -- (issue #123). perHour: what a typical clean job earns an hour after fuel, from the career review of 2026-11-18
 -- (docs/CAREER_ECONOMY.md, tools/career-economy.py); keep it in step when pay rules change.
 -- facts: owned = { car = true, suv = true, ... } (the kinds of vehicle you own), firm = a firm with a headquarters,
--- firmReq = firm.requirements list, independent = 20 reputation with some company.
+-- firmReq = firm.requirements list, independent = 20 reputation with some company, taxi / tow = { ready, why } for the
+-- vehicle you are in (left out: not known).
 M.WORK = {
   { id = 'food', mode = 'courier', name = 'Food delivery', perHour = 500,
     what = 'Pick up a meal or groceries at a restaurant or shop and bring it to the customer before the timer runs out. Rough driving spoils food.',
@@ -149,6 +150,8 @@ function M.workTypes(career, facts)
       ready, missing = false, van < VAN_GOAL and string.format('Van hauls: %d of %d.', van, VAN_GOAL)
         or string.format('Box truck hauls: %d of %d.', rigid, RIGID_GOAL)
     end
+    local now = (w.id == 'taxi' or w.id == 'tow') and facts[w.id]
+    if now and not now.ready then ready, missing = false, now.why end
     if w.id == 'independent' and not facts.independent then
       ready, missing = false, 'No company trusts you that far yet.'
     elseif w.id == 'firm' and not facts.firm then

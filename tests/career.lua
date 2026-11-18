@@ -3032,6 +3032,8 @@ test('career review: company trucks keep a bigger share, and each work type says
   assert(w.food.ready and w.taxi.ready and w.bus.ready and w.company.ready)
   assert(not w.parcel.ready and w.parcel.missing == 'You own no van.')
   assert(not w.rigid.ready and not w.semi.ready and not w.firm.ready and not w.drivers.ready)
+  w = byId(progress.workTypes({}, { taxi = { ready = false, why = 'No seats.' }, tow = { ready = false, why = 'No hitch.' } }))
+  assert(not w.taxi.ready and w.taxi.missing == 'No seats.' and not w.tow.ready and w.tow.missing == 'No hitch.')
   w = byId(progress.workTypes({ hauls = { van = 2 } }, { owned = { rigid = true } }))
   assert(w.rigid.missing == 'Van hauls: 2 of 5.', 'an owned box truck still waits for the van hauls')
   w = byId(progress.workTypes({ hauls = { van = 5, rigid = 10 } }, { owned = { semi = true }, firm = true, independent = true }))
