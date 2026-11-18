@@ -138,8 +138,10 @@ The same command-line options listed for Windows work on Linux. The helper is in
 1. Download `cargo_earth_career_<version>.zip` and `cargo_earth_helper_<version>.py` from the [latest release](https://github.com/themazzy/cargo-earth/releases/latest).
 2. Close the game. Put the ZIP as it is (do not unpack it) in your BeamNG user folder's `mods` directory (for example `%LOCALAPPDATA%\BeamNG\BeamNG.drive\current\mods`). Keep only one Cargo Earth version there.
 3. Install Python 3 and the helper's libraries: `python -m pip install duckdb fsspec`.
-4. Register the helper with BeamNG.Earth: copy [`helper/local.json.example`](helper/local.json.example) to `%LOCALAPPDATA%\beamng-earth\addons\local.json` (or add its entry to the file there) and set `"file"` to where you saved the helper. Or run it yourself before playing: `python cargo_earth_helper_<version>.py` (it listens on `127.0.0.1:47820`; keep the window open).
+4. Register the helper with BeamNG.Earth: copy [`helper/local.json.example`](helper/local.json.example) to `%LOCALAPPDATA%\beamng-earth\addons\local.json` (or add its entry to the file there) and set `"file"` to where you saved the helper. Or run it yourself before playing: `python cargo_earth_helper_<version>.py` (it listens on `127.0.0.1:47821`; keep the window open).
 5. Continue with **First start** below.
+
+Cargo Earth uses **47821** to coexist with EarthRadio on **47820**. Update both Cargo Earth and its helper, then restart BeamNG.Earth to close the old helper process. CargoEarthSetup synchronizes the launchers, Cargo Earth's configuration and BeamNG.Earth's saved add-on options, preserving other custom ports. Old `--port 47820` arguments and `helperPort: 47820` configurations migrate to 47821. For a custom port, keep the helper's `--port`, the add-on's Port option and `settings/cargoEarth/config.json`'s `helperPort` equal. See [EarthRadio compatibility](docs/EARTHRADIO_COMPATIBILITY.md) for the remaining antenna-reload check.
 
 ### First start
 

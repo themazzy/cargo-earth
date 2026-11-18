@@ -217,6 +217,46 @@ test('the game\'s part lookup gets the slot and the part, only while the switch 
   dash.setOn(false)
 end)
 
+test('unloading leaves later add-on wrappers installed and old Cargo wrappers become passive', function()
+  reset(nil)
+  dash.setOn(true)
+  dash.setSpot('pigeon', assert(dash.findSpot(car(EYE), EYE)))
+  local ctx = {preloadedDirs = {'/vehicles/pigeon/'}}
+  for _, radioFirst in ipairs({false, true}) do
+    local io = {
+      getPart = function(_, name) if name == 'pigeon' then return {slotType = 'main', slots2 = {}} end end,
+      getAvailableParts = function() return {} end,
+      getAvailableSlotNameMap = function() return {} end,
+      getCompatiblePartNamesForSlot = function() return {'base'}, {} end,
+    }
+    local radio = {}
+    local function installRadio()
+      for name, f in pairs(io) do
+        local original = f
+        radio[name] = function(...) return original(...) end
+        io[name] = radio[name]
+      end
+    end
+    if radioFirst then installRadio() end
+    assert(dash.install(io))
+    if not radioFirst then installRadio() end
+    local top = io.getPart
+    assert(dash.install(io) and io.getPart == top, 'install is idempotent under a later wrapper')
+    assert(#io.getPart(ctx, 'pigeon').slots2 == 1)
+    dash.uninstall()
+    for name, wrapper in pairs(radio) do assert(io[name] == wrapper, name .. ' keeps EarthRadio installed') end
+    assert(#io.getPart(ctx, 'pigeon').slots2 == 0, 'retained Cargo hook no longer injects slots')
+    assert(io.getPart(ctx, dash.PART) == nil and io.getAvailableParts(ctx)[dash.PART] == nil)
+    assert(io.getAvailableSlotNameMap(ctx)[dash.SLOT] == nil)
+    assert(io.getCompatiblePartNamesForSlot(ctx, {name = dash.SLOT})[1] == 'base')
+    assert(dash.install(io), 'Cargo can reload on top of the retained chain')
+    assert(#io.getPart(ctx, 'pigeon').slots2 == 1, 'reinstall injects the phone once')
+    dash.uninstall()
+    assert(io.getPart == radio.getPart and #io.getPart(ctx, 'pigeon').slots2 == 0)
+  end
+  dash.setOn(false)
+end)
+
 test('a loaded car keeps only first groups; the car as it loaded keeps them all', function()
   -- after loading, the game deletes node.group and leaves node.firstGroup (a number from vdata.groups)
   local vdata = { groups = { ferax_dash = 3, ferax_body = 0 },

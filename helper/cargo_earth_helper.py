@@ -6,7 +6,7 @@ the parts of the files it needs, with HTTP Range requests, cached on disk) and s
 http://127.0.0.1:<port>. Where a place has no addresses in Overture, houses (building outlines) are the customers.
 
 Run it as a BeamNG.Earth add-on (its Add-ons page, kind "companion": BeamNG.Earth's own Python runs it, "Start with
-BeamNG.Earth" starts it every time), or by hand:  python3 cargo_earth_helper.py [--port 47820] [--cache DIR]
+BeamNG.Earth" starts it every time), or by hand:  python3 cargo_earth_helper.py [--port 47821] [--cache DIR]
 Needs duckdb and fsspec (both come with BeamNG.Earth).  python3 cargo_earth_helper.py --test LAT,LON  builds one area
 and prints what it found.
 
@@ -2002,9 +2002,26 @@ def bind(host, port, handler=BaseHTTPRequestHandler):
         sys.exit(2)
 
 
+DEFAULT_PORT, LEGACY_PORT = 47821, 47820
+
+
+def helper_port(value):
+    """Retire the old EarthRadio-conflicting port, including saved launch arguments and environment settings."""
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("port must be an integer") from None
+    if not 1024 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1024 and 65535")
+    if port == LEGACY_PORT:
+        log(f"port {LEGACY_PORT} is reserved for EarthRadio; using {DEFAULT_PORT}. Update CargoEarthSetup to refresh launchers and the add-on page.")
+        return DEFAULT_PORT
+    return port
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--port", type=int, default=int(os.environ.get("BNE_CARGO_PORT", "47820")))
+    ap.add_argument("--port", type=helper_port, default=os.environ.get("BNE_CARGO_PORT", str(DEFAULT_PORT)))
     here = os.path.dirname(os.path.abspath(__file__))
     ap.add_argument("--cache", default=os.environ.get("BNE_CARGO_CACHE") or os.path.join(here, "cache"))
     ap.add_argument("--release", default=RELEASE, help="Overture release (default: the pinned one, else the latest)")

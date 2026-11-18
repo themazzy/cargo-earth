@@ -41,6 +41,28 @@ class Connection:
         return self.rows
 
 
+class HelperPortTests(unittest.TestCase):
+    def test_default_environment_and_legacy_launch_arguments(self):
+        for arguments, environment, expected in (
+            ([], {}, 47821),
+            (['--port', '47820'], {}, 47821),
+            ([], {'BNE_CARGO_PORT': '47820'}, 47821),
+            ([], {'BNE_CARGO_PORT': '53100'}, 53100),
+            (['--port', '53101'], {'BNE_CARGO_PORT': '53100'}, 53101),
+        ):
+            with self.subTest(arguments=arguments, environment=environment):
+                with patch.dict(os.environ, environment, clear=True), patch.object(helper.sys, 'argv', ['helper.py'] + arguments), \
+                     patch.object(helper, 'bind', side_effect=RuntimeError('stop before network')) as bind:
+                    with self.assertRaisesRegex(RuntimeError, 'stop before network'):
+                        helper.main()
+                    bind.assert_called_once_with('127.0.0.1', expected)
+
+    def test_invalid_ports_are_rejected(self):
+        for value in ('not-a-port', '99999', '0', '1234.5'):
+            with self.subTest(value=value), self.assertRaises(helper.argparse.ArgumentTypeError):
+                helper.helper_port(value)
+
+
 class HelperTests(unittest.TestCase):
     def test_business_classification(self):
         self.assertEqual(helper.depot_kind("warehouse", None, None), "yard")
@@ -628,6 +650,7 @@ class NetworkAndStorageTests(unittest.TestCase):
             a, b = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b"
             radio.state["CZ"] = [[a, "A", f"http://127.0.0.1:{up.server_port}/s", "MP3", 0, "", ""],
                                  [b, "B", f"http://127.0.0.1:{up.server_port}/page", "MP3", 0, "", ""]]
+            radio._api = lambda path: []  # Unknown UUIDs must not make a live Radio Browser request in this fixture.
             srv = helper.bind("127.0.0.1", 0)
             areas = type("Areas", (), {"budget": type("Budget", (), {"stats": {}})()})()
             threading.Thread(target=helper.serve, args=(areas, "r", 0), kwargs={"radio": radio, "srv": srv},

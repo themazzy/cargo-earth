@@ -3,4 +3,6 @@
   "summary": "Restaurants, shops, workplaces, fuel stations, speed cameras, customer addresses and local radio anywhere in the world for the Cargo Earth mod.",
   "licence": "MIT", "asset": "^cargo_earth_helper.*\\.py$",
   "local": {"file": "C:\\Users\\YOU\\Documents\\cargo_earth_helper_0.10.3.py", "tag": "v0.10.3"},
-  "run": {"args": [], "port": 47820, "page": "http://127.0.0.1:47820/"}}]}
+  "options": [{"key": "port", "label": "Port", "type": "int", "default": 47821, "min": 1024, "max": 65535,
+    "arg": "--port", "help": "Must match Cargo Earth's config.json helperPort. Port 47820 is reserved for EarthRadio."}],
+  "run": {"args": [], "port": 47821, "page": "http://127.0.0.1:{port}/"}}]}

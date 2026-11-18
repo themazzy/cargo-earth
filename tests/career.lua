@@ -3965,7 +3965,7 @@ test('one radio for both phones: the UI page plays it while it checks in, else t
   local ask, command, enabled, commanding = helper.ask, helper.command, helper.enabled, helper.commanding
   local cmds, stored = {}, nil
   local host, port = helper.HOST, helper.PORT
-  helper.enabled, helper.HOST, helper.PORT = true, '127.0.0.1', 47820
+  helper.enabled, helper.HOST, helper.PORT = true, '127.0.0.1', 47821
   helper.ask = function() end
   helper.command = function(path, cb) cmds[#cmds + 1] = { path, cb } end
   helper.commanding = function() return false end
