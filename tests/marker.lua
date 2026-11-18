@@ -1,10 +1,11 @@
 -- Stop rings sit on the ground under trees, pylons and roofs, and the stop zone is a short column (issue #118).
 local saved = { castRayStatic = castRayStatic, vec3 = vec3, ColorF = ColorF, ColorI = ColorI, String = String,
   debugDrawer = debugDrawer, map = map, earth = package.loaded['cargoEarth/earth'], marker = package.loaded['cargoEarth/marker'] }
-local function ground(x, y) return 100 + 0.08 * x + 0.03 * y end
+local ground, surfaces
+ground = function(x, y) return 100 + 0.08 * x + 0.03 * y end
 -- every surface at x, y: the sloped ground, a building over the address (roof 12 m up), a tree crown at the
 -- ring's east edge and a power pylon on its north edge
-local function surfaces(x, y)
+surfaces = function(x, y)
   local g = ground(x, y)
   local list = { g }
   if math.abs(x) < 6 and math.abs(y) < 6 then list[#list + 1] = g + 12 end
@@ -58,6 +59,31 @@ assert(marker.offLevel(bridge, stop), 'a bridge over the stop does not count')
 local under = { lat = 50, lon = 14, x = 5, y = 0, z = ground(5, 0) - 6, anchorLat = 50, anchorLon = 14 }
 assert(marker.offLevel(under, stop), 'a road under the stop does not count')
 assert(marker.heightGap(p, { g = { 50, 14, x = 1, y = 1 } }) == nil, 'another stop has no height yet')
+
+-- a steep street (15 %): the first ring point is a whole radius from the centre, and a sloping depot yard
+ground = function(x, y) return 100 + 0.15 * x end
+surfaces = function(x, y) return { ground(x, y), ground(x, y) + 9 } end
+marker.reset()
+outer = nil
+debugDrawer.drawLineInstance = function(_, a) outer = outer or {}; outer[#outer + 1] = a end
+local steep = { lat = 50, lon = 14, x = 0, y = 5, z = ground(0, 5) + 0.8, anchorLat = 50, anchorLon = 14 }
+marker.draw(steep, stop, 'delivery', true, 30, false, 0)
+debugDrawer.drawLineInstance = real
+for _, pt in ipairs(outer) do
+  assert(math.abs(pt.z - ground(pt.x, pt.y) - 0.18) < 0.05,
+    string.format('steep ring point at %.1f, %.1f is %.2f m off the ground', pt.x, pt.y, pt.z - ground(pt.x, pt.y)))
+end
+local uphill = { lat = 50, lon = 14, x = 28, y = 0, z = ground(28, 0) + 0.8, anchorLat = 50, anchorLon = 14 }
+assert(not marker.offLevel(uphill, stop), 'uphill inside a steep ring counts')
+map = { findClosestRoad = function() return 'a', 'b' end,
+  getMap = function() return { nodes = { a = { pos = vec3(-50, 0, ground(-50, 0)) }, b = { pos = vec3(50, 0, ground(50, 0)) } } } end }
+local yard = { g = { 50, 14, x = 0, y = 0 }, n = 'Yard' }
+marker.reset()
+marker.draw(steep, yard, 'pickup', false, 35, false, 0)
+local truck = { lat = 50, lon = 14, x = 30, y = 0, z = ground(30, 0) + 0.8, anchorLat = 50, anchorLon = 14 }
+assert(not marker.offLevel(truck, yard), 'uphill in a sloping depot yard counts: ' .. tostring(marker.heightGap(truck, yard)))
+truck.z = truck.z + 6
+assert(marker.offLevel(truck, yard), 'a bridge over the yard does not count')
 
 castRayStatic, vec3, ColorF, ColorI, String = saved.castRayStatic, saved.vec3, saved.ColorF, saved.ColorI, saved.String
 debugDrawer, map = saved.debugDrawer, saved.map

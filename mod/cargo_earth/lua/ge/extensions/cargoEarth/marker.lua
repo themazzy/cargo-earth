@@ -23,6 +23,8 @@ local COLORS = {
 }
 
 local pickup, delivery, depot = {}, {}, {}
+local depotDirections = {}
+for i = 1, 8 do depotDirections[i] = { math.cos(math.pi * i / 4), math.sin(math.pi * i / 4) } end
 local warned = false
 local ringDirections = {}
 for i = 1, RING_SEGMENTS do
@@ -162,6 +164,28 @@ end
 -- crown or a roof is not).
 local POINT_STEP = 3
 
+-- The ground at x, y, `apart` metres from a point at height `ref`: the surface nearest `ref`, and no further from
+-- it than a steep street allows over that distance (else `ref`).
+local function groundNear(x, y, ref, apart)
+  local limit = math.max(POINT_STEP, 0.25 * apart)
+  local z = surfaceZ(x, y, ref, ref + 4 + limit, 12 + 2 * limit)
+  if not z or math.abs(z - ref) > limit then return ref end
+  return z
+end
+
+-- Walk round a circle of `radius` about x, y, z (the centre's ground). Returns the ground height of each point
+-- (directions from `dirs`) and the slope of the plane through them: z = z0 + sx * dx + sy * dy.
+local function groundRing(x, y, z, radius, dirs)
+  local heights, prev, sumC, sumS = {}, z, 0, 0
+  local seg = 2 * radius * math.sin(math.pi / #dirs)
+  for i, dir in ipairs(dirs) do
+    local h = groundNear(x + dir[1] * radius, y + dir[2] * radius, prev, i == 1 and radius or seg)
+    heights[i], prev = h, h
+    sumC, sumS = sumC + (h - z) * dir[1], sumS + (h - z) * dir[2]
+  end
+  return heights, 2 * sumC / (#dirs * radius), 2 * sumS / (#dirs * radius)
+end
+
 local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
   if distance(x, y, p) > RING_RANGE then return end
   if now >= cache.nextGround then
@@ -172,22 +196,17 @@ local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
     if not z and distance(x, y, p) <= 50 then z = surfaceZ(p.x, p.y, p.z - 0.5, p.z + 2, 12) end
     if z then
       local outer, inner = {}, {}
-      local prev = z
-      local sumC, sumS = 0, 0
+      local heights, sx, sy = groundRing(x, y, z, radius, ringDirections)
       for i, dir in ipairs(ringDirections) do
-        local ox, oy = x + dir[1] * radius, y + dir[2] * radius
-        local oz = surfaceZ(ox, oy, prev, prev + 4, 12)
-        if not oz or math.abs(oz - prev) > POINT_STEP then oz = prev end
+        local oz = heights[i]
         local ix, iy = x + dir[1] * (radius - RING_WIDTH), y + dir[2] * (radius - RING_WIDTH)
         local iz = surfaceZ(ix, iy, oz, oz + 2, 6)
         if not iz or math.abs(iz - oz) > 1 then iz = oz end
-        outer[i], inner[i] = vec3(ox, oy, oz + SURFACE_LIFT), vec3(ix, iy, iz + SURFACE_LIFT)
-        sumC, sumS = sumC + (oz - z) * dir[1], sumS + (oz - z) * dir[2]
-        prev = oz
+        outer[i] = vec3(x + dir[1] * radius, y + dir[2] * radius, oz + SURFACE_LIFT)
+        inner[i] = vec3(ix, iy, iz + SURFACE_LIFT)
       end
       -- the ground inside the ring as a tilted plane through the centre: the stop counts only on that level
-      cache.cx, cache.cy, cache.cz = x, y, z
-      cache.slopeX, cache.slopeY = 2 * sumC / (RING_SEGMENTS * radius), 2 * sumS / (RING_SEGMENTS * radius)
+      cache.cx, cache.cy, cache.cz, cache.slopeX, cache.slopeY = x, y, z, sx, sy
       cache.outer, cache.inner = outer, inner
     end
   end
@@ -235,7 +254,12 @@ local function drawDepotPickup(p, stop, radius, inZone, now)
   if now >= depot.nextGround then
     local ref = distance(x, y, p) <= RING_RANGE and roadZNear(x, y, p.z) or nil
     depot.z = surfaceZ(x, y, ref, (ref or p.z) + 500, 2000) or depot.z
-    depot.cx, depot.cy, depot.cz, depot.slopeX, depot.slopeY = x, y, ref and depot.z, 0, 0
+    depot.cx, depot.cy, depot.cz, depot.slopeX, depot.slopeY = x, y, nil, 0, 0
+    if ref and depot.z then
+      -- the yard's tilt from eight ground points across it, so a sloping yard still counts as one level
+      local _, sx, sy = groundRing(x, y, depot.z, math.max(5, radius * 0.6), depotDirections)
+      depot.cz, depot.slopeX, depot.slopeY = depot.z, sx, sy
+    end
     depot.nextGround = now + REFRESH_S
   end
   local z = depot.z or p.z
