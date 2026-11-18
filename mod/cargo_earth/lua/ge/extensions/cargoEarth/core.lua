@@ -3241,9 +3241,12 @@ end
 -- Long hauls: far towns' workplaces for the freight and contract distance settings that reach far (cargoEarth/longhaul).
 -- (M. fields: the main chunk is at Lua's 200-local limit)
 function M.longHaulRing()
-  if S.mode ~= 'trucking' or S.career.employment or not S.career.garage.started then return nil end
+  if S.career.employment or not S.career.garage.started then return nil end
+  -- own freight in Freight; company contracts in Freight or while the Companies page is open (any mode)
+  local browsing = S.placesRequestedAt and S.clock - S.placesRequestedAt < 30
+  if S.mode ~= 'trucking' and not browsing then return nil end
   local profiles = {}
-  local tier = freightSettingsTier()
+  local tier = S.mode == 'trucking' and freightSettingsTier()
   if tier == 'van' or tier == 'rigid' or tier == 'semi' then profiles[#profiles + 1] = M.jobOptions('freight_' .. tier) end
   local unlocked = haul.state(S.career).unlocked
   for _, t in ipairs(employment.TIERS) do

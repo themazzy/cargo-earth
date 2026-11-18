@@ -312,6 +312,11 @@ end)
 test('Long hauls: far profiles open the ring, and an unchecked far site can be handed over nearby', function()
   local core, s = fresh()
   assert(core.longHaulRing() == nil, 'not in freight')
+  core.settingsDo('jobRange', 'company_van', {nearKm = 25, minKm = 600, maxKm = 800})
+  s.placesRequestedAt = s.clock
+  assert(#core.longHaulRing() == 1, 'the Companies page wants far contract destinations in any mode')
+  s.placesRequestedAt = nil
+  core.settingsDo('resetJobRange', 'company_van')
   s.mode, s.opts = 'trucking', s.optsByMode.trucking
   assert(core.longHaulRing() == nil, 'normal distances stay local')
   core.settingsDo('jobRange', 'company_van', {nearKm = 25, minKm = 600, maxKm = 800})
