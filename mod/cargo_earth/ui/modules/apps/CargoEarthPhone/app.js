@@ -265,6 +265,12 @@ angular.module('beamng.apps')
     // missing file just leaves the outline underneath showing
     '.cep-thumb i{position:absolute;top:0;left:0;right:0;bottom:0;background:center/cover no-repeat}' +
     '.cep-thumb.big{width:100%;height:0;padding-top:56%;cursor:default;margin-bottom:6px}.cep-thumb.big i{background-size:contain}' +
+    '.cem .cep-scroll.cep-market-list{display:flex}.cep-market-card{flex-shrink:0;display:flex;flex-direction:column;gap:12px;padding:14px;margin:12px 0;border-radius:12px;background:var(--card);min-width:0}' +
+    '.cep-market-card .cep-cartop{flex-direction:column}.cep-market-card .cep-thumb{width:100%;height:130px}' +
+    '.cep-market-card .cep-thumb i{background-size:contain}.cep-market-card .cep-name{font-size:17px;line-height:1.3}' +
+    '.cep-market-card .cep-market-actions{display:flex;flex-direction:column;gap:8px;width:100%}' +
+    '.cep-market-card .cep-market-actions button{min-height:38px;width:100%;white-space:normal}' +
+    '.cep-market-expiry{font-variant-numeric:tabular-nums;margin-top:8px}' +
     '.cep-cartop{display:flex;gap:8px;align-items:flex-start}.cep-cartop>div{flex:1;min-width:0}' +
     '.cep-cardetail{flex:0 0 100%;border-top:1px solid var(--line);padding-top:8px}' +
     '.cep-specs{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:12px}.cep-specs span{color:var(--muted)}.cep-specs b{font-weight:700}' +
@@ -929,7 +935,7 @@ angular.module('beamng.apps')
               '<button class="cep-sm" ng-if="g.fleet.unlocked && !v.driver && !v.loaner" ng-click="openHq()">Hire a driver</button>' +
               '<button class="cep-sm ghost" ng-if="v.driver" ng-click="gdo(\'releaseDriver\', v.id)">Release driver</button></div>' +
           '</div></div>' +
-        '<div ng-if="g && g.started && gview === \'cars\' && !g.parts" class="cep-scroll">' +
+        '<div ng-if="g && g.started && gview === \'cars\' && !g.parts" class="cep-scroll cep-market-list">' +
           // the car being looked at stays on top of the list, so the next one is a tap away
           '<div class="cep-card" ng-if="g.preview"><div class="cep-label">Looking at</div>' +
             '<div class="cep-keyval"><strong style="white-space:normal">{{ g.preview.name }}</strong><strong style="white-space:nowrap">{{ fmt.money(g.preview.price - (g.preview.tradeIn || 0)) }}</strong></div>' +
@@ -957,10 +963,10 @@ angular.module('beamng.apps')
             '<button class="cep-chip" ng-class="{on: cf.sort === \'dear\'}" ng-click="cf.sort = \'dear\'">Dearest</button>' +
             '<button class="cep-chip" ng-class="{on: cf.sort === \'km\'}" ng-click="cf.sort = \'km\'">Fewest km</button>' +
             '<button class="cep-chip" ng-class="{on: cf.sort === \'cond\'}" ng-click="cf.sort = \'cond\'">Best condition</button></div>' +
-          '<div class="cep-sub" ng-if="!cars.length">No cars for sale. New ones come every few minutes.</div>' +
+          '<div class="cep-sub" ng-if="!cars.length">No vehicles are available for these categories.</div>' +
           '<div class="cep-sub" ng-if="cars.length && !shownCars().length">No car fits these filters. ' +
             '<button class="cep-chip" ng-click="cf.kind = null; cf.afford = false">Show all</button></div>' +
-          '<div class="cep-li" ng-repeat="c in shownCars() track by c.id" style="align-items:flex-start;cursor:default;flex-wrap:wrap"><div style="flex:1;min-width:0">' +
+          '<div class="cep-market-card" ng-repeat="c in shownCars() track by c.id"><div style="flex:1;min-width:0">' +
             // the picture and numbers come from the game's vehicle list: nothing is spawned (Look at it does that)
             '<div class="cep-cartop"><button class="cep-thumb" ng-click="cf.detail = (cf.detail === c.id ? null : c.id)" ' +
               'aria-label="Show details" title="Show details"><i ng-if="c.info.preview" ng-style="carPic(c)"></i></button><div>' +
@@ -972,11 +978,12 @@ angular.module('beamng.apps')
             '<div class="cep-jobs" ng-if="cf.help === c.id && kindOf(c)"><div class="cep-label">Jobs it can do</div>' +
               '<ul><li ng-repeat="j in kindOf(c).jobs">{{ j }}</li></ul>' +
               '<div class="cep-sub" ng-if="kindOf(c).locked">{{ kindOf(c).locked }}</div></div>' +
-            '<small>{{ fmt.int(c.km) }} km · condition {{ fmt.cond(c.condition) }} · gone in {{ fmt.left(c.leftMin) }}' +
+            '<small>{{ fmt.int(c.km) }} km · condition {{ fmt.cond(c.condition) }}' +
               '<span ng-if="c.missing !== undefined && c.missing !== null"> · {{ c.missing }} parts missing</span></small>' +
+            '<div class="cep-sub cep-market-expiry">{{ c.held ? "Reserved during your test drive" : "Expires in " + carExpiry(c) + " of play" }}</div>' +
             '<div class="cep-time" style="height:4px;margin-top:5px" ng-class="{warn: c.condition < 0.6, late: c.condition < 0.35}"><i ng-style="{width: (c.condition * 100) + \'%\'}"></i></div></div>' +
             // while looking at a car, only that car can be bought (from the card above) and the deal is fixed
-            '<div style="display:flex;flex-direction:column;gap:5px;align-items:stretch" ng-if="!g.preview">' +
+            '<div class="cep-market-actions" style="align-items:stretch" ng-if="!g.preview">' +
             '<button class="cep-sm" ng-class="{ghost: carPrice(c) > market.money}" ng-click="buyCar(c.id)">' +
               'Buy {{ fmt.money(carPrice(c)) }}</button>' +
             '<button class="cep-sm ghost" ng-click="look(c.id)">Look at it</button></div>' +
@@ -1570,6 +1577,7 @@ angular.module('beamng.apps')
         if (busy || destroyed) return
         if (scope.menuOnly && !scope.panel) return // the Menu app asks only while its window is open
         var now = Date.now()
+        if (scope.panel === 'garage' && scope.gview === 'cars' && !(scope.g && scope.g.parts) && (!scope.min || scope.menuOnly) && now - marketPollAt >= 1000) scope.loadCars()
         if (now - lastPoll < pollGap()) return
         lastPoll = now
         busy = true
@@ -1922,7 +1930,23 @@ angular.module('beamng.apps')
           loadCareer()
         })
       }
-      scope.loadCars = function () { lua('garageDealer', [scope.cf.text || ''], function (r) { scope.market = r || {}; scope.cars = (r && r.cars) || [] }) }
+      var marketBusy = false, marketPollAt = 0
+      scope.loadCars = function () {
+        if (marketBusy || destroyed) return
+        marketBusy = true
+        marketPollAt = Date.now()
+        var filter = scope.cf.text || ''
+        lua('garageDealer', [filter], function (r) {
+          marketBusy = false
+          if (destroyed || filter !== (scope.cf.text || '') || !r || r._phoneError) return
+          scope.market = r
+          scope.cars = r.cars || []
+        })
+      }
+      scope.carExpiry = function (car) {
+        var seconds = Math.max(0, car.leftS || 0)
+        return Math.floor(seconds / 60) + ':' + ('0' + (seconds % 60)).slice(-2)
+      }
       scope.carPrice = function (car) { return car.price - (scope.purchase.keep ? 0 : (scope.market.tradeIn || 0)) }
       // the used-car list: vehicle kinds (type, cargo, jobs for the ?) and the tap filters
       scope.kindOf = function (car) {
