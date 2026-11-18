@@ -2446,7 +2446,10 @@ function M.careerState()
     local need = here == 'suv' and require('cargoEarth/parts').MIN_SLOTS or 1
     local another = false
     for _, car in ipairs(g.parked or {}) do if not car.loaner and upkeep.tier(car) == here then another = true end end
-    if not another and haul.capacity(S.storage.rows, 'parcel') < need then boxless[here] = true end
+    local rows = S.storage.rows
+    -- a box truck may carry fluid or dry bulk instead (haul.freight takes 100 L or more)
+    local bulk = here == 'rigid' and (haul.capacity(rows, 'fluid') >= 100 or haul.capacity(rows, 'dryBulk') >= 100)
+    if not another and not bulk and haul.capacity(rows, 'parcel') < need then boxless[here] = true end
   end
   state.work = progress.workTypes(S.career, { owned = owned, firm = fleet.unlocked(S.career), independent = trusted, boxless = boxless,
     taxi = okTaxi and type(taxiNow) == 'table' and { ready = taxiNow.eligible == true, why = taxiNow.hint } or nil,
