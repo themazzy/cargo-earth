@@ -43,3 +43,21 @@ box truck and every company contract, and a company truck earned 80-90 % of your
 
 With shorter unlocks and these prices the first own tractor comes after about 12 hours of play (about 7-8 h of
 unlock hauls, then the rest of the money), and a used van pays for itself in about 8-10 hours.
+
+## Experience pay
+
+Every kind of work pays more the more of it you do (`experience.lua`). The bonus grows evenly with each finished job up to a
+ceiling, and later-unlocked driving work has the higher ceilings, so the ladder keeps its order:
+
+| Work | Ceiling | Jobs to reach it |
+| --- | --- | --- |
+| Food, taxi, parts runs | +10 % | 100 / 60 / 40 |
+| Bus lines, parcel routes | +10 % | 30 |
+| Tow jobs | +15 % | 30 |
+| Vans (own or company) | +15 % | 40 |
+| Box trucks | +20 % | 40 |
+| Tractors | +25 % | 40 |
+
+Your own jobs get it on the offer ("+X for your experience"). Company contracts and bus lines raise the driver's share of
+the contract instead (never past the whole contract). The Progress page's Work types cards show the jobs done and the
+current bonus. Taxi rides also keep the nicer-car bonus.

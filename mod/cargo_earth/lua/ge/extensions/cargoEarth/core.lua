@@ -1599,6 +1599,10 @@ local function finishDelivery(force)
     if not economy.post(c, pay + tip - toDebt, 'delivery', j.paymentId, j.cargoName) then return end
   end
   local rankUp = progress.complete(c, j)
+  if not j.companyShift then   -- company shifts count when they settle (employment.settle)
+    local experience = require('cargoEarth/experience')
+    experience.add(c, experience.kind(j))
+  end
   local truckUnlock = j.haul and haul.complete(c, j.haul.tier)
   local today = os.date('%Y-%m-%d')
   if type(c.today) ~= 'table' or c.today.date ~= today then c.today = { date = today, earned = 0, count = 0 } end
@@ -1747,8 +1751,8 @@ function M.busState()
   for _, o in ipairs(not shift and S.busBoard or {}) do
     local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
     out.lines[#out.lines + 1] = { id = o.id, ref = o.bus.ref, name = o.bus.name, from = o.bus.from, to = o.bus.to,
-      singleDirection = o.bus.singleDirection, limited = o.bus.limited, stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.SHARE / 5 + 0.5) * 5,
-      fares = math.floor((o.fares or 0) * employment.SHARE / 5 + 0.5) * 5, minutes = o.minutes, depot = o.yard.n,
+      singleDirection = o.bus.singleDirection, limited = o.bus.limited, stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.shareFor('bus', S.career) / 5 + 0.5) * 5,
+      fares = math.floor((o.fares or 0) * employment.shareFor('bus', S.career) / 5 + 0.5) * 5, minutes = o.minutes, depot = o.yard.n,
       depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= bus.DEPOT_RADIUS and not p.camera
         and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour }
   end
@@ -2274,6 +2278,7 @@ local function phoneTick()
   elseif j.kind == 'food' and rating.premium(S.career) and math.random(rating.PREMIUM_ONE_IN) == 1 then
     rating.makePremium(j)
   end
+  require('cargoEarth/experience').apply(S.career, j)   -- experience pay, once per offer
   ph.incoming = { job = j, expiresAt = S.clock + M.PHONE.acceptS }
   S.phoneHidden = false   -- a ringing phone shows itself
   phoneSound('offer')
@@ -2299,7 +2304,7 @@ local function incomingInfo(inc)
     trailerBonus = j.trailerBonus,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
-    fuelAllowance = j.fuelAllowance, carBonus = j.carBonus, carRate = j.carRate,
+    fuelAllowance = j.fuelAllowance, carBonus = j.carBonus, carRate = j.carRate, expBonus = j.expBonus, expRate = j.expRate,
     trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or (j.haul and j.haul.trailerName) or (S.idx and S.idx.trailers[j.trailer]) or j.trailer) or nil,
     leftS = math.max(0, math.floor(inc.expiresAt - S.clock + 0.5)), totalS = M.PHONE.acceptS }
 end
@@ -2333,7 +2338,8 @@ function M.nearContracts(p)
   table.sort(picked, function(a, b) if a.km == b.km then return a.offer.id < b.offer.id end return a.km < b.km end)
   for _, r in ipairs(picked) do
     local offer, km = r.offer, r.km
-    out[#out + 1] = { id = offer.id, name = offer.name, km = math.floor(km * 10 + 0.5) / 10, wages = offer.wages, minutes = offer.minutes,
+    out[#out + 1] = { id = offer.id, name = offer.name, km = math.floor(km * 10 + 0.5) / 10, minutes = offer.minutes,
+      wages = math.floor(offer.gross * employment.shareFor(offer.tier or 'van', S.career) + 0.5),
       vehicle = offer.vehicle or haul.loaners.van.name,
       atYard = km * 1000 <= employment.RADIUS and not p.camera and (p.speed or 0) <= M.STOP_SPEED }
   end
@@ -2441,7 +2447,7 @@ function M.placesState()
     local km = p and jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) or nil
     out.companies[#out.companies + 1] = { id = offer.id, name = offer.name, yard = offer.yard.n,
       vehicle = offer.vehicle or haul.loaners.van.name, van = (offer.tier or 'van') == 'van',
-      km = km, routeKm = offer.km, wages = offer.wages, minutes = offer.minutes,
+      km = km, routeKm = offer.km, wages = math.floor(offer.gross * employment.shareFor(offer.tier or 'van', c) + 0.5), minutes = offer.minutes,
       reputation = company and company.reputation or 0,
       independentPay = offer.gross, independentUnlocked = company ~= nil and company.reputation >= employment.INDEPENDENT_REP,
       atYard = km and km * 1000 <= employment.RADIUS and not p.camera and (p.speed or 0) <= M.STOP_SPEED }

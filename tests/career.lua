@@ -5065,3 +5065,35 @@ test('used-car list: picture and numbers come from the game list without a spawn
   gamecar._reset()
   assert(ok, err)
 end)
+
+test('experience pay grows with each job of a kind, higher for later-unlocked work', function()
+  local experience = require('cargoEarth/experience')
+  local employment = require('cargoEarth/employment')
+  local c = {}
+  assert(experience.rate(c, 'semi') == 0 and experience.kind({ kind = 'food' }) == 'food')
+  assert(experience.kind({ taxi = {} }) == 'taxi' and experience.kind({ route = {} }) == 'parcel')
+  assert(experience.kind({ partsRun = true }) == 'parts' and experience.kind({ haul = { tier = 'rigid' } }) == 'rigid')
+  assert(experience.kind({ haul = { tier = 'car' } }) == nil)
+  experience.add(c, 'food', 50)
+  assert(experience.rate(c, 'food') == 0.05)
+  experience.add(c, 'food', 500)
+  assert(experience.rate(c, 'food') == 0.10, 'capped')
+  experience.add(c, 'semi', 40)
+  assert(experience.rate(c, 'semi') == 0.25 and experience.KINDS.semi.max > experience.KINDS.van.max)
+  local job = experience.apply(c, { kind = 'food', pay = 200 })
+  assert(job.pay == 220 and job.expBonus == 20 and job.expRate == 0.10)
+  experience.apply(c, job)
+  assert(job.pay == 220, 'only once')
+  assert(experience.apply(c, { kind = 'food', pay = 200, companyShift = 's1' }).pay == 200, 'company jobs are paid by share')
+  -- company work: the driver's share grows, never past the whole contract
+  assert(employment.shareFor('semi', c) == 0.65 * 1.25 and employment.shareFor('semi') == 0.65)
+  assert(employment.shareFor('bus', c) == employment.SHARE)
+  c.experience.van = 1000
+  assert(employment.shareFor('van', c) == math.min(1, employment.SHARE * 1.15))
+  -- the Progress page shows it per work type; company van contracts share the van's experience
+  local progress = require('cargoEarth/progress')
+  local rows = {}
+  for _, w in ipairs(progress.workTypes(c, { owned = {} })) do rows[w.id] = w end
+  assert(rows.food.exp.jobs == 550 and rows.food.exp.rate == 0.10 and rows.company.exp.rate == 0.15)
+  assert(rows.firm.exp == nil)
+end)

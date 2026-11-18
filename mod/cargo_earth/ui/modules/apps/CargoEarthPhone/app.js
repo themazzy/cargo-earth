@@ -668,7 +668,8 @@ angular.module('beamng.apps')
             '<div class="cep-sub">{{ fmt.text(w.what) }}</div>' +
             '<div class="cep-sub"><b>Needs:</b> {{ fmt.text(w.needs) }}</div>' +
             '<div class="cep-sub" ng-if="!w.ready && w.missing" style="color:var(--tomato)">{{ fmt.text(w.missing) }}</div>' +
-            '<div class="cep-sub" ng-if="w.perHour">About {{ fmt.money(w.perHour) }} an hour</div></div>' +
+            '<div class="cep-sub" ng-if="w.perHour">About {{ fmt.money(w.perHour) }} an hour</div>' +
+            '<div class="cep-sub" ng-if="w.exp">Experience: {{ w.exp.jobs }} jobs, +{{ fmt.pct(w.exp.rate) }} pay (up to +{{ fmt.pct(w.exp.max) }} after {{ w.exp.full }})</div></div>' +
           '<div class="cep-label">Cargo milestones</div>' +
           '<div class="cep-card" ng-repeat="goal in career.cargo track by goal.id">' +
             '<div class="cep-keyval"><strong>{{ goal.name }}</strong>' +
@@ -1327,6 +1328,7 @@ angular.module('beamng.apps')
             '{{ s.incoming.special.note }}</div>' +
           '<div class="cep-sub" ng-if="s.incoming.fuelAllowance">+{{ fmt.money(s.incoming.fuelAllowance) }} toward your fuel</div>' +
           '<div class="cep-sub" ng-if="s.incoming.carBonus">+{{ fmt.money(s.incoming.carBonus) }} for a nicer car ({{ fmt.pct(s.incoming.carRate) }})</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.expBonus">+{{ fmt.money(s.incoming.expBonus) }} for your experience ({{ fmt.pct(s.incoming.expRate) }})</div>' +
           '<div class="cep-sub" ng-if="s.incoming.reputationPay > 1">+{{ fmt.pct(s.incoming.reputationPay - 1) }} for your reputation</div>' +
           '<div class="cep-sub" ng-if="s.incoming.reputationPay < 1">−{{ fmt.pct(1 - s.incoming.reputationPay) }} for your reputation</div>' +
           '<div class="cep-sub" ng-if="s.incoming.handling">{{ s.incoming.handling }} cargo<span ng-if="s.incoming.handling === \'Fragile\'"> · avoid hard jolts</span></div>' +

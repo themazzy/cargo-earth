@@ -131,6 +131,8 @@ M.WORK = {
     needs = 'Your firm with a headquarters, 350 CZK per hire and a vehicle for each.' },
 }
 
+-- company van contracts share the van's experience
+local EXP_KIND = { company = 'van' }
 function M.workTypes(career, facts)
   facts = facts or {}
   local owned = facts.owned or {}
@@ -164,7 +166,7 @@ function M.workTypes(career, facts)
     end
     local needs = w.needs:gsub('{van}', tostring(VAN_GOAL)):gsub('{rigid}', tostring(RIGID_GOAL))
     out[#out + 1] = { id = w.id, mode = w.mode, name = w.name, what = w.what, needs = needs, perHour = w.perHour,
-      ready = ready, missing = missing }
+      ready = ready, missing = missing, exp = require('cargoEarth/experience').state(career, EXP_KIND[w.id] or w.id) }
   end
   return out
 end
