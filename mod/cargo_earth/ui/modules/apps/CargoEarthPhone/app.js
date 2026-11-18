@@ -291,6 +291,7 @@ angular.module('beamng.apps')
     '.cep-eq i{width:3px;height:7px;background:var(--tomato);animation:cepEq .9s ease-in-out 4}.cep-eq i:nth-child(2){animation-delay:.3s}.cep-eq i:nth-child(3){animation-delay:.6s}' +
     '@keyframes cepEq{0%,100%{height:3px}50%{height:12px}}' +
     '.cep-input{flex:1;min-width:0;border:1.5px solid var(--line);border-radius:10px;padding:7px 10px;font:inherit;font-size:13px;background:#fff}' +
+    '.cep-job-input{display:block;width:100%;box-sizing:border-box;margin-top:5px}' +
     '.cep-stars{color:#e0a100;letter-spacing:1px;font-size:15px;white-space:nowrap}.cep-stars.big{font-size:24px}' +
     '.cep-stars i{font-style:normal;color:var(--line)}' +
     '.cep-premium{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;background:#e0a100;color:#fff;font-size:10px;font-weight:800}' +
@@ -1021,24 +1022,27 @@ angular.module('beamng.apps')
         '<div class="cep-center" ng-if="st.reviewingParts">' +
           '<div class="cep-sub">Confirm or cancel your parts preview in Garage to change these settings.</div>' +
           '<button class="cep-btn go" ng-click="setTab(\'garage\')">Review parts</button></div>' +
-        '<div class="cep-scroll" ng-if="!st.reviewingParts">' +
-        '<div class="cep-card" ng-if="st.paused"><div class="cep-sub">Job settings, speed cameras and pausing come with your save. ' +
-          'Load it on the phone to change them. Dark mode, the phone on the dashboard and the help below work now.</div></div>' +
-        '<div ng-if="!st.paused">' +
-        '<div class="cep-modes" ng-keydown="$event.keyCode === 27 && (modePicker.settings = false)"><span>Job type</span>' +
-          '<button class="cep-mode-select" aria-label="Job type" aria-haspopup="menu" aria-expanded="{{ modePicker.settings && st.canSwitch }}" ' +
-            'ng-disabled="!st.canSwitch" ng-click="modePicker.settings = !modePicker.settings">{{ workModeName(st.mode) }}<b aria-hidden="true">▾</b></button>' +
-          '<div class="cep-mode-menu" role="menu" aria-label="Job types" ng-if="modePicker.settings && st.canSwitch">' +
-            '<button ng-repeat="m in workModes" role="menuitemradio" aria-checked="{{ st.mode === m.id }}" ng-class="{on: st.mode === m.id}" ' +
-              'ng-click="chooseWorkMode(\'settings\', m.id)">{{ m.name }}</button></div></div>' +
-        '<div class="cep-sub" ng-if="!st.canSwitch">Finish the job or company shift to switch.</div>' +
-        '<div class="cep-label">Orders</div>' +
-        '<div class="cep-li" ng-repeat="it in st.items" style="cursor:default"><div class="cep-name">{{ it.label }}</div>' +
-          '<div class="cep-step2"><button class="cep-sm ghost" ng-click="sdo(\'step\', it.key, -1)">−</button>' +
-          '<b>{{ fmt.num(it.value) }} {{ it.unit }}</b><button class="cep-sm ghost" ng-click="sdo(\'step\', it.key, 1)">+</button></div></div>' +
-        '<div class="cep-li" ng-if="st.mode === \'courier\'" ng-click="sdo(\'autoReach\', !st.autoReach)">' +
-          '<div><div class="cep-name">Look further in the countryside</div><small>Search wider where restaurants are few</small></div>' +
-          '<b>{{ st.autoReach ? "On" : "Off" }}</b></div>' +
+        "<button class=\"cep-sm ghost\" ng-if=\"jobsSettingsOpen\" ng-click=\"closeJobsSettings()\">Back to Settings</button>" +
+        "<div class=\"cep-scroll\" ng-if=\"!st.reviewingParts\">" +
+        "<div ng-if=\"jobsSettingsOpen\" aria-label=\"Jobs settings\">" +
+        "<div class=\"cep-sub\" ng-if=\"st.paused\">Load a career to edit its job settings.</div><div ng-if=\"!st.paused\">" +
+        "<div class=\"cep-modes\" ng-keydown=\"$event.keyCode === 27 && (modePicker.jobs = false)\"><span>Job type to configure</span>" +
+        "<button class=\"cep-mode-select cep-job-select\" aria-label=\"Job type to configure\" aria-haspopup=\"menu\" aria-expanded=\"{{ modePicker.jobs }}\" ng-click=\"modePicker.jobs = !modePicker.jobs\">{{ jobTypeName() }}<b aria-hidden=\"true\">▾</b></button>" +
+        "<div class=\"cep-mode-menu\" role=\"menu\" aria-label=\"Job settings categories\" ng-if=\"modePicker.jobs\">" +
+        "<button ng-repeat=\"m in st.jobTypes\" role=\"menuitemradio\" aria-checked=\"{{ st.jobType === m.id }}\" ng-class=\"{on: st.jobType === m.id}\" ng-click=\"chooseJobSettings(m.id)\">{{ m.name }}</button></div></div>" +
+        "<div class=\"cep-sub\">{{ st.jobHint }}</div>" +
+        "<div ng-repeat=\"it in st.items\"><div class=\"cep-card\" ng-if=\"it.unit === 'km'\"><label><span class=\"cep-label\">{{ it.label }}</span>" +
+        "<input class=\"cep-input cep-job-input\" type=\"number\" step=\"any\" min=\"{{ it.min }}\" max=\"{{ it.max }}\" aria-label=\"{{ it.label }} in kilometres\" ng-model=\"jobDraft()[it.key]\"></label>" +
+        "<div class=\"cep-step2\"><button class=\"cep-sm ghost\" aria-label=\"Less\" ng-click=\"nudgeDraft(it, -1)\">−</button>" +
+        "<button class=\"cep-sm ghost\" aria-label=\"More\" ng-click=\"nudgeDraft(it, 1)\">+</button></div>" +
+        "<div class=\"cep-sub\">{{ fmt.num(it.min) }}–{{ fmt.num(it.max) }} km</div></div>" +
+        "<div class=\"cep-li\" ng-if=\"it.unit !== 'km'\" style=\"cursor:default\"><div class=\"cep-name\">{{ it.label }}</div><div class=\"cep-step2\">" +
+        "<button class=\"cep-sm ghost\" ng-click=\"sdo('step', it.key, -1)\">−</button><b>{{ it.value }}</b><button class=\"cep-sm ghost\" ng-click=\"sdo('step', it.key, 1)\">+</button></div></div></div>" +
+        "<div class=\"cep-li\" ng-if=\"st.jobType === 'courier'\" ng-click=\"sdo('autoReach', !st.autoReach)\"><div><div class=\"cep-name\">Look further in the countryside</div><small>Automatically widen the search where restaurants are few</small></div><b>{{ st.autoReach ? \"On\" : \"Off\" }}</b></div>" +
+        "<div class=\"cep-sub\" role=\"status\" ng-if=\"st.rangeError\">{{ st.rangeError }}</div><div class=\"cep-sub\" role=\"status\" ng-if=\"st.rangeSaved\">Distances saved for this job type.</div>" +
+        "</div></div>" +
+        "<div ng-if=\"!jobsSettingsOpen\"><button class=\"cep-btn ghost\" ng-click=\"openJobsSettings()\">Jobs settings</button>" +
+        "<div class=\"cep-sub\" ng-if=\"st.paused\">Load a career to edit job settings, cameras and career progress.</div><div ng-if=\"!st.paused\">" +
         '<div class="cep-li" ng-if="st.cameras" ng-click="!st.cameras.paused && sdo(\'cameras\', !st.cameras.on)">' +
           '<div><div class="cep-name">Speed cameras</div><small>{{ st.cameras.paused ? "Temporarily paused: no downloads, fines or lost stars" : (!st.cameras.on ? "Off: no fines, no stars lost" : ' +
             '(st.cameras.helper === "off" ? "Needs the Cargo Earth helper running" : ' +
@@ -1070,7 +1074,6 @@ angular.module('beamng.apps')
             '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x-\')">Right</button></div></div>' +
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-if="st.dash.nudged" ng-click="sdo(\'dash\', \'reset\')">Back to where it started</button>' +
           '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'measure\')">Measure this car again</button></div></div>' +
-        '<button class="cep-sm ghost" ng-if="!st.paused" ng-click="sdo(\'reset\')">Reset settings</button>' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-disabled="st.savingDamage" ng-click="sdo(\'pause\')">{{ st.savingDamage ? "Saving vehicle damage..." : "Save and switch career" }}</button>' +
         '<button class="cep-sm ghost" ng-if="st.canRestart && !restart.open" ng-click="restartOpen()">Delete this career</button>' +
         '<div class="cep-card" ng-if="st.canRestart && restart.open">' +
@@ -1096,7 +1099,11 @@ angular.module('beamng.apps')
             'It has versions, the helper\'s state and recent errors; your position only to about 10 km.</div>' +
           '<textarea class="cep-report" readonly rows="8" ng-model="report.text" onclick="this.select()"></textarea>' +
           '<button class="cep-sm ghost" ng-click="closeReport()">Close</button></div>' +
-      '</div></div>' +
+        "</div></div>" +
+        "<div class=\"cep-actionbar\" aria-label=\"Job settings actions\" ng-if=\"jobsSettingsOpen && !st.paused && !st.reviewingParts && st.jobType !== 'bus'\">" +
+        "<button class=\"cep-btn go\" ng-disabled=\"!jobRangeValid()\" ng-click=\"saveJobRange()\">Apply distances</button>" +
+        "<button class=\"cep-sm ghost\" ng-click=\"resetJobRange()\">Reset this job type</button></div>" +
+        "</div>" +
       '</div></div></div>' +
       '<div class="cep-pill" ng-if="ready && min && !menuOnly" ng-click="fold(false)"><span>Cargo<b>Earth</b><span ng-if="radio.status === \'playing\'" style="font-weight:500"> ♪ {{ radio.station.name | limitTo: 18 }}</span></span>' +
         '<span><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}">{{ s.limit.sign }}</span>' +
@@ -1106,7 +1113,7 @@ angular.module('beamng.apps')
       // the speed limit, the balance and online on the right (the tabs at the bottom say whether this is Work or Radio)
       '<div class="cep-bar"><span class="cep-bar-l">{{ s.clock }}' +
         '<button class="cep-settings-link" title="{{ s.mode === \'courier\' ? \'Food delivery\' : \'Freight\' }} settings" ' +
-          'aria-label="Job settings" ng-click="setTab(\'settings\')">⚙</button></span>' +
+          'aria-label="Job settings" ng-click="openJobsSettings()">⚙</button></span>' +
         '<span class="cep-bar-r"><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}" title="Speed limit here">{{ s.limit.sign }}' +
           '<small ng-if="s.limit.unit === \'mph\'">mph</small></span>' +
         '<strong class="cep-bal">{{ fmt.money(s.money) }}</strong>' +
@@ -1642,7 +1649,7 @@ angular.module('beamng.apps')
       }
       // Buttons keep the dropdown inside the rendered dashboard texture; native select popups cannot receive its taps.
       scope.workModes = [{id: 'courier', name: 'Food delivery'}, {id: 'trucking', name: 'Freight'}, {id: 'taxi', name: 'Taxi'}, {id: 'bus', name: 'Bus'}]
-      scope.modePicker = {work: false, settings: false}
+      scope.modePicker = {work: false, settings: false, jobs: false}
       scope.workModeName = function (id) {
         for (var i = 0; i < scope.workModes.length; i++) if (scope.workModes[i].id === id) return scope.workModes[i].name
         return 'Choose job type'
@@ -1678,6 +1685,72 @@ angular.module('beamng.apps')
       scope.careerView = 'progress'
       scope.endCompanyAsk = false
       scope.g = null; scope.gview = 'home'; scope.cars = []; scope.st = null
+      scope.jobsSettingsOpen = false
+      scope.rangeDrafts = {}
+      scope.settingsEpoch = 0
+      scope.openJobsSettings = function () {
+        if (scope.panel === 'settings') { scope.jobsSettingsOpen = true; loadSettings() }
+        else scope.openPanel('settings', 'jobs')
+      }
+      scope.closeJobsSettings = function () { scope.jobsSettingsOpen = false; scope.modePicker.jobs = false }
+      scope.jobTypeName = function () {
+        var state = scope.st || {}
+        var types = state.jobTypes || []
+        for (var i = 0; i < types.length; i++) if (types[i].id === state.jobType) return types[i].name
+        return 'Choose a job type'
+      }
+      scope.chooseJobSettings = function (id) { scope.modePicker.jobs = false; scope.sdo('jobType', id) }
+      // Drafts belong to one loaded career; an untouched draft follows the saved values (they can change elsewhere,
+      // e.g. in the old jobs window), while a half-typed one survives polling.
+      scope.rangeBase = {}
+      scope.rangeDraftsCareer = null
+      function sameRange(a, b) {
+        var keys = Object.keys(a || {}).concat(Object.keys(b || {}))
+        return keys.every(function (k) { return (a || {})[k] === (b || {})[k] })
+      }
+      scope.jobDraft = function () {
+        var state = scope.st || {}, id = state.jobType
+        if (!id) return {}
+        if (state.careerEpoch !== scope.rangeDraftsCareer) {
+          scope.rangeDrafts = {}
+          scope.rangeBase = {}
+          scope.rangeDraftsCareer = state.careerEpoch
+        }
+        var saved = {}
+        ;(state.items || []).forEach(function (it) { if (it.unit === 'km') saved[it.key] = it.value })
+        var draft = scope.rangeDrafts[id]
+        if (!draft || (sameRange(draft, scope.rangeBase[id]) && !sameRange(saved, scope.rangeBase[id]))) {
+          scope.rangeDrafts[id] = JSON.parse(JSON.stringify(saved))
+          scope.rangeBase[id] = saved
+        }
+        return scope.rangeDrafts[id]
+      }
+      // −/+ beside each distance, so it can be set without a keyboard (the dash phone and VR can't type)
+      scope.nudgeDraft = function (it, dir) {
+        var draft = scope.jobDraft(), v = Number(draft[it.key])
+        if (!isFinite(v)) v = it.value
+        var at = dir < 0 ? v - 0.01 : v   // going down from 100 steps by 5, from 10 by 0.5
+        var step = at < 10 ? 0.5 : (at < 100 ? 5 : 25)
+        v = Math.round((v + dir * step) / step) * step
+        draft[it.key] = Math.max(it.min, Math.min(it.max, Math.round(v * 10) / 10))
+      }
+      scope.jobRangeValid = function () {
+        var state = scope.st || {}, draft = scope.jobDraft()
+        var fields = (state.items || []).filter(function (it) { return it.unit === 'km' })
+        return fields.length === 3 && fields.every(function (it) {
+          var n = draft[it.key]
+          return typeof n === 'number' && isFinite(n) && n >= it.min && n <= it.max
+        }) && draft.minKm <= draft.maxKm
+      }
+      scope.saveJobRange = function () {
+        if (scope.jobRangeValid()) scope.sdo('jobRange', scope.st.jobType, scope.jobDraft())
+      }
+      scope.resetJobRange = function () { if (scope.st) scope.sdo('resetJobRange', scope.st.jobType) }
+      function settingsResult(r) {
+        scope.st = r
+        if (r && (r.rangeSaved || r.rangeReset)) { delete scope.rangeDrafts[r.rangeChanged]; delete scope.rangeBase[r.rangeChanged] }
+      }
+
       scope.cf = { text: '', kind: null, afford: false, sort: 'price', help: null, detail: null }
       scope.purchase = { keep: true }
       scope.fmt.int = function (v) { return Math.round(v || 0).toLocaleString('cs-CZ') }
@@ -1787,11 +1860,12 @@ angular.module('beamng.apps')
       function page(fn, field, then) {
         if (destroyed) return
         if (loadingPage[fn] && Date.now() - loadingPage[fn].at < 5000) return
-        var request = {at: Date.now()}
+        var request = {at: Date.now(), settingsEpoch: scope.settingsEpoch}
         loadingPage[fn] = request
         lua(fn, [], function (r) {
           if (loadingPage[fn] !== request) return
           delete loadingPage[fn]
+          if (field === 'st' && request.settingsEpoch !== scope.settingsEpoch) return
           if (!r || r._phoneError) {
             scope.pageErrors[field] = r && r._phoneError ? 'Could not load this page: ' + r._phoneError : 'The game did not return this page. Retry in a moment.'
             return
@@ -1872,6 +1946,7 @@ angular.module('beamng.apps')
         // another section → Garage starts on its first page; reopening the Menu keeps the page it was on (the car list…)
         if (p === 'garage' && scope.panel && scope.panel !== 'garage') scope.gview = 'home'
         if (p === 'career' && view) scope.careerView = view
+        if (p === 'settings') { scope.jobsSettingsOpen = view === 'jobs'; scope.modePicker.jobs = false }
         if (!scope.dash) {
           var other = cargoEarthMenu.open
           if (other && other !== scope && other.panel) other.$evalAsync(function () { other.closePanel() })
@@ -1920,6 +1995,7 @@ angular.module('beamng.apps')
       }
       scope.panelOn = function (p, view) { return scope.panel === p && (!view || scope.careerView === view) }
       scope.panelTitle = function () {
+        if (scope.panel === 'settings' && scope.jobsSettingsOpen) return 'Jobs settings'
         if (scope.panel === 'career') return {progress: 'Progress', money: 'Finances', map: 'Delivery map', firm: 'Firm'}[scope.careerView]
         return {garage: 'Garage', home: 'Home garage', companies: 'Company contracts', settings: 'Settings'}[scope.panel]
       }
@@ -2121,11 +2197,13 @@ angular.module('beamng.apps')
       }
       scope.$on('$destroy', function () { if (padTimer) clearInterval(padTimer) })
       scope.sdo = function (name, a, b) {
+        var epoch = ++scope.settingsEpoch
         var args = [name]
         if (a !== undefined) args.push(a)
         if (b !== undefined) args.push(b)
         lua('settingsDo', args, function (r) {
-          scope.st = r
+          if (epoch !== scope.settingsEpoch) return
+          settingsResult(r)
           if (r && r.dark !== undefined) { scope.dark = !!r.dark; keepLook(null, r.dark) }
         })
       }

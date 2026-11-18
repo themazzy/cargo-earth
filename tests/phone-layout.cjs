@@ -84,14 +84,24 @@ module.exports = function auditPhoneLayout (directive) {
   const modeSelectors = nodes.filter(n => n.name === 'button' && n.classes.has('cep-mode-select'))
   assert.equal(modeSelectors.length, 2, 'Work and Settings both need a category dropdown')
   for (const select of modeSelectors) {
-    assert(select.attrs['ng-disabled'].includes('canSwitch'), 'An active job or shift must lock its category')
-    assert.equal(select.attrs['aria-label'], 'Job type', 'The dropdown needs an accessible label')
+    if (select.classes.has('cep-job-select')) {
+      assert.equal(select.attrs['aria-label'], 'Job type to configure')
+      assert(!select.attrs['ng-disabled'], 'Editing future job settings must not require switching active work')
+    } else {
+      assert(select.attrs['ng-disabled'].includes('canSwitch'), 'An active job or shift must lock its work category')
+      assert.equal(select.attrs['aria-label'], 'Job type')
+    }
     assert.equal(select.attrs['aria-haspopup'], 'menu')
   }
   assert(!scrollAncestor(modeSelectors.find(n => n.attrs['ng-click'].includes('modePicker.work'))), 'Work category must stay above the scroll area')
   const modeMenus = nodes.filter(n => n.classes.has('cep-mode-menu'))
   assert.equal(modeMenus.length, 2)
-  for (const menu of modeMenus) assert(menu.attrs['ng-if'].includes('canSwitch'), 'Locked categories cannot open their menu')
+  for (const menu of modeMenus) {
+    if (menu.attrs['aria-label'] === 'Job types') assert(menu.attrs['ng-if'].includes('canSwitch'), 'Locked work categories cannot open their menu')
+  }
+  pinned('Jobs settings back', click => click === 'closeJobsSettings()')
+  pinned('Apply job distances', click => click === 'saveJobRange()')
+  pinned('Reset selected job type', click => click === 'resetJobRange()')
   for (const command of ['online', 'offline']) pinned(command, click => click === "act('" + command + "')")
   assert(template.includes('.cep-actionbar{flex:0 0 auto;'), 'Actions must not shrink with the detail list')
   assert(template.includes('.cep-body>.cep-row'), 'Incoming Accept/Decline row must not shrink')

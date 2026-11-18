@@ -2,6 +2,7 @@
 -- makes them) to a repair workshop. The parts ride in BeamNG's own parcel containers in the boot or the bed, like any
 -- other parcel freight. Pure rules: no game calls here.
 local M = {}
+local jobs = require('cargoEarth/jobs')
 
 M.NEAR_KM = 15          -- suppliers this close to the player (straight km)
 M.KM = { 4, 30 }        -- straight km from the supplier to the workshop
@@ -34,13 +35,13 @@ function M.offers(suppliers, workshops, lat, lon, capacity, rnd, roadKm, range)
   rnd = rnd or math.random
   local room = math.floor(tonumber(capacity) or 0)
   if room < M.MIN_SLOTS then return {} end
-  local minRoad = math.max(M.KM[1] * M.ROAD_FACTOR, tonumber(range and range.minKm) or 0)
-  local maxRoad = math.min(M.KM[2] * M.ROAD_FACTOR, tonumber(range and range.maxKm) or math.huge)
+  local minRoad = tonumber(range and range.minKm) or M.KM[1] * M.ROAD_FACTOR
+  local maxRoad = tonumber(range and range.maxKm) or M.KM[2] * M.ROAD_FACTOR
   if maxRoad < minRoad then return {} end
-  local nearKm = math.min(M.NEAR_KM, tonumber(range and range.nearKm) or M.NEAR_KM)
+  local nearKm = tonumber(range and range.nearKm) or M.NEAR_KM
   local near = {}
   for _, s in ipairs(suppliers or {}) do
-    if place(s) and math.abs(s.g[1] - lat) < nearKm / 100 then
+    if place(s) and jobs.inBox(lat, lon, s.g, nearKm) then
       local k = km(lat, lon, s.g[1], s.g[2])
       if k <= nearKm then near[#near + 1] = { s = s, k = k } end
     end

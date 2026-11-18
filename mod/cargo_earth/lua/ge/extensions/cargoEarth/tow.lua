@@ -141,7 +141,7 @@ function M.offers(class, lat, lon, addresses, workshop, models, rnd, count, road
     local pickupKm = jobs.km(lat, lon, g[1], g[2])
     -- addresses are spread evenly, so most are far out: a nearer breakdown is likelier
     local likely = pickupKm <= M.LIKELY_KM or rnd(1000) <= 1000 * (M.LIKELY_KM / pickupKm) ^ 1.5
-    local to = not used[key] and pickupKm <= M.NEAR_KM and likely and workshop(g[1], g[2])
+    local to = not used[key] and pickupKm <= (opts and opts.nearKm or M.NEAR_KM) and likely and workshop(g[1], g[2])
     if to then
       used[key] = true
       local cars = {}
@@ -155,14 +155,18 @@ function M.offers(class, lat, lon, addresses, workshop, models, rnd, count, road
       end
       local straight = jobs.km(g[1], g[2], to.g[1], to.g[2])
       local road = roadKm and roadKm(g, to.g, straight * 4 + 5)
+      if road == false then to = nil end -- a known unreachable destination is not an estimate
       if type(road) ~= 'number' then road = straight * jobs.ROAD_FACTOR end   -- paid by the road when it is known
-      local offer = { id = 'tow:' .. key .. ':' .. #out + 1, kind = 'tow', tow = { class = jobClass, cars = cars, wrecks = wrecks },
-        from = { id = 'tow:' .. key, n = a[5] or 'Roadside', town = a[6] or '', g = g, label = 'Broken-down car' },
-        to = to, cargoName = #cars > 1 and string.format('Tow %d broken-down cars', #cars) or 'Tow a broken-down car',
-        trailer = c.trailer, straightKm = straight, km = road, pickupKm = pickupKm, pay = M.pay(jobClass, road),
-        minutes = M.minutes(jobClass, road, pickupKm) }
-      if borrow then M.borrow(offer, lat, lon) end
-      out[#out + 1] = offer
+      if opts and ((opts.minKm and road < opts.minKm) or (opts.maxKm and road > opts.maxKm)) then to = nil end
+      if to then
+        local offer = { id = 'tow:' .. key .. ':' .. #out + 1, kind = 'tow', tow = { class = jobClass, cars = cars, wrecks = wrecks },
+          from = { id = 'tow:' .. key, n = a[5] or 'Roadside', town = a[6] or '', g = g, label = 'Broken-down car' },
+          to = to, cargoName = #cars > 1 and string.format('Tow %d broken-down cars', #cars) or 'Tow a broken-down car',
+          trailer = c.trailer, straightKm = straight, km = road, pickupKm = pickupKm, pay = M.pay(jobClass, road),
+          minutes = M.minutes(jobClass, road, pickupKm) }
+        if borrow then M.borrow(offer, lat, lon) end
+        out[#out + 1] = offer
+      end
     end
   end
   return out
