@@ -31,14 +31,15 @@ end
 
 -- Resupply jobs from the nearest depots. within(lat, lon, minKm, maxKm) lists stations ({ station, km }).
 -- rnd: math.random-like (rnd(n) picks 1..n). Returns jobs shaped like jobs.generate's.
-function M.offers(idx, lat, lon, within, rnd, count, nearKm)
+function M.offers(idx, lat, lon, within, rnd, count, nearKm, range)
   rnd = rnd or math.random
   local out, used = {}, {}
   local cg = idx and idx.cargo and idx.cargo[M.CARGO]
   if not cg then return out end
   for _, p in ipairs(M.depots(idx, lat, lon, nearKm)) do
     if #out >= (count or M.OFFERS) then break end
-    local list = within(p.d.g[1], p.d.g[2], M.MIN_KM / jobs.ROAD_FACTOR, M.MAX_KM / jobs.ROAD_FACTOR)
+    local list = within(p.d.g[1], p.d.g[2], (range and range.minKm or M.MIN_KM) / jobs.ROAD_FACTOR,
+      (range and range.maxKm or M.MAX_KM) / jobs.ROAD_FACTOR)
     local free = {}
     for _, row in ipairs(list) do if not used[row.station.id] then free[#free + 1] = row end end
     if #free > 0 then

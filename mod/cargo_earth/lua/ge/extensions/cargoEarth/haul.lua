@@ -150,8 +150,8 @@ function M.options(tier, source, rows)
   local t, o = M.tiers[tier], {}
   for k, v in pairs(source or {}) do o[k] = v end
   o.requireValidatedSites = tier ~= 'van'
-  o.minKm = math.max(t.minKm, math.min(t.maxKm, o.minKm or t.minKm))
-  o.maxKm = math.max(t.minKm, math.min(t.maxKm, o.maxKm or t.maxKm))
+  o.minKm = math.max(0.5, math.min(800, o.minKm or t.minKm))
+  o.maxKm = math.max(o.minKm, math.min(800, o.maxKm or t.maxKm))
   o.allowCargo = function(id) return M.freight(tier, id, rows) ~= nil end
   return o
 end

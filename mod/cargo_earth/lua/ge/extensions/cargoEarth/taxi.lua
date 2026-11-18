@@ -83,9 +83,9 @@ function M.offers(near, sights, lat, lon, rnd, roadKm, range, seats)
   local most = type(seats) == 'number' and seats == seats and seats >= 1 and seats < math.huge and math.floor(seats) or 0
   if most < 1 then return {} end
   if type(near) ~= 'function' or type(sights) ~= 'function' or type(lat) ~= 'number' or type(lon) ~= 'number' then return {} end
-  local nearKm = math.min(M.NEAR_KM, tonumber(range and range.nearKm) or M.NEAR_KM)
-  local minRoad = math.max(M.KM[1] * M.ROAD_FACTOR, tonumber(range and range.minKm) or 0)
-  local maxRoad = math.min(M.KM[2] * M.ROAD_FACTOR, tonumber(range and range.maxKm) or math.huge)
+  local nearKm = tonumber(range and range.nearKm) or M.NEAR_KM
+  local minRoad = tonumber(range and range.minKm) or M.KM[1] * M.ROAD_FACTOR
+  local maxRoad = tonumber(range and range.maxKm) or M.KM[2] * M.ROAD_FACTOR
   if maxRoad < minRoad then return {} end
   local pool = {}
   for _, a in ipairs(near(lat, lon, nearKm) or {}) do

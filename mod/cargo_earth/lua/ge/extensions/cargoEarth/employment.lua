@@ -33,9 +33,10 @@ local containers = {
 }
 M.TIERS = { 'van', 'rigid', 'semi' }
 
-local function tierBoard(idx, pose, tier, board)
+local function tierBoard(idx, pose, tier, board, ranges)
   local rows, range = containers[tier], M.KM[tier]
-  local options = { nearKm = 25, minKm = range[1], maxKm = range[2], count = 60, adr = false,
+  local custom = ranges and ranges[tier] or {}
+  local options = { nearKm = custom.nearKm or 25, minKm = custom.minKm or range[1], maxKm = custom.maxKm or range[2], count = 60, adr = false,
     requireValidatedSites = tier ~= 'van' or nil,
     allowCargo = function(id) return haul.freight(tier, id, rows) ~= nil end }
   -- Fixed selection for this area: opening the phone repeatedly does not reroll the quote.
@@ -86,11 +87,11 @@ local function tierBoard(idx, pose, tier, board)
 end
 
 -- unlocked: the highest freight tier the player may drive ('van' when left out).
-function M.board(idx, pose, unlocked)
+function M.board(idx, pose, unlocked, ranges)
   if not idx or not pose then return {} end
   local board = {}
   for _, tier in ipairs(M.TIERS) do
-    tierBoard(idx, pose, tier, board)
+    tierBoard(idx, pose, tier, board, ranges)
     if tier == (unlocked or 'van') then break end
   end
   return board

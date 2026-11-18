@@ -760,7 +760,7 @@ end
 ------------------------------------------------------------------------------------------ the used-car market
 -- A changing list of used cars: new ones appear while you play, old ones are sold to someone else. Each has its
 -- kilometres and condition; the price follows the car's BeamNG value, its condition and a little luck.
-M.MARKET_LIFE_MIN = { 40, 60 } -- a listing is gone after this many minutes of play
+M.MARKET_LIFE_MIN = { 15, 30 } -- a listing is gone after this many minutes of play
 M.CHEAP_SHARE = 0.5            -- this share of random new listings comes from the cheapest third of its kind
 M.MIN_PER_KIND = 8             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
 M.MARKET_V = 5                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price

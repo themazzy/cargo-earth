@@ -85,6 +85,32 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
   per-car position. Made for VR, also fine on a monitor. See [dash phone](docs/DASH_PHONE.md).
 - When a new version is out, the phone says so with a link to the release.
 
+**Settings → Jobs** has separate saved distance profiles for food, taxi, parts runs, parcel rounds, each tow class,
+fuel resupply, and each vehicle class of own-vehicle freight and company contracts. Choose a profile without
+switching your current work, enter distances directly, then press **Apply distances**. **Reset this job type**
+restores only that profile. Accepted jobs keep their agreed route and quote.
+
+| Job profile | Default pickup radius | Default shortest–longest | Editable longest distance |
+| --- | ---: | ---: | ---: |
+| Food and groceries | 3 km | 0.5–5 km | 8 km |
+| Taxi | 1.5 km | 1.95–15.6 km | 15.6 km |
+| Parts runs | 15 km | 5.2–39 km | 800 km |
+| Parcel rounds | 20 km | 0.5–100 km (whole round) | 100 km |
+| Tow jobs, either trailer class | 8 km | 3.9–39 km (loaded leg) | 800 km |
+| Fuel resupply | 40 km | 15–150 km | 800 km |
+| Own van / box truck / semi | 30 km | 3–45 / 12–125 / 20–250 km | 800 km |
+| Company van / box truck / semi | 25 km | 1–20 / 12–40 / 20–60 km (per loaded leg) | 800 km |
+
+Pickups use straight-line distance; freight and company delivery lengths are estimated as straight-line distance
+× 1.3. Food lengths use straight-line distance, and its countryside option can widen the search. Taxi, parts and tow
+use road distance where available. Bus lines retain their mapped stops and lengths. Parcel settings filter normal
+rounds rather than adding more stops. Defaults and older saved settings are retained; company and own-vehicle
+settings are independent.
+
+**Data coverage still limits offers.** The helper currently loads cells near the player. Raising the maximum to
+800 km permits long jobs when distant destinations are already in the bundled/loaded data; it does not download
+an 800 km region. Wider freight-only discovery remains part of [issue #126](https://github.com/themazzy/cargo-earth/issues/126).
+
 Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated with BeamNG, BeamNG.Earth or the RLS
 Career Overhaul project.
 

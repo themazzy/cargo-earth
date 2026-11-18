@@ -231,6 +231,59 @@ scope.chooseWorkMode('settings', 'taxi')
 assert(commands.at(-1).includes('pcall(cargoEarth_core.settingsDo, "mode", "taxi")'))
 assert.equal(scope.st.mode, 'taxi')
 assert(!scope.modePicker.settings)
+// Settings > Jobs edits a profile without changing active work; polling preserves unfinished numeric input.
+answer = {mode: 'taxi', jobType: 'freight_rigid', jobTypes: [{id: 'freight_rigid', name: 'Own box truck'}], items: [
+  {key: 'nearKm', unit: 'km', min: 0.5, max: 200, value: 30},
+  {key: 'minKm', unit: 'km', min: 0.5, max: 800, value: 12},
+  {key: 'maxKm', unit: 'km', min: 0.5, max: 800, value: 125}
+]}
+scope.openPanel('settings', 'jobs', true)
+assert(scope.jobsSettingsOpen && scope.panelTitle() === 'Jobs settings')
+assert.equal(scope.jobTypeName(), 'Own box truck')
+scope.jobDraft().minKm = 600
+scope.jobDraft().maxKm = 800
+scope.openJobsSettings()
+assert.equal(scope.jobDraft().maxKm, 800, 'polling must not replace typed input')
+assert(scope.jobRangeValid())
+scope.saveJobRange()
+assert(commands.at(-1).includes('pcall(cargoEarth_core.settingsDo, "jobRange", "freight_rigid", {"nearKm":30,"minKm":600,"maxKm":800})'))
+scope.jobDraft().maxKm = 500
+assert(!scope.jobRangeValid())
+const invalidRangeCommands = commands.length
+scope.saveJobRange()
+assert.equal(commands.length, invalidRangeCommands)
+answer = {...answer, rangeReset: true, rangeChanged: 'freight_rigid'}
+scope.resetJobRange()
+assert.equal(scope.jobDraft().maxKm, 125, 'successful reset clears the selected draft')
+// An untouched draft follows saved values changed elsewhere; another career drops drafts.
+answer = {...answer, rangeReset: false, rangeChanged: undefined, careerEpoch: 1}
+scope.st = answer
+scope.jobDraft()
+answer = {...answer, items: answer.items.map(it => it.key === 'maxKm' ? {...it, value: 300} : it)}
+scope.st = answer
+assert.equal(scope.jobDraft().maxKm, 300, 'untouched draft shows the newly saved value')
+scope.jobDraft().maxKm = 400
+answer = {...answer, items: answer.items.map(it => it.key === 'maxKm' ? {...it, value: 350} : it)}
+scope.st = answer
+assert.equal(scope.jobDraft().maxKm, 400, 'typed draft survives a changed saved value')
+answer = {...answer, careerEpoch: 2}
+scope.st = answer
+assert.equal(scope.jobDraft().maxKm, 350, 'another loaded career shows its own saved values')
+const maxItem = answer.items.find(it => it.key === 'maxKm')
+scope.nudgeDraft(maxItem, 1)
+assert.equal(scope.jobDraft().maxKm, 375, 'plus steps by 25 km above 100 km')
+scope.jobDraft().maxKm = 100
+scope.nudgeDraft(maxItem, -1)
+assert.equal(scope.jobDraft().maxKm, 95, 'minus from 100 steps by 5 km')
+scope.jobDraft().maxKm = 1
+scope.nudgeDraft(maxItem, -1); scope.nudgeDraft(maxItem, -1)
+assert.equal(scope.jobDraft().maxKm, 0.5, 'minus stops at the lowest allowed value')
+scope.closeJobsSettings()
+assert(!scope.jobsSettingsOpen && scope.panelTitle() === 'Settings')
+scope.openJobsSettings()
+scope.openPanel('garage', undefined, true)
+scope.openPanel('settings', undefined, true)
+assert(!scope.jobsSettingsOpen, 'Settings menu entry opens general settings')
 answer = {screen: 'offline'}
 scope.setTab('orders')
 scope.setTab('invalid')
@@ -382,6 +435,9 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   const request = {panel: 'settings', to: 'menu'}
   for (const m of menus) m.on.CargoEarthOpenMenu({}, request)
   assert.equal(menus.filter(m => m.s.panel).length, 1, 'one request opens one window')
+  const jobsRequest = {panel: 'settings', view: 'jobs', to: 'menu'}
+  for (const m of menus) m.on.CargoEarthOpenMenu({}, jobsRequest)
+  assert(menus[0].s.jobsSettingsOpen && menus[0].s.panelTitle() === 'Jobs settings', 'dash shortcut opens the submenu in the Menu host')
   menus[1].s.openPanel('garage', undefined, true)
   assert(!menus[0].s.panel && menus[1].s.panel === 'garage', 'opening a window closes the other one')
   const toggle = {panel: 'toggle', to: 'menu'}
