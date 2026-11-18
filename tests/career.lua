@@ -5037,8 +5037,18 @@ test('used-car market: every vehicle kind has eight listings at cheap, middle an
   -- a salvage spare fitted back stays salvage
   fit = garage.partsQuote(PG, { engine = 1 }, stripped.slotPartMap, truck, { engine = { n = 1, f = 0.35 } })
   assert(fit.paid == nil and fit.salvage == nil)
-  back = garage.partsQuote(PG, fit.inventory, truck.slotPartMap, stripped, fit.salvage, fit.paid)
+  back = garage.partsQuote(PG, fit.inventory, truck.slotPartMap, stripped, fit.salvage, fit.paid, fit.fittedSalvage)
   assert(back.salvage.engine.n == 1)
+  -- a salvage spare moved onto an ordinary car keeps its discount when it comes off there
+  local car = { model = 'covet', slotPartMap = { b = 'engine' }, ioCtx = {} }
+  local bare = { model = 'covet', slotPartMap = { b = '' }, ioCtx = {} }
+  fit = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car, { engine = { n = 1, f = 0.35 } })
+  assert(fit.cost == 0 and fit.salvage == nil and fit.fittedSalvage.engine.n == 1 and fit.fittedSalvage.engine.f == 0.35)
+  back = garage.partsQuote(PG, fit.inventory, car.slotPartMap, bare, fit.salvage, fit.paid, fit.fittedSalvage)
+  assert(back.salvage.engine.n == 1 and back.salvage.engine.f == 0.35 and back.fittedSalvage == nil)
+  -- the car's own part comes off at full price
+  back = garage.partsQuote(PG, {}, car.slotPartMap, bare)
+  assert(back.inventory.engine == 1 and back.salvage == nil)
 end)
 
 test('a save whose car mod is gone: another owned car, else a base Pigeon; the missing car is kept', function()

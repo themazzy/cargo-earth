@@ -250,8 +250,9 @@ M.FREE_PART = 'cargo_earth_phone_auto' -- the phone on the dashboard (cargoEarth
 -- salvage: { [part] = { n, f } } spares taken off discounted work vehicles (WORK_PRICE): they sell at that share
 -- too, so buying a cheap truck and stripping it can't pay more than the truck cost.
 -- paid: { [part] = count } parts on this car that were paid at the full price (bought here or fitted from full-price
--- spares): taking them off again gives full-price spares, not salvage.
-function M.partsQuote(G, inventory, before, vehicle, salvage, paid)
+-- spares): taking them off again gives full-price spares, not salvage. onSalvage: { [part] = { n, f } } salvage spares
+-- fitted to this car: they keep their discount when taken off again.
+function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage)
   if type(before) ~= 'table' or not vehicle or type(vehicle.slotPartMap) ~= 'table' then
     return nil, 'Waiting for the vehicle parts to load.'
   end
@@ -259,8 +260,9 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid)
   for part, count in pairs(inventory or {}) do spares[part] = count end
   local cheap, factor = {}, M.kindFactor(haul.carrier(vehicle))
   for part, row in pairs(salvage or {}) do cheap[part] = { n = row.n, f = row.f } end
-  local full = {}
+  local full, onCar = {}, {}
   for part, n in pairs(paid or {}) do full[part] = n end
+  for part, row in pairs(onSalvage or {}) do onCar[part] = { n = row.n, f = row.f } end
   for _, part in pairs(before) do
     if part == M.FREE_PART then -- the dash phone comes and goes with Settings: never bought
     elseif type(part) == 'string' and part ~= '' then delta[part] = (delta[part] or 0) - 1
@@ -278,27 +280,39 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid)
       local added, removed = math.max(0, count - owned), math.max(0, -count)
       if added > 0 and not detail.jbeam then return nil, 'Could not price ' .. part end
       local cost = added > 0 and added * M.partPrice(detail.value) or 0
-      local left = (spares[part] or 0) + removed - owned
+      local pre = spares[part] or 0
+      local left = pre + removed - owned
       spares[part] = left > 0 and left or nil
-      local row = cheap[part]
-      -- fitted spares: the full-price ones go first
-      local fullSpares = math.max(0, left + owned - removed - (row and row.n or 0))
-      if count > 0 then full[part] = (full[part] or 0) + added + math.min(owned, fullSpares) end
-      local paidOff = math.min(removed, full[part] or 0)
-      if removed > 0 then full[part] = (full[part] or 0) - paidOff end
-      if full[part] and full[part] <= 0 then full[part] = nil end
-      if removed - paidOff > 0 and factor < 1 then
-        row = row or { n = 0, f = factor }
-        row.n, row.f = row.n + removed - paidOff, math.min(row.f or 1, factor)
+      local row = cheap[part] or { n = 0, f = 1 }
+      local fitted = onCar[part] or { n = 0, f = 1 }
+      local function addCheap(t, n, f)
+        if n > 0 then t.n, t.f = t.n + n, math.min(t.f or 1, f or 1) end
       end
-      if row then row.n = math.min(row.n, math.max(0, left)) end -- spares fitted again: the full-price ones go first
-      cheap[part] = row and row.n > 0 and row or nil
+      if count > 0 then
+        -- fitted spares: the full-price ones go first; a salvage spare keeps its discount on this car
+        local fitFull = math.min(owned, math.max(0, pre - row.n))
+        local fitCheap = owned - fitFull
+        full[part] = (full[part] or 0) + added + fitFull
+        if fitCheap > 0 then addCheap(fitted, fitCheap, row.f) row.n = row.n - fitCheap end
+      elseif removed > 0 then
+        -- taken off: salvage fitted earlier first, then parts paid in full, then the car's own parts
+        local k1 = math.min(removed, fitted.n)
+        if k1 > 0 then fitted.n = fitted.n - k1 addCheap(row, k1, fitted.f) end
+        local k2 = math.min(removed - k1, full[part] or 0)
+        full[part] = (full[part] or 0) - k2
+        if factor < 1 then addCheap(row, removed - k1 - k2, factor) end
+      end
+      if full[part] and full[part] <= 0 then full[part] = nil end
+      row.n = math.min(row.n, math.max(0, left))
+      cheap[part] = row.n > 0 and row or nil
+      onCar[part] = fitted.n > 0 and fitted or nil
       items[#items + 1] = { part = part, name = detail.name, buy = added, fit = owned, keep = removed, cost = cost }
       total = total + cost
     end
   end
   table.sort(items, function(a, b) return a.name == b.name and a.part < b.part or a.name < b.name end)
-  return { items = items, cost = total, inventory = spares, salvage = next(cheap) and cheap or nil, paid = next(full) and full or nil }
+  return { items = items, cost = total, inventory = spares, salvage = next(cheap) and cheap or nil, paid = next(full) and full or nil,
+    fittedSalvage = next(onCar) and onCar or nil }
 end
 
 -- Share of a spare part's value it sells for: salvage from a discounted work vehicle sells at that discount.
