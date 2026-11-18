@@ -35,6 +35,9 @@ API (GET, JSON):
   /v1/near?lat=..&lon=..      the 3 x 3 areas around the point: {"ready": ["r_c", ...], "loading": n, "failed": n,
                               "errors": [...], "grocers": true, "depots": true, "fuel": true}; builds missing areas
                               nearest first
+  /v1/sites?lat=..&lon=..     workplaces only (warehouses, yards, shops, fuel depots) in a box SITE_HALF degrees
+                              around a far town, for long-distance freight destinations; built in the background and
+                              kept on disk: {"state": "ready" | "loading" | "failed", "key", "depots": [as /v1/area's]}
   /v1/area?key=r_c            one ready area: {"key", "restaurants": [[id, lat, lon, curbLat, curbLon, name, cat, town],
                               ...], "grocers": [rows in the same format],
                               "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...],
@@ -68,6 +71,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from contextlib import contextmanager
 
 VERSION = "0.10.3"
+SITES_CACHE_VERSION = "1"  # /v1/sites: far workplaces for long-distance freight
+SITE_GRID = 0.05           # a far town's point is snapped to this grid (one cached box per grid point)
+SITE_HALF = 0.12           # half the size of that box, degrees (about 27 x 17 km in central Europe)
+SITE_QUEUE = 24            # far boxes waiting at most; older requests drop first
 AREA_CACHE_VERSION = "7"  # taxi destinations (airports, stations, sights); retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
@@ -277,7 +284,7 @@ class CacheBudget:
             self.last = time.monotonic()
             pinned = {os.path.normcase(os.path.realpath(p)) for p in pinned}
             files = []
-            for sub, extension in (("blocks", ".blk"), ("areas", ".json")):
+            for sub, extension in (("blocks", ".blk"), ("areas", ".json"), ("sites", ".json")):
                 for directory, _, names in os.walk(os.path.join(self.root, sub), followlinks=False):
                     for name in names:
                         if not name.endswith(extension):
@@ -560,6 +567,31 @@ class Builder:
                 if car:
                     autos.append([f"o{pid[:16]}", round(lat, 6), round(lon, 6), name, car, town])
         return out, depots, stations, autos
+    def sites(self, box):
+        """Workplaces only (no food, addresses or buildings): a cheap query for a far town's box."""
+        con, paths = self._con("places/place", box)
+        if not paths:
+            con.close()
+            return []
+        depot = ("regexp_matches(lower(concat_ws(' ', basic_category, taxonomy.primary, "
+                 f"array_to_string(taxonomy.hierarchy, ' '))), '{DEPOT_SQL_RX}')")
+        q = f"""SELECT id, names.primary, basic_category, taxonomy.primary, array_to_string(taxonomy.hierarchy, ' '),
+                       (bbox.ymin + bbox.ymax) / 2, (bbox.xmin + bbox.xmax) / 2, addresses[1].locality
+                FROM read_parquet({paths!r}, union_by_name = true)
+                WHERE {self._where(box)} AND coalesce(operating_status, 'open') = 'open'
+                  AND {depot} AND confidence >= {MIN_CONF} AND names.primary IS NOT NULL"""
+        try:
+            rows = con.execute(q).fetchall()
+        finally:
+            con.close()
+        out = []
+        for pid, name, basic, prim, hier, lat, lon, town in rows:
+            name, kind = (name or "").strip(), depot_kind(prim, hier, basic)
+            if name and kind and box[1] <= lat < box[3] and box[0] <= lon < box[2]:
+                out.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)], "t": kind,
+                            "town": (town or "").strip(), "source": "Overture", "access": "candidate"})
+        return out
+
     def addresses(self, box):
         con, paths = self._con("addresses/address", box)
         if not paths:
@@ -845,6 +877,98 @@ class Areas:
             raise ValueError("invalid cached area")
         touch_cache(self.path(key))
         return body
+
+
+def site_key(lat, lon):
+    """The grid point a far town snaps to: "row_col" in SITE_GRID steps."""
+    if not math.isfinite(lat) or not math.isfinite(lon) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError("coordinates must be finite WGS84 latitude/longitude")
+    return f"{int(round(lat / SITE_GRID))}_{int(round(lon / SITE_GRID))}"
+
+
+def valid_sites(data, key, release):
+    if not isinstance(data, dict) or data.get("key") != key or data.get("release") != release:
+        return False
+    rows = data.get("depots")
+    if not isinstance(rows, list):
+        return False
+    return valid_area({"key": key, "release": release, "tiles": {}, "restaurants": [], "grocers": [], "fuel": [],
+                       "depots": rows}, key, release)
+
+
+class Sites:
+    """Workplaces around far towns (long-distance freight destinations): one box per town, built one at a time in the
+    background (a cheap places-only query) and kept on disk like the areas."""
+
+    def __init__(self, builder, cache_dir, start=True):
+        self.builder = builder
+        self.dir = os.path.join(cache_dir, "sites", builder.index.release, SITES_CACHE_VERSION)
+        os.makedirs(self.dir, exist_ok=True)
+        self.state, self.queue, self._fail_at = {}, [], {}
+        self.cv = threading.Condition()
+        if start:
+            threading.Thread(target=self._work, daemon=True, name="cargo-earth-sites").start()
+
+    def path(self, key):
+        return os.path.join(self.dir, key + ".json")
+
+    def _cached(self, key):
+        with open(self.path(key), encoding="utf-8") as f:
+            data = json.load(f)
+        if not valid_sites(data, key, self.builder.index.release):
+            raise ValueError("invalid cached sites")
+        touch_cache(self.path(key))
+        return data
+
+    def get(self, lat, lon):
+        key = site_key(lat, lon)
+        try:
+            data = self._cached(key)
+            return {"state": "ready", "key": key, "depots": data["depots"]}
+        except (OSError, ValueError, TypeError):
+            pass
+        with self.cv:
+            s = self.state.get(key)
+            if s and s.startswith("failed") and time.time() < self._fail_at.get(key, 0) + 300:
+                return {"state": "failed", "key": key, "error": s[8:], "depots": []}
+            if s != "loading" and key not in self.queue:
+                self.queue.append(key)
+                del self.queue[:-SITE_QUEUE]
+                self.state[key] = "queued"
+                self.cv.notify()
+        return {"state": "loading", "key": key, "depots": []}
+
+    def build(self, key):
+        r, c = map(int, key.split("_"))
+        lat, lon = r * SITE_GRID, c * SITE_GRID
+        box = (lon - SITE_HALF, lat - SITE_HALF, lon + SITE_HALF, lat + SITE_HALF)
+        t0 = time.time()
+        depots = self.builder.sites(box)
+        log(f"far sites {key}: {len(depots)} workplaces in {time.time() - t0:.1f} s")
+        return {"key": key, "release": self.builder.index.release, "depots": depots}
+
+    def _work(self):
+        while True:
+            with self.cv:
+                while not self.queue:
+                    self.cv.wait()
+                key = self.queue.pop()        # the newest request first: it is the one the game waits on now
+                self.state[key] = "loading"
+            try:
+                data = self.build(key)
+                if not valid_sites(data, key, self.builder.index.release):
+                    raise ValueError("invalid sites; not published")
+                tmp = self.path(key) + f".{threading.get_ident()}.tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+                os.replace(tmp, self.path(key))
+                with self.cv:
+                    self.state.pop(key, None)
+            except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
+                log(f"far sites {key} failed:", repr(e))
+                with self.cv:
+                    self._fail_at[key] = time.time()
+                    self.state[key] = "failed: " + str(e)[:200]
 
 
 ######################################################################################## speed cameras (OpenStreetMap)
@@ -1855,7 +1979,7 @@ td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
 
 
 def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None,
-          buslines=None):
+          buslines=None, sites=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -1931,7 +2055,7 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
-                                            "cameras": cameras is not None, "buslines": buslines is not None, "radio": radio is not None,
+                                            "cameras": cameras is not None, "buslines": buslines is not None, "sites": sites is not None, "radio": radio is not None,
                                             "player": player is not None, "missing": missing_libraries(),
                                             "network": network, "cache": areas.budget.stats,
                                             "update": updates.info() if updates else None})
@@ -1969,6 +2093,8 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     return self._send(200, radio.click(q.get("id", "")))
                 if u.path == "/v1/near":
                     return self._send(200, areas.near(float(q["lat"]), float(q["lon"])))
+                if u.path == "/v1/sites" and sites:
+                    return self._send(200, sites.get(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/area":
                     key = q.get("key", "")
                     if not re.fullmatch(r"-?\d+_-?\d+", key):
@@ -2062,7 +2188,7 @@ def main():
         return
     updates = Updates(a.cache, enabled=not a.no_update_check).start()
     serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=Player(), srv=srv,
-          updates=updates, buslines=BusLines(a.cache))
+          updates=updates, buslines=BusLines(a.cache), sites=Sites(builder, a.cache))
 
 
 if __name__ == "__main__":

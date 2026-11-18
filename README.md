@@ -93,7 +93,7 @@ restores only that profile. Accepted jobs keep their agreed route and quote.
 | Job profile | Default pickup radius | Default shortest–longest | Editable longest distance |
 | --- | ---: | ---: | ---: |
 | Food and groceries | 3 km | 0.5–5 km | 8 km |
-| Taxi | 1.5 km | 1.95–15.6 km | 15.6 km |
+| Taxi | 1.5 km (up to 15 km) | 1.95–15.6 km | 15.6 km |
 | Parts runs | 15 km | 5.2–39 km | 800 km |
 | Parcel rounds | 20 km | 0.5–100 km (whole round) | 100 km |
 | Tow jobs, either trailer class | 8 km | 3.9–39 km (loaded leg) | 800 km |
@@ -107,9 +107,12 @@ use road distance where available. Bus lines retain their mapped stops and lengt
 rounds rather than adding more stops. Defaults and older saved settings are retained; company and own-vehicle
 settings are independent.
 
-**Data coverage still limits offers.** The helper currently loads cells near the player. Raising the maximum to
-800 km permits long jobs when distant destinations are already in the bundled/loaded data; it does not download
-an 800 km region. Wider freight-only discovery remains part of [issue #126](https://github.com/themazzy/cargo-earth/issues/126).
+**Long hauls.** When an own-vehicle freight or company contract profile reaches past 120 km, the game picks up to
+8 real towns in that ring, spread by compass direction (a bundled Natural Earth list of towns over 30,000 people),
+and the helper loads only their workplaces (warehouses, yards and stores; `/v1/sites`, cached on disk). They become
+delivery points; pickups stay near you. These far sites are not checked for truck access: within 600 m of one, the
+phone offers **Hand over here** for 85 % of the pay and no fee. Taxi, tow, parts, parcel and fuel jobs keep their
+local data. Long hauls need the helper running.
 
 Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated with BeamNG, BeamNG.Earth or the RLS
 Career Overhaul project.
@@ -227,7 +230,7 @@ The helper fetches public Overture source data; busy areas and first visits may 
 
 ## Data attribution
 
-Bundled Czech geography credits **OpenStreetMap contributors** and **Overture Maps Foundation**; the pack declares **ODbL-1.0**. Preserve the pack's attribution and licence metadata when redistributing the data. Live helper data retains its source metadata. Country borders (`data/borders.json`, for the local currency) are simplified from **Natural Earth** 1:10m admin 0 countries, which is in the public domain. No BeamNG game assets or proprietary runtime are included here.
+Bundled Czech geography credits **OpenStreetMap contributors** and **Overture Maps Foundation**; the pack declares **ODbL-1.0**. Preserve the pack's attribution and licence metadata when redistributing the data. Live helper data retains its source metadata. Country borders (`data/borders.json`, for the local currency) are simplified from **Natural Earth** 1:10m admin 0 countries, which is in the public domain. Long-haul towns (`data/cities.json`) are Natural Earth 1:10m populated places, also public domain. No BeamNG game assets or proprietary runtime are included here.
 
 Report bugs through [GitHub Issues](https://github.com/themazzy/cargo-earth/issues), with mod/helper version, reproduction steps and the relevant error excerpt. Remove home coordinates and other personal data before sharing a save or log.
 

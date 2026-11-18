@@ -309,6 +309,28 @@ test('Jobs settings selects profiles without changing work and saves only the re
   assert(#out.items == 0 and out.jobHint:find('mapped'))
 end)
 
+test('Long hauls: far profiles open the ring, and an unchecked far site can be handed over nearby', function()
+  local core, s = fresh()
+  assert(core.longHaulRing() == nil, 'not in freight')
+  s.mode, s.opts = 'trucking', s.optsByMode.trucking
+  assert(core.longHaulRing() == nil, 'normal distances stay local')
+  core.settingsDo('jobRange', 'company_van', {nearKm = 25, minKm = 600, maxKm = 800})
+  local lo, hi = core.longHaulRing()
+  assert(lo == 600 and hi == 800)
+  local j = {id = 'far-job', kind = 'cargo', cargoName = 'Pallets', pay = 10000, minutes = 900, km = 700,
+    from = {id = 'a', n = 'Yard', g = {50, 14}}, to = {id = 'overture:1', n = 'Lager', g = {50.004, 14}, far = true}}
+  s.job, s.phase, s.orders = j, 'toDelivery', {{job = j, phase = 'toDelivery'}}
+  s.dist = 2000
+  assert(not core.canHandover(), 'too far from the site')
+  s.dist = 400
+  assert(core.canHandover())
+  core.phoneAction('handover')
+  assert(j.handover and j.pay == 8500 and j.to.g[1] == pose.lat and j.to.g[2] == pose.lon and j.to.n == 'Lager')
+  assert(not core.canHandover(), 'once')
+  j.to.far, j.handover, s.dist = nil, nil, 400
+  assert(not core.canHandover(), 'checked sites have a gate')
+end)
+
 test('The old jobs window writes the profile new offers use, after the phone saved one', function()
   local core, s = fresh()
   core.settingsDo('jobRange', 'courier', {nearKm = 2, minKm = 1, maxKm = 3})

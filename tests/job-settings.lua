@@ -25,7 +25,7 @@ for _, values in ipairs({
   assert(not profiles.set(options, 'freight_rigid', values))
   equal(profiles.resolve(options, 'freight_rigid'), {nearKm = 40, minKm = 600, maxKm = 800})
 end
-assert(profiles.bounds('taxi').nearKm[2] == 5 and profiles.bounds('tow_light').nearKm[2] == 25, 'address jobs stay local')
+assert(profiles.bounds('taxi').nearKm[2] == 15 and profiles.bounds('tow_light').nearKm[2] == 25, 'address jobs stay local')
 assert(profiles.bounds('freight_semi').nearKm[2] == 200)
 assert(not profiles.set(options, 'bus', {nearKm = 1, minKm = 1, maxKm = 10}))
 assert(not profiles.set(options, 'unknown', {}))

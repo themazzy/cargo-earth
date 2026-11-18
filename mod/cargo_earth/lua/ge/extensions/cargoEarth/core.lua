@@ -1945,6 +1945,33 @@ function M.busSkip()
   end
 end
 
+-- A long haul to a far workplace nobody checked for truck access (jobs.FAR_UNCHECKED, Jan 2026-11-18: "allow, no fee
+-- if blocked"): close to it, the load can be handed over where the truck stands, for HANDOVER_PAY of the pay.
+M.HANDOVER_M = 600
+M.HANDOVER_PAY = 0.85
+function M.canHandover()
+  local j = S.job
+  return j ~= nil and S.phase == 'toDelivery' and j.to and j.to.far == true and not j.handover and not j.route
+    and S.dist ~= nil and S.dist <= M.HANDOVER_M and S.dist > arrivalRadius(j)
+end
+
+function M.handover()
+  if not M.canHandover() then return false end
+  local j, p = S.job, earth.pose()
+  if not p then return false end
+  -- the delivery point moves to the truck; arriving, stopping and unloading then go as at any gate
+  local to = {}
+  for k, v in pairs(j.to) do to[k] = v end
+  to.g, to.r, to.d = { p.lat, p.lon }, nil, nil
+  to.label = 'Handed over near ' .. tostring(j.to.n)
+  j.to, j.handover = to, true
+  j.pay = math.floor(j.pay * M.HANDOVER_PAY + 0.5)
+  S.dist, S.roadM, S.etaS, S.stopT = 0, nil, nil, 0
+  saveCareer()
+  say('The site staff come out to you. Stop and unload here.', 5)
+  return true
+end
+
 -- Cancels the current order (all of them with `all`); free: no fee (a crash, the debug window).
 function M.cancel(free, all)
   if not S.job then return end
@@ -2906,6 +2933,8 @@ function M.phoneState()
       cancelAsk = S.phone.cancelAskUntil ~= nil and S.clock <= S.phone.cancelAskUntil, trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or S.idx and S.idx.trailers[j.trailer] or j.trailer) or nil,
       trailerM = j.trailerSpawned and trailers.distanceToPlayer() and math.floor(trailers.distanceToPlayer()) or nil,
       cancelFee = rules(j).cancelFee, count = #S.orders, carrying = carrying, orders = {},
+      canHandover = M.canHandover() or nil, handoverPay = M.canHandover() and math.floor(j.pay * M.HANDOVER_PAY + 0.5) or nil,
+      handedOver = j.handover or nil,
       loadKg = r1(cargo.onBoard(S.orders)) }
     -- List the current stop first, then the remaining orders.
     for _, o in ipairs(S.orders) do
@@ -3057,6 +3086,8 @@ function M.phoneAction(a, orderId)
     S.placesOk = nil
     M.placesDo(a == 'contractGps' and 'companyGps' or 'startCompany', orderId)
     S.contractMsg = not S.placesOk and S.placesMsg and { text = S.placesMsg, at = S.clock or 0 } or nil
+  elseif a == 'handover' then
+    M.handover()
   elseif a == 'cancel' then
     M.cancel(false)
   elseif a == 'dismiss' then
@@ -3207,6 +3238,41 @@ local function learnCameraLimits(p)
   end
 end
 
+-- Long hauls: far towns' workplaces for the freight and contract distance settings that reach far (cargoEarth/longhaul).
+-- (M. fields: the main chunk is at Lua's 200-local limit)
+function M.longHaulRing()
+  if S.mode ~= 'trucking' or S.career.employment or not S.career.garage.started then return nil end
+  local profiles = {}
+  local tier = freightSettingsTier()
+  if tier == 'van' or tier == 'rigid' or tier == 'semi' then profiles[#profiles + 1] = M.jobOptions('freight_' .. tier) end
+  local unlocked = haul.state(S.career).unlocked
+  for _, t in ipairs(employment.TIERS) do
+    profiles[#profiles + 1] = M.jobOptions('company_' .. t)
+    if t == (unlocked or 'van') then break end
+  end
+  return require('cargoEarth/longhaul').ring(profiles)
+end
+
+function M.longHaulTick(p)
+  local lo, hi = M.longHaulRing()
+  if not lo then return end
+  local longhaul = require('cargoEarth/longhaul')
+  if not S.cities then
+    local ok, data = pcall(jsonReadFile, DATA_DIR .. 'cities.json')
+    S.cities = longhaul.cities(ok and data or nil)
+  end
+  S.longHaul = S.longHaul or {}
+  longhaul.tick(S.longHaul, S.clock, p, lo, hi, S.cities, helper.ask, packDepotsNear, function(key, depots, city)
+    S.idx = S.idx or jobs.streamIndex()
+    local n = jobs.addFar(S.idx, key, depots)
+    log('I', 'cargoEarth', string.format('long hauls: %d workplaces around %s', n, tostring(city and city.n)))
+    if n > 0 then
+      S.companyBoardDirty = true
+      if not S.job then S.offeredAt = nil end
+    end
+  end)
+end
+
 local radioAlive   -- (the radio, below)
 local radioView    -- (the shared radio, below)
 local askUpdate    -- (the update notice, with the support report below)
@@ -3230,6 +3296,7 @@ local function helperTick(p)
   local areas = S.mode == 'taxi' or (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
   local wantCameras = camerasOn() and onHelperCameras or nil
   M.busFetch(p)
+  M.longHaulTick(p)
   radioAlive()
   askUpdate()
   if areas or wantCameras or helper.asking() then
@@ -4700,7 +4767,9 @@ function M.settingsState()
     or id == 'parcels' and 'Filters the total parcel round length; the route still serves its normal number of stops.'
     or 'Changes apply to new offers. Distances are estimated where road data is unavailable.'
   if id ~= 'bus' then
-    out.jobHint = out.jobHint .. ' Offers need destinations in loaded data; increasing a range does not download a wider area.'
+    out.jobHint = out.jobHint .. ((profile.tier and id ~= 'parcels')
+      and ' Past 120 km, the helper loads workplaces in real towns that far: delivery points only, unchecked for truck access.'
+      or ' Offers need destinations in loaded data; increasing a range does not download a wider area.')
   end
   out.dash = dash.state(M.G.vehicle and M.G.vehicle() or nil)
   out.dash.error = S.dashError
