@@ -69,6 +69,26 @@ longhaul.tick(st3, 0, p, {{300, 450}}, cities, function(path, done) asked3[#aske
 local before = #st3.towns
 asked3[1]({state = 'ready', key = 'empty', depots = {}})
 assert(#st3.towns == before + 1 or #st3.spares[1] == 0)
+-- a town whose workplaces are all left out (only fuel stations) also makes way for a spare
+local st4, asked4 = {}, {}
+longhaul.tick(st4, 0, p, {{300, 450}}, cities, function(path, done) asked4[#asked4 + 1] = done end, nil, function() return 0 end)
+local before4, spares4 = #st4.towns, #st4.spares[1]
+asked4[1]({state = 'ready', key = 'fuel', depots = {{id = 'overture:9', n = 'Tank', g = {48.2, 16.37}, t = 'fuel'}}})
+assert(spares4 == 0 or #st4.towns == before4 + 1, 'a spare replaces a town with no usable workplaces')
+assert(longhaul.status(st4).ready == 0)
+-- a new town list keeps the requests in flight: the same town is not asked twice, and no slot is lost
+local st5, asked5, cbs5 = {}, {}, {}
+local function ask5(path, done) asked5[#asked5 + 1] = path cbs5[#cbs5 + 1] = done end
+longhaul.tick(st5, 0, p, {{300, 450}}, cities, ask5, nil, function() return 1 end)
+assert(#asked5 == 2)
+longhaul.tick(st5, 1, p, {{300, 460}}, cities, ask5, nil, function() return 1 end)   -- settings changed: picked again
+assert(#asked5 == 2, 'both slots still busy with the old requests, nothing asked twice')
+cbs5[1]({state = 'ready', key = 'a', depots = {{id = 'o:1', n = 'A', g = {48.2, 16.37}, t = 'yard'}}})
+longhaul.tick(st5, 2, p, {{300, 460}}, cities, ask5, nil, function() return 1 end)
+assert(#asked5 == 3 and asked5[3] ~= asked5[2], 'a freed slot asks a town not already in flight')
+-- an answer that never comes frees its slot after a while
+longhaul.tick(st5, 2 + longhaul.LOST_S + 1, p, {{300, 460}}, cities, ask5, nil, function() return 1 end)
+assert(#asked5 >= 4, 'lost requests are asked again')
 -- moving far picks again
 local st2 = {}
 longhaul.tick(st2, 0, p, {{300, 450}}, cities, function() end, nil, function() end)

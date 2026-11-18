@@ -3273,6 +3273,7 @@ function M.longHaulTick(p)
       S.companyBoardDirty = true
       if not S.job then S.offeredAt = nil end
     end
+    return n
   end)
 end
 

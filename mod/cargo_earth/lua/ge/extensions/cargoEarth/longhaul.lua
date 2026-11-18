@@ -11,6 +11,7 @@ M.MOVE_KM = 50         -- pick the towns again after moving this far
 M.LOADING_S = 4        -- a town the helper is still building: ask again after this long
 M.FAILED_S = 300       -- a town that failed: ask again after this long
 M.IN_FLIGHT = 2        -- requests to the helper at once
+M.LOST_S = 60          -- a request with no answer by then counts as dropped (the helper queue is full or merged it)
 M.SECTORS = 8          -- the ring is split by compass direction, so the towns go every way
 
 -- data/cities.json -> { { n, cc, lat, lon, pop (thousands) }, ... }
@@ -98,7 +99,8 @@ end
 
 -- One step, from the helper tick. st: this module's state (kept by the caller). p: the player { lat, lon }.
 -- rings: from M.rings (nil: nothing far wanted). cities: from M.cities. ask(path, onDone): the helper call.
--- covered(lat, lon): true where the bundled pack already has workplaces. onSites(key, depots): ready workplaces.
+-- covered(lat, lon): true where the bundled pack already has workplaces. onSites(key, depots, city): ready workplaces,
+-- returns how many became delivery points.
 function M.tick(st, now, p, rings, cities, ask, covered, onSites)
   if not (rings and rings[1] and p) or st.old then return end
   local parts = {}
@@ -114,30 +116,43 @@ function M.tick(st, now, p, rings, cities, ask, covered, onSites)
       end
     end
   end
-  st.flying = st.flying or 0
+  -- requests in flight, by path: they outlive a new town list, so a town asked again is not asked twice
+  st.pending = st.pending or {}
+  local flying = 0
+  for path, at in pairs(st.pending) do
+    if now - at > M.LOST_S then st.pending[path] = nil else flying = flying + 1 end
+  end
   for _, t in ipairs(st.towns) do
-    if st.flying >= M.IN_FLIGHT then break end
-    if not t.done and not t.asking and now >= t.nextAt then
-      t.asking, st.flying = true, st.flying + 1
-      local path = string.format('/v1/sites?lat=%.4f&lon=%.4f', t.city.lat, t.city.lon)
+    if flying >= M.IN_FLIGHT then break end
+    local path = string.format('/v1/sites?lat=%.4f&lon=%.4f', t.city.lat, t.city.lon)
+    if not t.done and not st.pending[path] and now >= t.nextAt then
+      st.pending[path], flying = now, flying + 1
       ask(path, function(data, err)
-        t.asking, st.flying = false, math.max(0, st.flying - 1)
+        st.pending[path] = nil
+        local town   -- the town of the current list (the list may have been picked again meanwhile)
+        for _, x in ipairs(st.towns) do if x.city == t.city then town = x break end end
+        if not town or town.done then return end
         if type(data) ~= 'table' then
           if err == 'HTTP 404' then st.old = true end   -- a helper from before long hauls
-          t.nextAt = now + M.FAILED_S
+          town.nextAt = now + M.FAILED_S
           return
         end
         if data.state == 'ready' and type(data.depots) == 'table' then
-          t.done, t.count = true, #data.depots
-          if #data.depots > 0 then onSites(tostring(data.key or path), data.depots, t.city)
-          else
-            -- no workplaces there (a resort, a suburb): the next town of the same ring instead
-            local list, spare = st.spares and st.spares[t.ring] or {}, nil
-            repeat spare = table.remove(list, 1) until not spare or not M.scheduled(st, spare)
-            if spare then st.towns[#st.towns + 1] = { city = spare, ring = t.ring, nextAt = 0 } end
+          town.done = true
+          -- usable delivery points (fuel stations and the like are left out), not the raw rows
+          town.count = 0
+          if #data.depots > 0 then
+            local added = onSites(tostring(data.key or path), data.depots, town.city)
+            town.count = type(added) == 'number' and added or #data.depots
           end
-        elseif data.state == 'failed' then t.nextAt = now + M.FAILED_S
-        else t.nextAt = now + M.LOADING_S end
+          if town.count == 0 then
+            -- no workplaces there (a resort, a suburb): the next town of the same ring instead
+            local list, spare = st.spares and st.spares[town.ring] or {}, nil
+            repeat spare = table.remove(list, 1) until not spare or not M.scheduled(st, spare)
+            if spare then st.towns[#st.towns + 1] = { city = spare, ring = town.ring, nextAt = 0 } end
+          end
+        elseif data.state == 'failed' then town.nextAt = now + M.FAILED_S
+        else town.nextAt = now + M.LOADING_S end
       end)
     end
   end
@@ -153,7 +168,7 @@ function M.status(st)
   local out = { towns = 0, ready = 0, old = st.old or nil }
   for _, t in ipairs(st.towns or {}) do
     out.towns = out.towns + 1
-    if t.done then out.ready = out.ready + 1 end
+    if t.done and (t.count or 0) > 0 then out.ready = out.ready + 1 end
   end
   return out
 end
