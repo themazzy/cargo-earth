@@ -510,6 +510,18 @@ function M.carWorth(G, g)
   return round5(M.carValue(G) * (1 - math.min(0.5, km / 300000)))
 end
 
+-- Dealer credit for an exchange. Mileage consumes up to 25 percentage points of
+-- installed value at the market's mean mileage. Repairs share the same floor.
+function M.tradeInQuote(G, g)
+  if not g.car or g.car.standIn or g.car.loaner then return 0, 0 end
+  local value = M.carValue(G)
+  if value <= 0 then value = tonumber(g.car.value) or 0 end
+  local fraction = math.min(1, math.max(0, g.car.km or 0) / 80000)
+  local floor = math.ceil(value * 0.25 / 5) * 5
+  local gross = math.max(floor, round5(value * (M.TRADE_IN - 0.25 * fraction)))
+  return math.max(floor, gross - (g.repair or 0)), gross
+end
+
 local function captureCurrent(G, g)
   if not g.car or not M.inOwnCar(G, g) then return true end
   if not M.remember(G, g) then return false end
@@ -677,7 +689,7 @@ function M.buyCar(G, g, career, offer, opts)
   end
   if opts.keepCar and not captureCurrent(G, g) then return false, 'Could not save the current car configuration.' end
   local tradeIn = not opts.keepCar and (opts.tradeIn or
-    ((g.car and M.inOwnCar(G, g)) and round5(M.carWorth(G, g) * M.TRADE_IN) or 0)) or 0
+    ((g.car and M.inOwnCar(G, g)) and M.tradeInQuote(G, g) or 0)) or 0
   local cost = offer.price - tradeIn
   if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK needed)', cost) end
   M.expectFix(g)
@@ -1133,8 +1145,9 @@ function M.previewStart(G, g, id, keepCar)
   if g.car and not M.inOwnCar(G, g) then return false, 'Sit in your car first (Bring my car)' end
   if (g.repair or 0) > 0 then return false, 'Repair your car first' end
   if g.car and g.car.loaner then keepCar = true end
-  local tradeIn = not keepCar and g.car and round5(M.carWorth(G, g) * M.TRADE_IN) or 0
   if not captureCurrent(G, g) then return false, 'Could not save the current car configuration.' end
+  if (g.repair or 0) > 0 then return false, 'Repair your car first' end
+  local tradeIn = not keepCar and M.tradeInQuote(G, g) or 0
   M.expectFix(g)
   local ok, err = pcall(G.spawn, l.model, l.key)
   if not ok then return false, 'Car not spawned: ' .. tostring(err) end

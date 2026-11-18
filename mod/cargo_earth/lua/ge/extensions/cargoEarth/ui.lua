@@ -310,7 +310,7 @@ local function garageSection(core, S)
     local f = textInput('carFilter', 'Find a car')
     if f ~= garageView.dealerFilter then garageView.dealer, garageView.dealerFilter = nil, f end
     garageView.dealer = garageView.dealer or garage.dealer(G, f, 25)
-    local tradeIn = math.floor(garage.carValue(G) * garage.TRADE_IN / 5 + 0.5) * 5
+    local tradeIn = garage.inOwnCar(G, g) and garage.tradeInQuote(G, g) or 0
     txt('Your car is taken in for ' .. czk(tradeIn) .. '. Spare parts stay yours.')
     for i, o in ipairs(garageView.dealer) do
       if im.Button('Buy ' .. czk(o.price) .. '##car' .. i) then did(core.garageBuy(o)) end

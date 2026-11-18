@@ -943,7 +943,7 @@ angular.module('beamng.apps')
             '<input class="cep-input" placeholder="Find a car" aria-label="Find a car" ng-model="cf.text">' +
             '<button class="cep-sm" ng-click="loadCars()">Search</button></div>' +
           '<label class="cep-sub" ng-if="market.tradeIn > 0 && !g.preview"><input type="checkbox" ng-model="purchase.keep"> Keep my current car</label>' +
-          '<div class="cep-sub" ng-if="market.tradeIn > 0 && !purchase.keep && !g.preview">Trade-in credit · {{ fmt.money(market.tradeIn) }}</div>' +
+          '<div class="cep-sub" ng-if="market.tradeIn > 0 && !purchase.keep && !g.preview"><span ng-if="market.repair">Before repairs {{ fmt.money(market.tradeGross) }} · Repair bill {{ fmt.money(market.repair) }}<br></span>Trade-in credit · {{ fmt.money(market.tradeIn) }}</div>' +
           '<div class="cep-sub" ng-if="market.debt > 0" style="color:var(--tomato)">Pay your debt first ({{ fmt.money(market.debt) }}).</div>' +
           '<div class="cep-sub" ng-if="g.preview">Go back to your car to look at another one.</div>' +
           // filters: tap to pick (no typing needed); counts follow the other filters

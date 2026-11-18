@@ -4106,8 +4106,8 @@ function M.garageState()
   out.damage = g.lastDamage or 0
   if out.own then
     out.value = garage.carWorth(G, g)
-    out.tradeIn = math.floor(out.value * garage.TRADE_IN / 5 + 0.5) * 5
-    out.sellPrice = math.max(0, out.tradeIn - (g.repair or 0))
+    out.tradeIn = garage.tradeInQuote(G, g)
+    out.sellPrice = math.max(0, math.floor(out.value * garage.TRADE_IN / 5 + 0.5) * 5 - (g.repair or 0))
     out.condition = g.car and g.car.condition or 1
   end
   out.spares = garage.spares(G, g)
@@ -4123,7 +4123,9 @@ function M.garageDealer(filter)
   -- picture + numbers for each listing, read from the game's vehicle list (no spawn); a missing one stays nil
   for _, c in ipairs(cars) do c.info = M.G.carInfo and M.G.carInfo(c.model, c.key) or nil end
   local inCar = g.car and not g.car.loaner and garage.inOwnCar(M.G, g)
-  return { cars = cars, tradeIn = inCar and math.floor(garage.carWorth(M.G, g) * garage.TRADE_IN / 5 + 0.5) * 5 or 0,
+  local credit, gross = 0, 0
+  if inCar then credit, gross = garage.tradeInQuote(M.G, g) end
+  return { cars = cars, tradeIn = credit, tradeGross = gross, repair = g.repair or 0,
     money = S.career.money or 0, debt = g.debt or 0, kinds = M.vehicleKinds() }
 end
 
