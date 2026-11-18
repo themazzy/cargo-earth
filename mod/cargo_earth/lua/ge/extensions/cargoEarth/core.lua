@@ -1139,15 +1139,16 @@ end
 
 local function updateForceWatch(p)
   local G, g = M.G, S.career.garage
-  local riders = S.job and S.job.bus and (S.job.bus.onBoard or 0) > 0   -- bus passengers feel the ride too
+  local busRide = S.job ~= nil and S.job.bus ~= nil
+  local riders = busRide and (S.job.bus.onBoard or 0) > 0   -- bus passengers feel the ride too
   local id = p and not p.camera and G.playerId and (carriedOrders() > 0 or riders) and G.playerId()
   if id and g.started and not G.ownsVehicleId(id) then id = nil end
-  if forceWatch and id == forceWatch.id and p.anchorLat == forceWatch.lat and p.anchorLon == forceWatch.lon then return end
+  if forceWatch and forceWatch.bus == busRide and id == forceWatch.id and p.anchorLat == forceWatch.lat and p.anchorLon == forceWatch.lon then return end
   stopForceWatch()
   if id then
     forceToken = forceToken + 1
-    if G.watchForces(id, forceToken) then
-      forceWatch = { id = id, token = forceToken, lat = p.anchorLat, lon = p.anchorLon }
+    if G.watchForces(id, forceToken, busRide) then
+      forceWatch = { id = id, token = forceToken, lat = p.anchorLat, lon = p.anchorLon, bus = busRide }
     end
   end
 end
@@ -1944,7 +1945,7 @@ function M.onCargoEarthShock(id, token, peak)
   stopForceWatch()
   if S.job and S.job.bus then
     local bus = require('cargoEarth/bus')
-    if bus.bump(S.job, peak) > 0 then
+    if bus.impact(S.job, peak, nil, S.clock) > 0 then
       say(string.format('Your passengers were thrown about (%.1f g). Comfort %d %%.', peak, bus.comfort(S.job)), 5)
       saveCareer()
     end
@@ -1971,7 +1972,16 @@ function M.onCargoEarthHarsh(id, token, g)
   if M.G.playerId() ~= id then return end
   if S.job and S.job.bus then
     local bus = require('cargoEarth/bus')
-    if bus.harsh(S.job) > 0 then say(string.format('Your passengers felt that. Comfort %d %%.', bus.comfort(S.job)), 4) end
+    local p, watch = earth.pose(), forceWatch
+    if not watch or watch.id ~= id or watch.token ~= token or earth.status() ~= 'ok' or not p or p.camera
+        or p.anchorLat ~= watch.lat or p.anchorLon ~= watch.lon or g < bus.HARSH_G or g == math.huge then return end
+    local ride = S.job.bus
+    if ride.impactAt and S.clock >= ride.impactAt and S.clock - ride.impactAt < bus.IMPACT_GAP_S then return end
+    if ride.harshAt and S.clock >= ride.harshAt and S.clock - ride.harshAt < bus.HARSH_GAP_S then return end
+    if bus.harsh(S.job) > 0 then
+      ride.harshAt = S.clock
+      say(string.format('Your passengers felt that. Comfort %d %%.', bus.comfort(S.job)), 4)
+    end
     return
   end
   local cracked, ruined = 0, {}
@@ -1985,6 +1995,31 @@ function M.onCargoEarthHarsh(id, token, g)
   if next(ruined) then M.spoil(nil, ruined) return end
   if cracked > 0 then
     say(string.format('The fragile load felt that: %d %% intact.', special.condition(S.job or {})), 4)
+  end
+end
+
+-- New vehicle damage catches collisions that never cross the accelerometer threshold.
+function M.busDamageTick(damage)
+  local j, p = S.job, earth.pose()
+  local id = M.G.playerId and M.G.playerId()
+  if not (j and j.bus and p and not p.camera and id) or earth.status() ~= 'ok'
+      or type(damage) ~= 'number' or damage ~= damage or damage == math.huge then
+    S.busDamageWatch = nil
+    return
+  end
+  local w = S.busDamageWatch
+  if not w or w.job ~= j or w.id ~= id or w.lat ~= p.anchorLat or w.lon ~= p.anchorLon then
+    S.busDamageWatch = {job=j, id=id, lat=p.anchorLat, lon=p.anchorLon, damage=damage, at=S.clock}
+    return
+  end
+  local bus = require('cargoEarth/bus')
+  if S.clock - w.at < 2 or damage < w.damage or not bus.riding(j) then w.damage = damage return end
+  local added = damage - w.damage
+  if added < bus.DAMAGE_MIN then return end
+  w.damage = damage
+  if bus.impact(j, nil, added, S.clock) > 0 then
+    say(string.format('Your passengers felt the collision. Comfort %d %%.', bus.comfort(j)), 5)
+    saveCareer()
   end
 end
 
@@ -3521,7 +3556,9 @@ local function garageTick(dt)
     S.valueAt = S.clock + 5
     garage.noteValue(M.G, g)
   end
-  local what, amount = garage.trackDamage(g, M.G.damage())
+  local damage = M.G.damage()
+  M.busDamageTick(damage)
+  local what, amount = garage.trackDamage(g, damage)
   if shift and what == 'hit' then employment.damage(S.career, math.max(0, amount)) end
   if shift and not shift.ownerOperator then g.debt = 0 end
   if what == 'hit' then
@@ -5360,11 +5397,13 @@ end
 
 -- BeamNG.Earth moved the world's origin (modding API 1.7): positions worked out in the old frame are stale.
 function M.onBeamNGEarthRebased()
+  S.busDamageWatch = nil
   marker.reset()
   trailers.onRebased()
 end
 
 function M.onBeamNGEarthTeleported(info)
+  S.busDamageWatch = nil
   if S.busDwell then M.interruptBoarding() end
   trailers.onTeleported()
   S.odometerPose = nil
@@ -5398,6 +5437,7 @@ function M.onJbeamLoadingPhase2(_, objID, vehicle) dash.captureLoading(objID, ve
 function M.onVehicleSwitched() M.dashCheckSoon() end
 
 function M.onVehicleSpawned(id)
+  S.busDamageWatch = nil
   M.dashCheckSoon()
   if fuelWatch and fuelWatch.id == id then stopFuelWatch() end
   -- A respawn recreates the vehicle-side storage, even when BeamNG reuses its object ID.
@@ -5409,6 +5449,7 @@ end
 -- A reset (R, recover, the game's repair) rebuilds the vehicle-side containers empty, so the load the mod set is
 -- forgotten there: read the boxes again and put the load back (a meal box at once, freight through workFreight).
 function M.onVehicleResetted(id)
+  S.busDamageWatch = nil
   if S.storage and S.storage.id == id then S.storage = nil end
   if S.freightLoad and S.freightLoad.id == id then S.freightLoad = nil end
 end

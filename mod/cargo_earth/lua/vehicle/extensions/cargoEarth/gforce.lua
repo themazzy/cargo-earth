@@ -12,13 +12,15 @@ local HARSH_G, HARSH_S, HARSH_GAP_S = 0.55, 0.4, 3
 
 local token, warmup, shockTime, impactTime, peak
 local harshToken, harshTime, harshWait = nil, 0, 0
+local harshG, harshGap = HARSH_G, HARSH_GAP_S
 
 local function reset()
   warmup, shockTime, impactTime, peak = WARMUP_S, 0, 0, 0
   harshTime = 0
 end
 
-function M.watch(newToken)
+function M.watch(newToken, busRide)
+  harshG, harshGap = busRide and 0.8 or HARSH_G, busRide and 5 or HARSH_GAP_S
   token = newToken
   harshToken, harshWait = newToken, 0
   reset()
@@ -38,9 +40,9 @@ function M.updateGFX(dt)
   if harshToken then
     local flat = math.sqrt(x * x + y * y) / STANDARD_GRAVITY
     harshWait = math.max(0, harshWait - dt)
-    harshTime = (flat >= HARSH_G and flat < SHOCK_G) and harshTime + sampleTime or 0
+    harshTime = (flat >= harshG and flat < SHOCK_G) and harshTime + sampleTime or 0
     if harshTime >= HARSH_S and harshWait <= 0 then
-      harshTime, harshWait = 0, HARSH_GAP_S
+      harshTime, harshWait = 0, harshGap
       obj:queueGameEngineLua(string.format('extensions.hook("onCargoEarthHarsh", %d, %d, %.3f)', obj:getID(), harshToken, flat))
     end
   end

@@ -40,12 +40,12 @@ function M.vehicleState(action, path, token)
   return true
 end
 
-function M.watchForces(id, token)
+function M.watchForces(id, token, busRide)
   local v = getObjectByID and getObjectByID(id)
   if not v then return false end
   if token then
     v:queueLuaCommand(string.format(
-      'extensions.load("cargoEarth_gforce"); if extensions.cargoEarth_gforce then extensions.cargoEarth_gforce.watch(%d) end', token))
+      'extensions.load("cargoEarth_gforce"); if extensions.cargoEarth_gforce then extensions.cargoEarth_gforce.watch(%d, %s) end', token, tostring(busRide == true)))
   else
     v:queueLuaCommand('if extensions.cargoEarth_gforce then extensions.unload("cargoEarth_gforce") end')
   end
