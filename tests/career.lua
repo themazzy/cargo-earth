@@ -2749,6 +2749,72 @@ test('bus comfort: passengers feel harsh moments and bumps, an empty bus does no
   assert(bus.comfort(j) == 0)
 end)
 
+test('bus collisions combine damage and G reports once, with stronger reports upgrading the penalty', function()
+  local function ride()
+    return {bus={onBoard=5,comfort=100}}
+  end
+  local j = ride()
+  assert(bus.impact(j, 3, bus.DAMAGE_MIN - 1, 10) == 0)
+  assert(bus.impact(j, 3, bus.DAMAGE_MIN, 10) == 10)
+  assert(bus.impact(j, 3.5, nil, 11) == 0)
+  assert(bus.impact(j, 5.5, nil, 11) == 30 and bus.comfort(j) == 60)
+  assert(bus.impact(j, nil, bus.DAMAGE_FULL, 12) == 0)
+  assert(bus.impact(j, nil, bus.DAMAGE_MIN, 14) == 10)
+  local reverse = ride()
+  bus.impact(reverse, 5.5, nil, 10)
+  bus.impact(reverse, nil, bus.DAMAGE_MIN, 11)
+  assert(bus.comfort(reverse) == 60)
+  j.bus.onBoard = 0
+  assert(bus.impact(j, 10, bus.DAMAGE_FULL, 20) == 0)
+end)
+
+test('bus comfort tolerates ordinary braking and catches damage below the G threshold', function()
+  local core, s = fresh()
+  core.setMode('bus')
+  s.busIdx = bus.index()
+  bus.set(s.busIdx, busData())
+  s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+  pose.lat, pose.lon = 50.0005, 14.0005
+  core.busSelect(s.busBoard[1].id)
+  core.busDepotTick(pose, 2)
+  advance(core, 2)
+  local j = s.job
+  j.bus.onBoard = 5
+  advance(core, 6)
+  core.onCargoEarthHarsh(vehicle.id, impactToken, 0.7)
+  assert(bus.comfort(j) == 100, 'routine braking should not cost comfort')
+  core.onCargoEarthHarsh(vehicle.id, impactToken + 1, 0.9)
+  assert(bus.comfort(j) == 100, 'an expired force reporter must be ignored')
+  core.onCargoEarthHarsh(vehicle.id, impactToken, 0.9)
+  assert(bus.comfort(j) == 98)
+  core.onCargoEarthHarsh(vehicle.id, impactToken, 0.9)
+  assert(bus.comfort(j) == 98, 'one harsh moment must not produce repeated penalties')
+  core.busDamageTick(bus.DAMAGE_MIN - 1)
+  assert(bus.comfort(j) == 98)
+  core.busDamageTick(bus.DAMAGE_MIN)
+  assert(bus.comfort(j) == 90, 'the collision penalty includes the recent harsh-driving penalty')
+  core.busDamageTick(bus.DAMAGE_MIN)
+  assert(bus.comfort(j) == 90)
+  local watched = s.busDamageWatch
+  core.onVehicleSpawned(vehicle.id + 10)
+  core.onVehicleResetted(vehicle.id + 10)
+  assert(s.busDamageWatch == watched, 'traffic spawn and reset must preserve the bus baseline')
+  s.clock = s.clock + 4
+  -- One collision whose damage arrives over two garage ticks.
+  core.busDamageTick(bus.DAMAGE_MIN + 10000)
+  local afterFirst = bus.comfort(j)
+  assert(afterFirst == 66)
+  s.clock = s.clock + 0.5
+  core.busDamageTick(bus.DAMAGE_MIN + 20000)
+  assert(bus.comfort(j) == 50, 'the two increments must total a 40-point loss')
+  core.busDamageTick(bus.DAMAGE_MIN + 20000)
+  assert(bus.comfort(j) == 50, 'the unchanged damage total must not be counted again')
+  core.onVehicleResetted(vehicle.id)
+  assert(not s.busDamageWatch, 'resetting the watched bus clears its baseline')
+  core.busDamageTick(0)
+  assert(bus.comfort(j) == 50, 'a reset is not another crash')
+end)
+
 test('bus signs: the line number, the destination in plain letters and the stops ahead', function()
   local idx = bus.index()
   local data = busData()

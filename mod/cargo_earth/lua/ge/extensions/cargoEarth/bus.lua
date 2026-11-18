@@ -23,7 +23,10 @@ M.CAPACITY = 70          -- people a city bus takes
 -- cornering) costs HARSH_LOSS points, a bump or crash from BUMP_G[1] g costs BUMP_LOSS[1]..[2] (the most from
 -- BUMP_G[2] g). An empty bus feels nothing. Comfort sets the line's pay (0.6 + 0.004 x comfort, as a taxi ride) and
 -- its stars.
-M.HARSH_LOSS = 4
+M.HARSH_LOSS = 2
+M.HARSH_G, M.HARSH_GAP_S = 0.8, 5
+M.IMPACT_GAP_S = 3
+M.DAMAGE_MIN, M.DAMAGE_FULL = 1000, 20000
 M.BUMP_G, M.BUMP_LOSS = { 3.5, 5.5 }, { 10, 40 }
 M.DWELL_S, M.PER_PERSON_S, M.MAX_DWELL_S = 3, 0.6, 15
 M.MAX_STOPS = 40         -- a longer line is cut here (its last stop is the end of this run)
@@ -283,11 +286,44 @@ end
 
 -- A bump or crash of `peak` g with people on board. Returns the loss.
 function M.bump(job, peak)
-  if not M.riding(job) or type(peak) ~= 'number' or peak ~= peak or peak < M.BUMP_G[1] then return 0 end
-  local share = math.min(1, (peak - M.BUMP_G[1]) / (M.BUMP_G[2] - M.BUMP_G[1]))
+  if type(peak) ~= 'number' or peak ~= peak or peak == math.huge then return 0 end
+  return M.impact(job, peak)
+end
+
+-- Combine accelerometer and damage reports from one collision. A stronger later
+-- report adds only the difference, so callback order does not change the total.
+function M.impact(job, peak, damage, now)
+  if not M.riding(job) then return 0 end
+  local loss = 0
+  if peak and peak >= M.BUMP_G[1] then
+    local share = math.min(1, (peak - M.BUMP_G[1]) / (M.BUMP_G[2] - M.BUMP_G[1]))
+    loss = math.floor(M.BUMP_LOSS[1] + share * (M.BUMP_LOSS[2] - M.BUMP_LOSS[1]) + 0.5)
+  end
+  local hasDamage = damage and damage >= M.DAMAGE_MIN
+  if loss == 0 and not hasDamage then return 0 end
+  local b = job.bus
+  if now then
+    if not b.impactAt or now < b.impactAt or now - b.impactAt >= M.IMPACT_GAP_S then
+      b.impactAt, b.impactDamage = now, 0
+      b.impactLoss = b.harshAt and now >= b.harshAt and now - b.harshAt < M.IMPACT_GAP_S and M.HARSH_LOSS or 0
+    end
+    if hasDamage then
+      b.impactDamage = (b.impactDamage or 0) + damage
+      damage = b.impactDamage
+    end
+  end
+  if hasDamage then
+    local share = math.min(1, (damage - M.DAMAGE_MIN) / (M.DAMAGE_FULL - M.DAMAGE_MIN))
+    loss = math.max(loss, math.floor(M.BUMP_LOSS[1] + share * (M.BUMP_LOSS[2] - M.BUMP_LOSS[1]) + 0.5))
+  end
+  local extra = loss
+  if now then
+    extra = math.max(0, loss - b.impactLoss)
+    b.impactLoss = math.max(loss, b.impactLoss)
+  end
   local before = M.comfort(job)
-  job.bus.comfort = math.max(0, before - math.floor(M.BUMP_LOSS[1] + share * (M.BUMP_LOSS[2] - M.BUMP_LOSS[1]) + 0.5))
-  return before - job.bus.comfort
+  b.comfort = math.max(0, before - extra)
+  return before - b.comfort
 end
 
 -- The bus's own signs (the citybus's destination sign and next-stop screen, vehicles/citybus/lua/controller/bus.lua,
