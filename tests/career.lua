@@ -4893,10 +4893,10 @@ test('used-car market: every vehicle kind has eight listings at cheap, middle an
   local held = g.market.list[1]
   held.gone = g.market.t
   g.preview = {id = held.id}
-  garage.marketTick(G, g, 61, rnd)
+  garage.marketTick(G, g, 31, rnd)
   assert(#g.market.list == 40 and garage.findListing(g, held.id) == held, 'test-drive selection stays reserved')
   for _, l in ipairs(g.market.list) do
-    assert(l == held or l.gone - l.listedAt <= 60)
+    assert(l == held or l.gone - l.listedAt <= garage.MARKET_LIFE_MIN[2])
   end
   g.preview = nil
   garage.marketTick(G, g, 0, rnd)
@@ -4911,7 +4911,7 @@ test('used-car market: every vehicle kind has eight listings at cheap, middle an
   g.preview = {id = held.id}
   garage.marketTick(G, g, 0, rnd)
   assert(#g.market.list == 40 and garage.findListing(g, held.id))
-  assert(held.gone - held.listedAt == 60, 'legacy expiry shortened to the new maximum')
+  assert(held.gone - held.listedAt == garage.MARKET_LIFE_MIN[2], 'legacy expiry shortened to the new maximum')
   g.preview = nil
   local listing = g.market.list[1]
   assert(garage.buyListing(G, g, {money = 1000000}, listing.id))
