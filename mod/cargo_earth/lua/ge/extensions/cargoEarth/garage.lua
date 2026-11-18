@@ -725,11 +725,9 @@ end
 ------------------------------------------------------------------------------------------ the used-car market
 -- A changing list of used cars: new ones appear while you play, old ones are sold to someone else. Each has its
 -- kilometres and condition; the price follows the car's BeamNG value, its condition and a little luck.
-M.MARKET_SIZE = 40             -- listings at most
-M.MARKET_NEW_MIN = 8           -- a new listing about every this many minutes of play
-M.MARKET_LIFE_MIN = { 40, 150 } -- a listing is gone after this many minutes of play
+M.MARKET_LIFE_MIN = { 40, 60 } -- a listing is gone after this many minutes of play
 M.CHEAP_SHARE = 0.5            -- this share of random new listings comes from the cheapest third of its kind
-M.MIN_PER_KIND = 6             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
+M.MIN_PER_KIND = 8             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
 M.MARKET_V = 4                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind
 
 -- The configs for sale by kind, cheapest first ({ car = {...}, suv = {...}, ... }). Built once per config list.
@@ -805,76 +803,68 @@ local function newListing(G, m, rnd, kind, band)
     listedAt = m.t, gone = m.t + M.MARKET_LIFE_MIN[1] + rnd() * (M.MARKET_LIFE_MIN[2] - M.MARKET_LIFE_MIN[1]) }
 end
 
--- Every kind the game has keeps at least MIN_PER_KIND listings, spread over cheap, middle and dear ones (at least two
--- of each third): a listing that is sold or gone is replaced at once by one of its kind, from the price third it has
--- fewest of.
-local function topUp(G, m, rnd)
-  local byKind = kindPools(G)
+-- Eight slots per available category, with price variety and a protected test-drive selection.
+local function topUp(G, g, rnd)
+  local m, byKind = g.market, kindPools(G)
   local count, bands = {}, {}
   for _, l in ipairs(m.list) do
-    if l.kind then
-      count[l.kind] = (count[l.kind] or 0) + 1
-      bands[l.kind] = bands[l.kind] or { 0, 0, 0 }
-      if l.band then bands[l.kind][l.band] = bands[l.kind][l.band] + 1 end
+    local kind = l.kind
+    if kind then
+      count[kind] = (count[kind] or 0) + 1
+      bands[kind] = bands[kind] or { 0, 0, 0 }
+      if l.band then bands[kind][l.band] = bands[kind][l.band] + 1 end
+    end
+  end
+  for i = #m.list, 1, -1 do
+    local l = m.list[i]
+    local pool = byKind[l.kind]
+    local surplusBand = pool and #pool >= 3 and l.band and bands[l.kind][l.band] > math.ceil(M.MIN_PER_KIND / 3)
+    if (not pool or count[l.kind] > M.MIN_PER_KIND or surplusBand) and not (g.preview and g.preview.id == l.id) then
+      table.remove(m.list, i)
+      if l.kind then
+        count[l.kind] = count[l.kind] - 1
+        if l.band then bands[l.kind][l.band] = bands[l.kind][l.band] - 1 end
+      end
     end
   end
   for _, kind in ipairs(haul.KIND_ORDER) do
     local list = byKind[kind]
     if list and #list > 0 then
       local b = bands[kind] or { 0, 0, 0 }
-      local each = #list >= 3 and math.floor(M.MIN_PER_KIND / 3) or 0   -- at least this many from each price third
-      for _ = 1, M.MARKET_SIZE do   -- (bounded: never more than a market's worth)
+      for _ = (count[kind] or 0) + 1, M.MIN_PER_KIND do
         local band = 1
         for i = 2, 3 do if b[i] < b[band] then band = i end end
-        if (count[kind] or 0) >= M.MIN_PER_KIND and b[band] >= each then break end
         local l = newListing(G, m, rnd, kind, #list >= 3 and band or nil)
-        if not l then break end
         m.list[#m.list + 1] = l
-        count[kind] = (count[kind] or 0) + 1
         b[l.band] = b[l.band] + 1
       end
     end
   end
 end
 
--- Advances the market by dtMin minutes of play (old listings go, new ones come). rnd: math.random-like (0..1).
+-- Market time is active play time. Free slots are filled immediately after sales and expiries.
 function M.marketTick(G, g, dtMin, rnd)
   rnd = rnd or math.random
   local m = g.market
   if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= M.MARKET_V) then
-    m = { v = M.MARKET_V, t = 0, seq = 0, list = {}, nextAt = 0 } g.market = m
-  end
-  local changed = false
-  if m.v == 3 then
-    -- v3 listings stay (one may be the car you are looking at); they learn their kind
-    for _, l in ipairs(m.list) do l.kind = l.kind or kindOf(G, l.model, l.key) end
-    m.v, changed = M.MARKET_V, true
+    m = { v = M.MARKET_V, t = 0, seq = 0, list = {} }
+    g.market = m
   end
   m.t = m.t + (dtMin or 0)
   for i = #m.list, 1, -1 do
     local l = m.list[i]
-    if l.gone <= m.t and not (g.preview and g.preview.id == l.id) then table.remove(m.list, i) changed = true end   -- not while you look at it
-  end
-  if #m.list == 0 and m.t <= (dtMin or 0) + 1e-9 then
-    -- the first visit: a market already full of cars
-    for _ = 1, math.floor(M.MARKET_SIZE * 0.7) do
-      local l = newListing(G, m, rnd)
-      if l then l.gone = l.gone - rnd() * M.MARKET_LIFE_MIN[1] m.list[#m.list + 1] = l end
+    l.kind = l.kind or kindOf(G, l.model, l.key)
+    if not l.band then
+      local list = kindPools(G)[l.kind] or {}
+      for n, c in ipairs(list) do
+        if c.model == l.model and c.key == l.key then l.band = bandOf(list, n) break end
+      end
     end
-    m.nextAt = m.t + M.MARKET_NEW_MIN
-    changed = true
+    l.gone = math.min(l.gone, l.listedAt + M.MARKET_LIFE_MIN[2])
+    if l.gone <= m.t and not (g.preview and g.preview.id == l.id) then table.remove(m.list, i) end
   end
-  while m.t >= m.nextAt do
-    if #m.list < M.MARKET_SIZE then
-      local l = newListing(G, m, rnd)
-      if l then m.list[#m.list + 1] = l changed = true end
-    end
-    m.nextAt = m.nextAt + M.MARKET_NEW_MIN * (0.5 + rnd())
-  end
-  if changed or m.toppedUp ~= #m.list then
-    topUp(G, m, rnd)
-    m.toppedUp = #m.list
-  end
+  m.v = M.MARKET_V
+  topUp(G, g, rnd)
   return m
 end
 
@@ -887,7 +877,8 @@ function M.market(g, filter)
     if not filter or l.name:lower():find(filter, 1, true) then
       out[#out + 1] = { id = l.id, model = l.model, key = l.key, name = l.name, km = l.km, condition = l.condition,
         missing = l.wearVersion == WEAR_VERSION and l.missing and #l.missing or nil, kind = l.kind,
-        price = l.price, isNew = (m.t - l.listedAt) < 15, leftMin = math.max(0, math.floor(l.gone - m.t + 0.5)) }
+        price = l.price, isNew = (m.t - l.listedAt) < 15, held = g.preview and g.preview.id == l.id or nil,
+        leftS = math.max(0, math.ceil((l.gone - m.t) * 60)), leftMin = math.max(0, math.floor(l.gone - m.t + 0.5)) }
     end
   end
   table.sort(out, function(a, b) if a.price ~= b.price then return a.price < b.price end return a.id < b.id end)
@@ -919,6 +910,7 @@ function M.buyListing(G, g, career, id, keepCar)
     keepCar = keepCar })
   if ok then
     table.remove(g.market.list, i)
+    if g.market.v == M.MARKET_V then M.marketTick(G, g, 0) end
     g.preview = nil
     if here then
       g.car.wearVersion = l.wearVersion

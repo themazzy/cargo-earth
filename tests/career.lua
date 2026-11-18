@@ -4427,7 +4427,7 @@ test('a car goes on the deck by the middle of its body, not its ref node', funct
   assert(f0 == 0 and r0 == 0)
 end)
 
-test('used-car market: every vehicle kind has at least 6 listings at cheap, middle and dear prices', function()
+test('used-car market: every vehicle kind has eight listings at cheap, middle and dear prices', function()
   local garage, haul = require('cargoEarth/garage'), require('cargoEarth/haul')
   assert(haul.configClass('van', 'Van', 'H-Series Vanster') == 'van')
   assert(haul.configClass('us_semi', nil, 'T-Series T75 Box Truck') == 'rigid')
@@ -4449,7 +4449,7 @@ test('used-car market: every vehicle kind has at least 6 listings at cheap, midd
   end
   add('covet', 'Hatchback', 20) add('pickup', 'Pickup', 9, 'Truck') add('van', 'Van', 4, 'Truck')
   add('md_series', 'Box Truck', 2, 'Truck') add('us_semi', 'Semi Truck', 7, 'Truck') add('citybus', 'Bus', 3, 'Truck')
-  local G = { configs = function() return configs end }
+  local G = { configs = function() return configs end, spawn = function() end }
   local seed = 7
   local rnd = function() seed = (seed * 16807) % 2147483647 return seed / 2147483647 end
   local g = {}
@@ -4467,7 +4467,7 @@ test('used-car market: every vehicle kind has at least 6 listings at cheap, midd
   end
   local n, bands = counts()
   for _, kind in ipairs(haul.KIND_ORDER) do
-    assert((n[kind] or 0) >= garage.MIN_PER_KIND, kind .. ' has ' .. tostring(n[kind]))
+    assert((n[kind] or 0) == 8, kind .. ' has ' .. tostring(n[kind]))
   end
   assert(bands.car[1] and bands.car[2] and bands.car[3], 'cars at varied prices')
   assert(bands.semi[1] and bands.semi[3], 'tractors at varied prices')
@@ -4479,6 +4479,33 @@ test('used-car market: every vehicle kind has at least 6 listings at cheap, midd
   n = counts()
   assert(n.van >= garage.MIN_PER_KIND)
   for _, c in ipairs(garage.market(g)) do assert(c.kind and c.hours == nil) end
+  assert(#g.market.list == 40, 'eight slots for each of five categories')
+  local held = g.market.list[1]
+  held.gone = g.market.t
+  g.preview = {id = held.id}
+  garage.marketTick(G, g, 61, rnd)
+  assert(#g.market.list == 40 and garage.findListing(g, held.id) == held, 'test-drive selection stays reserved')
+  for _, l in ipairs(g.market.list) do
+    assert(l == held or l.gone - l.listedAt <= 60)
+  end
+  g.preview = nil
+  garage.marketTick(G, g, 0, rnd)
+  assert(not garage.findListing(g, held.id) and #g.market.list == 40)
+  -- A legacy oversized category shrinks while the preview survives.
+  for _ = 1, 20 do
+    g.market.seq = g.market.seq + 1
+    table.insert(g.market.list, {id = g.market.seq, model = 'covet', key = 'covet1', kind = 'car', band = 1,
+      name = 'Legacy', km = 0, condition = 1, price = 100, listedAt = g.market.t, gone = g.market.t + 150})
+  end
+  held = g.market.list[#g.market.list]
+  g.preview = {id = held.id}
+  garage.marketTick(G, g, 0, rnd)
+  assert(#g.market.list == 40 and garage.findListing(g, held.id))
+  assert(held.gone - held.listedAt == 60, 'legacy expiry shortened to the new maximum')
+  g.preview = nil
+  local listing = g.market.list[1]
+  assert(garage.buyListing(G, g, {money = 1000000}, listing.id))
+  assert(#g.market.list == 40 and not garage.findListing(g, listing.id), 'buying refills the freed slot immediately')
   -- an older save's market keeps its listings and learns their kinds
   local old = { market = { v = 3, t = 5, seq = 1, nextAt = 100,
     list = { { id = 1, model = 'van', key = 'van2', name = 'van 2', km = 0, condition = 1, price = 10, listedAt = 0, gone = 90 } } } }

@@ -228,8 +228,29 @@ let asked = commands.length, digested = digests
 for (now = t0 + 10250; now <= t0 + 20000; now += 250) poll()
 assert.equal(commands.length - asked, 20, 'An open phone polls twice a second')
 assert(digests - digested <= 1, 'Unchanged answers must not start a digest')
+// The open market updates from active game time without overlapping requests or resetting filters.
+scope.panel = 'garage'
+scope.gview = 'cars'
+scope.cf.kind = 'van'
+scope.cf.detail = 17
+answer = {cars: [{id: 17, leftS: 3600}], money: 100}
+now += 1000; poll()
+assert.equal(scope.cars[0].leftS, 3600)
+assert.equal(scope.carExpiry(scope.cars[0]), '60:00')
+answer.cars[0].leftS = 3599
+now += 1000; poll()
+assert.equal(scope.carExpiry(scope.cars[0]), '59:59')
+assert.equal(scope.cf.kind, 'van')
+assert.equal(scope.cf.detail, 17)
+scope.panel = null
+scope.gview = 'home'
+answer = {screen: 'offline'}
+let dealerCalls = commands.filter(c => c.includes('garageDealer')).length
+now += 1000; poll()
+assert.equal(commands.filter(c => c.includes('garageDealer')).length, dealerCalls, 'closed market stops polling')
 // Standing in the stop zone the bar fills: four times a second.
 answer = {screen: 'active', active: {stop: {inZone: true, frac: 0}}}
+now += 500
 poll(); now += 250
 asked = commands.length
 for (let i = 0; i < 8; i++) { answer.active.stop.frac = i / 8; poll(); now += 250 }
