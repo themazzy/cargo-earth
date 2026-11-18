@@ -32,6 +32,14 @@ function M.playerId()
   return v and v:getID() or nil
 end
 
+function M.vehicleState(action, path, token)
+  local car = playerVeh()
+  if not car then return false end
+  car:queueLuaCommand(string.format(
+    'extensions.load("cargoEarth_vehicleState"); extensions.cargoEarth_vehicleState.run(%q, %q, %d)', action, path, token))
+  return true
+end
+
 function M.watchForces(id, token)
   local v = getObjectByID and getObjectByID(id)
   if not v then return false end

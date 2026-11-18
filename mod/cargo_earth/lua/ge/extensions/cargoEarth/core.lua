@@ -422,7 +422,7 @@ function M.careerChoice()
   return { starter = S.starterName or nil, startMoney = garage.START_MONEY, busy = S.job ~= nil }
 end
 
-local function saveCareer()
+local function saveCareer(skipDamage)
   if S.pendingCareer then return end
   local c = S.career
   if earth.status() == 'ok' then rememberLocation(earth.pose()) end
@@ -430,6 +430,13 @@ local function saveCareer()
   if c.garage.car and not c.garage.pendingUsed and not S.parts and not S.skipCapture then
     local ok, err = pcall(garage.remember, M.G, c.garage)
     if not ok then problem('W', 'Could not capture the career car: ' .. tostring(err)) end
+  end
+  local g = c.garage
+  if not skipDamage and g.car and not g.pendingUsed and not g.preview and not S.parts and not S.skipCapture
+      and not conditionAt and not g.restoringDamage and garage.inOwnCar(M.G, g) then
+    require('cargoEarth/damage').capture(M.G, g, function()
+      if S.career == c and not S.pendingCareer then saveCareer(true) end
+    end)
   end
   c.savedAt = os.time()
   c.mode = S.mode
@@ -442,7 +449,10 @@ local function saveCareer()
   economy.reconcile(c)
   economy.compact(c)
   local path = M.savePath(c)
+  local restoring = g.restoringDamage
+  g.restoringDamage = nil
   local ok, saved = pcall(persistence.save, jsonWriteFile, jsonReadFile, path, c)
+  g.restoringDamage = restoring
   if ok and saved and S.indexDirty then saved = M.writeIndex() end
   if ok and saved then
     if S.slot then S.saveInfo[S.slot] = require('cargoEarth/saves').summary(c) end
@@ -567,6 +577,7 @@ local function spawnCareerCar(g, vehicleId, position)
   usedAt = g.pendingUsed and S.clock + 1 or nil
   conditionAt = not g.pendingUsed and S.clock + 3 or nil
   -- A spawn resets physical damage. Keep its outstanding repair cost with the car.
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.carriedRepair, g.lastDamage, g.preview = g.repair or 0, 0, nil
   return true
 end
@@ -3430,9 +3441,34 @@ local function garageTick(dt)
   if not S.parts and conditionAt and own and S.clock >= conditionAt then
     conditionAt = nil
     if M.G.applyCondition then pcall(M.G.applyCondition, g.car.km or 0, g.car.condition or 1) end
+    if g.car.physicalDamage then
+      local car = g.car
+      g.restoringDamage = {car = car, bill = g.repair or 0}
+      local pending = g.restoringDamage
+      if not require('cargoEarth/damage').restore(M.G, g, function(ok)
+        if g.restoringDamage == pending then
+          pending.ready, pending.ok = S.clock + 1, ok
+        end
+      end) then pending.ready, pending.ok = S.clock + 1, false end
+    end
   end
   fuelTick(own)
   if not own then return end
+  if g.restoringDamage then
+    local pending = g.restoringDamage
+    if pending.car ~= g.car then g.restoringDamage = nil
+    elseif not pending.ready or S.clock < pending.ready then return
+    else
+      g.restoringDamage = nil
+      if pending.ok then
+        g.damageBaseline = {damage = M.G.damage() or 0, bill = pending.bill}
+        g.lastDamage = g.damageBaseline.damage
+        g.carriedRepair = g.lastDamage == 0 and pending.bill or nil
+      else
+        say('Saved vehicle damage could not be restored. Its repair bill has been kept.', 8)
+      end
+    end
+  end
   -- the odometer
   local p = earth.pose()
   local shift = S.career.employment
@@ -5082,6 +5118,7 @@ M.dashTick = dashTick
 function M.dashCheckSoon() dashCheckAt = dashClock + M.DASH_CHECK_S end
 
 function M.onUpdate(dtReal, dtSim)
+  require('cargoEarth/damage').tick(dtReal)
   dashTick(dtReal)
   if S.pendingCareer then
     stopForceWatch()

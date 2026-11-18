@@ -3422,6 +3422,77 @@ test('buying after a test drive uses the trade-in quote from the owned car', fun
   assert(garage.buyListing(G, g, career, 9) and career.money == 0 and g.car.model == 'etk')
 end)
 
+test('a restored damaged car keeps its repair bill once and a paid repair clears its snapshot', function()
+  local core, s = fresh()
+  local g = s.career.garage
+  g.debt, g.repair = 0, 500
+  g.car.key = 'custom'
+  g.car.physicalDamage = {format = 'v2', cargoEarthLocalNodes = true, nodes = {}, beams = {}}
+  local snapshots, restored = require('cargoEarth/damage'), 0
+  core.G.vehicleState = function(action, path, token)
+    if action == 'restore' then
+      restored = restored + 1
+      damageValue = 12000
+    else
+      disk[path] = {format = 'v2', cargoEarthLocalNodes = true, nodes = {}, beams = {}}
+    end
+    snapshots.complete(token, 1, true)
+    return true
+  end
+  assert(core.garageBringCar())
+  advance(core, 12)
+  assert(restored == 1 and g.repair == 500 and g.debt == 0, 'restore must neither double the repair bill nor create debt ' .. tostring(restored) .. '/' .. tostring(g.repair) .. '/' .. tostring(g.debt))
+  damageValue = damageValue + 1000
+  advance(core, 4)
+  assert(g.repair > 500)
+  local bill = g.repair
+  core.G.vehicleState = nil
+  core.G.repair = function() damageValue = 0 end
+  assert(core.garageRepair())
+  assert(not g.car.physicalDamage and not g.damageBaseline)
+  assert(s.career.money == 1000 - bill)
+end)
+
+test('an older car save loads normally and starts capturing its current state', function()
+  local core, s = fresh()
+  local g = s.career.garage
+  g.car.key = 'custom'
+  g.repair, g.debt = 100, 0
+  local captures, restores = 0, 0
+  core.G.vehicleState = function(action, path, token)
+    if action == 'capture' then captures = captures + 1 else restores = restores + 1 end
+    disk[path] = {format = 'v2'}
+    require('cargoEarth/damage').complete(token, 1, true)
+    return true
+  end
+  assert(core.garageBringCar())
+  advance(core, 22)
+  core.saveOptions()
+  assert(restores == 0 and captures > 0 and g.car.physicalDamage)
+  assert(g.repair == 100 and g.debt == 0)
+end)
+
+test('snapshot capture rejects late results after a paid repair and retries a lost callback', function()
+  local module = require('cargoEarth/damage')
+  local request, writes = nil, 0
+  local g = {car = {}}
+  local G = {playerId = function() return 1 end, vehicleState = function(action, path, token)
+    request = {path = path, token = token}
+    return true
+  end}
+  module.capture(G, g, function() writes = writes + 1 end)
+  module.clear(g.car)
+  disk[request.path] = {format = 'v2'}
+  module.complete(request.token, 1, true)
+  assert(not g.car.physicalDamage and writes == 0)
+  module.capture(G, g, function() writes = writes + 1 end)
+  module.tick(11)
+  module.capture(G, g, function() writes = writes + 1 end)
+  disk[request.path] = {format = 'v2'}
+  module.complete(request.token, 1, true)
+  assert(g.car.physicalDamage and writes == 1)
+end)
+
 test('Settings puts the phone on the dash of the car you drive, and each new car gets it', function()
   local core = fresh()
   local dash = require('cargoEarth/dash')
