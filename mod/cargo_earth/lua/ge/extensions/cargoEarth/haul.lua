@@ -20,7 +20,7 @@ M.SMALL = { car = true, suv = true }   -- these tiers take no board of company f
 -- A loaner runs on the company's fuel card. In your own vehicle you buy the fuel, so the job pays this much
 -- more per road km (about 9, 22 and 32 L/100 km of diesel).
 M.FUEL_ALLOWANCE = { car = 1, suv = 2, van = 3, rigid = 8, semi = 12 }
-M.VAN_GOAL, M.RIGID_GOAL = 5, 10
+M.VAN_GOAL, M.RIGID_GOAL = 3, 5   -- 2026-11-18 (Jan: the first own truck took far too long): was 5, 10
 M.loaners = {
   van = { model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', label = 'van' },
   rigid = { model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', label = 'box truck' },

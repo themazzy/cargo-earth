@@ -104,7 +104,7 @@ M.WORK = {
     needs = 'A vehicle with a tow hitch. Your own car trailer (from your firm) saves the trip to borrow one.' },
   { id = 'company', mode = 'trucking', name = 'Company contracts', perHour = 630,
     what = 'Take a company van, box truck or tractor at its yard, make two deliveries and bring it back. The company pays the fuel and repairs and keeps a share.',
-    needs = 'Nothing for the van. Box trucks after 5 van hauls, tractors after 10 box truck hauls.' },
+    needs = 'Nothing for the van. Box trucks after {van} van hauls, tractors after {rigid} box truck hauls.' },
   { id = 'parts', mode = 'trucking', name = 'Parts runs', perHour = 580, kind = 'suv',
     what = 'Load car parts at a parts supplier and bring them to a repair workshop.',
     needs = 'Your own SUV or pickup with cargo boxes.' },
@@ -116,10 +116,10 @@ M.WORK = {
     needs = 'Your own van with cargo boxes.' },
   { id = 'rigid', mode = 'trucking', name = 'Box truck freight', perHour = 1150, kind = 'rigid', tier = 'rigid',
     what = 'Business shipping between companies. Counts toward the tractor unlock.',
-    needs = 'Your own box truck with a cargo box, after 5 van hauls (own or company).' },
+    needs = 'Your own box truck with a cargo box, after {van} van hauls (own or company).' },
   { id = 'semi', mode = 'trucking', name = 'Tractor freight and tanker runs', perHour = 1400, kind = 'semi', tier = 'semi',
     what = 'Pull a trailer between companies, or bring fuel to real fuel stations. A trailer of your own firm pays 12 % more.',
-    needs = 'Your own tractor, after 10 box truck hauls (own or company).' },
+    needs = 'Your own tractor, after {rigid} box truck hauls (own or company).' },
   { id = 'independent', mode = 'trucking', name = 'Independent contracts',
     what = 'Drive a company contract in your own vehicle and keep all the pay.',
     needs = '20 reputation with that company: about 2 clean contracts.' },
@@ -136,7 +136,7 @@ function M.workTypes(career, facts)
   local owned = facts.owned or {}
   local hauls = career.hauls or {}
   local van, rigid = hauls.van or 0, hauls.rigid or 0
-  local VAN_GOAL, RIGID_GOAL = facts.vanGoal or 5, facts.rigidGoal or 10
+  local VAN_GOAL, RIGID_GOAL = facts.vanGoal or 3, facts.rigidGoal or 5
   local out = {}
   for _, w in ipairs(M.WORK) do
     local ready, missing = true, nil
@@ -162,7 +162,8 @@ function M.workTypes(career, facts)
     elseif w.id == 'drivers' and not facts.firm then
       ready, missing = false, 'Found your firm first.'
     end
-    out[#out + 1] = { id = w.id, mode = w.mode, name = w.name, what = w.what, needs = w.needs, perHour = w.perHour,
+    local needs = w.needs:gsub('{van}', tostring(VAN_GOAL)):gsub('{rigid}', tostring(RIGID_GOAL))
+    out[#out + 1] = { id = w.id, mode = w.mode, name = w.name, what = w.what, needs = needs, perHour = w.perHour,
       ready = ready, missing = missing }
   end
   return out

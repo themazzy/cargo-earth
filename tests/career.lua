@@ -3035,8 +3035,8 @@ test('career review: company trucks keep a bigger share, and each work type says
   w = byId(progress.workTypes({}, { taxi = { ready = false, why = 'No seats.' }, tow = { ready = false, why = 'No hitch.' } }))
   assert(not w.taxi.ready and w.taxi.missing == 'No seats.' and not w.tow.ready and w.tow.missing == 'No hitch.')
   w = byId(progress.workTypes({ hauls = { van = 2 } }, { owned = { rigid = true } }))
-  assert(w.rigid.missing == 'Van hauls: 2 of 5.', 'an owned box truck still waits for the van hauls')
-  w = byId(progress.workTypes({ hauls = { van = 5, rigid = 10 } }, { owned = { semi = true }, firm = true, independent = true }))
+  assert(w.rigid.missing == 'Van hauls: 2 of 3.', 'an owned box truck still waits for the van hauls')
+  w = byId(progress.workTypes({ hauls = { van = 3, rigid = 5 } }, { owned = { semi = true }, firm = true, independent = true }))
   assert(w.semi.ready and w.firm.ready and w.drivers.ready and w.independent.ready)
   w = byId(progress.workTypes({}, { firmReq = { { label = 'Founding fee', detail = '100 CZK of 6000 CZK', done = false } } }))
   assert(w.firm.missing == 'Founding fee: 100 CZK of 6000 CZK.')
@@ -4942,6 +4942,14 @@ test('used-car market: every vehicle kind has eight listings at cheap, middle an
     list = { { id = 1, model = 'van', key = 'van2', name = 'van 2', km = 0, condition = 1, price = 10, listedAt = 0, gone = 90 } } } }
   garage.marketTick(G, old, 0, rnd)
   assert(old.market.v == garage.MARKET_V and old.market.list[1].id == 1 and old.market.list[1].kind == 'van')
+  assert(old.market.list[1].price == 5, 'an older listing of a work vehicle is repriced once')
+  garage.marketTick(G, old, 0, rnd)
+  assert(old.market.list[1].price == 5, 'and only once')
+  -- work vehicles cost a share of their value-based price; a new tractor for the firm too
+  assert(garage.kindFactor('car') == 1 and garage.kindFactor('suv') == 1 and garage.kindFactor('van') == 0.5)
+  assert(garage.kindFactor('rigid') == 0.35 and garage.kindFactor('semi') == 0.35)
+  assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.35 / 5 + 0.5) * 5)
+  assert(garage.newPrice(G, 'covet', 'covet7') == math.floor(7000 * garage.PRICE_PER_VALUE / 5 + 0.5) * 5)
 end)
 
 test('a save whose car mod is gone: another owned car, else a base Pigeon; the missing car is kept', function()

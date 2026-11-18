@@ -13,10 +13,10 @@ Lua pay rules; distances, speeds and fuel burn are estimates). Car prices follow
 | Parts runs | own SUV or pickup | 580 |
 | Company van contract | nothing (lent van) | 630 |
 | Van freight / parcel routes | own van | 720 / 800 |
-| Company box truck contract | 5 van hauls | 860 |
-| Company tractor contract | 10 box truck hauls | 910 |
-| Box truck freight | own box truck, 5 van hauls | 1,150 |
-| Tractor freight | own tractor, 10 box truck hauls (firm trailer +12 %) | 1,370-1,580 |
+| Company box truck contract | 3 van hauls | 860 |
+| Company tractor contract | 5 box truck hauls | 910 |
+| Box truck freight | own box truck, 3 van hauls | 1,150 |
+| Tractor freight | own tractor, 5 box truck hauls (firm trailer +12 %) | 1,370-1,580 |
 | Fuel tanker runs | own tractor | 1,720 |
 
 Hired drivers bring in, after wage, incidents and wear: about 100 CZK an hour in a car, 300 in a van, 500 in a box
@@ -35,6 +35,11 @@ box truck and every company contract, and a company truck earned 80-90 % of your
 - Van tier: 80 + 11/km -> 150 + 18/km. Box truck tier: 120 + 15/km -> 250 + 22/km. Tractor unchanged.
 - Company contracts: you keep 65 % in a lent box truck or tractor (80 % in a van or bus).
 - Fuel cargo pay factor 1.55 -> 1.15 (tanker runs).
+- Unlocks: box trucks after 3 van hauls (was 5), tractors after 5 box truck hauls (was 10).
 
-Open: work vehicles still take long to pay back (a used van about 20 h, a tractor about 50 h, a 45,000 CZK box truck
-about 150 h against the company's); a price factor for work vehicles or shorter unlocks would help.
+- Work vehicles cost a share of their value-based price (`garage.WORK_PRICE`): vans 0.5, box trucks and tractors 0.35,
+  on the market, for the firm's new vehicles and in what a vehicle is worth (trade-in, sale, repair cap). Older
+  market listings are repriced once (market v5). Cheapest used van about 1,800 CZK, tractor about 10,000.
+
+With shorter unlocks and these prices the first own tractor comes after about 12 hours of play (about 7-8 h of
+unlock hauls, then the rest of the money), and a used van pays for itself in about 8-10 hours.

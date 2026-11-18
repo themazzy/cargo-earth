@@ -157,7 +157,7 @@ local function valueOf(G, v)
     local i = info(G, v.ioCtx, name)
     if i then sum = sum + i.value end
   end
-  return round5(sum * M.PRICE_PER_VALUE)
+  return round5(sum * M.PRICE_PER_VALUE * M.kindFactor(haul.carrier(v)))
 end
 function M.carValue(G) return valueOf(G, G.vehicle()) end
 
@@ -561,7 +561,7 @@ end
 function M.newPrice(G, model, key)
   for _, c in ipairs(G.configs() or {}) do
     if c.model == model and c.key == key and tonumber(c.value) and tonumber(c.value) > 0 then
-      return round5(tonumber(c.value) * M.PRICE_PER_VALUE)
+      return round5(tonumber(c.value) * M.PRICE_PER_VALUE * M.kindFactor(haul.configClass(c.model, c.bodyStyle, c.name)))
     end
   end
 end
@@ -740,7 +740,12 @@ end
 M.MARKET_LIFE_MIN = { 40, 60 } -- a listing is gone after this many minutes of play
 M.CHEAP_SHARE = 0.5            -- this share of random new listings comes from the cheapest third of its kind
 M.MIN_PER_KIND = 8             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
-M.MARKET_V = 4                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind
+M.MARKET_V = 5                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price
+-- Work vehicles cost this share of their BeamNG-value price (Jan, 2026-11-18: the first own truck took far too long to
+-- afford and to pay back). Applies to the market, the firm's new vehicles and a vehicle's worth (trade-in, sale,
+-- repair cap). Cars and SUVs keep their price: it follows food pay.
+M.WORK_PRICE = { van = 0.5, rigid = 0.35, semi = 0.35 }
+function M.kindFactor(kind) return M.WORK_PRICE[kind] or 1 end
 
 -- The configs for sale by kind, cheapest first ({ car = {...}, suv = {...}, ... }). Built once per config list.
 local pools = { src = nil }
@@ -807,7 +812,7 @@ local function newListing(G, m, rnd, kind, band)
   local c = list[idx] or list[1]
   local km = math.floor(rnd() * rnd() * 320000 / 100) * 100          -- most cars have few km, some many
   local condition = math.max(0.15, math.min(1, 1 - km / 450000 - rnd() * 0.35))
-  local price = round5(tonumber(c.value) * M.PRICE_PER_VALUE * (0.3 + 0.55 * condition) * (0.88 + 0.24 * rnd()))
+  local price = round5(tonumber(c.value) * M.PRICE_PER_VALUE * M.kindFactor(kind) * (0.3 + 0.55 * condition) * (0.88 + 0.24 * rnd()))
   m.seq = (m.seq or 0) + 1
   return { id = m.seq, model = c.model, key = c.key, name = (c.brand and (c.brand .. ' ') or '') .. (c.name or c.key),
     kind = kind, band = bandOf(list, idx),
@@ -858,14 +863,16 @@ end
 function M.marketTick(G, g, dtMin, rnd)
   rnd = rnd or math.random
   local m = g.market
-  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= M.MARKET_V) then
+  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= 4 and m.v ~= M.MARKET_V) then
     m = { v = M.MARKET_V, t = 0, seq = 0, list = {} }
     g.market = m
   end
   m.t = m.t + (dtMin or 0)
+  local reprice = m.v ~= M.MARKET_V   -- listings from before the work-vehicle prices
   for i = #m.list, 1, -1 do
     local l = m.list[i]
     l.kind = l.kind or kindOf(G, l.model, l.key)
+    if reprice and tonumber(l.price) then l.price = round5(l.price * M.kindFactor(l.kind)) end
     if not l.band then
       local list = kindPools(G)[l.kind] or {}
       for n, c in ipairs(list) do
