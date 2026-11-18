@@ -247,12 +247,16 @@ M.FREE_PART = 'cargo_earth_phone_auto' -- the phone on the dashboard (cargoEarth
 
 -- Quote the complete difference after BeamNG has resolved the slots and any dependent parts.
 -- Matching parts can move between slots without being bought again.
-function M.partsQuote(G, inventory, before, vehicle)
+-- salvage: { [part] = { n, f } } spares taken off discounted work vehicles (WORK_PRICE): they sell at that share
+-- too, so buying a cheap truck and stripping it can't pay more than the truck cost.
+function M.partsQuote(G, inventory, before, vehicle, salvage)
   if type(before) ~= 'table' or not vehicle or type(vehicle.slotPartMap) ~= 'table' then
     return nil, 'Waiting for the vehicle parts to load.'
   end
   local delta, spares, items, total = {}, {}, {}, 0
   for part, count in pairs(inventory or {}) do spares[part] = count end
+  local cheap, factor = {}, M.kindFactor(haul.carrier(vehicle))
+  for part, row in pairs(salvage or {}) do cheap[part] = { n = row.n, f = row.f } end
   for _, part in pairs(before) do
     if part == M.FREE_PART then -- the dash phone comes and goes with Settings: never bought
     elseif type(part) == 'string' and part ~= '' then delta[part] = (delta[part] or 0) - 1
@@ -272,12 +276,25 @@ function M.partsQuote(G, inventory, before, vehicle)
       local cost = added > 0 and added * M.partPrice(detail.value) or 0
       local left = (spares[part] or 0) + removed - owned
       spares[part] = left > 0 and left or nil
+      local row = cheap[part]
+      if removed > 0 and factor < 1 then
+        row = row or { n = 0, f = factor }
+        row.n, row.f = row.n + removed, math.min(row.f or 1, factor)
+      end
+      if row then row.n = math.min(row.n, math.max(0, left)) end -- spares fitted again: the full-price ones go first
+      cheap[part] = row and row.n > 0 and row or nil
       items[#items + 1] = { part = part, name = detail.name, buy = added, fit = owned, keep = removed, cost = cost }
       total = total + cost
     end
   end
   table.sort(items, function(a, b) return a.name == b.name and a.part < b.part or a.name < b.name end)
-  return { items = items, cost = total, inventory = spares }
+  return { items = items, cost = total, inventory = spares, salvage = next(cheap) and cheap or nil }
+end
+
+-- Share of a spare part's value it sells for: salvage from a discounted work vehicle sells at that discount.
+local function sellShare(g, part)
+  local row = g.salvage and g.salvage[part]
+  return M.SELL_PART * (row and (row.n or 0) > 0 and tonumber(row.f) or 1)
 end
 
 -- Spare parts: { { part, name, count, price (to sell) } }
@@ -287,7 +304,7 @@ function M.spares(G, g)
   for name, n in pairs(g.inventory) do
     local i = v and info(G, v.ioCtx, name)
     local value = i and i.value or 0
-    out[#out + 1] = { part = name, name = i and i.name or name, count = n, price = round5(value * M.PRICE_PER_VALUE * M.SELL_PART) }
+    out[#out + 1] = { part = name, name = i and i.name or name, count = n, price = round5(value * M.PRICE_PER_VALUE * sellShare(g, name)) }
   end
   table.sort(out, function(a, b) return a.name < b.name end)
   return out
@@ -297,7 +314,13 @@ function M.sell(G, g, career, partName)
   if (g.inventory[partName] or 0) <= 0 then return false, 'Not in the spare parts' end
   local v = G.vehicle()
   local i = v and info(G, v.ioCtx, partName)
-  local price = round5((i and i.value or 0) * M.PRICE_PER_VALUE * M.SELL_PART)
+  local price = round5((i and i.value or 0) * M.PRICE_PER_VALUE * sellShare(g, partName))
+  local row = g.salvage and g.salvage[partName]
+  if row and (row.n or 0) > 0 then
+    row.n = row.n - 1
+    if row.n <= 0 then g.salvage[partName] = nil end
+    if not next(g.salvage) then g.salvage = nil end
+  end
   g.inventory[partName] = g.inventory[partName] - 1
   if g.inventory[partName] <= 0 then g.inventory[partName] = nil end
   career.money = (career.money or 0) + price
@@ -1238,7 +1261,7 @@ function M.start(G, g, career, model)
     km = STARTER_KM, condition = STARTER_CONDITION, starter = true }
   g.pendingUsed = { starter = true }
   g.repair, g.debt, g.lastDamage, g.inventory, g.spent, g.carriedRepair = 0, 0, 0, {}, 0, nil
-  g.debtParts, g.debtLog = nil, nil
+  g.debtParts, g.debtLog, g.salvage = nil, nil, nil
   g.priceV = M.PRICE_V
   return true, 'Your car: ' .. g.car.name .. '. ' .. M.START_MONEY .. ' CZK to start.'
 end

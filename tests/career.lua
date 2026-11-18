@@ -4950,6 +4950,26 @@ test('used-car market: every vehicle kind has eight listings at cheap, middle an
   assert(garage.kindFactor('rigid') == 0.35 and garage.kindFactor('semi') == 0.35)
   assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.35 / 5 + 0.5) * 5)
   assert(garage.newPrice(G, 'covet', 'covet7') == math.floor(7000 * garage.PRICE_PER_VALUE / 5 + 0.5) * 5)
+  -- parts stripped off a discounted truck sell at the truck's discount, so buy-and-strip can't beat the price
+  local PG = { part = function(_, name) return { information = { name = name, value = 1000 } } end }
+  local truck = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = 'engine' }, ioCtx = {} }
+  local stripped = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = '' }, ioCtx = {} }
+  local q = garage.partsQuote(PG, {}, truck.slotPartMap, stripped)
+  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1 and q.salvage.engine.f == 0.35)
+  PG.vehicle = function() return stripped end
+  local sg = { inventory = { engine = 2 }, salvage = q.salvage }
+  local full = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART / 5 + 0.5) * 5
+  local cheap = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART * 0.35 / 5 + 0.5) * 5
+  assert(garage.spares(PG, sg)[1].price == cheap)
+  local _, _, got = garage.sell(PG, sg, { money = 0 }, 'engine')
+  assert(got == cheap and sg.salvage == nil)
+  _, _, got = garage.sell(PG, sg, { money = 0 }, 'engine')
+  assert(got == full, 'a spare bought at full price still sells at the full share')
+  -- fitting a spare again uses the full-price ones first; the salvage count never exceeds the spares
+  q = garage.partsQuote(PG, { engine = 2 }, stripped.slotPartMap, truck, { engine = { n = 1, f = 0.35 } })
+  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1)
+  q = garage.partsQuote(PG, { engine = 1 }, stripped.slotPartMap, truck, { engine = { n = 1, f = 0.35 } })
+  assert(q.inventory.engine == nil and q.salvage == nil)
 end)
 
 test('a save whose car mod is gone: another owned car, else a base Pigeon; the missing car is kept', function()
