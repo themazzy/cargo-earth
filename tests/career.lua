@@ -3439,7 +3439,7 @@ test('a restored damaged car keeps its repair bill once and a paid repair clears
     snapshots.complete(token, 1, true)
     return true
   end
-  assert(core.garageBringCar())
+  assert(core.garageBringCar(true))
   advance(core, 12)
   assert(restored == 1 and g.repair == 500 and g.debt == 0, 'restore must neither double the repair bill nor create debt ' .. tostring(restored) .. '/' .. tostring(g.repair) .. '/' .. tostring(g.debt))
   damageValue = damageValue + 1000
@@ -3465,7 +3465,7 @@ test('an older car save loads normally and starts capturing its current state', 
     require('cargoEarth/damage').complete(token, 1, true)
     return true
   end
-  assert(core.garageBringCar())
+  assert(core.garageBringCar(true))
   advance(core, 22)
   core.saveOptions()
   assert(restores == 0 and captures > 0 and g.car.physicalDamage)
@@ -3508,6 +3508,64 @@ test('repairing a parked car clears its damage snapshot and invalidates pending 
   disk[request.path] = {format = 'v2', nodes = {oldDamage = true}}
   module.complete(request.token, 1, true)
   assert(not car.physicalDamage, 'the late capture must not undo the paid repair')
+end)
+
+test('external vehicle replacement checkpoints and pauses even if the vehicle VM cannot answer', function()
+  local core, s = fresh()
+  s.career.garage.car.key = 'custom'
+  core.saveOptions()
+  local path, request = core.savePath(s.career), nil
+  core.G.vehicleState = function(action, file, token) request = {path=file, token=token} return true end
+  local cleared = false
+  core.G.clearOwnership = function() cleared = true end
+  core.settingsDo('pause')
+  assert(s.pauseSaving and not s.pendingCareer)
+  core.onBeforeVehicleReplaced(1)
+  assert(cleared and s.pendingCareer == s.career and not s.pauseSaving)
+  assert(disk[path].garage.car.model == 'pigeon')
+  require('cargoEarth/damage').tick(11)
+  assert(s.pendingCareer == s.career, 'a late timeout must not reactivate the career')
+end)
+
+test('owned car switches capture fresh outgoing damage before spawning the parked vehicle', function()
+  local core, s = fresh()
+  local g, request = s.career.garage, nil
+  local old = g.car
+  old.key = 'custom'
+  g.parked = {{fleetId=5,model='etk',name='Parked car',key='base'}}
+  core.G.vehicleState = function(action, file, token) request = {path=file,token=token} return true end
+  damageValue = 10000
+  require('cargoEarth/damage').capture(core.G, g, function() end)
+  core.garageDo('switchCar', 5)
+  assert(g.car == old and vehicle.model == 'pigeon', 'the outgoing vehicle must survive until capture completes')
+  local earlier = request
+  disk[earlier.path] = {format='v2',nodes={earlierDamage=true}}
+  require('cargoEarth/damage').complete(earlier.token,1,true)
+  assert(request.token ~= earlier.token and g.car == old, 'replacement requires a fresh snapshot after an in-flight save')
+  disk[request.path] = {format='v2',nodes={freshDamage=true}}
+  require('cargoEarth/damage').complete(request.token,1,true)
+  assert(g.car.model == 'etk' and old.physicalDamage.nodes.freshDamage)
+  assert(g.parked[1] == old and old.parkedRepair > 0)
+end)
+
+test('dealer previews and keep-car purchases capture the outgoing car before spawning', function()
+  for _, action in ipairs({'preview','buyListing'}) do
+    local core, s = fresh()
+    local g, request = s.career.garage, nil
+    local old = g.car
+    old.key = 'custom'
+    g.repair, g.debt = 0, 0
+    s.career.money = 100000
+    g.market = {list={{id=9,model='etk',name='Dealer car',key='base',price=100}}}
+    core.G.vehicleState = function(op, file, token) request={path=file,token=token} return true end
+    core.garageDo(action, 9, true)
+    assert(vehicle.model == 'pigeon' and request)
+    disk[request.path] = {format='v2',nodes={latestDealerState=true}}
+    require('cargoEarth/damage').complete(request.token,1,true)
+    assert(vehicle.model == 'etk' and old.physicalDamage.nodes.latestDealerState)
+    if action == 'preview' then assert(g.preview and g.car == old)
+    else assert(g.parked[1] == old and g.car.model == 'etk') end
+  end
 end)
 
 test('snapshot capture rejects late results after a paid repair and retries a lost callback', function()

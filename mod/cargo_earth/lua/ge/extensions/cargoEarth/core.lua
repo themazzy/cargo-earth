@@ -628,7 +628,7 @@ end
 local function pauseCareer(captured)
   if S.pendingCareer or not S.career.savedAt then return false end
   local c, g = S.career, S.career.garage
-  if S.pauseSaving then return false end
+  if S.pauseSaving or S.replacementSaving then return false end
   if not captured and g.car and M.G.vehicleState and not conditionAt and not g.pendingUsed
       and not g.restoringDamage and not g.preview and not S.parts and garage.inOwnCar(M.G, g) then
     local car = g.car
@@ -3864,6 +3864,33 @@ local function garageSay(ok, msg)
   return ok, msg
 end
 
+-- Keep the outgoing car alive until its latest physical state is checkpointed.
+function M.captureOutgoing(run)
+  local c, g, G = S.career, S.career.garage, M.G
+  if not g.car or not G.vehicleState or not garage.inOwnCar(G, g) then return false end
+  if S.pauseSaving or S.replacementSaving then return true, 'Saving vehicle damage. Please wait.' end
+  if conditionAt or g.restoringDamage or g.pendingUsed or S.parts then
+    return true, 'Wait for your car to finish loading or close the parts editor first.'
+  end
+  local pending = {car = g.car, id = G.playerId()}
+  S.replacementSaving = pending
+  local sent = require('cargoEarth/damage').captureFresh(G, g, function(ok)
+    if S.replacementSaving ~= pending then return end
+    S.replacementSaving = nil
+    if S.career ~= c or S.pendingCareer or g.car ~= pending.car or G.playerId() ~= pending.id then return end
+    if not ok then say('Vehicle damage could not be saved. Try the garage action again.', 8) return end
+    if G.damage then garage.trackDamage(g, G.damage()) end
+    if not saveCareer(true) then say('Career could not be saved. Try the garage action again.', 8) return end
+    local completed, why = run()
+    if not completed and why then say(why) end
+  end)
+  if not sent then
+    S.replacementSaving = nil
+    return true, 'Vehicle damage could not be saved. Try the garage action again.'
+  end
+  return true, 'Saving vehicle damage. Please wait.'
+end
+
 function M.garageStart(model, name)
   if S.career.employment then return false, 'End company work first.' end
   if S.career.garage.started then return false, 'Your career has already started.' end
@@ -3906,19 +3933,27 @@ function M.garageBuy(offer)
   return garageSay(ok, msg)
 end
 -- Spawns the career car again with its parts (after driving something else).
-function M.garageBringCar()
+function M.garageBringCar(captured)
+  if not captured then
+    local waiting, why = M.captureOutgoing(function() return M.garageBringCar(true) end)
+    if waiting then return false, why end
+  end
   local g = S.career.garage
   if not g.started or not g.car then return false, 'No career car yet' end
   local ok, why = spawnCareerCar(g)
   if not ok then return garageSay(false, why) end
   return garageSay(true, 'Here is your ' .. g.car.name .. '.')
 end
-local function garageSwitchCar(id)
+local function garageSwitchCar(id, captured)
   if S.job then return false, 'Finish your current orders before switching cars.' end
   local here = earth.pose()
   if S.career.home and not home.near(S.career, here) and not firm.atHq(S.career, here) then
     return false, S.career.firm and S.career.firm.hq and 'Return to your home garage or headquarters to switch cars.'
       or 'Return to your home garage to switch cars.'
+  end
+  if not captured then
+    local waiting, why = M.captureOutgoing(function() return garageSwitchCar(id, true) end)
+    if waiting then return false, why end
   end
   local ok, why = garage.switchCar(M.G, S.career.garage, tonumber(id))
   if ok then
@@ -4217,7 +4252,7 @@ function M.vehicleKinds()
   end
   return out
 end
-function M.garageBuyListing(id, keepCar)
+function M.garageBuyListing(id, keepCar, captured)
   if S.job then return false, 'Finish the order first' end
   local g = S.career.garage
   local keeping = keepCar == true
@@ -4225,6 +4260,10 @@ function M.garageBuyListing(id, keepCar)
   if keeping and home.count(g) >= firm.capacity(S.career) then
     return garageSay(false, S.career.firm and 'Every parking bay is taken. Build more bays, trade in a car or sell one first.'
       or 'Your garage is full. Trade in a car or sell one first.')
+  end
+  if keeping and not g.preview and not captured then
+    local waiting, why = M.captureOutgoing(function() return M.garageBuyListing(id, keepCar, true) end)
+    if waiting then return false, why end
   end
   local ok, msg = garage.buyListing(M.G, S.career.garage, S.career, tonumber(id), keepCar == true)
   if ok then
@@ -4237,8 +4276,12 @@ function M.garageBuyListing(id, keepCar)
   end
   return garageSay(ok, msg)
 end
-function M.garagePreview(id, keepCar)
+function M.garagePreview(id, keepCar, captured)
   if S.job then return false, 'Finish the order first' end
+  if not captured then
+    local waiting, why = M.captureOutgoing(function() return M.garagePreview(id, keepCar, true) end)
+    if waiting then return false, why end
+  end
   local ok, msg = garage.previewStart(M.G, S.career.garage, tonumber(id), keepCar == true)
   if ok then previewAt = S.clock + 2 end
   return garageSay(ok, msg)
@@ -5343,7 +5386,8 @@ function M.onBeforeVehicleReplaced(id)
   if S.storage and S.storage.id == id then releaseStorage() end
   if forceWatch and forceWatch.id == id then stopForceWatch() end
   if not M.G.spawning and M.G.ownsVehicleId and M.G.ownsVehicleId(id) then
-    pauseCareer()
+    S.pauseSaving, S.replacementSaving = nil, nil
+    pauseCareer(true)
     M.G.clearOwnership()
   end
 end
@@ -5388,7 +5432,8 @@ function M.onClientEndMission()
   releaseStorage()
   clearFreight()
   stopForceWatch()
-  if S.inCareerWorld then pauseCareer() end
+  S.pauseSaving, S.replacementSaving = nil, nil
+  if S.inCareerWorld then pauseCareer(true) end
 end
 
 function M.onExtensionUnloaded()
@@ -5397,7 +5442,8 @@ function M.onExtensionUnloaded()
   releaseStorage()
   clearFreight()
   stopForceWatch()
-  if not S.pendingCareer and S.career.savedAt then saveCareer() end
+  S.pauseSaving, S.replacementSaving = nil, nil
+  if not S.pendingCareer and S.career.savedAt then saveCareer(true) end
   trailers.remove()
 end
 

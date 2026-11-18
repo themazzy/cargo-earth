@@ -57,6 +57,19 @@ function M.capture(G, g, done)
   return sent
 end
 
+-- Replacement must capture after any earlier save request finishes.
+function M.captureFresh(G, g, done)
+  local car = g.car
+  if car and capturing[car] then
+    table.insert(capturing[car], function()
+      if g.car ~= car then done(false) return end
+      if not M.capture(G, g, done) then done(false) end
+    end)
+    return true
+  end
+  return M.capture(G, g, done)
+end
+
 function M.restore(G, g, done)
   return request(G, 'restore', g.car.physicalDamage, done)
 end
