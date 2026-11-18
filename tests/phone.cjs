@@ -269,6 +269,15 @@ assert.equal(scope.jobDraft().maxKm, 400, 'typed draft survives a changed saved 
 answer = {...answer, careerEpoch: 2}
 scope.st = answer
 assert.equal(scope.jobDraft().maxKm, 350, 'another loaded career shows its own saved values')
+const maxItem = answer.items.find(it => it.key === 'maxKm')
+scope.nudgeDraft(maxItem, 1)
+assert.equal(scope.jobDraft().maxKm, 375, 'plus steps by 25 km above 100 km')
+scope.jobDraft().maxKm = 100
+scope.nudgeDraft(maxItem, -1)
+assert.equal(scope.jobDraft().maxKm, 95, 'minus from 100 steps by 5 km')
+scope.jobDraft().maxKm = 1
+scope.nudgeDraft(maxItem, -1); scope.nudgeDraft(maxItem, -1)
+assert.equal(scope.jobDraft().maxKm, 0.5, 'minus stops at the lowest allowed value')
 scope.closeJobsSettings()
 assert(!scope.jobsSettingsOpen && scope.panelTitle() === 'Settings')
 scope.openJobsSettings()
