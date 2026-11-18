@@ -3385,6 +3385,43 @@ test('a wreck never costs more to repair than the car is worth', function()
   assert(garage.trackDamage(g, 0) == 'debt' and g.debt == cap and g.repair == 0)
 end)
 
+test('trade-in credit uses market mileage, deducts repairs and guarantees a quarter of installed value', function()
+  local garage = require('cargoEarth/garage')
+  local G = {vehicle = function() return {slotPartMap = {body = 'body'}} end,
+    part = function() return {information = {value = 10000 / garage.PRICE_PER_VALUE}} end,
+    spawn = function() end}
+  local offer = {model = 'etk', name = 'Replacement', price = 8000}
+  for _, row in ipairs({{0, 0, 5000}, {0, 1000, 4000}, {40000, 0, 3750}, {40000, 1000, 2750},
+                        {80000, 0, 2500}, {80000, 1000, 2500}, {200000, 5000, 2500}}) do
+    local g, c = {car = {km = row[1]}, repair = row[2]}, {money = offer.price - row[3] - 1}
+    assert(garage.tradeInQuote(G, g) == row[3])
+    assert(not garage.buyCar(G, g, c, offer) and g.repair == row[2] and g.car.km == row[1])
+    c.money = c.money + 1
+    assert(garage.buyCar(G, g, c, offer) and c.money == 0 and g.repair == 0)
+    g = {car = {name = 'My car', km = row[1]}, repair = row[2]}
+    c = {money = 1000}
+    local ok, _, paid = garage.sellCar(G, g, c)
+    assert(ok and paid == row[3] and c.money == 1000 + row[3])
+    assert(not g.car and g.repair == 0)
+
+  end
+end)
+
+test('buying after a test drive uses the trade-in quote from the owned car', function()
+  local garage = require('cargoEarth/garage')
+  local owned = {model = 'pigeon', slotPartMap = {body = 'body'}}
+  local current = owned
+  local G = {vehicle = function() return current end, isOwned = function() return true end,
+    part = function() return {information = {value = 10000 / garage.PRICE_PER_VALUE}} end,
+    spawn = function(model) current = {model = model, slotPartMap = {}} end}
+  local offer = {id = 9, model = 'etk', name = 'Replacement', price = 8000}
+  local g = {started = true, car = {model = 'pigeon', km = 80000}, market = {list = {offer}}}
+  assert(garage.previewStart(G, g, 9, false) and g.preview.tradeIn == 2500)
+  g.preview.ready = true
+  local career = {money = 5500}
+  assert(garage.buyListing(G, g, career, 9) and career.money == 0 and g.car.model == 'etk')
+end)
+
 test('Settings puts the phone on the dash of the car you drive, and each new car gets it', function()
   local core = fresh()
   local dash = require('cargoEarth/dash')
