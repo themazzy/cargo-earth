@@ -282,6 +282,32 @@ end
 local function advance(core, n)
   for _ = 1, n or 20 do core.onUpdate(0.5, 0.5) end
 end
+
+test('Jobs settings selects profiles without changing work and saves only the requested range', function()
+  local core, s = fresh()
+  s.job = {id = 'keep-current-job'}
+  local out = core.settingsDo('jobType', 'freight_rigid')
+  assert(out.jobType == 'freight_rigid' and s.mode == 'courier' and s.job.id == 'keep-current-job')
+  assert(out.items[3].max == 800 and out.items[3].value == 125)
+  out = core.settingsDo('jobRange', 'freight_rigid', {nearKm = 30, minKm = 600, maxKm = 800})
+  assert(out.rangeSaved and core.jobOptions('freight_rigid').minKm == 600)
+  assert(s.job.id == 'keep-current-job' and s.optsByMode.courier.maxKm == nil)
+  assert(core.jobOptions('company_rigid').maxKm == 40)
+  out = core.settingsDo('jobRange', 'freight_rigid', {nearKm = 30, minKm = 800, maxKm = 600})
+  assert(out.rangeError and not out.rangeSaved and core.jobOptions('freight_rigid').maxKm == 800)
+  core.settingsDo('jobRange', 'company_rigid', {nearKm = 20, minKm = 80, maxKm = 100})
+  assert(s.career.options.trucking.jobRanges.freight_rigid.maxKm == 800, 'stored with the career')
+  local saved = copy(s.career)
+  s.job = nil
+  s.pendingCareer = saved
+  core.phoneAction('resume')
+  assert(core.jobOptions('freight_rigid').maxKm == 800 and core.companyRanges().rigid.maxKm == 100)
+  out = core.settingsDo('resetJobRange', 'freight_rigid')
+  assert(out.rangeReset and core.jobOptions('freight_rigid').maxKm == 125)
+  assert(core.jobOptions('company_rigid').maxKm == 100)
+  out = core.settingsDo('jobType', 'bus')
+  assert(#out.items == 0 and out.jobHint:find('mapped'))
+end)
 local function start(core)
   local board = core.placesDo('refreshCompanies')
   assert(#board.companies == 1)

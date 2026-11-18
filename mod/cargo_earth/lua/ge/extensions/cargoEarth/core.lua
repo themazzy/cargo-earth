@@ -57,6 +57,7 @@ M.COUNTRY_S = 5   -- seconds between border checks
 M.TOW_RULES = { arriveM = 30, stopS = 3, cancelFee = 200 }
 M.TAXI_RULES = { arriveM = 25, stopS = 3, cancelFee = 100 }   -- taxi rides (cargoEarth/taxi)
 M.RULES.taxi = M.TAXI_RULES
+M.jobSettings = require('cargoEarth/jobSettings')
 M.TOW_RELOAD_FEE = 150  -- putting a car that slid off back on the trailer
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
 M.random = function(...) return math.random(...) end   -- (tests replace it)
@@ -268,7 +269,22 @@ local function freightOptions(tier)
   local range = o.freightRanges and o.freightRanges[tier] or {}
   o.minKm = range.minKm or (tier == 'semi' and o.minKm or nil)
   o.maxKm = range.maxKm or (tier == 'semi' and o.maxKm or nil)
+  if tier == 'van' or tier == 'rigid' or tier == 'semi' then
+    for k, v in pairs(M.jobOptions('freight_' .. tier)) do o[k] = v end
+  end
   return o
+end
+
+function M.jobOptions(id) return M.jobSettings.resolve(S.optsByMode, id) end
+function M.companyRanges()
+  return {van = M.jobOptions('company_van'), rigid = M.jobOptions('company_rigid'), semi = M.jobOptions('company_semi')}
+end
+
+function M.settingsJobType()
+  if M.jobSettings.type(S.settingsJobType) then return S.settingsJobType end
+  if S.mode ~= 'trucking' then return S.mode end
+  local tier = freightSettingsTier()
+  return tier == 'car' and 'tow_light' or tier == 'suv' and 'parts' or 'freight_' .. tier
 end
 
 local function clearFreight()
@@ -905,15 +921,16 @@ end
 -- workshops are the helper's repair garages, your firm's headquarters, or the workshop at a fuel station.
 function M.partsOffers(p, room, range)
   local parts = require('cargoEarth/parts')
+  local nearKm = range and range.nearKm or parts.NEAR_KM
   local suppliers = {}
   for _, d in ipairs(S.idx and S.idx.depots or {}) do
-    if d.g and math.abs(d.g[1] - p.lat) < parts.NEAR_KM / 100 then
+    if d.g and jobs.inBox(p.lat, p.lon, d.g, nearKm) then
       for _, id in ipairs((S.idx.types[d.t] or {}).produces or {}) do
         if id == 'car_parts' then suppliers[#suppliers + 1] = d break end
       end
     end
   end
-  for _, row in ipairs(S.autoIdx and fuel.within(S.autoIdx, p.lat, p.lon, 'parts', 0, parts.NEAR_KM) or {}) do
+  for _, row in ipairs(S.autoIdx and fuel.within(S.autoIdx, p.lat, p.lon, 'parts', 0, nearKm) or {}) do
     local s = row.station
     suppliers[#suppliers + 1] = { id = 'parts:' .. s.id, n = s.n, town = s.town, g = s.g }
   end
@@ -945,6 +962,7 @@ end
 -- specs: the vehicle's power and weight (tow.weak warns per job)
 local function towOffers(class, p, specs)
   local c = S.career
+  local range = M.jobOptions(class == 'heavy' and 'tow_heavy' or 'tow_light')
   -- is this tow trailer kind in the game? (asked once; core's main chunk is at Lua's local limit, so it lives here)
   local function towTrailerExists(k)
     if S.towTrailer == nil then S.towTrailer = {} end
@@ -965,24 +983,27 @@ local function towOffers(class, p, specs)
   elseif not towTrailerExists(kind) then return {} end
   local hq = c.firm and c.firm.hq
   local function workshop(lat, lon)
+    local minKm, maxKm = range.minKm / jobs.ROAD_FACTOR, range.maxKm / jobs.ROAD_FACTOR
     if hq and hq.g then
       local k = jobs.km(lat, lon, hq.g[1], hq.g[2])
-      if k >= tow.WORKSHOP_KM[1] and k <= tow.WORKSHOP_KM[2] then
+      if k >= minKm and k <= maxKm then
         return { id = 'hq', n = hq.n or 'Headquarters', town = hq.town or '', g = { hq.g[1], hq.g[2] }, label = 'Your workshop' }
       end
     end
     -- a real auto repair shop (from the helper), one of the nearest few; else the workshop at a fuel station
-    local shops = S.autoIdx and fuel.within(S.autoIdx, lat, lon, 'garage', tow.WORKSHOP_KM[1], tow.WORKSHOP_KM[2]) or {}
+    local shops = S.autoIdx and fuel.within(S.autoIdx, lat, lon, 'garage', minKm, maxKm) or {}
     if #shops > 0 then
       local g = shops[M.random(math.min(#shops, 3))].station
       return { id = 'garage:' .. g.id, n = g.n, town = g.town or '', g = { g.g[1], g.g[2] }, label = 'Repair shop' }
     end
-    local list = S.fuelIdx and fuel.within(S.fuelIdx, lat, lon, 'fuel', tow.WORKSHOP_KM[1], tow.WORKSHOP_KM[2]) or {}
+    local list = S.fuelIdx and fuel.within(S.fuelIdx, lat, lon, 'fuel', minKm, maxKm) or {}
     local s = list[1] and list[1].station
     if s then return { id = 'workshop:' .. s.id, n = 'Workshop at ' .. s.n, town = s.town or '', g = { s.g[1], s.g[2] },
       label = 'Workshop' } end
   end
-  local addresses = food.addressesNear(S.fidx, p.lat, p.lon, tow.NEAR_KM)
+  local addresses = food.addressesNear(S.fidx, p.lat, p.lon, range.nearKm)
+  opts = opts or {}
+  for k, v in pairs(range) do opts[k] = v end
   -- no car trailer of your own coupled: the job starts by borrowing one at the workshop
   local borrow
   if class == 'light' then borrow = own == nil else borrow = not trailers.ownTowTrailer(kind) end
@@ -1011,7 +1032,10 @@ function M.generate()
   if not p then S.offers, S.offerStats = {}, nil return end
   if S.mode == 'courier' then
     local plan = storagePlan()
-    S.offers, S.offerStats = food.generate(S.fidx, S.opts, p.lat, p.lon, nil, plan and plan.maxFree or 1, roadKmFn(p))
+    local options = {}
+    for k, v in pairs(S.opts) do options[k] = v end
+    for k, v in pairs(M.jobOptions('courier')) do options[k] = v end
+    S.offers, S.offerStats = food.generate(S.fidx, options, p.lat, p.lon, nil, plan and plan.maxFree or 1, roadKmFn(p))
   elseif S.mode == 'taxi' then
     S.offers, S.offerStats = {}, nil
     local state = M.taxiState()
@@ -1025,7 +1049,7 @@ function M.generate()
         end
         return out
       end
-      S.offers = require('cargoEarth/taxi').offers(near, sights, p.lat, p.lon, M.random, roadKmFn(p), S.opts, state.seats)
+      S.offers = require('cargoEarth/taxi').offers(near, sights, p.lat, p.lon, M.random, roadKmFn(p), M.jobOptions('taxi'), state.seats)
       -- Keep the existing taxi fare supplements when moving rides out of Freight.
       local factor = rating.freightPay(S.career)
       for _, offer in ipairs(S.offers) do
@@ -1049,22 +1073,24 @@ function M.generate()
       -- tanker runs to real fuel stations
       if tier == 'semi' and S.fuelIdx and S.opts.adr ~= false then
         local within = function(lat, lon, a, b) return fuel.within(S.fuelIdx, lat, lon, 'fuel', a, b) end
-        for _, offer in ipairs(resupply.offers(S.idx, p.lat, p.lon, within, M.random, nil, S.opts.nearKm)) do
+        local range = M.jobOptions('fuel')
+        for _, offer in ipairs(resupply.offers(S.idx, p.lat, p.lon, within, M.random, nil, range.nearKm, range)) do
           table.insert(offers, 1, offer)
         end
       end
       -- parts runs in an SUV or a pickup: from a parts supplier to a repair workshop
       if tier == 'suv' and rows then
-        for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'), freightOptions(tier))) do offers[#offers + 1] = offer end
+        for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'), M.jobOptions('parts'))) do offers[#offers + 1] = offer end
       end
       -- parcel routes from the nearest depots to real addresses: vans only (box trucks do business shipping)
       if parcel.TIERS[tier] and rows and S.fidx then
+        local range = M.jobOptions('parcels')
         local room = haul.capacity(rows, 'parcel')
         local near = {}
         for _, d in ipairs(S.idx.depots or {}) do
-          if d.g and math.abs(d.g[1] - p.lat) < 0.2 then
+          if d.g and jobs.inBox(p.lat, p.lon, d.g, range.nearKm) then
             local k = jobs.km(p.lat, p.lon, d.g[1], d.g[2])
-            if k <= math.min(20, S.opts.nearKm or 20) then near[#near + 1] = { d = d, k = k } end
+            if k <= range.nearKm then near[#near + 1] = { d = d, k = k } end
           end
         end
         table.sort(near, function(a, b) return a.k < b.k end)
@@ -1072,7 +1098,6 @@ function M.generate()
           local d = near[i].d
           local route = parcel.route(d, food.addressesNear(S.fidx, d.g[1], d.g[2], parcel.TIERS[tier].radiusKm), tier, room, nil, i)
           -- the shortest / longest job settings of this vehicle hold for the whole round
-          local range = freightOptions(tier)
           if route and ((range.minKm and route.km < range.minKm) or (range.maxKm and route.km > range.maxKm)) then route = nil end
           if route then
             route.pickupKm = near[i].k
@@ -1113,6 +1138,7 @@ end
 function M.setMode(m)
   if S.job or S.career.employment or not M.RULES[m] or m == S.mode then return end
   S.mode = m
+  S.settingsJobType = nil
   S.busDepot = nil
   S.opts = S.optsByMode[m]
   if m == 'bus' then S.phone.online = false end   -- bus lines are started from the board, nothing rings
@@ -2308,7 +2334,7 @@ function M.nearContracts(p)
   local at = S.companyBoardPos
   if S.companyBoard == nil or (S.companyBoardDirty and S.clock >= (S.nextBoardAt or 0))
     or (at and jobs.km(at.lat, at.lon, p.lat, p.lon) > 5) then
-    S.companyBoard = employment.board(S.idx, p, haul.state(S.career).unlocked)
+    S.companyBoard = employment.board(S.idx, p, haul.state(S.career).unlocked, M.companyRanges())
     S.companyBoardDirty, S.nextBoardAt, S.companyBoardPos = nil, S.clock + 2, { lat = p.lat, lon = p.lon }
   end
   -- the nearest contract of every vehicle you may drive, then the nearest of the rest
@@ -2402,7 +2428,7 @@ end
 function M.placesState()
   S.placesRequestedAt = S.clock
   if S.companyBoardDirty and not S.career.employment and S.clock >= (S.nextBoardAt or 0) then
-    S.companyBoard = employment.board(S.idx, earth.pose(), haul.state(S.career).unlocked)
+    S.companyBoard = employment.board(S.idx, earth.pose(), haul.state(S.career).unlocked, M.companyRanges())
     S.companyBoardDirty, S.nextBoardAt = nil, S.clock + 2
   end
   local c, p = S.career, earth.pose()
@@ -2721,7 +2747,7 @@ function M.placesDo(name, value)
     if S.job or c.employment then why = 'Finish your current work before changing GPS.'
     else ok, why = earth.gps(c.home.g[1], c.home.g[2], c.home.name) end
   elseif name == 'refreshCompanies' then
-    S.companyBoard = employment.board(S.idx, p, haul.state(S.career).unlocked)
+    S.companyBoard = employment.board(S.idx, p, haul.state(S.career).unlocked, M.companyRanges())
     S.companyBoardDirty, S.nextBoardAt = nil, S.clock + 2
     S.placesMsg = #S.companyBoard > 0 and 'Fictional employers at mapped depot locations. Check access on arrival; you can end work without a cancellation fee.'
       or 'Looking for nearby workplaces through the helper. Contracts appear as local data loads; the Czech pack also works offline.'
@@ -4651,25 +4677,30 @@ M.SETTINGS = {
 }
 
 function M.settingsState()
-  local defs = S.mode == 'courier' and food.defaults or S.mode == 'taxi' and require('cargoEarth/taxi').defaults or jobs.defaults
-  local freightTier, opts = nil, S.opts
-  if S.mode == 'trucking' then
-    local tier = freightSettingsTier()
-    freightTier, opts = haul.tiers[tier], freightOptions(tier)
-  end
-  -- paused: a saved career waits on the resume screen. Only what lives outside the career can change then
-  -- (the dash phone, help); the job's settings belong to the save and open once it is loaded.
-  local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil and S.career.garage.started == true, window = S.window,
+  local id = M.settingsJobType()
+  local profile, opts = M.jobSettings.type(id), M.jobOptions(id)
+  local bounds = M.jobSettings.bounds(id)
+  local out = { mode = S.mode, jobType = id, jobTypes = M.jobSettings.types,
+    canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil and S.career.garage.started == true, window = S.window,
     savingDamage = S.pauseSaving ~= nil, reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
     canRestart = S.pendingCareer ~= nil or S.career.garage.started == true or nil, restartWord = M.RESTART_WORD }
-  for _, d in ipairs(M.SETTINGS[S.mode] or {}) do
-    local key, step, min, max, default = d[1], d[3], d[4], d[5], defs[d[1]]
-    if freightTier and (key == 'minKm' or key == 'maxKm') then
-      min, max, default = freightTier.minKm, freightTier.maxKm, freightTier[key]
-      step = key == 'minKm' and 1 or 5
+  local labels = {nearKm = 'Pickups within', minKm = 'Shortest delivery', maxKm = 'Longest delivery'}
+  for _, key in ipairs({'nearKm', 'minKm', 'maxKm'}) do
+    if bounds[key] then
+      out.items[#out.items + 1] = {key = key, label = labels[key], step = 0.5, min = bounds[key][1], max = bounds[key][2], unit = 'km', value = opts[key]}
     end
-    local v = math.max(min, math.min(max, opts[key] or default))
-    out.items[#out.items + 1] = { key = key, label = d[2], step = step, min = min, max = max, unit = d[6], value = v }
+  end
+  if id == 'courier' then
+    out.items[#out.items + 1] = {key = 'maxOrders', label = 'Orders at once', step = 1, min = 1, max = 3, unit = '',
+      value = S.optsByMode.courier.maxOrders or food.defaults.maxOrders}
+  end
+  out.jobHint = id == 'bus' and 'Bus lines follow their mapped stops and lengths. Choose a line on Work.'
+    or profile.company and 'Distance per loaded delivery. A company shift also includes return legs. Changes apply to new contracts.'
+    or id:find('tow_', 1, true) == 1 and 'Distance with the car loaded. Borrowing a trailer adds empty travel.'
+    or id == 'parcels' and 'Filters the total parcel round length; the route still serves its normal number of stops.'
+    or 'Changes apply to new offers. Distances are estimated where road data is unavailable.'
+  if id ~= 'bus' then
+    out.jobHint = out.jobHint .. ' Offers need destinations in loaded data; increasing a range does not download a wider area.'
   end
   out.dash = dash.state(M.G.vehicle and M.G.vehicle() or nil)
   out.dash.error = S.dashError
@@ -4678,8 +4709,8 @@ function M.settingsState()
   out.update = M.updateInfo() or { mod = M.VERSION, unknown = true }
   out.cameras = { on = not M.CAMERAS_PAUSED and not S.career.camerasOff, paused = M.CAMERAS_PAUSED, known = #cams.list,
     helper = cams.state or (helper.status().cameras == 'off' and 'off' or nil) }
-  if S.mode == 'courier' then
-    out.autoReach = S.opts.autoReach
+  if id == 'courier' then
+    out.autoReach = S.optsByMode.courier.autoReach
     if out.autoReach == nil then out.autoReach = food.defaults.autoReach end
   end
   return out
@@ -4714,15 +4745,38 @@ function M.settingsDo(name, a, b)
     pauseCareer()
     return M.settingsState()
   end
+  if name == 'jobType' then
+    if M.jobSettings.type(a) then S.settingsJobType = a end
+    return M.settingsState()
+  end
+  if name == 'jobRange' or name == 'resetJobRange' then
+    local ok, why
+    if name == 'jobRange' then ok, why = M.jobSettings.set(S.optsByMode, a, b)
+    else ok = M.jobSettings.reset(S.optsByMode, a) end
+    if ok then
+      S.companyBoard, S.companyBoardDirty, S.offeredAt = nil, true, nil
+      saveCareer()
+    end
+    local out = M.settingsState()
+    out.rangeSaved, out.rangeReset, out.rangeError = ok and name == 'jobRange', ok and name == 'resetJobRange', not ok and (why or 'Choose a generated job type.') or nil
+    out.rangeChanged = a
+    return out
+  end
   if name == 'mode' then M.setMode(a)
   elseif name == 'step' then
     for _, item in ipairs(M.settingsState().items) do
       if item.key == a then
         local v = item.value + item.step * (tonumber(b) or 0)
-        M.setOption(a, math.max(item.min, math.min(item.max, math.floor(v / item.step + 0.5) * item.step)))
+        local value = math.max(item.min, math.min(item.max, math.floor(v / item.step + 0.5) * item.step))
+        if a == 'maxOrders' then S.optsByMode.courier.maxOrders = value
+        elseif S.settingsJobType then
+          local range = M.jobOptions(S.settingsJobType)
+          range[a] = value
+          M.jobSettings.set(S.optsByMode, S.settingsJobType, range)
+        else M.setOption(a, value) end
       end
     end
-  elseif name == 'autoReach' then S.opts.autoReach = a and true or false
+  elseif name == 'autoReach' then S.optsByMode.courier.autoReach = a and true or false
   elseif name == 'cameras' then
     if M.CAMERAS_PAUSED and a then return M.settingsState() end
     S.career.camerasOff = (not a) or nil
