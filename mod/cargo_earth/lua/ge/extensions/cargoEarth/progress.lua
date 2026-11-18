@@ -157,9 +157,12 @@ function M.workTypes(career, facts)
     if w.id == 'independent' and not facts.independent then
       ready, missing = false, 'No company trusts you that far yet.'
     elseif w.id == 'firm' and not facts.firm then
-      ready = false
+      -- no firm yet: available to found once every requirement is met
+      ready = facts.firmReq ~= nil and #facts.firmReq > 0
       for _, r in ipairs(facts.firmReq or {}) do
-        if not r.done then missing = (missing and missing .. ' ' or '') .. r.label .. ': ' .. r.detail .. '.' end
+        if not r.done then
+          ready, missing = false, (missing and missing .. ' ' or '') .. r.label .. ': ' .. r.detail .. '.'
+        end
       end
     elseif w.id == 'drivers' and not facts.firm then
       ready, missing = false, 'Found your firm first.'
