@@ -3398,6 +3398,12 @@ test('trade-in credit uses market mileage, deducts repairs and guarantees a quar
     assert(not garage.buyCar(G, g, c, offer) and g.repair == row[2] and g.car.km == row[1])
     c.money = c.money + 1
     assert(garage.buyCar(G, g, c, offer) and c.money == 0 and g.repair == 0)
+    g = {car = {name = 'My car', km = row[1]}, repair = row[2]}
+    c = {money = 1000}
+    local ok, _, paid = garage.sellCar(G, g, c)
+    assert(ok and paid == row[3] and c.money == 1000 + row[3])
+    assert(not g.car and g.repair == 0)
+
   end
 end)
 

@@ -4107,7 +4107,7 @@ function M.garageState()
   if out.own then
     out.value = garage.carWorth(G, g)
     out.tradeIn = garage.tradeInQuote(G, g)
-    out.sellPrice = math.max(0, math.floor(out.value * garage.TRADE_IN / 5 + 0.5) * 5 - (g.repair or 0))
+    out.sellPrice = out.tradeIn
     out.condition = g.car and g.car.condition or 1
   end
   out.spares = garage.spares(G, g)

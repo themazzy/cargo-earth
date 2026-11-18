@@ -510,7 +510,7 @@ function M.carWorth(G, g)
   return round5(M.carValue(G) * (1 - math.min(0.5, km / 300000)))
 end
 
--- Dealer credit for an exchange. Mileage consumes up to 25 percentage points of
+-- Dealer credit for a trade-in or direct sale. Mileage consumes up to 25 percentage points of
 -- installed value at the market's mean mileage. Repairs share the same floor.
 function M.tradeInQuote(G, g)
   if not g.car or g.car.standIn or g.car.loaner then return 0, 0 end
@@ -713,7 +713,7 @@ function M.sellCar(G, g, career)
   if g.car.loaner then return false, 'The loaner stays in your garage.' end
   if g.pendingUsed then return false, 'Wait for your car to finish loading its parts' end
   if not M.inOwnCar(G, g) then return false, 'Sit in your car to sell it' end
-  local price = math.max(0, round5(M.carWorth(G, g) * M.TRADE_IN) - (g.repair or 0))
+  local price = M.tradeInQuote(G, g)
   career.money = (career.money or 0) + price
   local name = g.car.name
   local damaged = (g.repair or 0) > 0
