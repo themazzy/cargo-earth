@@ -299,18 +299,25 @@ function M.impact(job, peak, damage, now)
     local share = math.min(1, (peak - M.BUMP_G[1]) / (M.BUMP_G[2] - M.BUMP_G[1]))
     loss = math.floor(M.BUMP_LOSS[1] + share * (M.BUMP_LOSS[2] - M.BUMP_LOSS[1]) + 0.5)
   end
-  if damage and damage >= M.DAMAGE_MIN then
+  local hasDamage = damage and damage >= M.DAMAGE_MIN
+  if loss == 0 and not hasDamage then return 0 end
+  local b = job.bus
+  if now then
+    if not b.impactAt or now < b.impactAt or now - b.impactAt >= M.IMPACT_GAP_S then
+      b.impactAt, b.impactDamage = now, 0
+      b.impactLoss = b.harshAt and now >= b.harshAt and now - b.harshAt < M.IMPACT_GAP_S and M.HARSH_LOSS or 0
+    end
+    if hasDamage then
+      b.impactDamage = (b.impactDamage or 0) + damage
+      damage = b.impactDamage
+    end
+  end
+  if hasDamage then
     local share = math.min(1, (damage - M.DAMAGE_MIN) / (M.DAMAGE_FULL - M.DAMAGE_MIN))
     loss = math.max(loss, math.floor(M.BUMP_LOSS[1] + share * (M.BUMP_LOSS[2] - M.BUMP_LOSS[1]) + 0.5))
   end
-  if loss == 0 then return 0 end
-  local b = job.bus
   local extra = loss
   if now then
-    if not b.impactAt or now < b.impactAt or now - b.impactAt >= M.IMPACT_GAP_S then
-      b.impactAt = now
-      b.impactLoss = b.harshAt and now >= b.harshAt and now - b.harshAt < M.IMPACT_GAP_S and M.HARSH_LOSS or 0
-    end
     extra = math.max(0, loss - b.impactLoss)
     b.impactLoss = math.max(loss, b.impactLoss)
   end

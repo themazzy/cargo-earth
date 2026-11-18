@@ -5437,7 +5437,7 @@ function M.onJbeamLoadingPhase2(_, objID, vehicle) dash.captureLoading(objID, ve
 function M.onVehicleSwitched() M.dashCheckSoon() end
 
 function M.onVehicleSpawned(id)
-  S.busDamageWatch = nil
+  if S.busDamageWatch and S.busDamageWatch.id == id then S.busDamageWatch = nil end
   M.dashCheckSoon()
   if fuelWatch and fuelWatch.id == id then stopFuelWatch() end
   -- A respawn recreates the vehicle-side storage, even when BeamNG reuses its object ID.
@@ -5449,7 +5449,7 @@ end
 -- A reset (R, recover, the game's repair) rebuilds the vehicle-side containers empty, so the load the mod set is
 -- forgotten there: read the boxes again and put the load back (a meal box at once, freight through workFreight).
 function M.onVehicleResetted(id)
-  S.busDamageWatch = nil
+  if S.busDamageWatch and S.busDamageWatch.id == id then S.busDamageWatch = nil end
   if S.storage and S.storage.id == id then S.storage = nil end
   if S.freightLoad and S.freightLoad.id == id then S.freightLoad = nil end
 end

@@ -2795,9 +2795,24 @@ test('bus comfort tolerates ordinary braking and catches damage below the G thre
   assert(bus.comfort(j) == 90, 'the collision penalty includes the recent harsh-driving penalty')
   core.busDamageTick(bus.DAMAGE_MIN)
   assert(bus.comfort(j) == 90)
+  local watched = s.busDamageWatch
+  core.onVehicleSpawned(vehicle.id + 10)
+  core.onVehicleResetted(vehicle.id + 10)
+  assert(s.busDamageWatch == watched, 'traffic spawn and reset must preserve the bus baseline')
+  s.clock = s.clock + 4
+  -- One collision whose damage arrives over two garage ticks.
+  core.busDamageTick(bus.DAMAGE_MIN + 10000)
+  local afterFirst = bus.comfort(j)
+  assert(afterFirst == 66)
+  s.clock = s.clock + 0.5
+  core.busDamageTick(bus.DAMAGE_MIN + 20000)
+  assert(bus.comfort(j) == 50, 'the two increments must total a 40-point loss')
+  core.busDamageTick(bus.DAMAGE_MIN + 20000)
+  assert(bus.comfort(j) == 50, 'the unchanged damage total must not be counted again')
   core.onVehicleResetted(vehicle.id)
+  assert(not s.busDamageWatch, 'resetting the watched bus clears its baseline')
   core.busDamageTick(0)
-  assert(bus.comfort(j) == 90, 'a reset is not another crash')
+  assert(bus.comfort(j) == 50, 'a reset is not another crash')
 end)
 
 test('bus signs: the line number, the destination in plain letters and the stops ahead', function()
