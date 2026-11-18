@@ -110,8 +110,8 @@ settings are independent.
 **Long hauls.** When an own-vehicle freight or company contract profile reaches past 120 km, the game picks up to
 8 real towns in that ring, spread by compass direction (a bundled Natural Earth list of towns over 30,000 people),
 and the helper loads only their workplaces (warehouses, yards and stores; `/v1/sites`, cached on disk). They become
-delivery points; pickups stay near you. These far sites are not checked for truck access: within 600 m of one, the
-phone offers **Hand over here** for 85 % of the pay and no fee. Taxi, tow, parts, parcel and fuel jobs keep their
+delivery points; pickups stay near you. Workplaces are not checked for truck access (none are bundled any more): within 600 m of one,
+the phone offers **Load here** or **Hand over here** for 85 % of the pay (once a job) and no fee. Taxi, tow, parts, parcel and fuel jobs keep their
 local data. Long hauls need the helper running.
 
 Cargo Earth is separate from BeamNG's stock career mode. It is not affiliated with BeamNG, BeamNG.Earth or the RLS
@@ -185,7 +185,7 @@ Cargo Earth uses **47821** to coexist with EarthRadio on **47820**. Update both 
 4. **Choose Career or Free play** on the phone, then choose Food delivery, Freight, Taxi or Bus from the **Work** dropdown.
 5. Optional: turn **traffic on in BeamNG.Earth** for the speed-limit sign on the phone (it reads Earth's road graph).
 
-If the phone says the helper is not running: press **Start helper** on the phone, check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` on Windows or `start_helper.sh` from `${XDG_DATA_HOME:-$HOME/.local/share}/CargoEarth/helper` on Linux and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras, bus lines, parts runs, repair shops and grocery runs still need it.
+If the phone says the helper is not running: press **Start helper** on the phone, check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` on Windows or `start_helper.sh` from `${XDG_DATA_HOME:-$HOME/.local/share}/CargoEarth/helper` on Linux and keep its window open. The mod bundles no places: restaurants, customers, workplaces, fuel stations and everything else come from the helper, the same way in every country.
 
 The phone keeps what you need while driving: **Work** (deliveries), **Radio**, and a fuel line at the bottom. **Menu** opens a big window over the game with **Garage**, **Home**, **Companies**, **Progress**, **Finances**, **Delivery map**, **Firm** and **Settings**. The firm's headquarters opens from Firm as a full-screen plan of the building.
 
@@ -230,10 +230,10 @@ The helper fetches public Overture source data; busy areas and first visits may 
 
 ## Data attribution
 
-Bundled Czech geography credits **OpenStreetMap contributors** and **Overture Maps Foundation**; the pack declares **ODbL-1.0**. Preserve the pack's attribution and licence metadata when redistributing the data. Live helper data retains its source metadata. Country borders (`data/borders.json`, for the local currency) are simplified from **Natural Earth** 1:10m admin 0 countries, which is in the public domain. Long-haul towns (`data/cities.json`) are Natural Earth 1:10m populated places, also public domain. No BeamNG game assets or proprietary runtime are included here.
+The mod bundles no map places. Places the helper loads come from **Overture Maps Foundation** (and OpenStreetMap through it) and keep their source metadata. The freight catalogue (`data/freight.json`: cargo, trailers, workplace types) is gameplay rules, not data about real businesses. Country borders (`data/borders.json`, for the local currency) are simplified from **Natural Earth** 1:10m admin 0 countries, which is in the public domain. Long-haul towns (`data/cities.json`) are Natural Earth 1:10m populated places, also public domain. No BeamNG game assets or proprietary runtime are included here.
 
 Report bugs through [GitHub Issues](https://github.com/themazzy/cargo-earth/issues), with mod/helper version, reproduction steps and the relevant error excerpt. Remove home coordinates and other personal data before sharing a save or log.
 
 ## Licence
 
-Code: [MIT](LICENSE). Bundled geographic data: ODbL 1.0, © OpenStreetMap contributors and Overture Maps Foundation (see [LICENSE](LICENSE)).
+Code: [MIT](LICENSE). Bundled data: Natural Earth (public domain). Data the helper loads: Overture Maps Foundation and OpenStreetMap contributors under their licences (see [LICENSE](LICENSE)).

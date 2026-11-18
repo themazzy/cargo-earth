@@ -24,7 +24,8 @@ function literal(v) {
   if (Array.isArray(v)) return '{' + v.map(literal).join(',') + '}'
   return '{' + Object.entries(v).map(([k, x]) => '[' + literal(k) + ']=' + literal(x)).join(',') + '}'
 }
-const pack = JSON.parse(fs.readFileSync('mod/cargo_earth/lua/ge/extensions/cargoEarth/data/depots_CZ.json', 'utf8'))
+// sample helper-like workplaces around the five positions below (the mod bundles no real workplaces)
+const pack = require('./sample-sites.cjs').pack([[50.0755, 14.4378], [49.1951, 16.6068], [49.8209, 18.2625], [48.8053, 16.6378], [50.4372, 15.3516]])
 const source = `package.path='mod/cargo_earth/lua/ge/extensions/?.lua;'..package.path
 local food=require('cargoEarth/food')
 local haul=require('cargoEarth/haul')
@@ -165,7 +166,7 @@ The shortest company model (two 1 km deliveries) returns ${money(groups.company[
 
 ### Actual generated board sample
 
-Fixed city-centre positions: Prague, Brno, Ostrava, Mikulov and Jicin; deterministic board generation; first five displayed offers per position. Payouts and endpoints come from the supplied pack, while times remain modeled.
+Fixed city-centre positions: Prague, Brno, Ostrava, Mikulov and Jicin; deterministic board generation; first five displayed offers per position. Endpoints are reproducible sample workplaces (tools/sample-sites.cjs), while times remain modeled.
 
 ${table(['Location','Offers','Min–max full-shift payout, CZK','Min–max modeled minutes','Min–max CZK/h'],[...new Set(board.map(r=>r[0]))].map(city=>{const r=board.filter(x=>x[0]===city);return [city,r.length,money(Math.min(...r.map(x=>x[6])))+'–'+money(Math.max(...r.map(x=>x[6]))),n(Math.min(...r.map(x=>x[7])))+'–'+n(Math.max(...r.map(x=>x[7]))),money(Math.min(...r.map(x=>x[8])))+'–'+money(Math.max(...r.map(x=>x[8]))) ]}))}
 

@@ -90,7 +90,7 @@ local function stream(idx)
 end
 
 -- A helper row the bundled pack does not already have (same name within 120 m), as an index depot.
-local function helperRows(st, list, prefix, far)
+local function helperRows(st, list, prefix, far, types)
   local rows = {}
   for _, d in ipairs(list) do
     if type(d) == 'table' and type(d.id) == 'string' and type(d.n) == 'string' and type(d.g) == 'table'
@@ -103,7 +103,9 @@ local function helperRows(st, list, prefix, far)
         end
       end
       if not duplicate then
-        rows[#rows + 1] = { id = d.id, n = d.n, g = { d.g[1], d.g[2] }, t = prefix .. d.t,
+        -- the freight catalogue's type when the helper named one ("k"), else the plain yard / shop / fuel kind
+        local t = type(d.k) == 'string' and types and types[d.k] and d.k or prefix .. d.t
+        rows[#rows + 1] = { id = d.id, n = d.n, g = { d.g[1], d.g[2] }, t = t,
           s = 'S', town = d.town, source = d.source or 'Overture', access = 'candidate', far = far or nil }
       end
     end
@@ -117,8 +119,10 @@ M.FAR_ACCEPTS = {
   shop = { 'pallets_general', 'consumer_goods', 'electronics', 'furniture', 'food_dry' },
 }
 M.FAR_KEEP = 16          -- far towns' workplaces kept at once
--- Long hauls may end at a far workplace nobody has checked for truck access (BeamNG.Earth abroad has no checked sites).
-M.FAR_UNCHECKED = true
+-- Workplaces from the helper are not checked for truck access (Jan 2026-11-18: no bundled Czech pack, one way for the
+-- whole Earth; "allow, no fee if blocked"): box trucks and semis use them too, and the phone offers to load or hand
+-- over beside a site whose gate can't be reached (core.canHandover).
+M.UNCHECKED_SITES = true
 
 local function rebuild(idx)
   local st = idx.stream
@@ -142,7 +146,7 @@ end
 function M.addFar(idx, key, list)
   if type(key) ~= 'string' or type(list) ~= 'table' then return 0 end
   local st = stream(idx)
-  local rows = helperRows(st, list, 'ce:far:', true)
+  local rows = helperRows(st, list, 'ce:far:', true, idx.types)
   st.far, st.farOrder = st.far or {}, st.farOrder or {}
   if not st.far[key] then st.farOrder[#st.farOrder + 1] = key end
   st.far[key] = rows
@@ -161,7 +165,7 @@ function M.hasFar(idx, key) return idx and idx.stream and idx.stream.far and idx
 function M.addArea(idx, data, onDrop)
   if type(data) ~= 'table' or type(data.key) ~= 'string' or type(data.depots) ~= 'table' then return 0 end
   local st = stream(idx)
-  local rows = helperRows(st, data.depots, 'ce:stream:')
+  local rows = helperRows(st, data.depots, 'ce:stream:', nil, idx.types)
   if not st.areas[data.key] then st.order[#st.order + 1] = data.key end
   st.areas[data.key] = rows
   while #st.order > 25 do
@@ -171,7 +175,9 @@ function M.addArea(idx, data, onDrop)
   end
   idx.cargo.pallets_general = idx.cargo.pallets_general or {name = 'General goods', trailer = 'box', tonnes = 0.4, pay = 1}
   idx.types['ce:stream:yard'] = { produces = {'pallets_general'}, accepts = {'pallets_general'} }
-  idx.types['ce:stream:shop'] = { produces = {}, accepts = {'pallets_general'} }
+  local shop = {}
+  for _, c in ipairs(M.FAR_ACCEPTS.shop) do if idx.cargo[c] then shop[#shop + 1] = c end end
+  idx.types['ce:stream:shop'] = { produces = {}, accepts = shop, label = 'Store' }
   -- fuel depots: tanker runs to fuel stations only (cargoEarth/resupply)
   idx.cargo.fuel = idx.cargo.fuel or { name = 'Fuel (diesel, petrol)', trailer = 'tanker', tonnes = 25, pay = 1.15, adr = true }
   idx.types['ce:stream:fuel'] = { produces = {'fuel'}, accepts = {}, label = 'Fuel depot' }
@@ -227,7 +233,7 @@ function M.generate(idx, opts, lat, lon, rnd)
   local near = {}
   for _, d in ipairs(idx.depots) do
     if (SIZE_RANK[d.s] or 1) >= minRank and (not o.fromType or d.t == o.fromType)
-      and (not o.requireValidatedSites or d.access ~= 'candidate') and M.inBox(lat, lon, d.g, o.nearKm) then
+      and (not o.requireValidatedSites or d.access ~= 'candidate' or M.UNCHECKED_SITES) and M.inBox(lat, lon, d.g, o.nearKm) then
       local k = M.km(lat, lon, d.g[1], d.g[2])
       if k <= o.nearKm then near[#near + 1] = { d = d, k = k } end
     end
@@ -252,7 +258,7 @@ function M.generate(idx, opts, lat, lon, rnd)
           cands = {}
           for _, d in ipairs(idx.acceptors[c] or {}) do
             if d ~= p.d and (SIZE_RANK[d.s] or 1) >= minRank and (not o.toType or d.t == o.toType)
-              and (not o.requireValidatedSites or d.access ~= 'candidate' or (d.far and M.FAR_UNCHECKED))
+              and (not o.requireValidatedSites or d.access ~= 'candidate' or M.UNCHECKED_SITES)
               and M.inBox(p.d.g[1], p.d.g[2], d.g, o.maxKm / M.ROAD_FACTOR) then
               local s = M.km(p.d.g[1], p.d.g[2], d.g[1], d.g[2])
               local road = s * M.ROAD_FACTOR

@@ -46,7 +46,7 @@ API (GET, JSON):
                               [[lat, lon, curbLat, curbLon, label, town], ...]}, "houses": bool,
                               "depots": [{id, n, g: [lat, lon], t: "yard" | "shop", town, source, access}, ...]}
 Areas are AREA x AREA degrees (r = floor(lat / AREA), c = floor(lon / AREA)); address tiles inside are TILE degrees,
-the same keys as the mod's own data pack (food_CZ/a/<row>_<col>.json).
+the keys the mod's address tiles use. A depot's "k" is its type in the mod's freight catalogue (data/freight.json).
 
 Data: Overture Maps Foundation, places (CDLA-Permissive-2.0), addresses (sources' licences), buildings (ODbL and
 others); https://docs.overturemaps.org/attribution/
@@ -71,11 +71,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from contextlib import contextmanager
 
 VERSION = "0.10.3"
-SITES_CACHE_VERSION = "1"  # /v1/sites: far workplaces for long-distance freight
+SITES_CACHE_VERSION = "2"  # /v1/sites: far workplaces for long-distance freight (2: catalogue types "k")
 SITE_GRID = 0.05           # a far town's point is snapped to this grid (one cached box per grid point)
 SITE_HALF = 0.12           # half the size of that box, degrees (about 27 x 17 km in central Europe)
 SITE_QUEUE = 24            # far boxes waiting at most; older requests drop first
-AREA_CACHE_VERSION = "7"  # taxi destinations (airports, stations, sights); retain existing downloaded Parquet blocks
+AREA_CACHE_VERSION = "8"  # 8: workplaces carry their freight catalogue type "k"; retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
 STAC_ROOT = "https://stac.overturemaps.org"
@@ -133,7 +133,42 @@ def auto_kind(primary, hierarchy, basic):
         if pattern.search(taxonomy):
             return kind
     return None
-DEPOT_SQL_RX = "|".join(pattern for _, pattern in DEPOT_RULES)
+# The workplace's type in the mod's freight catalogue (data/freight.json): what it ships and takes in. First match
+# wins; a yard no rule names is an industrial estate. Also fictional gameplay rules, by the place's Overture category.
+WORKPLACE_RULES = [
+    ("fuel_depot", r"fuel_depot|fuel_terminal|oil_refiner|petroleum|oil_and_gas|fuel_supplier"),
+    ("automotive", r"automotive_parts_manufactur|car_manufactur|vehicle_manufactur|automobile_manufactur|auto_manufactur"),
+    ("steelworks", r"steel|foundry|metal_supplier|smelt"),
+    ("chemical", r"chemical|pharmaceutical_manufactur|plastic_manufactur|plastic_fabricat|plastics"),
+    ("sawmill", r"sawmill|lumber|timber|wood_product"),
+    ("brewery", r"brewery|distillery|winery"),
+    ("food", r"food_processing|food_manufactur|food_production|dairy_manufactur|meat_process|meat_packing|slaughter|beverage_manufactur|bottling"),
+    ("glassworks", r"glass_manufactur|glassblow|ceramic_manufactur|porcelain"),
+    ("concrete", r"concrete|cement|brick"),
+    ("scrap_yard", r"scrap|recycl|waste_management"),
+    ("mine", r"coal|(^| )mining|mine( |$)"),
+    ("quarry", r"quarr|gravel"),
+    ("farm", r"(^|[ _])farm($|[ _])|agricultur|livestock|ranch|dairy_farm|crop_farm"),
+    ("port", r"harbo|seaport|cargo_port|(^| )port( |$)"),
+    ("rail_terminal", r"rail_freight|intermodal|container_terminal|freight_terminal"),
+    ("power_plant", r"power_plant|power_station|energy_plant"),
+    ("logistics", r"warehous|logistic|freight|courier|distribution|wholesal|storage_facilit|shipping_cent|trucking"),
+    ("metalworks", r"metal_fabricat|machine_shop|machinery|industrial_equipment|tool_manufactur|metal"),
+    ("factory", r"manufactur|factory|industrial_company|textile_mill|electronics_manufactur|paper_mill"),
+]
+WORKPLACE_RX = [(kind, re.compile(pattern)) for kind, pattern in WORKPLACE_RULES]
+DEPOT_SQL_RX = "|".join([pattern for _, pattern in DEPOT_RULES] + [pattern for _, pattern in WORKPLACE_RULES])
+
+
+def workplace_kind(primary, hierarchy, basic, kind):
+    """The catalogue type of a workplace whose depot kind is `kind` (yard / shop / fuel), or None for a shop."""
+    if kind == "shop":
+        return None
+    taxonomy = " ".join(str(value or "") for value in (primary, hierarchy, basic)).lower()
+    for k, pattern in WORKPLACE_RX:
+        if pattern.search(taxonomy):
+            return k
+    return "fuel_depot" if kind == "fuel" else "industrial"
 
 
 def depot_kind(primary, hierarchy, basic):
@@ -141,6 +176,9 @@ def depot_kind(primary, hierarchy, basic):
     for kind, pattern in DEPOT_RX:
         if pattern.search(taxonomy):
             return kind
+    for k, pattern in WORKPLACE_RX:     # a brewery, quarry, farm...: a yard of its own kind
+        if pattern.search(taxonomy):
+            return "fuel" if k == "fuel_depot" else "yard"
     return None
 
 # Which files of the release cover which box: [name, [xmin, ymin, xmax, ymax], size]. Places from Overture's STAC
@@ -562,7 +600,8 @@ class Builder:
                 kind = depot_kind(prim, hier, basic)
                 if kind:
                     depots.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)],
-                                   "t": kind, "town": town, "source": "Overture", "access": "candidate"})
+                                   "t": kind, "k": workplace_kind(prim, hier, basic, kind), "town": town,
+                                   "source": "Overture", "access": "candidate"})
                 car = auto_kind(prim, hier, basic)
                 if car:
                     autos.append([f"o{pid[:16]}", round(lat, 6), round(lon, 6), name, car, town])
@@ -589,7 +628,8 @@ class Builder:
             name, kind = (name or "").strip(), depot_kind(prim, hier, basic)
             if name and kind and box[1] <= lat < box[3] and box[0] <= lon < box[2]:
                 out.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)], "t": kind,
-                            "town": (town or "").strip(), "source": "Overture", "access": "candidate"})
+                            "k": workplace_kind(prim, hier, basic, kind), "town": (town or "").strip(),
+                            "source": "Overture", "access": "candidate"})
         return out
 
     def addresses(self, box):
