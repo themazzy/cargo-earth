@@ -2304,7 +2304,7 @@ local function incomingInfo(inc)
     trailerBonus = j.trailerBonus,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
-    fuelAllowance = j.fuelAllowance, carBonus = j.carBonus, carRate = j.carRate, expBonus = j.expBonus, expRate = j.expRate,
+    fuelAllowance = j.fuelAllowance, carBonus = j.carBonus, carRate = j.carRate, expBonus = j.expBonus, expRate = j.expRate, loadFill = j.loadFill, loadBonus = j.loadBonus,
     trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or (j.haul and j.haul.trailerName) or (S.idx and S.idx.trailers[j.trailer]) or j.trailer) or nil,
     leftS = math.max(0, math.floor(inc.expiresAt - S.clock + 0.5)), totalS = M.PHONE.acceptS }
 end

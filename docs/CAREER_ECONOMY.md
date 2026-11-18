@@ -61,3 +61,10 @@ ceiling, and later-unlocked driving work has the higher ceilings, so the ladder 
 Your own jobs get it on the offer ("+X for your experience"). Company contracts and bus lines raise the driver's share of
 the contract instead (never past the whole contract). The Progress page's Work types cards show the jobs done and the
 current bonus. Taxi rides also keep the nicer-car bonus.
+
+## Load pay
+
+Freight is still paid by distance ((base + rate × km) × cargo factor), times 0.75 + 0.25 × fill (`haul.LOAD_PAY`). Fill is
+the share of the tier's weight limit or its space (van 96 slots, box truck 640, tractor 1,600 or the trailer's litres),
+whichever is higher. A job loads as much as the vehicle and its tier allow, so a full-size vehicle earns the full rate and
+a small van or light truck down to 75 % of it. The offer shows "Load X % full" when it pays less.

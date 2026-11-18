@@ -1328,6 +1328,7 @@ angular.module('beamng.apps')
             '{{ s.incoming.special.note }}</div>' +
           '<div class="cep-sub" ng-if="s.incoming.fuelAllowance">+{{ fmt.money(s.incoming.fuelAllowance) }} toward your fuel</div>' +
           '<div class="cep-sub" ng-if="s.incoming.carBonus">+{{ fmt.money(s.incoming.carBonus) }} for a nicer car ({{ fmt.pct(s.incoming.carRate) }})</div>' +
+          '<div class="cep-sub" ng-if="s.incoming.loadBonus < 0">Load {{ fmt.pct(s.incoming.loadFill) }} full: {{ fmt.money(s.incoming.loadBonus) }} (a fuller vehicle earns the full rate)</div>' +
           '<div class="cep-sub" ng-if="s.incoming.expBonus">+{{ fmt.money(s.incoming.expBonus) }} for your experience ({{ fmt.pct(s.incoming.expRate) }})</div>' +
           '<div class="cep-sub" ng-if="s.incoming.reputationPay > 1">+{{ fmt.pct(s.incoming.reputationPay - 1) }} for your reputation</div>' +
           '<div class="cep-sub" ng-if="s.incoming.reputationPay < 1">−{{ fmt.pct(1 - s.incoming.reputationPay) }} for your reputation</div>' +

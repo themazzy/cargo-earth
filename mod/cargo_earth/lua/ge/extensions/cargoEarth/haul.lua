@@ -156,6 +156,18 @@ function M.options(tier, source, rows)
   return o
 end
 
+-- Load pay (Jan, 2026-11-18): the distance pay x (0.75 + 0.25 x fill). A full load pays the distance pay, a light one
+-- down to 75 % of it. Jobs load as much as the vehicle and its tier allow, so a bigger vehicle in the tier earns more.
+M.LOAD_PAY = { 0.75, 0.25 }
+function M.fill(freight)
+  local t = freight and M.tiers[freight.tier]
+  if not t then return 1 end
+  local space = freight.kind == 'parcel' and t.parcel or t.bulk or 0
+  if freight.tier == 'semi' and freight.kind == 'dryBulk' then space = math.min(space, M.SEMI_BULK_L) end
+  local share = math.max((freight.kg or 0) / t.kg, space > 0 and (freight.amount or 0) / space or 0)
+  return math.floor(math.max(0, math.min(1, share)) * 100 + 0.5) / 100
+end
+
 function M.prepare(job, tier, rows, idx)
   local freight = M.freight(tier, job.cargo, rows)
   if not freight then return false end
@@ -163,7 +175,11 @@ function M.prepare(job, tier, rows, idx)
   local t = M.tiers[tier]
   local factor = idx.cargo[job.cargo].pay or 1
   local pay = (t.base + t.rate * job.km) * factor * (job.adr and 1.15 or 1)
-  job.pay = math.floor(pay / 5 + 0.5) * 5
+  -- a fuller load pays more: fill = the share of the tier's weight limit or its space, whichever is higher
+  local fill = M.fill(freight)
+  local base = math.floor(pay / 5 + 0.5) * 5
+  job.pay = math.floor(pay * (M.LOAD_PAY[1] + M.LOAD_PAY[2] * fill) / 5 + 0.5) * 5
+  job.loadFill, job.loadBonus = fill, job.pay - base
   job.minutes = math.floor((job.km + 1.3 * job.pickupKm) / t.speed * 60 + t.slack + 0.5)
   job.trailer = tier == 'semi' and (freight.kind == 'fluid' and 'tanker' or 'box') or nil
   if tier == 'semi' then

@@ -5097,3 +5097,18 @@ test('experience pay grows with each job of a kind, higher for later-unlocked wo
   assert(rows.food.exp.jobs == 550 and rows.food.exp.rate == 0.10 and rows.company.exp.rate == 0.15)
   assert(rows.firm.exp == nil)
 end)
+
+test('freight pays the distance rate for a full load and less for a light one', function()
+  local haul = require('cargoEarth/haul')
+  assert(haul.fill({ tier = 'van', kind = 'parcel', amount = 96, kg = 864 }) == 1)
+  assert(haul.fill({ tier = 'van', kind = 'parcel', amount = 48, kg = 432 }) == 0.5)
+  assert(haul.fill({ tier = 'rigid', kind = 'parcel', amount = 200, kg = 2800 }) == 0.35, 'heavy goods count by weight')
+  assert(haul.fill({ tier = 'semi', kind = 'dryBulk', amount = 12800, kg = 4480 }) == 1, 'the bulk trailer full by space')
+  local idx = { cargo = { pallets_general = { pay = 1 } } }
+  local rowsFor = function(n) return { { id = 1, capacity = n, cargoTypes = { 'parcel' } } } end
+  local full = { cargo = 'pallets_general', km = 10, pickupKm = 1 }
+  assert(haul.prepare(full, 'van', rowsFor(96), idx) and full.pay == 150 + 18 * 10 and full.loadBonus == 0)
+  local light = { cargo = 'pallets_general', km = 10, pickupKm = 1 }
+  assert(haul.prepare(light, 'van', rowsFor(48), idx))
+  assert(light.loadFill == 0.5 and light.pay == math.floor(330 * 0.875 / 5 + 0.5) * 5 and light.loadBonus == light.pay - 330)
+end)
