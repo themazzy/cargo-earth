@@ -3472,6 +3472,44 @@ test('an older car save loads normally and starts capturing its current state', 
   assert(g.repair == 100 and g.debt == 0)
 end)
 
+test('pausing waits for the completed damage snapshot to reach the career file', function()
+  local core, s = fresh()
+  s.career.garage.car.key = 'custom'
+  core.saveOptions()
+  local g, c = s.career.garage, s.career
+  local request
+  core.G.vehicleState = function(action, path, token)
+    request = {path = path, token = token}
+    return true
+  end
+  core.settingsDo('pause')
+  assert(request and not s.pendingCareer and s.pauseSaving == c)
+  disk[request.path] = {format = 'v2', nodes = {latestDamage = 123}}
+  require('cargoEarth/damage').complete(request.token, 1, true)
+  assert(s.pendingCareer == c and not s.pauseSaving)
+  local saved = disk[core.savePath(c)]
+  assert(saved.garage.car.physicalDamage.nodes.latestDamage == 123)
+  assert(not saved.pauseSaving)
+end)
+
+test('repairing a parked car clears its damage snapshot and invalidates pending captures', function()
+  local module, garage = require('cargoEarth/damage'), require('cargoEarth/garage')
+  local car = {fleetId = 7, name = 'Parked car', model = 'pigeon', parkedRepair = 500,
+    physicalDamage = {format = 'v2', nodes = {oldDamage = true}}}
+  local g, c, request = {car = car}, {money = 1000}, nil
+  local G = {playerId = function() return 1 end, vehicleState = function(action, path, token)
+    request = {path = path, token = token}
+    return true
+  end}
+  module.capture(G, g, function() end)
+  g.car, g.parked = nil, {car}
+  assert(garage.repairParked(g, c, 7))
+  assert(c.money == 500 and car.parkedRepair == 0 and not car.physicalDamage and car.damageRevision == 1)
+  disk[request.path] = {format = 'v2', nodes = {oldDamage = true}}
+  module.complete(request.token, 1, true)
+  assert(not car.physicalDamage, 'the late capture must not undo the paid repair')
+end)
+
 test('snapshot capture rejects late results after a paid repair and retries a lost callback', function()
   local module = require('cargoEarth/damage')
   local request, writes = nil, 0
@@ -3480,14 +3518,14 @@ test('snapshot capture rejects late results after a paid repair and retries a lo
     request = {path = path, token = token}
     return true
   end}
-  module.capture(G, g, function() writes = writes + 1 end)
+  module.capture(G, g, function(ok) if ok then writes = writes + 1 end end)
   module.clear(g.car)
   disk[request.path] = {format = 'v2'}
   module.complete(request.token, 1, true)
   assert(not g.car.physicalDamage and writes == 0)
-  module.capture(G, g, function() writes = writes + 1 end)
+  module.capture(G, g, function(ok) if ok then writes = writes + 1 end end)
   module.tick(11)
-  module.capture(G, g, function() writes = writes + 1 end)
+  module.capture(G, g, function(ok) if ok then writes = writes + 1 end end)
   disk[request.path] = {format = 'v2'}
   module.complete(request.token, 1, true)
   assert(g.car.physicalDamage and writes == 1)

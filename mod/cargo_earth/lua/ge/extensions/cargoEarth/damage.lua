@@ -40,16 +40,21 @@ end
 
 function M.capture(G, g, done)
   local car = g.car
-  if not car or capturing[car] then return end
-  local revision = car.damageRevision
-  capturing[car] = true
-  if not request(G, 'capture', nil, function(ok, data)
+  if not car then return false end
+  if capturing[car] then
+    table.insert(capturing[car], done)
+    return true
+  end
+  local revision, callbacks = car.damageRevision, {done}
+  capturing[car] = callbacks
+  local sent = request(G, 'capture', nil, function(ok, data)
     capturing[car] = nil
-    if ok and type(data) == 'table' and data.format == 'v2' and car.damageRevision == revision then
-      car.physicalDamage = data
-      done()
-    end
-  end) then capturing[car] = nil end
+    ok = ok and type(data) == 'table' and data.format == 'v2' and car.damageRevision == revision
+    if ok then car.physicalDamage = data end
+    for _, callback in ipairs(callbacks) do callback(ok == true) end
+  end)
+  if not sent then capturing[car] = nil end
+  return sent
 end
 
 function M.restore(G, g, done)

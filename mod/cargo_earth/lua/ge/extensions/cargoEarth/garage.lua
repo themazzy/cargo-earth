@@ -580,6 +580,7 @@ function M.repairParked(g, career, id, factor)
   if cost <= 0 then return false, car.name .. ' needs no repair.' end
   if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK needed).', cost) end
   career.money = career.money - cost
+  require('cargoEarth/damage').clear(car)
   car.parkedRepair = 0
   if type(car.breakdown) == 'table' then
     if type(car.service) == 'table' and car.service[car.breakdown.id] then car.service[car.breakdown.id] = 0 end

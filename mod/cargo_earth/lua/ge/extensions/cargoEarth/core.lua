@@ -434,8 +434,8 @@ local function saveCareer(skipDamage)
   local g = c.garage
   if not skipDamage and g.car and not g.pendingUsed and not g.preview and not S.parts and not S.skipCapture
       and not conditionAt and not g.restoringDamage and garage.inOwnCar(M.G, g) then
-    require('cargoEarth/damage').capture(M.G, g, function()
-      if S.career == c and not S.pendingCareer then saveCareer(true) end
+    require('cargoEarth/damage').capture(M.G, g, function(ok)
+      if ok and S.career == c and not S.pendingCareer and not S.pauseSaving then saveCareer(true) end
     end)
   end
   c.savedAt = os.time()
@@ -625,9 +625,28 @@ local function updateResume(dt)
   end
 end
 
-local function pauseCareer()
+local function pauseCareer(captured)
   if S.pendingCareer or not S.career.savedAt then return false end
-  if not saveCareer() then
+  local c, g = S.career, S.career.garage
+  if S.pauseSaving then return false end
+  if not captured and g.car and M.G.vehicleState and not conditionAt and not g.pendingUsed
+      and not g.restoringDamage and not g.preview and not S.parts and garage.inOwnCar(M.G, g) then
+    local car = g.car
+    S.pauseSaving = c
+    local sent = require('cargoEarth/damage').capture(M.G, g, function(ok)
+      if S.pauseSaving ~= c then return end
+      S.pauseSaving = nil
+      if S.career ~= c or S.pendingCareer then return end
+      if g.car ~= car then say('The active car changed. Try saving and switching career again.', 8) return end
+      if ok then pauseCareer(true)
+      else say('Vehicle damage could not be saved. Keep the game open and try pausing again.', 8) end
+    end)
+    if sent then return false end
+    S.pauseSaving = nil
+    say('Vehicle damage could not be saved. Keep the game open and try pausing again.', 8)
+    return false
+  end
+  if not saveCareer(true) then
     say('Career could not be saved. Try pausing again in a moment.')
     return false
   end
@@ -4503,7 +4522,7 @@ function M.settingsState()
   -- paused: a saved career waits on the resume screen. Only what lives outside the career can change then
   -- (the dash phone, help); the job's settings belong to the save and open once it is loaded.
   local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil and S.career.garage.started == true, window = S.window,
-    reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
+    savingDamage = S.pauseSaving ~= nil, reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
     canRestart = S.pendingCareer ~= nil or S.career.garage.started == true or nil, restartWord = M.RESTART_WORD }
   for _, d in ipairs(M.SETTINGS[S.mode] or {}) do
     local key, step, min, max, default = d[1], d[3], d[4], d[5], defs[d[1]]
