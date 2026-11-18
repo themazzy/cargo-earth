@@ -1578,7 +1578,7 @@ test('a small car in freight mode gets no parcel rounds and still sees company c
   advance(core, 2)
   core.generate()
   for _, offer in ipairs(s.offers) do
-    assert(offer.tow or offer.taxi, 'no parcel rounds and no company freight board in a car')
+    assert(offer.tow, 'a car gets tow jobs in Freight; taxi rides have their own category')
   end
   local t = core.phoneState().trucking
   assert(t.carrier == 'Car' and #t.contracts == 1, 'company contracts are still listed')
@@ -1662,6 +1662,126 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
   end
 end)
 
+test('Taxi is separate from Freight and passenger groups fit cars, SUVs and vans', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.autoIdx = fuel.index()
+  fuel.addArea(s.autoIdx, 'taxi', sightRows())
+  s.idx = nil   -- taxi pickup addresses must not depend on the freight depot index
+  freeSeats = 1
+  core.setMode('taxi')
+  for _, row in ipairs({{'pigeon', 'Hatchback'}, {'roamer', 'SUV'}, {'van', 'Van'}}) do
+    vehicle.model, vehicle.bodyStyle = row[1], row[2]
+    s.career.garage.car.model = row[1]
+    core.generate()
+    assert(#s.offers > 0, row[2] .. ' with a verified passenger seat gets rides')
+    assert(core.phoneState().taxi.eligible and not core.phoneState().trucking)
+    for _, offer in ipairs(s.offers) do assert(offer.taxi and offer.taxi.people == 1 and not offer.tow and not offer.haul) end
+  end
+  local ride = s.offers[1]
+  s.idx = idx
+  vehicle.model, vehicle.bodyStyle, s.career.garage.car.model = 'pigeon', 'Hatchback', 'pigeon'
+  core.setMode('trucking')
+  for _, offer in ipairs(s.offers) do assert(not offer.taxi, 'Freight never offers passenger rides') end
+  s.offers = {ride}
+  core.take(1)
+  assert(not s.job, 'a stale taxi offer cannot be accepted from Freight')
+  freeSeats = nil
+end)
+
+test('Taxi rejects missing, loaned, unsuitable and unverifiable passenger vehicles', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.autoIdx = fuel.index()
+  fuel.addArea(s.autoIdx, 'taxi', sightRows())
+  core.setMode('taxi')
+  for _, row in ipairs({{'citybus', 'Bus'}, {'md_series', 'Box Truck'}, {'us_semi', 'Truck'}, {'unicycle', ''}}) do
+    vehicle.model, vehicle.bodyStyle = row[1], row[2]
+    s.career.garage.car.model = row[1]
+    freeSeats = 30
+    s.freeSeats = nil
+    core.generate()
+    assert(#s.offers == 0 and not core.phoneState().taxi.eligible, row[1] .. ' cannot do taxi work')
+  end
+  vehicle.model, vehicle.bodyStyle, s.career.garage.car.model = 'pigeon', 'Hatchback', 'pigeon'
+  for _, n in ipairs({0, -1, math.huge}) do
+    freeSeats, s.freeSeats = n, nil
+    core.generate()
+    assert(#s.offers == 0 and not core.phoneState().taxi.eligible, 'only finite positive seat counts qualify')
+  end
+  freeSeats, s.freeSeats = nil, nil
+  core.phoneAction('online')
+  assert(not s.phone.online and core.phoneState().taxi.hint:find('could not be verified'))
+  freeSeats, s.freeSeats = 3, nil
+  s.career.garage.car.loaner = true
+  core.generate()
+  assert(#s.offers == 0 and not core.phoneState().taxi.eligible, 'loaners are reserved for contract work')
+  s.career.garage.car.loaner = nil
+  vehicle.model = 'someone_elses'
+  assert(not core.taxiState(true).eligible, 'only the owned vehicle qualifies')
+  vehicle.model, freeSeats, s.freeSeats = 'pigeon', 1, nil
+  assert(core.taxiState().seats == 1)
+  vehicle.id, freeSeats = 2, 3
+  assert(core.taxiState().seats == 3, 'changing vehicle invalidates the cached seat count immediately')
+  freeSeats = nil
+end)
+
+test('Taxi distance settings are independent and old saved rides resume in Taxi', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.autoIdx = fuel.index()
+  fuel.addArea(s.autoIdx, 'taxi', sightRows())
+  freeSeats = 3
+  core.setMode('taxi')
+  local defaults = core.settingsState().items
+  assert(#defaults == 3 and defaults[2].value < 2 and defaults[3].value > 15, 'taxi-specific distance defaults')
+  core.settingsDo('step', 'nearKm', -1)
+  assert(s.opts.nearKm == 1)
+  core.setMode('courier')
+  assert(s.opts.nearKm == nil, 'food pickup range is unchanged')
+  core.setMode('taxi')
+  assert(s.opts.nearKm == 1)
+  core.take(1)
+  assert(s.job and s.job.taxi)
+  local id = s.job.id
+  core.setMode('bus')
+  assert(s.mode == 'taxi', 'active ride locks the category')
+  core.saveOptions()
+  local saved = copy(s.career)
+  saved.mode = 'trucking'   -- the format used before Taxi was split out
+  s.pendingCareer = saved
+  core.phoneAction('resume')
+  assert(s.mode == 'taxi' and s.opts == s.optsByMode.taxi and s.opts.nearKm == 1)
+  assert(s.job.id == id and s.phase == 'toPickup', 'the active ride is preserved')
+  freeSeats = nil
+end)
+
+test('Taxi requests helper locations even with a complete restaurant pack and refreshes sight-only updates', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.fuelIdx = nil
+  freeSeats = 3
+  core.HELPER_MIN = 0   -- the restaurant pack is sufficient
+  core.setMode('taxi')
+  local helper = require('cargoEarth/helper')
+  local original, asked = helper.tick, 0
+  helper.tick = function(_, _, _, _, _, camerasOnly) if not camerasOnly then asked = asked + 1 end end
+  advance(core, 4)
+  helper.tick = original
+  assert(asked > 0, 'Taxi always streams pickup addresses and destinations')
+  s.offeredAt = {lat = 50, lon = 14}
+  core.onHelperArea({key = '500_140', restaurants = {}, autos = sightRows()})
+  assert(s.offeredAt == nil, 'sights arriving without new restaurants must refresh offers')
+  local originalStatus = helper.status
+  helper.status = function() return {state = 'ready', supportsAutos = false} end
+  assert(core.taxiState().search:find('Update'), 'old helper capabilities have an explicit explanation')
+  helper.status = function() return {state = 'error', msg = 'Offline'} end
+  assert(core.taxiState().search:find('Offline'), 'helper errors reach the Taxi screen')
+  helper.status = function() return {state = 'loading'} end
+  assert(core.taxiState().search:find('Loading passenger'), 'search progress is specific to Taxi')
+  helper.status, freeSeats = originalStatus, nil
+end)
+
 test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and gets out', function()
   local core, s = fresh()
   local c = s.career
@@ -1671,7 +1791,7 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   s.config.spawnTrailer, s.config.requireTrailer = true, true   -- the game's defaults: a taxi needs no trailer
   s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
     everywhere)
-  core.setMode('trucking')
+  core.setMode('taxi')
   advance(core, 2)
   s.autoIdx = fuel.index()
   core.generate()
@@ -1692,7 +1812,10 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   freeSeats = job.taxi.people - 1   -- switched to a smaller car after the offer came
   core.take(i)
   assert(s.job ~= job, 'more passengers than free seats: the ride is refused')
-  freeSeats = nil   -- a mod car without the seat system: seats unknown, the ride is allowed
+  freeSeats = nil   -- a mod car without the seat system: the group must fit verified seats
+  core.take(i)
+  assert(s.job ~= job, 'unknown seat count cannot guarantee room for the group')
+  freeSeats = 4
   core.take(i)
   assert(s.job == job and s.phase == 'toPickup')
   assert(core.phoneState().active.taxi.people == job.taxi.people)
@@ -1702,6 +1825,10 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   advance(core, 10)
   assert(s.phase == 'toPickup', 'nobody gets into another car')
   vehicle.model = ownModel
+  freeSeats = 0
+  advance(core, 10)
+  assert(s.phase == 'toPickup', 'seat changes after acceptance must also prevent boarding')
+  freeSeats = 4
   advance(core)
   assert(s.phase == 'toDelivery' and riders == job.taxi.people, 'the passengers sit in the car')
   s.taxiSeated, riders = nil, 0   -- as a loaded save: the ride is on, nobody seated yet

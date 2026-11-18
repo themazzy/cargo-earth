@@ -1,4 +1,4 @@
--- Taxi rides: a car's freight-mode work (Jan, 2026-11-15, in place of parcel rounds). A passenger (or a few) waits at a
+-- Taxi rides: passenger work in its own category. A passenger (or a few) waits at a
 -- real address near you, sits in the car (BeamNG's seat occupants, real weight) and rides to a place people take a
 -- taxi to: an airport, a railway or bus station, a museum, a sight, a hotel (Jan: not to ordinary addresses).
 -- A rough ride is felt: harsh jolts cost comfort, as a fragile load would, and comfort sets the pay, the tip and the
@@ -8,6 +8,7 @@ local M = {}
 M.NEAR_KM = 1.5          -- the passenger waits this close to you (straight km)
 M.KM = { 1.5, 12 }       -- straight km of the ride
 M.ROAD_FACTOR = 1.3
+M.defaults = { nearKm = M.NEAR_KM, minKm = M.KM[1] * M.ROAD_FACTOR, maxKm = M.KM[2] * M.ROAD_FACTOR }
 M.PEOPLE = { 1, 3 }
 M.BASE, M.PER_KM = 50, 18
 M.SPEED_KMH, M.SLACK_MIN = 35, 6

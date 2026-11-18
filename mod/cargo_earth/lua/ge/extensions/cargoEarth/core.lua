@@ -56,6 +56,7 @@ M.RULES = {
 M.COUNTRY_S = 5   -- seconds between border checks
 M.TOW_RULES = { arriveM = 30, stopS = 3, cancelFee = 200 }
 M.TAXI_RULES = { arriveM = 25, stopS = 3, cancelFee = 100 }   -- taxi rides (cargoEarth/taxi)
+M.RULES.taxi = M.TAXI_RULES
 M.TOW_RELOAD_FEE = 150  -- putting a car that slid off back on the trailer
 M.STOP_SPEED = 1.5     -- m/s that counts as standing still
 M.random = function(...) return math.random(...) end   -- (tests replace it)
@@ -95,7 +96,7 @@ M.KEEP_ON_START = { 'mode', 'options', 'camerasOff', 'updateHidden', 'country', 
 local S = {
   idx = nil, fidx = nil, packInfo = '', loadError = nil, mode = 'courier',
   phase = 'idle', job = nil, orders = {}, offers = {}, offerStats = nil, offeredAt = nil,
-  optsByMode = { courier = {}, trucking = {}, bus = {} }, opts = nil,
+  optsByMode = { courier = {}, trucking = {}, taxi = {}, bus = {} }, opts = nil,
   career = { money = 0, delivered = 0, km = 0, history = {}, garage = nil },
   stopT = 0, tick = 0, dist = nil, log = {}, config = {}, window = false, phoneHidden = false,
   clock = 0,
@@ -523,6 +524,8 @@ local function loadCareer(c)
   end
   current = current or S.orders[1]
   S.job, S.phase = current and current.job, current and current.phase or 'idle'
+  -- Older saves kept taxi rides in Freight. Resume the same ride in its new category.
+  if S.job and S.job.taxi and not c.employment then S.mode, S.opts = 'taxi', S.optsByMode.taxi end
   S.preferredDelivery = S.job and S.phase == 'toDelivery' and S.job.id == c.preferredDelivery and c.preferredDelivery or nil
   -- nothing is on board: a load the game still holds from before (a Lua reload, a lost reply) goes
   if not S.job then S.sweepWanted = true end
@@ -856,7 +859,7 @@ function M.savesDo(a, arg)
 end
 
 local function modeReady()
-  if S.mode == 'courier' then return S.fidx ~= nil end
+  if S.mode == 'courier' or S.mode == 'taxi' then return S.fidx ~= nil end
   if S.mode == 'bus' then return true end    -- lines come from the helper, on the bus board
   return S.idx ~= nil
 end
@@ -1005,6 +1008,28 @@ function M.generate()
   if S.mode == 'courier' then
     local plan = storagePlan()
     S.offers, S.offerStats = food.generate(S.fidx, S.opts, p.lat, p.lon, nil, plan and plan.maxFree or 1, roadKmFn(p))
+  elseif S.mode == 'taxi' then
+    S.offers, S.offerStats = {}, nil
+    local state = M.taxiState()
+    if state.eligible then
+      local function near(lat, lon, k) return food.addressesNear(S.fidx, lat, lon, k) end
+      local function sights(lat, lon, a, b)
+        local out = {}
+        for _, row in ipairs(S.autoIdx and fuel.within(S.autoIdx, lat, lon, 'sight', a, b) or {}) do
+          local d = row.station
+          out[#out + 1] = { id = 'sight:' .. d.id, n = d.n, town = d.town, g = d.g }
+        end
+        return out
+      end
+      S.offers = require('cargoEarth/taxi').offers(near, sights, p.lat, p.lon, M.random, roadKmFn(p), S.opts, state.seats)
+      -- Keep the existing taxi fare supplements when moving rides out of Freight.
+      local factor = rating.freightPay(S.career)
+      for _, offer in ipairs(S.offers) do
+        offer.fuelAllowance = math.floor(offer.km * haul.FUEL_ALLOWANCE.car / 5 + 0.5) * 5
+        offer.pay = offer.pay + offer.fuelAllowance
+        if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
+      end
+    end
   else
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
@@ -1027,23 +1052,6 @@ function M.generate()
       -- parts runs in an SUV or a pickup: from a parts supplier to a repair workshop
       if tier == 'suv' and rows then
         for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'), freightOptions(tier))) do offers[#offers + 1] = offer end
-      end
-      -- taxi rides in an ordinary car: a passenger from a real address near you to an airport, a station, a sight
-      -- (the helper's 't' places; cargoEarth/taxi)
-      if tier == 'car' and S.fidx then
-        local function near(lat, lon, k) return food.addressesNear(S.fidx, lat, lon, k) end
-        local function sights(lat, lon, a, b)
-          local out = {}
-          for _, row in ipairs(S.autoIdx and fuel.within(S.autoIdx, lat, lon, 'sight', a, b) or {}) do
-            local d = row.station
-            out[#out + 1] = { id = 'sight:' .. d.id, n = d.n, town = d.town, g = d.g }
-          end
-          return out
-        end
-        local seats = M.taxiFreeSeats()
-        for _, offer in ipairs(require('cargoEarth/taxi').offers(near, sights, p.lat, p.lon, M.random, roadKmFn(p), freightOptions(tier), seats)) do
-          offers[#offers + 1] = offer
-        end
       end
       -- parcel routes from the nearest depots to real addresses: vans only (box trucks do business shipping)
       if parcel.TIERS[tier] and rows and S.fidx then
@@ -1229,15 +1237,10 @@ local function takeJob(j)
     if not box then say('This order needs more cargo space.', 4) return end
     j.cargoBox = box.key
   elseif j.taxi then
-    local _, tier = freightCarrier()
-    if tier ~= 'car' then say('Taxi rides are for cars: get in your car to take this ride.', 4) return end
-    local seats = M.taxiFreeSeats(true)
-    if seats and seats < j.taxi.people then
-      say(seats == 0 and 'This car has no passenger seats: taxi rides need a car with seats for passengers.'
-        or string.format('This ride is for %d passengers and your car has %d free %s.', j.taxi.people, seats,
-          seats == 1 and 'seat' or 'seats'), 5)
-      return
-    end
+    if S.mode ~= 'taxi' then return end
+    local state = M.taxiState(true)
+    if not state.eligible then say(state.hint, 5) return end
+    if state.seats < j.taxi.people then say(string.format('This ride needs %d passenger seats; your vehicle has %d.', j.taxi.people, state.seats), 5) return end
   elseif j.tow then
     local v, tier = freightCarrier()
     if not v or not tow.fits(tow.class(tier, tow.hasHitch(v)), j.tow.class) then
@@ -1320,6 +1323,12 @@ local function finishPickup()
     say(n > 1 and string.format('Collected %d orders from %s.', n, j.from.n)
       or string.format('Collected %s from %s.', j.cargoName, j.from.n))
   elseif j.taxi then
+    local state = M.taxiState(true)
+    if not state.eligible or state.seats < j.taxi.people then
+      S.stopT = 0
+      say(state.eligible and 'There are not enough passenger seats for this group.' or state.hint, 5)
+      return
+    end
     -- the passengers get in: they sit in the car and feel how it is driven from here
     local _, o = orderOf(j)
     if o then o.phase = 'toDelivery' end
@@ -1752,11 +1761,41 @@ end
 function M.taxiFreeSeats(fresh)
   if not M.G.freeSeats then return nil end
   local memo = S.freeSeats
-  if not fresh and memo and (S.clock or 0) < memo.untilT then return memo.n end
+  local id = M.G.playerId and M.G.playerId()
+  if not fresh and memo and memo.id == id and (S.clock or 0) < memo.untilT then return memo.n end
   local ok, n = pcall(M.G.freeSeats)
-  n = ok and type(n) == 'number' and n or nil
-  S.freeSeats = { n = n, untilT = (S.clock or 0) + 2 }
+  n = ok and type(n) == 'number' and n == n and n >= 0 and n < math.huge and math.floor(n) or nil
+  S.freeSeats = { id = id, n = n, untilT = (S.clock or 0) + 2 }
   return n
+end
+
+function M.taxiState(fresh)
+  local v, tier = freightCarrier()
+  local out = { eligible = false }
+  local passenger = tier == 'car' or tier == 'suv' or tier == 'van'
+  if not v or S.career.garage.car.loaner then
+    out.hint = 'Use your own passenger vehicle for taxi work.'
+  elseif not passenger or not haul.configClass(v.model, v.bodyStyle) then
+    out.hint = 'Taxi work needs a car, SUV or passenger van with passenger seats.'
+  else
+    out.seats = M.taxiFreeSeats(fresh)
+    if out.seats == nil then
+      out.hint = 'Passenger seats could not be verified. Taxi work needs a vehicle with seats recognized by the game.'
+    elseif out.seats < 1 then
+      out.hint = 'This vehicle has no usable passenger seats. Fit a passenger seat or choose another vehicle.'
+    else
+      out.eligible = true
+      out.hint = string.format('%d passenger %s available. Groups will fit your vehicle.', out.seats, out.seats == 1 and 'seat' or 'seats')
+    end
+  end
+  local h = helper.status()
+  if h.state == 'off' then out.search = 'Start the Cargo Earth helper to find passenger pickup addresses and destinations.'
+  elseif h.state == 'error' then out.search = 'The helper could not load taxi locations. ' .. (h.msg or 'It will retry automatically.')
+  elseif h.supportsAutos == false then out.search = 'Update the Cargo Earth helper to load taxi destinations.'
+  elseif h.state == 'loading' or h.state == 'searching' then out.search = 'Loading passenger pickup addresses and destinations nearby.'
+  elseif #S.offers == 0 then out.search = 'No rides match the nearby addresses, destinations and distance filters. Try another area or change the Taxi settings.'
+  else out.search = 'Passengers nearby can request rides to airports, stations, hotels and sights.' end
+  return out
 end
 
 function M.busDoorWatch()
@@ -2294,10 +2333,8 @@ local function truckingState()
   end
   if not v or not tier then
     out.hint = 'Take a contract: park at its yard and the company gives you its vehicle.'
-  elseif tier == 'car' and M.taxiFreeSeats() == 0 then
-    out.hint = 'This car has no passenger seats for taxi rides: take a company contract below.'
   elseif tier == 'car' then
-    out.hint = 'In a car: taxi rides near you, or a company contract below.'
+    out.hint = 'Tow jobs with a tow hitch, or a company contract below. Choose Taxi for passenger rides.'
   elseif tier == 'suv' and rows and haul.capacity(rows, 'parcel') < 4 then
     out.hint = 'Fit cargo boxes in the bed or boot for parts runs, or take a contract.'
   elseif not haul.allowed(S.career, tier) then
@@ -2751,6 +2788,7 @@ function M.phoneState()
     return out
   end
   if S.mode == 'trucking' then out.trucking = truckingState() end
+  if S.mode == 'taxi' then out.taxi = M.taxiState() end
   if S.mode == 'bus' then out.bus = M.busState() end
   local gauge = c.garage.started and c.garage.car and fuel.state(c.garage.car)
   if gauge then
@@ -2927,13 +2965,15 @@ function M.phoneAction(a, orderId)
   end
   if a == 'online' and S.career.garage.car and S.career.garage.car.loaner and not S.career.employment then
     say('Company vehicles are for contract work only. Use your own car for your own jobs.', 5)
+  elseif a == 'online' and S.mode == 'taxi' and not M.taxiState(true).eligible then
+    say(M.taxiState().hint, 5)
   elseif a == 'online' then
     ph.online = true
     ph.nextPingAt = S.clock + 2
   elseif a == 'offline' then
     ph.online, ph.incoming = false, nil
   elseif a == 'mode' then
-    -- food delivery or freight, from the phone's offline screen (Settings has the same switch)
+    -- work category, from the phone's offline screen (Settings has the same switch)
     if not ph.online then M.setMode(orderId) end
   elseif a == 'accept' and ph.incoming then
     takeJob(ph.incoming.job)
@@ -3051,7 +3091,7 @@ local function onHelperArea(data)
   end
   stores = stores or 0
   log('I', 'cargoEarth', string.format('helper area %s: %d restaurants, %d grocery stores', tostring(data.key), n - stores, stores))
-  if n > 0 and not S.job then S.offeredAt = nil end
+  if (n > 0 or S.mode == 'taxi') and not S.job then S.offeredAt = nil end
 end
 M.onHelperArea = onHelperArea
 
@@ -3145,7 +3185,7 @@ local function helperTick(p)
       and fuel.nearest(S.fuelIdx, p.lat, p.lon, 'fuel', M.HELPER_NEAR_KM) == nil
   end
   local places = S.placesRequestedAt and S.clock - S.placesRequestedAt < 30
-  local areas = (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
+  local areas = S.mode == 'taxi' or (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
   local wantCameras = camerasOn() and onHelperCameras or nil
   M.busFetch(p)
   radioAlive()
@@ -4267,9 +4307,9 @@ function M.vehicleKinds()
   end
   local towJob = 'Tow jobs: one broken-down car on a car trailer (with a tow hitch)'
   local out, list = {}, {
-    car = { fits('car'), { 'Food delivery', parcel.TIERS.car and 'Short parcel rounds from a depot' or nil, towJob } },
-    suv = { fits('suv'), { 'Food delivery', 'Parts runs from parts suppliers to repair shops', towJob } },
-    van = { fits('van'), { 'Food delivery', 'Parcel routes from a depot to real addresses', 'Freight jobs between companies', towJob } },
+    car = { fits('car'), { 'Food delivery', 'Taxi rides with usable passenger seats', towJob } },
+    suv = { fits('suv'), { 'Food delivery', 'Taxi rides with usable passenger seats', 'Parts runs from parts suppliers to repair shops', towJob } },
+    van = { fits('van'), { 'Food delivery', 'Taxi rides with usable passenger seats', 'Parcel routes from a depot to real addresses', 'Freight jobs between companies', towJob } },
     rigid = { fits('rigid'), { 'Business shipping between companies', towJob } },
     semi = { string.format('Pulls trailers · up to %s', kg(haul.tiers.semi.kg)),
       { 'Freight jobs with trailers', 'Fuel tanker runs to real fuel stations',
@@ -4278,7 +4318,7 @@ function M.vehicleKinds()
   for _, kind in ipairs(haul.KIND_ORDER) do
     local k = list[kind]
     local jobsOf = {}
-    for i = 1, 4 do if k[2][i] then jobsOf[#jobsOf + 1] = k[2][i] end end
+    for _, job in ipairs(k[2]) do jobsOf[#jobsOf + 1] = job end
     local locked
     if kind == 'rigid' and state.unlocked == 'van' then
       locked = string.format('Freight unlocks after %d van freight jobs (%d done).', state.vanGoal, state.van)
@@ -4589,11 +4629,13 @@ M.SETTINGS = {
     { 'maxKm', 'Longest order', 0.5, 1, 8, 'km' }, { 'maxOrders', 'Orders at once', 1, 1, 3, '' } },
   trucking = { { 'nearKm', 'Pickups within', 5, 5, 200, 'km' }, { 'minKm', 'Shortest job', 10, 10, 600, 'km' },
     { 'maxKm', 'Longest job', 10, 20, 1000, 'km' } },
+  taxi = { { 'nearKm', 'Pickups within', 0.5, 0.5, 1.5, 'km' }, { 'minKm', 'Shortest ride', 0.5, 1.95, 15.6, 'km' },
+    { 'maxKm', 'Longest ride', 0.5, 1.95, 15.6, 'km' } },
   bus = {},   -- the lines near you are offered as they are
 }
 
 function M.settingsState()
-  local defs = S.mode == 'courier' and food.defaults or jobs.defaults
+  local defs = S.mode == 'courier' and food.defaults or S.mode == 'taxi' and require('cargoEarth/taxi').defaults or jobs.defaults
   local freightTier, opts = nil, S.opts
   if S.mode == 'trucking' then
     local tier = freightSettingsTier()
@@ -4627,7 +4669,7 @@ function M.settingsState()
   return out
 end
 
--- name: mode (a = courier | trucking | bus), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
+-- name: mode (a = courier | trucking | taxi | bus), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
 -- dark (a = true | false), restart (a = the confirm word, see restartCareer), dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
 function M.settingsDo(name, a, b)
   -- the dash phone is the player's own choice, outside the career: it works on the resume screen too
