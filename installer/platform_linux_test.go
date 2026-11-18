@@ -105,7 +105,7 @@ func TestLinuxHelperInstallAndUninstall(t *testing.T) {
 	writeTestFile(t, addonsFile(), other)
 	py := filepath.Join(home, "download's folder", "cargo_earth_helper_test.py")
 	writeTestFile(t, py, "print('helper')\n")
-	if err := installHelper(py, "vtest"); err != nil {
+	if err := installHelper(py, "vtest", ""); err != nil {
 		t.Fatal(err)
 	}
 	launcher := filepath.Join(helperDir(), "start_helper.sh")
@@ -124,7 +124,7 @@ func TestLinuxHelperInstallAndUninstall(t *testing.T) {
 		t.Fatal("add-on backup missing")
 	}
 	// Update must not duplicate our entry.
-	if err := installHelper(py, "vtest2"); err != nil {
+	if err := installHelper(py, "vtest2", ""); err != nil {
 		t.Fatal(err)
 	}
 	_, list, _ = readAddons()
@@ -146,7 +146,7 @@ func TestLinuxHelperInstallAndUninstall(t *testing.T) {
 func TestLinuxDryRunDoesNotWrite(t *testing.T) {
 	linuxTestHome(t)
 	opt.dryRun = true
-	if err := installLinuxPython("/not-written/helper.py"); err != nil {
+	if err := installLinuxPython("/not-written/helper.py", helperPort); err != nil {
 		t.Fatal(err)
 	}
 	if isDir(helperDir()) {

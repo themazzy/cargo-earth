@@ -539,7 +539,10 @@ local function loadConfig()
   if S.config.requireTrailer == nil then S.config.requireTrailer = true end
   if M.RULES[S.config.mode] then S.mode = S.config.mode end
   trailers.configure(S.config)
-  helper.configure(S.config)
+  if helper.configure(S.config) then
+    local ok, saved = pcall(jsonWriteFile, CONFIG, S.config, true)
+    if not ok or saved == false then problem('W', 'Could not save the migrated helper port. Using port ' .. helper.PORT .. ' for this session.') end
+  end
   for m, o in pairs(S.config.jobOptions or {}) do
     if S.optsByMode[m] and type(o) == 'table' then
       for k, v in pairs(o) do S.optsByMode[m][k] = v end

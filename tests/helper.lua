@@ -10,7 +10,7 @@ local function test(name, fn)
   passed = passed + 1
   print('PASS ' .. name)
 end
-local received = 0
+local received, connectedPort = 0, nil
 local function response(path)
   local data
   if path:find('/v1/radio', 1, true) then
@@ -37,7 +37,7 @@ end
 socket = {tcp = function()
   local s = {}
   function s:settimeout() end
-  function s:connect() return true end
+  function s:connect(_, port) connectedPort = port return true end
   function s:send(out)
     local path = out:match('^GET ([^ ]+)')
     requests[#requests + 1] = path
@@ -99,7 +99,18 @@ test('helper can be re-enabled and invalid ports do not replace the working port
   assert(#requests == 0)
   client.configure({helper = true, helperPort = 99999})
   tick(1); tick(1.5); tick(2)
-  assert(#requests == 1 and client.PORT == 47820)
+  assert(#requests == 1 and client.PORT == 47821 and connectedPort == 47821)
+end)
+
+test('legacy ports migrate while custom helper ports remain usable', function()
+  local cfg = {helperPort = '47820', helper = true, other = 'kept'}
+  assert(client.configure(cfg) == true and cfg.helperPort == 47821 and cfg.other == 'kept')
+  tick(0)
+  assert(connectedPort == 47821, 'the client never connects to EarthRadio during migration')
+  client._reset()
+  assert(client.configure({helperPort = 53100}) == false and client.PORT == 53100)
+  tick(0)
+  assert(connectedPort == 53100)
 end)
 
 test('speed cameras are asked for once a minute, alone where the data pack covers the rest', function()

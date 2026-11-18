@@ -121,7 +121,7 @@ assert.equal(scope.tab, 'radio')
 assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("radio")')), 'The game hears which page the phone shows')
 assert(commands.at(-1).includes('pcall(cargoEarth_core.radioState'))
 const stations = [{id: 'a', name: 'Rádio Jih', url: 'http://a/stream', codec: 'MP3', kbps: 128}, {id: 'b', name: 'Two', url: 'https://b/s', codec: 'OGG'}]
-const STREAM = 'http://127.0.0.1:47820/v1/stream?id='
+const STREAM = 'http://127.0.0.1:47821/v1/stream?id='
 scope.rs = {country: 'CZ', countryName: 'Czechia', state: 'ready', top: stations, near: [], stream: STREAM}
 scope.radioPlay(stations[0], stations)
 assert.equal(scope.radio.status, 'loading')
