@@ -422,7 +422,7 @@ function M.careerChoice()
   return { starter = S.starterName or nil, startMoney = garage.START_MONEY, busy = S.job ~= nil }
 end
 
-local function saveCareer()
+local function saveCareer(skipDamage)
   if S.pendingCareer then return end
   local c = S.career
   if earth.status() == 'ok' then rememberLocation(earth.pose()) end
@@ -430,6 +430,13 @@ local function saveCareer()
   if c.garage.car and not c.garage.pendingUsed and not S.parts and not S.skipCapture then
     local ok, err = pcall(garage.remember, M.G, c.garage)
     if not ok then problem('W', 'Could not capture the career car: ' .. tostring(err)) end
+  end
+  local g = c.garage
+  if not skipDamage and g.car and not g.pendingUsed and not g.preview and not S.parts and not S.skipCapture
+      and not conditionAt and not g.restoringDamage and garage.inOwnCar(M.G, g) then
+    require('cargoEarth/damage').capture(M.G, g, function(ok)
+      if ok and S.career == c and not S.pendingCareer and not S.pauseSaving then saveCareer(true) end
+    end)
   end
   c.savedAt = os.time()
   c.mode = S.mode
@@ -442,7 +449,10 @@ local function saveCareer()
   economy.reconcile(c)
   economy.compact(c)
   local path = M.savePath(c)
+  local restoring = g.restoringDamage
+  g.restoringDamage = nil
   local ok, saved = pcall(persistence.save, jsonWriteFile, jsonReadFile, path, c)
+  g.restoringDamage = restoring
   if ok and saved and S.indexDirty then saved = M.writeIndex() end
   if ok and saved then
     if S.slot then S.saveInfo[S.slot] = require('cargoEarth/saves').summary(c) end
@@ -567,6 +577,7 @@ local function spawnCareerCar(g, vehicleId, position)
   usedAt = g.pendingUsed and S.clock + 1 or nil
   conditionAt = not g.pendingUsed and S.clock + 3 or nil
   -- A spawn resets physical damage. Keep its outstanding repair cost with the car.
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.carriedRepair, g.lastDamage, g.preview = g.repair or 0, 0, nil
   return true
 end
@@ -614,9 +625,28 @@ local function updateResume(dt)
   end
 end
 
-local function pauseCareer()
+local function pauseCareer(captured)
   if S.pendingCareer or not S.career.savedAt then return false end
-  if not saveCareer() then
+  local c, g = S.career, S.career.garage
+  if S.pauseSaving or S.replacementSaving then return false end
+  if not captured and g.car and M.G.vehicleState and not conditionAt and not g.pendingUsed
+      and not g.restoringDamage and not g.preview and not S.parts and garage.inOwnCar(M.G, g) then
+    local car = g.car
+    S.pauseSaving = c
+    local sent = require('cargoEarth/damage').capture(M.G, g, function(ok)
+      if S.pauseSaving ~= c then return end
+      S.pauseSaving = nil
+      if S.career ~= c or S.pendingCareer then return end
+      if g.car ~= car then say('The active car changed. Try saving and switching career again.', 8) return end
+      if ok then pauseCareer(true)
+      else say('Vehicle damage could not be saved. Keep the game open and try pausing again.', 8) end
+    end)
+    if sent then return false end
+    S.pauseSaving = nil
+    say('Vehicle damage could not be saved. Keep the game open and try pausing again.', 8)
+    return false
+  end
+  if not saveCareer(true) then
     say('Career could not be saved. Try pausing again in a moment.')
     return false
   end
@@ -3430,9 +3460,34 @@ local function garageTick(dt)
   if not S.parts and conditionAt and own and S.clock >= conditionAt then
     conditionAt = nil
     if M.G.applyCondition then pcall(M.G.applyCondition, g.car.km or 0, g.car.condition or 1) end
+    if g.car.physicalDamage then
+      local car = g.car
+      g.restoringDamage = {car = car, bill = g.repair or 0}
+      local pending = g.restoringDamage
+      if not require('cargoEarth/damage').restore(M.G, g, function(ok)
+        if g.restoringDamage == pending then
+          pending.ready, pending.ok = S.clock + 1, ok
+        end
+      end) then pending.ready, pending.ok = S.clock + 1, false end
+    end
   end
   fuelTick(own)
   if not own then return end
+  if g.restoringDamage then
+    local pending = g.restoringDamage
+    if pending.car ~= g.car then g.restoringDamage = nil
+    elseif not pending.ready or S.clock < pending.ready then return
+    else
+      g.restoringDamage = nil
+      if pending.ok then
+        g.damageBaseline = {damage = M.G.damage() or 0, bill = pending.bill}
+        g.lastDamage = g.damageBaseline.damage
+        g.carriedRepair = g.lastDamage == 0 and pending.bill or nil
+      else
+        say('Saved vehicle damage could not be restored. Its repair bill has been kept.', 8)
+      end
+    end
+  end
   -- the odometer
   local p = earth.pose()
   local shift = S.career.employment
@@ -3809,6 +3864,33 @@ local function garageSay(ok, msg)
   return ok, msg
 end
 
+-- Keep the outgoing car alive until its latest physical state is checkpointed.
+function M.captureOutgoing(run)
+  local c, g, G = S.career, S.career.garage, M.G
+  if not g.car or not G.vehicleState or not garage.inOwnCar(G, g) then return false end
+  if S.pauseSaving or S.replacementSaving then return true, 'Saving vehicle damage. Please wait.' end
+  if conditionAt or g.restoringDamage or g.pendingUsed or S.parts then
+    return true, 'Wait for your car to finish loading or close the parts editor first.'
+  end
+  local pending = {car = g.car, id = G.playerId()}
+  S.replacementSaving = pending
+  local sent = require('cargoEarth/damage').captureFresh(G, g, function(ok)
+    if S.replacementSaving ~= pending then return end
+    S.replacementSaving = nil
+    if S.career ~= c or S.pendingCareer or g.car ~= pending.car or G.playerId() ~= pending.id then return end
+    if not ok then say('Vehicle damage could not be saved. Try the garage action again.', 8) return end
+    if G.damage then garage.trackDamage(g, G.damage()) end
+    if not saveCareer(true) then say('Career could not be saved. Try the garage action again.', 8) return end
+    local completed, why = run()
+    if not completed and why then say(why) end
+  end)
+  if not sent then
+    S.replacementSaving = nil
+    return true, 'Vehicle damage could not be saved. Try the garage action again.'
+  end
+  return true, 'Saving vehicle damage. Please wait.'
+end
+
 function M.garageStart(model, name)
   if S.career.employment then return false, 'End company work first.' end
   if S.career.garage.started then return false, 'Your career has already started.' end
@@ -3851,19 +3933,27 @@ function M.garageBuy(offer)
   return garageSay(ok, msg)
 end
 -- Spawns the career car again with its parts (after driving something else).
-function M.garageBringCar()
+function M.garageBringCar(captured)
+  if not captured then
+    local waiting, why = M.captureOutgoing(function() return M.garageBringCar(true) end)
+    if waiting then return false, why end
+  end
   local g = S.career.garage
   if not g.started or not g.car then return false, 'No career car yet' end
   local ok, why = spawnCareerCar(g)
   if not ok then return garageSay(false, why) end
   return garageSay(true, 'Here is your ' .. g.car.name .. '.')
 end
-local function garageSwitchCar(id)
+local function garageSwitchCar(id, captured)
   if S.job then return false, 'Finish your current orders before switching cars.' end
   local here = earth.pose()
   if S.career.home and not home.near(S.career, here) and not firm.atHq(S.career, here) then
     return false, S.career.firm and S.career.firm.hq and 'Return to your home garage or headquarters to switch cars.'
       or 'Return to your home garage to switch cars.'
+  end
+  if not captured then
+    local waiting, why = M.captureOutgoing(function() return garageSwitchCar(id, true) end)
+    if waiting then return false, why end
   end
   local ok, why = garage.switchCar(M.G, S.career.garage, tonumber(id))
   if ok then
@@ -4162,7 +4252,7 @@ function M.vehicleKinds()
   end
   return out
 end
-function M.garageBuyListing(id, keepCar)
+function M.garageBuyListing(id, keepCar, captured)
   if S.job then return false, 'Finish the order first' end
   local g = S.career.garage
   local keeping = keepCar == true
@@ -4170,6 +4260,10 @@ function M.garageBuyListing(id, keepCar)
   if keeping and home.count(g) >= firm.capacity(S.career) then
     return garageSay(false, S.career.firm and 'Every parking bay is taken. Build more bays, trade in a car or sell one first.'
       or 'Your garage is full. Trade in a car or sell one first.')
+  end
+  if keeping and not g.preview and not captured then
+    local waiting, why = M.captureOutgoing(function() return M.garageBuyListing(id, keepCar, true) end)
+    if waiting then return false, why end
   end
   local ok, msg = garage.buyListing(M.G, S.career.garage, S.career, tonumber(id), keepCar == true)
   if ok then
@@ -4182,8 +4276,12 @@ function M.garageBuyListing(id, keepCar)
   end
   return garageSay(ok, msg)
 end
-function M.garagePreview(id, keepCar)
+function M.garagePreview(id, keepCar, captured)
   if S.job then return false, 'Finish the order first' end
+  if not captured then
+    local waiting, why = M.captureOutgoing(function() return M.garagePreview(id, keepCar, true) end)
+    if waiting then return false, why end
+  end
   local ok, msg = garage.previewStart(M.G, S.career.garage, tonumber(id), keepCar == true)
   if ok then previewAt = S.clock + 2 end
   return garageSay(ok, msg)
@@ -4467,7 +4565,7 @@ function M.settingsState()
   -- paused: a saved career waits on the resume screen. Only what lives outside the career can change then
   -- (the dash phone, help); the job's settings belong to the save and open once it is loaded.
   local out = { mode = S.mode, canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil and S.career.garage.started == true, window = S.window,
-    reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
+    savingDamage = S.pauseSaving ~= nil, reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
     canRestart = S.pendingCareer ~= nil or S.career.garage.started == true or nil, restartWord = M.RESTART_WORD }
   for _, d in ipairs(M.SETTINGS[S.mode] or {}) do
     local key, step, min, max, default = d[1], d[3], d[4], d[5], defs[d[1]]
@@ -5082,6 +5180,7 @@ M.dashTick = dashTick
 function M.dashCheckSoon() dashCheckAt = dashClock + M.DASH_CHECK_S end
 
 function M.onUpdate(dtReal, dtSim)
+  require('cargoEarth/damage').tick(dtReal)
   dashTick(dtReal)
   if S.pendingCareer then
     stopForceWatch()
@@ -5287,7 +5386,8 @@ function M.onBeforeVehicleReplaced(id)
   if S.storage and S.storage.id == id then releaseStorage() end
   if forceWatch and forceWatch.id == id then stopForceWatch() end
   if not M.G.spawning and M.G.ownsVehicleId and M.G.ownsVehicleId(id) then
-    pauseCareer()
+    S.pauseSaving, S.replacementSaving = nil, nil
+    pauseCareer(true)
     M.G.clearOwnership()
   end
 end
@@ -5332,7 +5432,8 @@ function M.onClientEndMission()
   releaseStorage()
   clearFreight()
   stopForceWatch()
-  if S.inCareerWorld then pauseCareer() end
+  S.pauseSaving, S.replacementSaving = nil, nil
+  if S.inCareerWorld then pauseCareer(true) end
 end
 
 function M.onExtensionUnloaded()
@@ -5341,7 +5442,8 @@ function M.onExtensionUnloaded()
   releaseStorage()
   clearFreight()
   stopForceWatch()
-  if not S.pendingCareer and S.career.savedAt then saveCareer() end
+  S.pauseSaving, S.replacementSaving = nil, nil
+  if not S.pendingCareer and S.career.savedAt then saveCareer(true) end
   trailers.remove()
 end
 

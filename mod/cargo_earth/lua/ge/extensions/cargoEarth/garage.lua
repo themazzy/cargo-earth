@@ -315,7 +315,13 @@ function M.trackDamage(g, damage)
   local last = g.lastDamage or 0
   g.lastDamage = damage
   local before = g.repair or 0
-  g.repair = (g.carriedRepair or 0) + round5(math.max(0, damage) * M.REPAIR_PER_DAMAGE)
+  local baseline = g.damageBaseline
+  if baseline and baseline.damage > 0 then
+    g.repair = damage < baseline.damage and round5(baseline.bill * math.max(0, damage) / baseline.damage)
+      or baseline.bill + round5((damage - baseline.damage) * M.REPAIR_PER_DAMAGE)
+  else
+    g.repair = (g.carriedRepair or 0) + round5(math.max(0, damage) * M.REPAIR_PER_DAMAGE)
+  end
   local cap = M.repairCap(g)
   if cap and g.repair > cap then g.repair = cap end
   if damage > last then return 'hit', g.repair - before, damage - last end
@@ -340,6 +346,8 @@ function M.repairCar(G, g, career, factor)
   local ok, err = pcall(G.repair)
   if not ok then g.fixUntil = nil return false, 'Repair failed: ' .. tostring(err) end
   career.money = career.money - cost
+  require('cargoEarth/damage').clear(g.car)
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.carriedRepair = 0, nil
   g.spent = (g.spent or 0) + cost
   return true, string.format('Repaired (-%d CZK)', cost), cost
@@ -572,6 +580,7 @@ function M.repairParked(g, career, id, factor)
   if cost <= 0 then return false, car.name .. ' needs no repair.' end
   if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK needed).', cost) end
   career.money = career.money - cost
+  require('cargoEarth/damage').clear(car)
   car.parkedRepair = 0
   if type(car.breakdown) == 'table' then
     if type(car.service) == 'table' and car.service[car.breakdown.id] then car.service[car.breakdown.id] = 0 end
@@ -625,6 +634,7 @@ function M.switchCar(G, g, id)
   table.remove(g.parked, index)
   if not (g.car and g.car.loaner) then parkCurrent(g) end   -- an old loaner goes back to its company
   g.car, g.repair, g.lastDamage, g.fixUntil = car, car.parkedRepair or 0, 0, nil
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.carriedRepair, car.parkedRepair = g.repair, nil
   return true, 'Now driving ' .. car.name .. '.'
 end
@@ -664,6 +674,7 @@ function M.fallbackCar(G, g)
   if index then table.remove(g.parked, index) end
   if not car.loaner then parkCurrent(g) end   -- kept in My cars for when its mod is back
   g.car, g.repair, g.lastDamage, g.fixUntil, g.pendingUsed = pick, pick.parkedRepair or 0, 0, nil, nil
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.carriedRepair, pick.parkedRepair = g.repair, nil
   if pick.standIn then
     return string.format('%s is not installed (removed vehicle mod?). A %s stands in; %s stays in My cars.',
@@ -702,6 +713,7 @@ function M.buyCar(G, g, career, offer, opts)
   if kept then parkCurrent(g) end
   g.car = { model = offer.model, key = offer.key, name = offer.name, parts = nil, km = offer.km or 0,
     condition = offer.condition or 1 }
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.lastDamage, g.preview, g.carriedRepair = 0, 0, nil, nil
   return true, string.format('Bought %s for %d CZK%s', offer.name, offer.price,
     kept and '. Previous car parked.' or tradeIn > 0 and string.format(' (%d CZK for the old car)', tradeIn) or ''), cost
@@ -1179,6 +1191,7 @@ function M.previewEnd(G, g)
   M.expectFix(g)
   local ok, err = pcall(G.spawn, g.car.model, g.car.key, M.savedConfig(g.car))
   if not ok then return false, 'Car not spawned: ' .. tostring(err) end
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.preview, g.carriedRepair, g.lastDamage = nil, g.repair or 0, 0
   return true, 'Back in your ' .. g.car.name .. '.'
 end

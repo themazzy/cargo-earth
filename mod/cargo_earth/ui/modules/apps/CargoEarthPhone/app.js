@@ -1066,7 +1066,7 @@ angular.module('beamng.apps')
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-if="st.dash.nudged" ng-click="sdo(\'dash\', \'reset\')">Back to where it started</button>' +
           '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'measure\')">Measure this car again</button></div></div>' +
         '<button class="cep-sm ghost" ng-if="!st.paused" ng-click="sdo(\'reset\')">Reset settings</button>' +
-        '<button class="cep-sm ghost" ng-if="st.canPause" ng-click="sdo(\'pause\')">Save and switch career</button>' +
+        '<button class="cep-sm ghost" ng-if="st.canPause" ng-disabled="st.savingDamage" ng-click="sdo(\'pause\')">{{ st.savingDamage ? "Saving vehicle damage..." : "Save and switch career" }}</button>' +
         '<button class="cep-sm ghost" ng-if="st.canRestart && !restart.open" ng-click="restartOpen()">Delete this career</button>' +
         '<div class="cep-card" ng-if="st.canRestart && restart.open">' +
           '<div class="cep-name">Delete this career</div>' +
