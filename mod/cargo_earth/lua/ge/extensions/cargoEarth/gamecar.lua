@@ -370,8 +370,14 @@ function M.carPassengers(n, seed)
   if not okSeats or type(seats) ~= 'table' then return nil end
   local occupants = require('cargoEarth/occupants')
   local plan = occupants.plan(seats, n, seed)
-  for _, seatId in ipairs(plan.remove) do pcall(so.clearDummyOccupant, id, seatId) end
-  for _, seatId in ipairs(plan.add) do pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG) end
+  for _, seatId in ipairs(plan.remove) do
+    local ok, result = pcall(so.clearDummyOccupant, id, seatId)
+    if not ok or result == false then return nil end
+  end
+  for _, seatId in ipairs(plan.add) do
+    local ok, result = pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG)
+    if not ok or result == false then return nil end
+  end
   return plan.shown
 end
 

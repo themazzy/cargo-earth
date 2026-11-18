@@ -657,6 +657,7 @@ local function pauseCareer(captured)
     return false
   end
   S.pendingCareer = S.career
+  if S.taxiSeated then M.taxiSeats(0) end
   clearFreight()
   releaseStorage()
   S.parts = nil   -- only the paid configuration was saved
@@ -1332,10 +1333,17 @@ local function finishPickup()
       say(state.eligible and 'There are not enough passenger seats for this group.' or state.hint, 5)
       return
     end
+    -- Boarding must succeed before the ride starts. A failed seat API call can be retried at this stop.
+    if M.taxiSeats(j.taxi.people, j.id) ~= j.taxi.people then
+      M.taxiSeats(0)
+      j.taxi.boardingError, S.stopT = true, 0
+      say('Passengers could not be seated. Stay at the pickup to retry.', 5)
+      return
+    end
+    j.taxi.boardingError = nil
     -- the passengers get in: they sit in the car and feel how it is driven from here
     local _, o = orderOf(j)
     if o then o.phase = 'toDelivery' end
-    M.taxiSeats(j.taxi.people, j.id)
     local rush = require('cargoEarth/taxi').info(j).mode == 'rush'
     say(string.format(rush and '%s in, in a hurry. Get to %s fast: arriving early pays a big tip.'
       or '%s in. Drive to %s smoothly: a rough ride costs a lot of pay.',
@@ -1468,6 +1476,7 @@ end
 -- An order leaves the list; the next stop takes over, or the courier is free again.
 local function dropOrder(j)
   if j.haul then clearFreight() end
+  if j.taxi then M.taxiSeats(0) end
   -- a tow job's trailer and the car(s) on it or waiting by the road go with it
   if j.tow then trailers.removeTow() end
   local i = orderOf(j)
@@ -1828,20 +1837,21 @@ end
 
 -- A taxi's passengers, seated in the car (BeamNG's seat occupants, real weight); 0 empties the seats again.
 function M.taxiSeats(n, seed)
-  S.taxiSeated = n > 0 and { n = n, seed = seed, at = S.clock + 5 } or nil
-  if M.G.carPassengers then pcall(M.G.carPassengers, n, seed or 'taxi') end
+  local ok, shown = false, nil
+  if M.G.carPassengers then ok, shown = pcall(M.G.carPassengers, n, seed or 'taxi') end
+  S.taxiSeated = (n > 0 or not ok or shown ~= 0) and { n = n, seed = seed, at = S.clock + 5 } or nil
+  return ok and shown or nil
 end
 
 -- Once a second: the passengers sit while they ride (again after a reset or a loaded save), and leave the seats when
 -- the ride is over.
 function M.taxiTick()
   local t, j = S.taxiSeated, S.job
-  if not t then
-    if j and j.taxi and S.phase == 'toDelivery' then M.taxiSeats(j.taxi.people, j.id) end
-    return
+  if j and j.taxi and S.phase == 'toDelivery' then
+    if not t or t.n ~= j.taxi.people or t.seed ~= j.id or S.clock >= t.at then M.taxiSeats(j.taxi.people, j.id) end
+  elseif t and (t.n > 0 or S.clock >= t.at) then
+    M.taxiSeats(0)
   end
-  if not (j and j.taxi and S.phase == 'toDelivery' and j.id == t.seed) then M.taxiSeats(0) return end
-  if S.clock >= t.at then M.taxiSeats(t.n, t.seed) end
 end
 
 -- The people on board, seated in the bus (BeamNG's seat occupants, real weight; standing ones are not shown).
@@ -5386,12 +5396,12 @@ function M.onUpdate(dtReal, dtSim)
     if ready then countryTick(earth.pose()) end
     -- Returning a saved company vehicle must not depend on the geographic data cache.
     if ready and activeDt > 0 and S.career.employment then M.companyTick(dt) end
+    if ready and (S.taxiSeated or (S.job and S.job.taxi)) then M.taxiTick() end
     if modeReady() and ready then
       S.inCareerWorld = true
       local pose = earth.pose()
       rememberLocation(pose)
       if S.job and not S.parts and dt > 0 then tick(dt) end
-      if S.taxiSeated or (S.job and S.job.taxi) then M.taxiTick() end
       if S.trailerOffersWait then M.trailerOffersTick() end
       if S.phone.online and dt > 0 then phoneTick()
       elseif not S.job and not S.offeredAt and not S.career.employment then M.generate() end

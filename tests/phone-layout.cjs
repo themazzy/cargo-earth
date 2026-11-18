@@ -14,6 +14,9 @@ module.exports = function auditPhoneLayout (directive) {
     if (!voids.has(name) && !tag[0].endsWith('/>')) parents.push(node)
   }
   assert.equal(parents.length, 0)
+  const fare = nodes.find(n => n.attrs['aria-label'] === 'Taxi fare breakdown')
+  assert(fare && fare.ancestors.some(n => n.classes.has('cep-order-scroll')), 'Taxi fare details must scroll without displacing Accept/Decline')
+  assert(fare.ancestors.some(n => (n.attrs['ng-if'] || '').includes("s.screen === 'incoming'")), 'Fare breakdown belongs to the incoming offer')
   const scrollAncestor = n => n.ancestors.find(p => p.classes.has('cep-scroll') || p.classes.has('cep-center'))
   const buttons = nodes.filter(n => n.name === 'button')
   let actionGroups = 0
