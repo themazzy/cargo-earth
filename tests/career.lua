@@ -3086,6 +3086,8 @@ test('career review: company trucks keep a bigger share, and each work type says
   assert(not w.taxi.ready and w.taxi.missing == 'No seats.' and not w.tow.ready and w.tow.missing == 'No hitch.')
   w = byId(progress.workTypes({ hauls = { van = 2 } }, { owned = { rigid = true } }))
   assert(w.rigid.missing == 'Van hauls: 2 of 3.', 'an owned box truck still waits for the van hauls')
+  w = byId(progress.workTypes({}, { owned = { van = true }, boxless = { van = true } }))
+  assert(not w.parcel.ready and w.parcel.missing:find('cargo boxes', 1, true) and not w.van.ready)
   w = byId(progress.workTypes({ hauls = { van = 3, rigid = 5 } }, { owned = { semi = true }, firm = true, independent = true }))
   assert(w.semi.ready and w.firm.ready and w.drivers.ready and w.independent.ready)
   w = byId(progress.workTypes({}, { firmReq = { { label = 'Founding fee', detail = '100 CZK of 6000 CZK', done = false } } }))

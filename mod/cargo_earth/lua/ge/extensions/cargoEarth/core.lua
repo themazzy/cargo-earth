@@ -2438,7 +2438,17 @@ function M.careerState()
   local okTaxi, taxiNow = pcall(M.taxiState)
   local v, tier = freightCarrier()
   local towOk = v ~= nil and tow.class(tier, tow.hasHitch(v)) ~= nil
-  state.work = progress.workTypes(S.career, { owned = owned, firm = fleet.unlocked(S.career), independent = trusted,
+  -- the car you drive is your only one of its kind and has no cargo boxes: its work can't come yet (parked cars
+  -- can't be checked until driven)
+  local boxless = {}
+  local here = not shift and g.car and not g.car.loaner and not g.car.standIn and upkeep.tier(g.car)
+  if (here == 'suv' or here == 'van' or here == 'rigid') and S.storage and S.storage.rows then
+    local need = here == 'suv' and require('cargoEarth/parts').MIN_SLOTS or 1
+    local another = false
+    for _, car in ipairs(g.parked or {}) do if not car.loaner and upkeep.tier(car) == here then another = true end end
+    if not another and haul.capacity(S.storage.rows, 'parcel') < need then boxless[here] = true end
+  end
+  state.work = progress.workTypes(S.career, { owned = owned, firm = fleet.unlocked(S.career), independent = trusted, boxless = boxless,
     taxi = okTaxi and type(taxiNow) == 'table' and { ready = taxiNow.eligible == true, why = taxiNow.hint } or nil,
     tow = { ready = towOk, why = 'The vehicle you drive has no tow hitch.' },
     firmReq = (firm.requirements(S.career, state.debt)), vanGoal = haul.VAN_GOAL, rigidGoal = haul.RIGID_GOAL })

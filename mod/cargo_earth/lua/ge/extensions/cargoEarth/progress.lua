@@ -145,6 +145,9 @@ function M.workTypes(career, facts)
     if w.kind and not owned[w.kind] then
       ready, missing = false, ({ suv = 'You own no SUV or pickup.', van = 'You own no van.', rigid = 'You own no box truck.',
         semi = 'You own no tractor.' })[w.kind]
+    elseif w.kind and facts.boxless and facts.boxless[w.kind] then
+      ready, missing = false, 'Your ' .. ({ suv = 'SUV or pickup', van = 'van', rigid = 'box truck' })[w.kind]
+        .. ' has no room in cargo boxes. Fit them in Garage, Parts.'
     end
     if w.tier == 'rigid' and van < VAN_GOAL then
       ready, missing = false, string.format('Van hauls: %d of %d.', van, VAN_GOAL)
