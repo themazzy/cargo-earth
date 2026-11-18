@@ -1699,13 +1699,28 @@ angular.module('beamng.apps')
         return 'Choose a job type'
       }
       scope.chooseJobSettings = function (id) { scope.modePicker.jobs = false; scope.sdo('jobType', id) }
+      // Drafts belong to one loaded career; an untouched draft follows the saved values (they can change elsewhere,
+      // e.g. in the old jobs window), while a half-typed one survives polling.
+      scope.rangeBase = {}
+      scope.rangeDraftsCareer = null
+      function sameRange(a, b) {
+        var keys = Object.keys(a || {}).concat(Object.keys(b || {}))
+        return keys.every(function (k) { return (a || {})[k] === (b || {})[k] })
+      }
       scope.jobDraft = function () {
         var state = scope.st || {}, id = state.jobType
         if (!id) return {}
-        if (!scope.rangeDrafts[id]) {
-          var draft = {}
-          ;(state.items || []).forEach(function (it) { if (it.unit === 'km') draft[it.key] = it.value })
-          scope.rangeDrafts[id] = draft
+        if (state.careerEpoch !== scope.rangeDraftsCareer) {
+          scope.rangeDrafts = {}
+          scope.rangeBase = {}
+          scope.rangeDraftsCareer = state.careerEpoch
+        }
+        var saved = {}
+        ;(state.items || []).forEach(function (it) { if (it.unit === 'km') saved[it.key] = it.value })
+        var draft = scope.rangeDrafts[id]
+        if (!draft || (sameRange(draft, scope.rangeBase[id]) && !sameRange(saved, scope.rangeBase[id]))) {
+          scope.rangeDrafts[id] = JSON.parse(JSON.stringify(saved))
+          scope.rangeBase[id] = saved
         }
         return scope.rangeDrafts[id]
       }
@@ -1723,7 +1738,7 @@ angular.module('beamng.apps')
       scope.resetJobRange = function () { if (scope.st) scope.sdo('resetJobRange', scope.st.jobType) }
       function settingsResult(r) {
         scope.st = r
-        if (r && (r.rangeSaved || r.rangeReset)) delete scope.rangeDrafts[r.rangeChanged]
+        if (r && (r.rangeSaved || r.rangeReset)) { delete scope.rangeDrafts[r.rangeChanged]; delete scope.rangeBase[r.rangeChanged] }
       }
 
       scope.cf = { text: '', kind: null, afford: false, sort: 'price', help: null, detail: null }

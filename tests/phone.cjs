@@ -255,6 +255,20 @@ assert.equal(commands.length, invalidRangeCommands)
 answer = {...answer, rangeReset: true, rangeChanged: 'freight_rigid'}
 scope.resetJobRange()
 assert.equal(scope.jobDraft().maxKm, 125, 'successful reset clears the selected draft')
+// An untouched draft follows saved values changed elsewhere; another career drops drafts.
+answer = {...answer, rangeReset: false, rangeChanged: undefined, careerEpoch: 1}
+scope.st = answer
+scope.jobDraft()
+answer = {...answer, items: answer.items.map(it => it.key === 'maxKm' ? {...it, value: 300} : it)}
+scope.st = answer
+assert.equal(scope.jobDraft().maxKm, 300, 'untouched draft shows the newly saved value')
+scope.jobDraft().maxKm = 400
+answer = {...answer, items: answer.items.map(it => it.key === 'maxKm' ? {...it, value: 350} : it)}
+scope.st = answer
+assert.equal(scope.jobDraft().maxKm, 400, 'typed draft survives a changed saved value')
+answer = {...answer, careerEpoch: 2}
+scope.st = answer
+assert.equal(scope.jobDraft().maxKm, 350, 'another loaded career shows its own saved values')
 scope.closeJobsSettings()
 assert(!scope.jobsSettingsOpen && scope.panelTitle() === 'Settings')
 scope.openJobsSettings()

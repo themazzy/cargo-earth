@@ -23,6 +23,19 @@ local function floatPtr(key, v)
   return ptr[key]
 end
 
+-- Distance sliders show the saved job profile every frame: the phone can change it too.
+local function rangePtr(make, key, v)
+  local p = make(key, v)
+  if v then p[0] = v end
+  return p
+end
+
+-- The distances new offers in this mode use (core.jobOptions of the window's job type), or {} before a career.
+local function ranges(core)
+  local id = core.windowJobType and core.windowJobType()
+  return id and core.jobOptions(id) or {}
+end
+
 local function boolPtr(key, v)
   if not ptr[key] then ptr[key] = im.BoolPtr(v) end
   return ptr[key]
@@ -56,10 +69,10 @@ local function placeLine(d, S)
 end
 
 local function courierOptions(core, S, mods)
-  local o, d = S.opts, mods.food.defaults
-  local minKm = floatPtr('c.minKm', o.minKm or d.minKm)
-  local maxKm = floatPtr('c.maxKm', o.maxKm or d.maxKm)
-  local nearKm = floatPtr('c.nearKm', o.nearKm or d.nearKm)
+  local o, d, r = S.opts, mods.food.defaults, ranges(core)
+  local minKm = rangePtr(floatPtr, 'c.minKm', r.minKm or o.minKm or d.minKm)
+  local maxKm = rangePtr(floatPtr, 'c.maxKm', r.maxKm or o.maxKm or d.maxKm)
+  local nearKm = rangePtr(floatPtr, 'c.nearKm', r.nearKm or o.nearKm or d.nearKm)
   local count = intPtr('c.count', o.count or d.count)
   if im.SliderFloat('Shortest order (km)', minKm, 0.2, 15, '%.1f') then core.setOption('minKm', minKm[0]) end
   if im.SliderFloat('Longest order (km)', maxKm, 0.5, 20, '%.1f') then core.setOption('maxKm', maxKm[0]) end
@@ -79,9 +92,11 @@ local function truckOptions(core, S, mods)
   local o, d = S.opts, mods.jobs.defaults
   S.choices = S.choices or mods.jobs.choices(S.idx)
   local ch, idx = S.choices, S.idx
-  local minKm = intPtr('t.minKm', o.minKm or d.minKm)
-  local maxKm = intPtr('t.maxKm', o.maxKm or d.maxKm)
-  local nearKm = intPtr('t.nearKm', o.nearKm or d.nearKm)
+  local r = ranges(core)
+  local function whole(v) return v and math.floor(v + 0.5) end
+  local minKm = rangePtr(intPtr, 't.minKm', whole(r.minKm or o.minKm or d.minKm))
+  local maxKm = rangePtr(intPtr, 't.maxKm', whole(r.maxKm or o.maxKm or d.maxKm))
+  local nearKm = rangePtr(intPtr, 't.nearKm', whole(r.nearKm or o.nearKm or d.nearKm))
   local count = intPtr('t.count', o.count or d.count)
   if im.SliderInt('Shortest job (km)', minKm, 5, 600) then core.setOption('minKm', minKm[0]) end
   if im.SliderInt('Longest job (km)', maxKm, 10, 800) then core.setOption('maxKm', maxKm[0]) end
@@ -100,9 +115,15 @@ local function options(core, S, mods)
   if S.mode == 'courier' then courierOptions(core, S, mods)
   elseif S.mode == 'trucking' then truckOptions(core, S, mods)
   else
-    for _, item in ipairs(core.settingsState().items) do
-      local value = floatPtr(S.mode .. '.' .. item.key, item.value)
-      if im.SliderFloat(item.label .. ' (' .. item.unit .. ')', value, item.min, item.max, '%.1f') then core.setOption(item.key, value[0]) end
+    -- this mode's own profile (the phone's Jobs settings may be showing another job type)
+    local id = core.windowJobType and core.windowJobType()
+    local bounds, r = id and core.jobSettings.bounds(id) or {}, ranges(core)
+    local labels = { nearKm = 'Pickups within', minKm = 'Shortest delivery', maxKm = 'Longest delivery' }
+    for _, key in ipairs({ 'nearKm', 'minKm', 'maxKm' }) do
+      if bounds[key] and r[key] then
+        local value = rangePtr(floatPtr, S.mode .. '.' .. key, r[key])
+        if im.SliderFloat(labels[key] .. ' (km)', value, bounds[key][1], bounds[key][2], '%.1f') then core.setOption(key, value[0]) end
+      end
     end
   end
   if im.Button('Generate jobs') then
