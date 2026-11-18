@@ -1,10 +1,13 @@
 local taxi = require('cargoEarth/taxi')
 
-for _, example in ipairs({{1, 'comfort', 230}, {2, 'comfort', 275}, {5, 'comfort', 415}, {5, 'rush', 520}, {8, 'comfort', 550}, {8, 'rush', 690}}) do
+for _, example in ipairs({{1, 'comfort', 175}, {2, 'comfort', 210}, {5, 'comfort', 315}, {5, 'rush', 395}, {8, 'comfort', 420}, {8, 'rush', 525}}) do
   local quote = taxi.quote(10, example[1], example[2])
   assert(quote.fare == example[3], '10 km fare for ' .. example[1] .. ' passengers, ' .. example[2])
   assert(quote.baseFare + quote.passengerBonus + quote.modeBonus == quote.fare, 'displayed components sum to the quote')
 end
+-- a nicer car earns more: nothing up to 10 000 CZK of value, +15 % per doubling, at most +45 %
+assert(taxi.carRate(nil) == 0 and taxi.carRate(4000) == 0 and taxi.carRate(10000) == 0, 'ordinary cars earn the plain fare')
+assert(taxi.carRate(20000) == 0.15 and taxi.carRate(40000) == 0.3 and taxi.carRate(80000) == 0.45 and taxi.carRate(500000) == 0.45)
 local old = {taxi = {people = 5, mode = 'comfort'}, pay = 321}
 assert(taxi.info(old).fare == nil and old.pay == 321, 'existing agreed fares are never recalculated')
 

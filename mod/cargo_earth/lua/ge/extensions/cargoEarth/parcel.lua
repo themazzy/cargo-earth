@@ -9,7 +9,7 @@ M.TIERS = { van = { stops = { 4, 7 }, each = { 2, 6 }, radiusKm = 5 } }
 -- a van route carries up to about 340 kg (16-48 kg a stop).
 M.DENSITY = 8
 M.ROAD_FACTOR = 1.35
-M.BASE, M.PER_STOP, M.PER_KM = { van = 80 }, { van = 45 }, { van = 10 }
+M.BASE, M.PER_STOP, M.PER_KM = { van = 120 }, { van = 60 }, { van = 10 }
 M.SPEED_KMH, M.STOP_MIN, M.SLACK_MIN = 30, 3, 10
 M.MIN_GAP_M = 150      -- two stops of one route are at least this far apart
 M.MIN_SLOTS = 8

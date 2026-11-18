@@ -33,11 +33,11 @@ for _, u in ipairs(M.UPGRADES) do byId[u.id] = u end
 -- New vehicles the firm buys from the factory: BeamNG's stock configs, priced by their value like every car (no
 -- used discount). They are delivered to a free bay at the headquarters. fallback: the price when the game has none.
 M.VEHICLES = {
-  { id = 'van', model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', fallback = 6000,
+  { id = 'van', model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', fallback = 3000,
     text = 'Parcels and van freight' },
-  { id = 'rigid', model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', fallback = 14000,
+  { id = 'rigid', model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', fallback = 4900,
     text = 'Box truck business shipping' },
-  { id = 'semi', model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', fallback = 20000,
+  { id = 'semi', model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', fallback = 7000,
     text = 'Articulated freight; a hired driver needs one of your trailers' },
 }
 -- The firm's own trailers: a hired tractor driver needs one, and your own articulated jobs pay TRAILER_BONUS more

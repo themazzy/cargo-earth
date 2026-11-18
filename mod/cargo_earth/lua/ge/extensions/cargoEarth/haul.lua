@@ -2,8 +2,8 @@
 local M = {}
 
 M.tiers = {
-  van = { name = 'Van', minKm = 3, maxKm = 45, base = 80, rate = 11, speed = 40, slack = 12, kg = 1000, parcel = 96 },
-  rigid = { name = 'Rigid truck', minKm = 12, maxKm = 125, base = 120, rate = 15, speed = 50, slack = 20,
+  van = { name = 'Van', minKm = 3, maxKm = 45, base = 150, rate = 18, speed = 40, slack = 12, kg = 1000, parcel = 96 },
+  rigid = { name = 'Rigid truck', minKm = 12, maxKm = 125, base = 250, rate = 22, speed = 50, slack = 20,
     kg = 8000, parcel = 640, bulk = 4200 },
   semi = { name = 'Articulated truck', minKm = 20, maxKm = 250, base = 300, rate = 22, speed = 55, slack = 30,
     kg = 22000, parcel = 1600, bulk = 16000 },
@@ -14,12 +14,13 @@ M.tiers = {
 }
 M.SEMI_BULK_L = 12800   -- the dry-bulk trailer's 16 aggregate boxes of 800 L
 M.SMALL = { car = true, suv = true }   -- these tiers take no board of company freight
--- Pay per hour (0.3.5, Jan): courier ~450 CZK, van ~590, rigid ~850, semi ~1,250-1,700. Car prices follow courier pay,
+-- Pay per hour (career review 2026-11-18, net of fuel): food ~500 CZK, taxi/bus ~550, parts runs ~580, own van ~720-800,
+-- own box truck ~1,150, own tractor ~1,370-1,580. Each step up earns more than the one before. Car prices follow courier pay,
 -- so trucks are the reward for progressing without making cars nearly free.
 -- A loaner runs on the company's fuel card. In your own vehicle you buy the fuel, so the job pays this much
 -- more per road km (about 9, 22 and 32 L/100 km of diesel).
 M.FUEL_ALLOWANCE = { car = 1, suv = 2, van = 3, rigid = 8, semi = 12 }
-M.VAN_GOAL, M.RIGID_GOAL = 5, 10
+M.VAN_GOAL, M.RIGID_GOAL = 3, 5   -- 2026-11-18 (Jan: the first own truck took far too long): was 5, 10
 M.loaners = {
   van = { model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', label = 'van' },
   rigid = { model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', label = 'box truck' },
@@ -155,6 +156,18 @@ function M.options(tier, source, rows)
   return o
 end
 
+-- Load pay (Jan, 2026-11-18): the distance pay x (0.75 + 0.25 x fill). A full load pays the distance pay, a light one
+-- down to 75 % of it. Jobs load as much as the vehicle and its tier allow, so a bigger vehicle in the tier earns more.
+M.LOAD_PAY = { 0.75, 0.25 }
+function M.fill(freight)
+  local t = freight and M.tiers[freight.tier]
+  if not t then return 1 end
+  local space = freight.kind == 'parcel' and t.parcel or t.bulk or 0
+  if freight.tier == 'semi' and freight.kind == 'dryBulk' then space = math.min(space, M.SEMI_BULK_L) end
+  local share = math.max((freight.kg or 0) / t.kg, space > 0 and (freight.amount or 0) / space or 0)
+  return math.floor(math.max(0, math.min(1, share)) * 100 + 0.5) / 100
+end
+
 function M.prepare(job, tier, rows, idx)
   local freight = M.freight(tier, job.cargo, rows)
   if not freight then return false end
@@ -162,7 +175,11 @@ function M.prepare(job, tier, rows, idx)
   local t = M.tiers[tier]
   local factor = idx.cargo[job.cargo].pay or 1
   local pay = (t.base + t.rate * job.km) * factor * (job.adr and 1.15 or 1)
-  job.pay = math.floor(pay / 5 + 0.5) * 5
+  -- a fuller load pays more: fill = the share of the tier's weight limit or its space, whichever is higher
+  local fill = M.fill(freight)
+  local base = math.floor(pay / 5 + 0.5) * 5
+  job.pay = math.floor(pay * (M.LOAD_PAY[1] + M.LOAD_PAY[2] * fill) / 5 + 0.5) * 5
+  job.loadFill, job.loadBonus = fill, job.pay - base
   job.minutes = math.floor((job.km + 1.3 * job.pickupKm) / t.speed * 60 + t.slack + 0.5)
   job.trailer = tier == 'semi' and (freight.kind == 'fluid' and 'tanker' or 'box') or nil
   if tier == 'semi' then

@@ -3073,11 +3073,36 @@ test('bus names: escapes that lost their backslash on the way into the game are 
   assert(idx.lines[1].stops[1].n == 'Ovčáry' and idx.lines[1].to == 'Nedomice, Škola' and idx.depots[1].n == 'Garáž')
 end)
 
+test('career review: company trucks keep a bigger share, and each work type says what it needs', function()
+  assert(employment.shareFor('van') == 0.8 and employment.shareFor('bus') == 0.8)
+  assert(employment.shareFor('rigid') == 0.65 and employment.shareFor('semi') == 0.65)
+  local progress = require('cargoEarth/progress')
+  local function byId(list) local out = {} for _, w in ipairs(list) do out[w.id] = w end return out end
+  local w = byId(progress.workTypes({ hauls = { van = 2 } }, { owned = { car = true } }))
+  assert(w.food.ready and w.taxi.ready and w.bus.ready and w.company.ready)
+  assert(not w.parcel.ready and w.parcel.missing == 'You own no van.')
+  assert(not w.rigid.ready and not w.semi.ready and not w.firm.ready and not w.drivers.ready)
+  w = byId(progress.workTypes({}, { taxi = { ready = false, why = 'No seats.' }, tow = { ready = false, why = 'No hitch.' } }))
+  assert(not w.taxi.ready and w.taxi.missing == 'No seats.' and not w.tow.ready and w.tow.missing == 'No hitch.')
+  w = byId(progress.workTypes({ hauls = { van = 2 } }, { owned = { rigid = true } }))
+  assert(w.rigid.missing == 'Van hauls: 2 of 3.', 'an owned box truck still waits for the van hauls')
+  w = byId(progress.workTypes({}, { owned = { van = true }, boxless = { van = true } }))
+  assert(not w.parcel.ready and w.parcel.missing:find('cargo boxes', 1, true) and not w.van.ready)
+  w = byId(progress.workTypes({ hauls = { van = 3, rigid = 5 } }, { owned = { semi = true }, firm = true, independent = true }))
+  assert(w.semi.ready and w.firm.ready and w.drivers.ready and w.independent.ready)
+  w = byId(progress.workTypes({}, { firmReq = { { label = 'Founding fee', detail = '100 CZK of 6000 CZK', done = false } } }))
+  assert(w.firm.missing == 'Founding fee: 100 CZK of 6000 CZK.' and not w.firm.ready)
+  w = byId(progress.workTypes({}, { firmReq = { { label = 'Founding fee', detail = '6000 CZK of 6000 CZK', done = true } } }))
+  assert(w.firm.ready and w.firm.missing == nil and not w.drivers.ready, 'every requirement met: the firm can be founded')
+  local core = fresh()
+  assert(#core.careerState().work == #progress.WORK and core.careerState().ranks[4].perk ~= nil)
+end)
+
 test('bus board: the fares a line is expected to bring are shown with its pay', function()
   local idx = bus.index()
   bus.set(idx, busData())
   local o = bus.board(idx, 50, 14)[1]
-  assert(o.fares == bus.PER_PASSENGER * bus.expectedRiders(5) and o.fares > 0)
+  assert(o.fares == math.floor(bus.PER_PASSENGER * bus.expectedRiders(5) + 0.5) and o.fares > 0)
 end)
 
 test('speed cameras are paused even for a save that previously enabled them', function()
@@ -4971,6 +4996,59 @@ test('used-car market: every vehicle kind has eight listings at cheap, middle an
     list = { { id = 1, model = 'van', key = 'van2', name = 'van 2', km = 0, condition = 1, price = 10, listedAt = 0, gone = 90 } } } }
   garage.marketTick(G, old, 0, rnd)
   assert(old.market.v == garage.MARKET_V and old.market.list[1].id == 1 and old.market.list[1].kind == 'van')
+  assert(old.market.list[1].price == 5, 'an older listing of a work vehicle is repriced once')
+  garage.marketTick(G, old, 0, rnd)
+  assert(old.market.list[1].price == 5, 'and only once')
+  -- work vehicles cost a share of their value-based price; a new tractor for the firm too
+  assert(garage.kindFactor('car') == 1 and garage.kindFactor('suv') == 1 and garage.kindFactor('van') == 0.5)
+  assert(garage.kindFactor('rigid') == 0.35 and garage.kindFactor('semi') == 0.35)
+  assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.35 / 5 + 0.5) * 5)
+  assert(garage.newPrice(G, 'covet', 'covet7') == math.floor(7000 * garage.PRICE_PER_VALUE / 5 + 0.5) * 5)
+  -- parts stripped off a discounted truck sell at the truck's discount, so buy-and-strip can't beat the price
+  local PG = { part = function(_, name) return { information = { name = name, value = 1000 } } end }
+  local truck = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = 'engine' }, ioCtx = {} }
+  local stripped = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = '' }, ioCtx = {} }
+  local q = garage.partsQuote(PG, {}, truck.slotPartMap, stripped)
+  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1 and q.salvage.engine.f == 0.35)
+  PG.vehicle = function() return stripped end
+  local sg = { inventory = { engine = 2 }, salvage = q.salvage }
+  local full = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART / 5 + 0.5) * 5
+  local cheap = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART * 0.35 / 5 + 0.5) * 5
+  assert(garage.spares(PG, sg)[1].price == cheap)
+  local _, _, got = garage.sell(PG, sg, { money = 0 }, 'engine')
+  assert(got == cheap and sg.salvage == nil)
+  _, _, got = garage.sell(PG, sg, { money = 0 }, 'engine')
+  assert(got == full, 'a spare bought at full price still sells at the full share')
+  -- fitting a spare again uses the full-price ones first; the salvage count never exceeds the spares
+  q = garage.partsQuote(PG, { engine = 2 }, stripped.slotPartMap, truck, { engine = { n = 1, f = 0.35 } })
+  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1)
+  q = garage.partsQuote(PG, { engine = 1 }, stripped.slotPartMap, truck, { engine = { n = 1, f = 0.35 } })
+  assert(q.inventory.engine == nil and q.salvage == nil)
+  -- a part bought at full price for the truck comes off as a full-price spare, not salvage
+  q = garage.partsQuote(PG, {}, stripped.slotPartMap, truck)
+  assert(q.cost > 0 and q.paid.engine == 1)
+  local back = garage.partsQuote(PG, q.inventory, truck.slotPartMap, stripped, q.salvage, q.paid)
+  assert(back.inventory.engine == 1 and back.salvage == nil and back.paid == nil)
+  -- a full-price spare fitted to the truck stays full price when it comes off again
+  local fit = garage.partsQuote(PG, back.inventory, stripped.slotPartMap, truck, back.salvage, back.paid)
+  assert(fit.cost == 0 and fit.paid.engine == 1)
+  back = garage.partsQuote(PG, fit.inventory, truck.slotPartMap, stripped, fit.salvage, fit.paid)
+  assert(back.inventory.engine == 1 and back.salvage == nil)
+  -- a salvage spare fitted back stays salvage
+  fit = garage.partsQuote(PG, { engine = 1 }, stripped.slotPartMap, truck, { engine = { n = 1, f = 0.35 } })
+  assert(fit.paid == nil and fit.salvage == nil)
+  back = garage.partsQuote(PG, fit.inventory, truck.slotPartMap, stripped, fit.salvage, fit.paid, fit.fittedSalvage)
+  assert(back.salvage.engine.n == 1)
+  -- a salvage spare moved onto an ordinary car keeps its discount when it comes off there
+  local car = { model = 'covet', slotPartMap = { b = 'engine' }, ioCtx = {} }
+  local bare = { model = 'covet', slotPartMap = { b = '' }, ioCtx = {} }
+  fit = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car, { engine = { n = 1, f = 0.35 } })
+  assert(fit.cost == 0 and fit.salvage == nil and fit.fittedSalvage.engine.n == 1 and fit.fittedSalvage.engine.f == 0.35)
+  back = garage.partsQuote(PG, fit.inventory, car.slotPartMap, bare, fit.salvage, fit.paid, fit.fittedSalvage)
+  assert(back.salvage.engine.n == 1 and back.salvage.engine.f == 0.35 and back.fittedSalvage == nil)
+  -- the car's own part comes off at full price
+  back = garage.partsQuote(PG, {}, car.slotPartMap, bare)
+  assert(back.inventory.engine == 1 and back.salvage == nil)
 end)
 
 test('a save whose car mod is gone: another owned car, else a base Pigeon; the missing car is kept', function()
@@ -5065,4 +5143,51 @@ test('used-car list: picture and numbers come from the game list without a spawn
   core_vehicles = oldCv
   gamecar._reset()
   assert(ok, err)
+end)
+
+test('experience pay grows with each job of a kind, higher for later-unlocked work', function()
+  local experience = require('cargoEarth/experience')
+  local employment = require('cargoEarth/employment')
+  local c = {}
+  assert(experience.rate(c, 'semi') == 0 and experience.kind({ kind = 'food' }) == 'food')
+  assert(experience.kind({ taxi = {} }) == 'taxi' and experience.kind({ route = {} }) == 'parcel')
+  assert(experience.kind({ partsRun = true }) == 'parts' and experience.kind({ haul = { tier = 'rigid' } }) == 'rigid')
+  assert(experience.kind({ haul = { tier = 'car' } }) == nil)
+  experience.add(c, 'food', 50)
+  assert(experience.rate(c, 'food') == 0.05)
+  experience.add(c, 'food', 500)
+  assert(experience.rate(c, 'food') == 0.10, 'capped')
+  experience.add(c, 'semi', 40)
+  assert(experience.rate(c, 'semi') == 0.25 and experience.KINDS.semi.max > experience.KINDS.van.max)
+  local job = experience.apply(c, { kind = 'food', pay = 200 })
+  assert(job.pay == 220 and job.expBonus == 20 and job.expRate == 0.10)
+  experience.apply(c, job)
+  assert(job.pay == 220, 'only once')
+  assert(experience.apply(c, { kind = 'food', pay = 200, companyShift = 's1' }).pay == 200, 'company jobs are paid by share')
+  -- company work: the driver's share grows, never past the whole contract
+  assert(employment.shareFor('semi', c) == 0.65 * 1.25 and employment.shareFor('semi') == 0.65)
+  assert(employment.shareFor('bus', c) == employment.SHARE)
+  c.experience.van = 1000
+  assert(employment.shareFor('van', c) == math.min(1, employment.SHARE * 1.15))
+  -- the Progress page shows it per work type; company van contracts share the van's experience
+  local progress = require('cargoEarth/progress')
+  local rows = {}
+  for _, w in ipairs(progress.workTypes(c, { owned = {} })) do rows[w.id] = w end
+  assert(rows.food.exp.jobs == 550 and rows.food.exp.rate == 0.10 and rows.company.exp.rate == 0.15)
+  assert(rows.firm.exp == nil)
+end)
+
+test('freight pays the distance rate for a full load and less for a light one', function()
+  local haul = require('cargoEarth/haul')
+  assert(haul.fill({ tier = 'van', kind = 'parcel', amount = 96, kg = 864 }) == 1)
+  assert(haul.fill({ tier = 'van', kind = 'parcel', amount = 48, kg = 432 }) == 0.5)
+  assert(haul.fill({ tier = 'rigid', kind = 'parcel', amount = 200, kg = 2800 }) == 0.35, 'heavy goods count by weight')
+  assert(haul.fill({ tier = 'semi', kind = 'dryBulk', amount = 12800, kg = 4480 }) == 1, 'the bulk trailer full by space')
+  local idx = { cargo = { pallets_general = { pay = 1 } } }
+  local rowsFor = function(n) return { { id = 1, capacity = n, cargoTypes = { 'parcel' } } } end
+  local full = { cargo = 'pallets_general', km = 10, pickupKm = 1 }
+  assert(haul.prepare(full, 'van', rowsFor(96), idx) and full.pay == 150 + 18 * 10 and full.loadBonus == 0)
+  local light = { cargo = 'pallets_general', km = 10, pickupKm = 1 }
+  assert(haul.prepare(light, 'van', rowsFor(48), idx))
+  assert(light.loadFill == 0.5 and light.pay == math.floor(330 * 0.875 / 5 + 0.5) * 5 and light.loadBonus == light.pay - 330)
 end)

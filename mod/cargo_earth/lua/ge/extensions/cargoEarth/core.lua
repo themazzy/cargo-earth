@@ -1055,6 +1055,11 @@ function M.generate()
       for _, offer in ipairs(S.offers) do
         offer.fuelAllowance = math.floor(offer.km * haul.FUEL_ALLOWANCE.car / 5 + 0.5) * 5
         offer.pay = offer.pay + offer.fuelAllowance
+        local carRate = require('cargoEarth/taxi').carRate(S.career.garage.car and S.career.garage.car.value)
+        if carRate > 0 then
+          offer.carRate, offer.carBonus = carRate, math.floor(offer.pay * carRate / 5 + 0.5) * 5
+          offer.pay = offer.pay + offer.carBonus
+        end
         if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
       end
     end
@@ -1620,6 +1625,10 @@ local function finishDelivery(force)
     if not economy.post(c, pay + tip - toDebt, 'delivery', j.paymentId, j.cargoName) then return end
   end
   local rankUp = progress.complete(c, j)
+  if not j.companyShift then   -- company shifts count when they settle (employment.settle)
+    local experience = require('cargoEarth/experience')
+    experience.add(c, experience.kind(j))
+  end
   local truckUnlock = j.haul and haul.complete(c, j.haul.tier)
   local today = os.date('%Y-%m-%d')
   if type(c.today) ~= 'table' or c.today.date ~= today then c.today = { date = today, earned = 0, count = 0 } end
@@ -1768,8 +1777,8 @@ function M.busState()
   for _, o in ipairs(not shift and S.busBoard or {}) do
     local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
     out.lines[#out.lines + 1] = { id = o.id, ref = o.bus.ref, name = o.bus.name, from = o.bus.from, to = o.bus.to,
-      singleDirection = o.bus.singleDirection, limited = o.bus.limited, stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.SHARE / 5 + 0.5) * 5,
-      fares = math.floor((o.fares or 0) * employment.SHARE / 5 + 0.5) * 5, minutes = o.minutes, depot = o.yard.n,
+      singleDirection = o.bus.singleDirection, limited = o.bus.limited, stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.shareFor('bus', S.career) / 5 + 0.5) * 5,
+      fares = math.floor((o.fares or 0) * employment.shareFor('bus', S.career) / 5 + 0.5) * 5, minutes = o.minutes, depot = o.yard.n,
       depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= bus.DEPOT_RADIUS and not p.camera
         and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour }
   end
@@ -2295,6 +2304,7 @@ local function phoneTick()
   elseif j.kind == 'food' and rating.premium(S.career) and math.random(rating.PREMIUM_ONE_IN) == 1 then
     rating.makePremium(j)
   end
+  require('cargoEarth/experience').apply(S.career, j)   -- experience pay, once per offer
   ph.incoming = { job = j, expiresAt = S.clock + M.PHONE.acceptS }
   S.phoneHidden = false   -- a ringing phone shows itself
   phoneSound('offer')
@@ -2320,7 +2330,7 @@ local function incomingInfo(inc)
     trailerBonus = j.trailerBonus,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
-    fuelAllowance = j.fuelAllowance,
+    fuelAllowance = j.fuelAllowance, carBonus = j.carBonus, carRate = j.carRate, expBonus = j.expBonus, expRate = j.expRate, loadFill = j.loadFill, loadBonus = j.loadBonus,
     trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or (j.haul and j.haul.trailerName) or (S.idx and S.idx.trailers[j.trailer]) or j.trailer) or nil,
     leftS = math.max(0, math.floor(inc.expiresAt - S.clock + 0.5)), totalS = M.PHONE.acceptS }
 end
@@ -2354,7 +2364,8 @@ function M.nearContracts(p)
   table.sort(picked, function(a, b) if a.km == b.km then return a.offer.id < b.offer.id end return a.km < b.km end)
   for _, r in ipairs(picked) do
     local offer, km = r.offer, r.km
-    out[#out + 1] = { id = offer.id, name = offer.name, km = math.floor(km * 10 + 0.5) / 10, wages = offer.wages, minutes = offer.minutes,
+    out[#out + 1] = { id = offer.id, name = offer.name, km = math.floor(km * 10 + 0.5) / 10, minutes = offer.minutes,
+      wages = math.floor(offer.gross * employment.shareFor(offer.tier or 'van', S.career) + 0.5),
       vehicle = offer.vehicle or haul.loaners.van.name,
       atYard = km * 1000 <= employment.RADIUS and not p.camera and (p.speed or 0) <= M.STOP_SPEED }
   end
@@ -2415,6 +2426,35 @@ function M.careerState()
   end
   state.reputation = rating.state(S.career)
   state.fines = S.career.fines
+  -- every kind of work, what it needs and whether you have it (issue #123)
+  local owned, g = {}, personal or {}   -- during a company shift the garage you own waits in the shift
+  if g.car and not g.car.loaner and not g.car.standIn then owned[upkeep.tier(g.car)] = true end
+  for _, car in ipairs(g.parked or {}) do if not car.loaner then owned[upkeep.tier(car)] = true end end
+  local trusted = false
+  for _, co in pairs(S.career.companies or {}) do
+    if type(co) == 'table' and (co.reputation or 0) >= employment.INDEPENDENT_REP then trusted = true end
+  end
+  -- taxi and tow depend on the vehicle you are in: its passenger seats and its tow hitch (or fifth wheel)
+  local okTaxi, taxiNow = pcall(M.taxiState)
+  local v, tier = freightCarrier()
+  local towOk = v ~= nil and tow.class(tier, tow.hasHitch(v)) ~= nil
+  -- the car you drive is your only one of its kind and has no cargo boxes: its work can't come yet (parked cars
+  -- can't be checked until driven)
+  local boxless = {}
+  local here = not shift and g.car and not g.car.loaner and not g.car.standIn and upkeep.tier(g.car)
+  if (here == 'suv' or here == 'van' or here == 'rigid') and S.storage and S.storage.rows then
+    local need = here == 'suv' and require('cargoEarth/parts').MIN_SLOTS or 1
+    local another = false
+    for _, car in ipairs(g.parked or {}) do if not car.loaner and upkeep.tier(car) == here then another = true end end
+    local rows = S.storage.rows
+    -- a box truck may carry fluid or dry bulk instead (haul.freight takes 100 L or more)
+    local bulk = here == 'rigid' and (haul.capacity(rows, 'fluid') >= 100 or haul.capacity(rows, 'dryBulk') >= 100)
+    if not another and not bulk and haul.capacity(rows, 'parcel') < need then boxless[here] = true end
+  end
+  state.work = progress.workTypes(S.career, { owned = owned, firm = fleet.unlocked(S.career), independent = trusted, boxless = boxless,
+    taxi = okTaxi and type(taxiNow) == 'table' and { ready = taxiNow.eligible == true, why = taxiNow.hint } or nil,
+    tow = { ready = towOk, why = 'The vehicle you drive has no tow hitch.' },
+    firmReq = (firm.requirements(S.career, state.debt)), vanGoal = haul.VAN_GOAL, rigidGoal = haul.RIGID_GOAL })
   return state
 end
 
@@ -2446,7 +2486,7 @@ function M.placesState()
     local km = p and jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) or nil
     out.companies[#out.companies + 1] = { id = offer.id, name = offer.name, yard = offer.yard.n,
       vehicle = offer.vehicle or haul.loaners.van.name, van = (offer.tier or 'van') == 'van',
-      km = km, routeKm = offer.km, wages = offer.wages, minutes = offer.minutes,
+      km = km, routeKm = offer.km, wages = math.floor(offer.gross * employment.shareFor(offer.tier or 'van', c) + 0.5), minutes = offer.minutes,
       reputation = company and company.reputation or 0,
       independentPay = offer.gross, independentUnlocked = company ~= nil and company.reputation >= employment.INDEPENDENT_REP,
       atYard = km and km * 1000 <= employment.RADIUS and not p.camera and (p.speed or 0) <= M.STOP_SPEED }
@@ -4188,7 +4228,9 @@ local function quoteParts()
   local ok, quote, why = pcall(function()
     local v = previewVehicle()
     if not v then return nil, 'Waiting for BeamNG to apply the preview.' end
-    return garage.partsQuote(M.G, S.career.garage.inventory, S.parts.before, v)
+    return garage.partsQuote(M.G, S.career.garage.inventory, S.parts.before, v, S.career.garage.salvage,
+      S.career.garage.car and S.career.garage.car.paidParts,
+      S.career.garage.car and S.career.garage.car.salvageParts)
   end)
   if not ok then
     if S.parts.quoteError ~= tostring(quote) then
@@ -4248,12 +4290,13 @@ local function buyParts(revision)
   why = partsProblem(quote)
   if why then return false, why end
   local c, g = S.career, S.career.garage
-  local money, spent, inventory, config, parts = c.money, g.spent, g.inventory, g.car.config, g.car.parts
+  local money, spent, inventory, config, parts, salvage, paid, fitted = c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts
   if not garage.remember(M.G, g, previewVehicle()) then return false, 'Could not capture the new configuration.' end
-  c.money, g.spent, g.inventory = (money or 0) - quote.cost, (spent or 0) + quote.cost, quote.inventory
+  c.money, g.spent, g.inventory, g.salvage = (money or 0) - quote.cost, (spent or 0) + quote.cost, quote.inventory, quote.salvage
+  g.car.paidParts, g.car.salvageParts = quote.paid, quote.fittedSalvage
   economy.reconcile(c, 'parts', 'Parts fitted')
   if not saveCareer() then
-    c.money, g.spent, g.inventory, g.car.config, g.car.parts = money, spent, inventory, config, parts
+    c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts = money, spent, inventory, config, parts, salvage, paid, fitted
     economy.reconcile(c, 'parts', 'Purchase not saved, refunded')
     return false, 'The purchase could not be saved. Try again.'
   end

@@ -10,7 +10,10 @@ M.NEAR_KM = 4            -- lines with a mapped stop this close to the player ar
 M.DEPOT_KM = 3           -- a bus station or depot this close to the first stop is where the bus is lent
 M.ROAD_FACTOR = 1.25     -- the line's straight stop-to-stop km to road km (until the GPS knows the road)
 -- Pay goes by the timetable's minutes, as a driver's wage does, plus a little per stop and the fares.
-M.BASE, M.PER_MIN, M.PER_STOP, M.PER_PASSENGER = 60, 7, 3, 2   -- about 500-620 CZK/h with fares, near van freight
+-- Career review 2026-11-18 (issue #123): the bus is lent, needs no unlock and costs no fuel, and a line is usually driven
+-- well inside its timetable, so after the company's share it pays about as much as taxi (about 550 CZK/h), below the
+-- work you buy a vehicle for.
+M.BASE, M.PER_MIN, M.PER_STOP, M.PER_PASSENGER = 40, 4.5, 3, 1.5
 -- The timetable: each stop has its own time from the one before. A bus is slow on short hops (pulling out, braking
 -- for the next stop) and faster between stops far apart: its speed grows with the hop's road km, within LEG_KMH.
 M.LEG_KMH, M.LEG_KMH_PER_KM = { 18, 45 }, 8
@@ -264,7 +267,7 @@ function M.board(idx, lat, lon)
     local operator = r.line.operator ~= '' and r.line.operator or 'City buses'
     out[#out + 1] = { id = 'bus:' .. r.line.id, companyId = 'bus:' .. operator, tier = 'bus', vehicle = 'City bus',
       name = operator, yard = r.depot, jobs = { j }, jobCount = 1, gross = j.pay, km = j.km, pickupKm = jobs.km(lat, lon, r.depot.g[1], r.depot.g[2]),
-      minutes = j.minutes, wages = j.pay, fares = M.PER_PASSENGER * M.expectedRiders(#j.bus.stops), bus = { ref = r.line.ref, name = j.bus.name, from = j.from.n,
+      minutes = j.minutes, wages = j.pay, fares = math.floor(M.PER_PASSENGER * M.expectedRiders(#j.bus.stops) + 0.5), bus = { ref = r.line.ref, name = j.bus.name, from = j.from.n,
       to = j.bus.stops[#j.bus.stops].n, stops = #j.bus.stops, limited = #r.line.stops > #j.bus.stops,
       singleDirection = not r.hasReturn, colour = r.line.colour } }
   end
@@ -413,7 +416,7 @@ function M.skip(job, nowS)
 end
 
 -- What the line pays at its end: the quote and the fares of the people who rode.
-function M.fares(job) return M.PER_PASSENGER * (job.bus.boarded or 0) end
+function M.fares(job) return math.floor(M.PER_PASSENGER * (job.bus.boarded or 0) + 0.5) end
 
 -- The line's pay at its end: the quote less the skipped stops' share, and the fares.
 function M.linePay(job)

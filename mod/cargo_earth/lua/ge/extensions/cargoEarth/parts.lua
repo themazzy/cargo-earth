@@ -10,7 +10,7 @@ M.ROAD_FACTOR = 1.3
 M.SLOTS = { 6, 20 }     -- parcel slots of parts a run carries (cut to the free space)
 M.MIN_SLOTS = 4
 M.DENSITY = 8           -- kg per slot, as parcel routes: a run carries about 50-160 kg
-M.BASE, M.PER_KM, M.PER_SLOT = 70, 10, 2
+M.BASE, M.PER_KM, M.PER_SLOT = 110, 16, 4   -- career review 2026-11-18: above food (the ride to the supplier is unpaid)
 M.SPEED_KMH, M.SLACK_MIN = 40, 12
 M.OFFERS = 3
 

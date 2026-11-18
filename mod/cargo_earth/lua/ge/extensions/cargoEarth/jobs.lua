@@ -122,7 +122,7 @@ function M.addArea(idx, data, onDrop)
   idx.types['ce:stream:yard'] = { produces = {'pallets_general'}, accepts = {'pallets_general'} }
   idx.types['ce:stream:shop'] = { produces = {}, accepts = {'pallets_general'} }
   -- fuel depots: tanker runs to fuel stations only (cargoEarth/resupply)
-  idx.cargo.fuel = idx.cargo.fuel or { name = 'Fuel (diesel, petrol)', trailer = 'tanker', tonnes = 25, pay = 1.55, adr = true }
+  idx.cargo.fuel = idx.cargo.fuel or { name = 'Fuel (diesel, petrol)', trailer = 'tanker', tonnes = 25, pay = 1.15, adr = true }
   idx.types['ce:stream:fuel'] = { produces = {'fuel'}, accepts = {}, label = 'Fuel depot' }
   local rebuilt = M.index({depots = depots, cargo = idx.cargo, types = idx.types, trailers = idx.trailers})
   for k, v in pairs(rebuilt) do idx[k] = v end
