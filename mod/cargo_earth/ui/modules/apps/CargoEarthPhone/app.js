@@ -204,7 +204,13 @@ angular.module('beamng.apps')
     '.cep-settings-link{border:0;background:transparent;padding:4px 6px;color:var(--muted);font:inherit;font-size:15px;line-height:1;cursor:pointer}' +
     '.cep-subtabs{display:flex;flex-shrink:0;gap:4px;margin:10px 14px 0;padding:4px;background:var(--line);border-radius:12px}' +
     '.cep-subtabs button{flex:1;min-width:0;border:0;border-radius:9px;padding:8px 4px;font:inherit;font-size:12px;font-weight:700;background:transparent;color:var(--muted);cursor:pointer}' +
-    '.cep-modes{margin:0}.cep-modes button{padding:11px 4px;font-size:13px}' +
+    '.cep-modes{display:block;position:relative;flex:0 0 auto;min-width:0;margin:0}.cep-modes>span{display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px}' +
+    '.cep-mode-select{display:block;box-sizing:border-box;width:100%;max-width:100%;min-width:0;min-height:42px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;' +
+      'background:var(--card);color:var(--ink);font:inherit;font-size:14px;font-weight:700;text-align:left;cursor:pointer}.cep-mode-select:disabled{cursor:default;opacity:.65}' +
+    '.cep-mode-select>b{float:right}.cep-mode-menu{position:absolute;z-index:10;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;padding:4px;' +
+      'border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:0 6px 18px rgba(0,0,0,.25)}' +
+    '.cep-mode-menu>button{display:block;width:100%;min-height:42px;padding:9px 10px;border:0;border-radius:7px;text-align:left;font:inherit;' +
+      'background:transparent;color:var(--ink);cursor:pointer}.cep-mode-menu>button.on{background:var(--line);font-weight:700}' +
     '.cep-subtabs button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(29,27,25,.1)}' +
     '.cep-live{display:flex;flex-shrink:0;align-items:center;gap:8px;margin:8px 14px 0;padding:9px 10px;border:1px solid #f2c5b7;border-radius:12px;background:#fff0ea;color:var(--ink);font:inherit;text-align:left;cursor:pointer}' +
     '.cep-live>span{flex:1;min-width:0}.cep-live strong,.cep-live small{display:block}.cep-live strong{font-size:12px}.cep-live small{font-size:11px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}' +
@@ -1019,14 +1025,13 @@ angular.module('beamng.apps')
         '<div class="cep-card" ng-if="st.paused"><div class="cep-sub">Job settings, speed cameras and pausing come with your save. ' +
           'Load it on the phone to change them. Dark mode, the phone on the dashboard and the help below work now.</div></div>' +
         '<div ng-if="!st.paused">' +
-        '<div class="cep-label">Job type</div>' +
-        '<div class="cep-row"><button class="cep-btn" ng-class="{go: st.mode === \'courier\', ghost: st.mode !== \'courier\'}" ' +
-          'ng-disabled="!st.canSwitch" ng-click="sdo(\'mode\', \'courier\')">Food delivery</button>' +
-          '<button class="cep-btn" ng-class="{go: st.mode === \'trucking\', ghost: st.mode !== \'trucking\'}" ' +
-          'ng-disabled="!st.canSwitch" ng-click="sdo(\'mode\', \'trucking\')">Freight</button>' +
-          '<button class="cep-btn" ng-class="{go: st.mode === \'bus\', ghost: st.mode !== \'bus\'}" ' +
-          'ng-disabled="!st.canSwitch" ng-click="sdo(\'mode\', \'bus\')">Bus</button></div>' +
-        '<div class="cep-sub" ng-if="!st.canSwitch">Finish the order to switch.</div>' +
+        '<div class="cep-modes" ng-keydown="$event.keyCode === 27 && (modePicker.settings = false)"><span>Job type</span>' +
+          '<button class="cep-mode-select" aria-label="Job type" aria-haspopup="menu" aria-expanded="{{ modePicker.settings && st.canSwitch }}" ' +
+            'ng-disabled="!st.canSwitch" ng-click="modePicker.settings = !modePicker.settings">{{ workModeName(st.mode) }}<b aria-hidden="true">▾</b></button>' +
+          '<div class="cep-mode-menu" role="menu" aria-label="Job types" ng-if="modePicker.settings && st.canSwitch">' +
+            '<button ng-repeat="m in workModes" role="menuitemradio" aria-checked="{{ st.mode === m.id }}" ng-class="{on: st.mode === m.id}" ' +
+              'ng-click="chooseWorkMode(\'settings\', m.id)">{{ m.name }}</button></div></div>' +
+        '<div class="cep-sub" ng-if="!st.canSwitch">Finish the job or company shift to switch.</div>' +
         '<div class="cep-label">Orders</div>' +
         '<div class="cep-li" ng-repeat="it in st.items" style="cursor:default"><div class="cep-name">{{ it.label }}</div>' +
           '<div class="cep-step2"><button class="cep-sm ghost" ng-click="sdo(\'step\', it.key, -1)">−</button>' +
@@ -1159,10 +1164,12 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="s.helperStart.error">Could not start it: {{ s.helperStart.error }}</div>' +
         '<button class="cep-btn ok" ng-disabled="s.helperStart.busy" ng-click="act(\'helperStart\')">{{ s.helperStart.busy ? "Starting…" : (s.helperStart.installed ? "Start helper" : "Install and start") }}</button>' +
         '<button class="cep-sm ghost" ng-click="act(\'helperHide\')">Not now</button></div>' +
-      '<div class="cep-subtabs cep-modes" ng-if="s.canSwitch" role="group" aria-label="Job type">' +
-        '<button ng-class="{on: s.mode === \'courier\'}" ng-click="act(\'mode\', \'courier\')">Food delivery</button>' +
-        '<button ng-class="{on: s.mode === \'trucking\'}" ng-click="act(\'mode\', \'trucking\')">Freight</button>' +
-        '<button ng-class="{on: s.mode === \'bus\'}" ng-click="act(\'mode\', \'bus\')">Bus</button></div>' +
+      '<div class="cep-modes" ng-keydown="$event.keyCode === 27 && (modePicker.work = false)"><span>Job type</span>' +
+        '<button class="cep-mode-select" aria-label="Job type" aria-haspopup="menu" aria-expanded="{{ modePicker.work && s.canSwitch }}" ' +
+          'ng-disabled="!s.canSwitch" ng-click="modePicker.work = !modePicker.work">{{ workModeName(s.mode) }}<b aria-hidden="true">▾</b></button>' +
+        '<div class="cep-mode-menu" role="menu" aria-label="Job types" ng-if="modePicker.work && s.canSwitch">' +
+          '<button ng-repeat="m in workModes" role="menuitemradio" aria-checked="{{ s.mode === m.id }}" ng-class="{on: s.mode === m.id}" ' +
+            'ng-click="chooseWorkMode(\'work\', m.id)">{{ m.name }}</button></div></div>' +
       // city bus lines: the lines near you (the bus is lent at a depot near the first stop), or the shift you are on
       '<div class="cep-scroll" ng-if="s.bus">' +
         '<div class="cep-card" ng-if="s.bus.shift"><div class="cep-label">{{ s.bus.shift.name }}</div>' +
@@ -1197,9 +1204,10 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="!s.bus.shift && s.bus.lines.length">Choose a line, then park your own car in its depot marker to collect the bus.</div>' +
       '</div>' +
       '<div class="cep-center" ng-if="!s.bus" ng-class="{\'cep-freight-summary\': s.trucking}">' +
-        '<div class="cep-label" ng-if="!s.canSwitch">{{ s.mode === "courier" ? "Food delivery" : "Freight" }}</div>' +
         '<div class="cep-big">{{ s.trucking && !s.trucking.carrier ? "No work vehicle of your own" : "You are offline" }}</div>' +
-        '<div class="cep-sub" ng-if="!s.trucking || !s.trucking.hint">Go online to get orders from nearby {{ s.mode === "courier" ? "restaurants and shops" : "depots" }}.</div>' +
+        '<div class="cep-sub" ng-if="!s.taxi && (!s.trucking || !s.trucking.hint)">Go online to get orders from nearby {{ s.mode === "courier" ? "restaurants and shops" : "depots" }}.</div>' +
+        '<div class="cep-sub" ng-if="s.taxi">{{ s.taxi.hint }}</div>' +
+        '<div class="cep-sub" role="status" ng-if="s.taxi.eligible">{{ s.taxi.search }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.carrier">{{ s.trucking.label }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.hint">{{ s.trucking.hint }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
@@ -1221,7 +1229,7 @@ angular.module('beamng.apps')
       '<button class="cep-sm ghost" ng-if="s.trucking" ng-click="setTab(\'companies\')">All contracts</button>' +
       '<div class="cep-card cep-stats" ng-if="!s.bus && !s.trucking"><div>{{ s.todayCount }}<span>orders today</span></div>' +
         '<div>{{ fmt.short(s.todayEarned) }}<span>earned today</span></div></div>' +
-      '<button class="cep-btn go" ng-if="!s.bus && (!s.trucking || s.trucking.carrier)" ng-click="act(\'online\')">Go online</button>' +
+      '<button class="cep-btn go" ng-if="!s.bus && (!s.trucking || s.trucking.carrier)" ng-disabled="s.taxi && !s.taxi.eligible" ng-click="act(\'online\')">Go online</button>' +
       '<button class="cep-sm ghost" ng-if="s.freePlay" style="margin-top:6px" ng-click="act(\'careerInfo\')">Free play · Start a career</button></div>' +
 
       // waiting
@@ -1234,17 +1242,19 @@ angular.module('beamng.apps')
       '<button class="cep-btn ghost" ng-click="act(\'offline\')">Go offline</button><div class="cep-center">' +
         '<div class="cep-pulse"><i></i></div><div class="cep-big">Looking for orders</div>' +
         '<div class="cep-sub" ng-if="s.trucking">{{ s.trucking.hint || ("Looking for " + s.trucking.carrier + " freight near you.") }}</div>' +
-        '<div class="cep-sub" ng-if="!s.trucking && (!s.helper || s.helper.state === \'ready\')">The next order will ring here.</div>' +
-        '<div class="cep-sub" ng-if="!s.trucking && s.helper && !s.helper.outdated && (s.helper.state === \'loading\' || s.helper.state === \'searching\')">' +
+        '<div class="cep-sub" ng-if="s.taxi">{{ s.taxi.hint }}</div>' +
+        '<div class="cep-sub" role="status" ng-if="s.taxi.eligible">{{ s.taxi.search }}</div>' +
+        '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && (!s.helper || s.helper.state === \'ready\')">The next order will ring here.</div>' +
+        '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && s.helper && !s.helper.outdated && (s.helper.state === \'loading\' || s.helper.state === \'searching\')">' +
           '{{ s.helper.restaurants ? "Loading nearby pickup locations…" : "Loading nearby grocery stores…" }}</div>' +
-        '<div class="cep-sub" ng-if="!s.trucking && s.helper && s.helper.state === \'off\'">' +
+        '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && s.helper && s.helper.state === \'off\'">' +
           '{{ s.helper.restaurants ? "Start the Cargo Earth helper to load nearby pickup locations." : "Start the Cargo Earth helper to get local grocery runs." }}' +
           '<span ng-if="s.helper.msg"> ({{ s.helper.msg }})</span></div>' +
         // the helper answers, but could not build this area (no Python libraries, no internet...): not "start it"
-        '<div class="cep-sub" ng-if="!s.trucking && s.helper && s.helper.state === \'error\'">' +
+        '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && s.helper && s.helper.state === \'error\'">' +
           'The helper could not load this area{{ s.helper.msg ? ": " + s.helper.msg : "." }} ' +
           'A support report (Menu → Settings) helps us find out why.</div>' +
-        '<div class="cep-sub" ng-if="!s.trucking && s.helper.outdated && (s.helper.state === \'ready\' || s.helper.state === \'loading\')">' +
+        '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && s.helper.outdated && (s.helper.state === \'ready\' || s.helper.state === \'loading\')">' +
           'Update the Cargo Earth helper for grocery runs.</div></div>' +
       '<div class="cep-card cep-stats"><div>{{ s.todayCount }}<span>orders today</span></div>' +
         '<div>{{ fmt.short(s.todayEarned) }}<span>earned today</span></div></div>' +
@@ -1315,7 +1325,9 @@ angular.module('beamng.apps')
               '<strong>{{ fmt.money(s.active.pay) }}</strong></div>' +
             '<div><div class="cep-name">{{ here().name }}</div>' +
               '<div class="cep-meta">{{ here().label }}{{ here().town ? " · " + here().town : "" }}</div>' +
-              '<div class="cep-meta" ng-if="s.active.taxi">{{ s.active.taxi.mode === "rush" ? "Rush: only speed counts" : "Comfort: drive smoothly" }}</div></div>' +
+              '<div class="cep-sub" ng-if="s.active.taxi">{{ s.active.taxi.people }} passenger{{ s.active.taxi.people === 1 ? "" : "s" }} · {{ s.active.taxi.mode === "rush" ? "Rush: only speed counts" : "Comfort: drive smoothly" }}</div>' +
+              '<div class="cep-sub" role="status" ng-if="s.active.taxi && s.active.phase === \'toPickup\' && (!s.taxi.eligible || s.taxi.seats < s.active.taxi.people)">' +
+                '{{ !s.taxi.eligible ? s.taxi.hint : "Not enough passenger seats for this group." }}</div></div>' +
             '<div class="cep-drive">' +
               '<div class="cep-dist">{{ fmt.dist(s.active.distM).v }}<small>{{ fmt.dist(s.active.distM).u }}</small></div>' +
               '<div class="cep-sub" ng-if="!s.active.stop.inZone">{{ s.active.distRoad ? "by road" : ' +
@@ -1616,6 +1628,20 @@ angular.module('beamng.apps')
         scope.cancelAsk = false
         var arg = value === undefined ? '' : ', ' + bngApi.serializeToLua(value)
         bngApi.engineLua('cargoEarth_core and cargoEarth_core.phoneAction("' + name + '"' + arg + ') or nil', apply)
+      }
+      // Buttons keep the dropdown inside the rendered dashboard texture; native select popups cannot receive its taps.
+      scope.workModes = [{id: 'courier', name: 'Food delivery'}, {id: 'trucking', name: 'Freight'}, {id: 'taxi', name: 'Taxi'}, {id: 'bus', name: 'Bus'}]
+      scope.modePicker = {work: false, settings: false}
+      scope.workModeName = function (id) {
+        for (var i = 0; i < scope.workModes.length; i++) if (scope.workModes[i].id === id) return scope.workModes[i].name
+        return 'Choose job type'
+      }
+      scope.chooseWorkMode = function (where, id) {
+        scope.modePicker.work = scope.modePicker.settings = false
+        var state = where === 'settings' ? scope.st : scope.s
+        if (!state || !state.canSwitch || id === state.mode || !scope.workModes.some(function (m) { return m.id === id })) return
+        if (where === 'settings') scope.sdo('mode', id)
+        else scope.act('mode', id)
       }
       // cancelling costs money: the first press asks, the second cancels
       scope.confirmCancel = function () {

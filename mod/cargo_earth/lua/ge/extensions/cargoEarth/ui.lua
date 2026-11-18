@@ -97,7 +97,14 @@ local function truckOptions(core, S, mods)
 end
 
 local function options(core, S, mods)
-  if S.mode == 'courier' then courierOptions(core, S, mods) else truckOptions(core, S, mods) end
+  if S.mode == 'courier' then courierOptions(core, S, mods)
+  elseif S.mode == 'trucking' then truckOptions(core, S, mods)
+  else
+    for _, item in ipairs(core.settingsState().items) do
+      local value = floatPtr(S.mode .. '.' .. item.key, item.value)
+      if im.SliderFloat(item.label .. ' (' .. item.unit .. ')', value, item.min, item.max, '%.1f') then core.setOption(item.key, value[0]) end
+    end
+  end
   if im.Button('Generate jobs') then
     core.saveOptions()
     core.generate()
@@ -372,7 +379,10 @@ function M.draw(core, S, mods, earth, trailers)
         im.SameLine()
         if im.Button((S.mode == 'trucking' and '[Trucking]' or 'Trucking') .. '##mode2') then core.setMode('trucking') end
         im.SameLine()
-        txt(S.mode == 'courier' and 'Food orders, any car' or 'Cargo with a trailer')
+        if im.Button((S.mode == 'taxi' and '[Taxi]' or 'Taxi') .. '##mode3') then core.setMode('taxi') end
+        im.SameLine()
+        if im.Button((S.mode == 'bus' and '[Bus]' or 'Bus') .. '##mode4') then core.setMode('bus') end
+        if S.mode == 'taxi' then wrapped(core.taxiState().hint) end
       end
       wrapped(S.packInfo)
       local hi = core.helperInfo and core.helperInfo()
@@ -383,7 +393,7 @@ function M.draw(core, S, mods, earth, trailers)
       im.Separator()
       if S.job then
         if im.CollapsingHeader1('Active job', im.TreeNodeFlags_DefaultOpen) then active(core, S, trailers) end
-      elseif (S.mode == 'courier' and not S.fidx) or (S.mode == 'trucking' and not S.idx) then
+      elseif ((S.mode == 'courier' or S.mode == 'taxi') and not S.fidx) or (S.mode == 'trucking' and not S.idx) then
         txt('No data pack for this mode.')
       else
         if im.CollapsingHeader1('Options', im.TreeNodeFlags_DefaultOpen) then options(core, S, mods) end

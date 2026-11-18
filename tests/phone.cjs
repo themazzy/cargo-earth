@@ -209,7 +209,29 @@ for (const t of timers.filter(timer => timer.interval === 250)) t.fn()
 assert.equal(scope.tab, 'radio', 'a choice made here a moment ago is not undone by an older answer')
 answer = {screen: 'offline'}
 assert(directive.template.includes('radio-browser.info'))
-assert(directive.template.includes('aria-label="Job type"') && directive.template.includes("act('mode', 'trucking')"), 'the offline screen switches the job type')
+assert.deepEqual(Array.from(scope.workModes, m => m.id), ['courier', 'trucking', 'taxi', 'bus'])
+assert.equal(scope.workModeName('taxi'), 'Taxi')
+assert(directive.template.includes('chooseWorkMode(\'work\', m.id)'), 'the offline dropdown switches the job type')
+answer = {screen: 'offline', mode: 'taxi', canSwitch: true, taxi: {eligible: true, seats: 3}}
+scope.s = {screen: 'offline', mode: 'trucking', canSwitch: true}
+scope.modePicker.work = true
+scope.chooseWorkMode('work', 'taxi')
+assert(commands.at(-1).includes('phoneAction("mode", "taxi")'))
+assert.equal(scope.s.mode, 'taxi')
+assert(!scope.modePicker.work, 'Choosing a mode closes the dropdown')
+const modeCommandCount = commands.length
+scope.chooseWorkMode('work', 'taxi')
+scope.s.canSwitch = false
+scope.chooseWorkMode('work', 'bus')
+assert.equal(commands.length, modeCommandCount, 'Active jobs and reselecting the current mode send no switch')
+answer = {mode: 'taxi', canSwitch: true, items: []}
+scope.st = {mode: 'courier', canSwitch: true}
+scope.modePicker.settings = true
+scope.chooseWorkMode('settings', 'taxi')
+assert(commands.at(-1).includes('pcall(cargoEarth_core.settingsDo, "mode", "taxi")'))
+assert.equal(scope.st.mode, 'taxi')
+assert(!scope.modePicker.settings)
+answer = {screen: 'offline'}
 scope.setTab('orders')
 scope.setTab('invalid')
 assert.equal(scope.tab, 'orders')
