@@ -1624,7 +1624,7 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
   end
   local seq = 0
   local function rnd(n) seq = seq % n + 1 return seq end
-  local offers = taxi.offers(near, sights, 50.02, 14.02, rnd)
+  local offers = taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 3)
   assert(#offers == taxi.OFFERS, 'three rides: ' .. #offers)
   local seen = {}
   for _, o in ipairs(offers) do
@@ -1635,10 +1635,10 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
     assert(o.km >= taxi.KM[1] * taxi.ROAD_FACTOR - 1e-9 and o.km <= taxi.KM[2] * taxi.ROAD_FACTOR + 1e-9)
     local rules = taxi.MODES[o.taxi.mode]
     assert(rules, 'every ride has a mode: ' .. tostring(o.taxi.mode))
-    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) * rules.pay / 5 + 0.5) * 5 and o.minutes > 0)
+    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) * (1 + 0.2 * (o.taxi.people - 1)) * rules.pay / 5 + 0.5) * 5 and o.minutes > 0)
     assert(cargo.supports(o) and cargo.handling(o) == 'Fragile', 'a rough ride is felt')
   end
-  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, {maxKm = 1}) == 0, 'the longest-job setting holds')
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, {maxKm = 1}, 3) == 0, 'the longest-job setting holds')
   -- comfort and rush: the same ride, driven fast and rough or slow and smooth
   local function tipFn(pay, m, limit) return m < limit * 0.5 and 50 or 0 end
   local comfortRide, rushRide = { taxi = { people = 1, mode = 'comfort' } }, { taxi = { people = 1, mode = 'rush' } }
@@ -1651,9 +1651,9 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
   local rpLate = taxi.settle(rushRide, 200, 40, 30, 0.02, 0.5, 100, tipFn)
   assert(rpLate == 100, 'rush, ten minutes late: half the fare (floor): ' .. rpLate)
   assert(taxi.info({ taxi = { people = 2 } }).mode == 'comfort', 'an older ride counts as comfort')
-  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, function() return false end) == 0, 'a long detour is out')
-  assert(#taxi.offers(function() return {} end, sights, 50.02, 14.02, rnd) == 0, 'no addresses, no rides')
-  assert(#taxi.offers(near, function() return {} end, 50.02, 14.02, rnd) == 0, 'no sights, no rides')
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, function() return false end, nil, 3) == 0, 'a long detour is out')
+  assert(#taxi.offers(function() return {} end, sights, 50.02, 14.02, rnd, nil, nil, 3) == 0, 'no addresses, no rides')
+  assert(#taxi.offers(near, function() return {} end, 50.02, 14.02, rnd, nil, nil, 3) == 0, 'no sights, no rides')
   assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 0) == 0, 'no passenger seats, no rides')
   for _ = 1, 5 do
     for _, o in ipairs(taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 1)) do
@@ -1840,6 +1840,56 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   assert(not s.job and c.money > money, 'paid at the sight')
   advance(core, 4)
   assert(riders == 0, 'and they get out')
+end)
+
+test('taxi seating retries and passengers clear on cancel and pause and return on resume', function()
+  local core, s = fresh()
+  vehicle.model, vehicle.bodyStyle, s.career.garage.car.model = 'van', 'Van', 'van'
+  s.career.garage.debt = 0
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.autoIdx = fuel.index()
+  fuel.addArea(s.autoIdx, 'taxi', sightRows())
+  freeSeats = 7
+  core.random = function(n) return n or 0.99 end
+  core.setMode('taxi')
+  local ride = assert(s.offers[1])
+  assert(ride.taxi.people == 7)
+  assert(ride.pay == ride.taxi.fare.fare + ride.fuelAllowance, 'fuel is added separately from the passenger fare')
+  s.phone.online, s.phone.incoming = true, {job = ride, expiresAt = s.clock + 20}
+  assert(core.phoneState().incoming.taxi.fare.passengerBonus == ride.taxi.fare.passengerBonus, 'offer exposes its stored breakdown')
+  core.take(1)
+  pose.lat, pose.lon = ride.from.g[1], ride.from.g[2]
+  local bad = true
+  core.G.carPassengers = function(n)
+    if n > 0 and bad then return nil end
+    riders = n
+    return n
+  end
+  advance(core, 10)
+  assert(s.phase == 'toPickup' and riders == 0 and core.phoneState().active.taxi.boardingError, 'failed seating does not start a paid ride')
+  bad = false
+  advance(core)
+  assert(s.phase == 'toDelivery' and riders == 7 and not ride.taxi.boardingError)
+  local pay = ride.pay
+  core.saveOptions()
+  core.settingsDo('pause')
+  assert(s.pendingCareer and riders == 0, 'pausing removes passenger mass')
+  core.phoneAction('resume')
+  s.fidx = nil -- restoring occupants must not wait for geographic data
+  advance(core, 2)
+  assert(s.phase == 'toDelivery' and riders == 7 and s.job.pay == pay and s.job.taxi.fare.passengerRate > 1)
+  local clearFails = true
+  core.G.carPassengers = function(n)
+    if n == 0 and clearFails then return nil end
+    riders = n
+    return n
+  end
+  core.cancel(true)
+  assert(not s.job and s.taxiSeated and s.taxiSeated.n == 0, 'a failed removal is kept for retry')
+  clearFails = false
+  advance(core, 12)
+  assert(riders == 0 and not s.taxiSeated, 'cancelled passengers clear even while map data is unavailable')
+  freeSeats = nil
 end)
 
 local cameras = require('cargoEarth/cameras')

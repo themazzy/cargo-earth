@@ -23,8 +23,13 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
 - At most two orders in a row come from one place before others get a turn. The phone shows separate *Pick up in* and
   *Deliver in* targets.
 
+**Taxi** (owned cars, SUVs and passenger vans with verified passenger seats)
+- Pick up a group at a real nearby address and drive to an airport, station, museum, sight or hotel. Groups can fill all usable passenger seats, with seated dummies adding 75 kg each.
+- The fare starts at 50 CZK plus 18 CZK/km. Each passenger after the first adds 20%; Rush then adds 25%. Fuel and reputation supplements follow their existing rules. The phone shows the breakdown before acceptance.
+- Comfort passengers reward a smooth ride; Rush passengers reward speed. Time allowances include the pickup drive and use road distances where mapped, with labelled pickup estimates elsewhere. Existing accepted rides keep their agreed fares.
+
 **Freight** (the work depends on what you drive, see [vehicle types](docs/VEHICLE_TYPES.md))
-- **Car:** taxi rides: a passenger from a real address near you to an airport, a station, a museum, a sight or a hotel, seated in the car. Comfort passengers want a smooth ride and tip for it; rush passengers pay more for a fast one (needs the latest helper).
+- **Car:** tow jobs with a tow hitch, or company contracts.
 - **SUV or pickup:** parts runs from parts shops and car plants to repair workshops.
 - **Van:** parcel routes from a depot to 4-7 addresses, emptying the cargo containers stop by stop; van freight.
 - **Box truck:** business shipping between real companies.
@@ -148,7 +153,7 @@ Cargo Earth uses **47821** to coexist with EarthRadio on **47820**. Update both 
 1. **Start BeamNG.Earth.** The installer sets the helper up there with **Start with BeamNG.Earth** on, so it runs whenever you play (you can turn that off on Earth's **Add-ons** page). After a manual install, the phone shows **Install and start** or **Start helper** when the helper isn't running; one press starts it through BeamNG.Earth and turns that switch on. The helper needs internet access.
 2. **Load a BeamNG.Earth map** with the mod enabled (BeamNG's Mods menu shows **cargo_earth_career**).
 3. **The phone:** the first time, the mod adds the **Cargo Earth: Phone** app to BeamNG.Earth's ".Earth" UI layout, above the speedometer. Move or resize it with the UI Apps editor (Escape → **UI Apps**). If you play with another layout, or removed the phone, add **Cargo Earth: Phone** there yourself and save the layout. Everything is done by clicking on the phone; the mod has no key bindings.
-4. **Choose Career or Free play** on the phone, pick Food delivery, Freight or Bus and go online on **Work**.
+4. **Choose Career or Free play** on the phone, then choose Food delivery, Freight, Taxi or Bus from the **Work** dropdown.
 5. Optional: turn **traffic on in BeamNG.Earth** for the speed-limit sign on the phone (it reads Earth's road graph).
 
 If the phone says the helper is not running: press **Start helper** on the phone, check the Add-ons page (step 1), or run `start_helper.cmd` from `%LOCALAPPDATA%\CargoEarth\helper` on Windows or `start_helper.sh` from `${XDG_DATA_HOME:-$HOME/.local/share}/CargoEarth/helper` on Linux and keep its window open. In Czechia the bundled data works without the helper, but the radio, speed cameras, bus lines, parts runs, repair shops and grocery runs still need it.

@@ -1278,7 +1278,8 @@ angular.module('beamng.apps')
         '<div class="cep-scroll cep-order-scroll">' +
           '<div class="cep-card cep-route"><div class="cep-stop">' +
             '<span class="cep-dot"></span><div><div class="cep-label">Pickup</div><div class="cep-name">{{ s.incoming.from.name }}</div>' +
-              '<div class="cep-meta">{{ fmt.km(s.incoming.pickupKm) }} away<span ng-if="s.incoming.from.town"> · {{ s.incoming.from.town }}</span></div></div>' +
+              '<div class="cep-sub">{{ fmt.km(s.incoming.taxi.pickupRoadKm || s.incoming.pickupKm) }} away<span ng-if="s.incoming.taxi.pickupRoadKm !== undefined">{{ s.incoming.taxi.pickupEstimated ? " est. by road" : " by road" }}</span>' +
+                '<span ng-if="s.incoming.from.town"> · {{ s.incoming.from.town }}</span></div></div>' +
             '<span><span class="cep-line"></span></span><span></span>' +
             '<span class="cep-dot to"></span><div><div class="cep-label">{{ s.incoming.route ? s.incoming.route.count + " drop-offs, nearest first" : "Drop-off" }}</div>' +
               '<div class="cep-name">{{ s.incoming.route ? s.incoming.route.stops[0].name + " and " + (s.incoming.route.count - 1) + " more" : s.incoming.to.name }}</div>' +
@@ -1294,6 +1295,15 @@ angular.module('beamng.apps')
           '<div class="cep-sub" ng-if="s.incoming.sizeBonus">+{{ fmt.money(s.incoming.sizeBonus) }} for the larger load</div>' +
           '<div class="cep-sub" ng-if="s.incoming.premium">Premium customer: pays more, wants it sooner.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.taxi">{{ s.incoming.taxi.people > 1 ? s.incoming.taxi.people + " passengers ride" : "One passenger rides" }} with you. {{ s.incoming.taxi.mode === "rush" ? "Rush: in a hurry, only speed counts. Arriving early pays a big tip, late minutes cost more." : "Comfort: no hurry, a smooth ride pays a big tip and bumps cost a lot." }}</div>' +
+          '<div class="cep-card" aria-label="Taxi fare breakdown" ng-if="s.incoming.taxi.fare">' +
+            '<div class="cep-label">Fare breakdown</div>' +
+            '<div class="cep-keyval"><span>Base + trip distance</span><strong>{{ fmt.money(s.incoming.taxi.fare.baseFare) }}</strong></div>' +
+            '<div class="cep-sub">{{ fmt.money(s.incoming.taxi.fare.base) }} base + {{ fmt.money(s.incoming.taxi.fare.perKm) }}/km</div>' +
+            '<div class="cep-keyval" ng-if="s.incoming.taxi.fare.passengerRate > 0"><span>Extra passengers +{{ fmt.pct(s.incoming.taxi.fare.passengerRate) }}</span>' +
+              '<strong>+{{ fmt.money(s.incoming.taxi.fare.passengerBonus) }}</strong></div>' +
+            '<div class="cep-keyval" ng-if="s.incoming.taxi.fare.modeRate > 0"><span>Rush +{{ fmt.pct(s.incoming.taxi.fare.modeRate) }}</span>' +
+              '<strong>+{{ fmt.money(s.incoming.taxi.fare.modeBonus) }}</strong></div>' +
+            '<div class="cep-sub">Fuel and reputation adjustments are included in the offer above. Time allowance includes the pickup drive.</div></div>' +
           '<div class="cep-sub" ng-if="s.incoming.tow && s.incoming.tow.wreck"><b>{{ s.incoming.tow.wreck }}</b></div>' +
           '<div class="cep-sub cep-warn" ng-if="s.incoming.tow && s.incoming.tow.weak">Your car may struggle: little power for this load.</div>' +
           '<div class="cep-sub" ng-if="s.incoming.tow">{{ s.incoming.tow.cars > 1 ? s.incoming.tow.cars + " cars go" : "The car goes" }} ' +
@@ -1327,7 +1337,8 @@ angular.module('beamng.apps')
               '<div class="cep-meta">{{ here().label }}{{ here().town ? " · " + here().town : "" }}</div>' +
               '<div class="cep-sub" ng-if="s.active.taxi">{{ s.active.taxi.people }} passenger{{ s.active.taxi.people === 1 ? "" : "s" }} · {{ s.active.taxi.mode === "rush" ? "Rush: only speed counts" : "Comfort: drive smoothly" }}</div>' +
               '<div class="cep-sub" role="status" ng-if="s.active.taxi && s.active.phase === \'toPickup\' && (!s.taxi.eligible || s.taxi.seats < s.active.taxi.people)">' +
-                '{{ !s.taxi.eligible ? s.taxi.hint : "Not enough passenger seats for this group." }}</div></div>' +
+                '{{ !s.taxi.eligible ? s.taxi.hint : "Not enough passenger seats for this group." }}</div>' +
+              '<div class="cep-sub" role="status" ng-if="s.active.taxi.boardingError">Passengers could not be seated. Stay at the pickup to retry.</div></div>' +
             '<div class="cep-drive">' +
               '<div class="cep-dist">{{ fmt.dist(s.active.distM).v }}<small>{{ fmt.dist(s.active.distM).u }}</small></div>' +
               '<div class="cep-sub" ng-if="!s.active.stop.inZone">{{ s.active.distRoad ? "by road" : ' +
