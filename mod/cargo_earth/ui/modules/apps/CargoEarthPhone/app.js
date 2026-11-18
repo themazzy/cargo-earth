@@ -1033,6 +1033,8 @@ angular.module('beamng.apps')
         "<div class=\"cep-sub\">{{ st.jobHint }}</div>" +
         "<div ng-repeat=\"it in st.items\"><div class=\"cep-card\" ng-if=\"it.unit === 'km'\"><label><span class=\"cep-label\">{{ it.label }}</span>" +
         "<input class=\"cep-input cep-job-input\" type=\"number\" step=\"any\" min=\"{{ it.min }}\" max=\"{{ it.max }}\" aria-label=\"{{ it.label }} in kilometres\" ng-model=\"jobDraft()[it.key]\"></label>" +
+        "<div class=\"cep-step2\"><button class=\"cep-sm ghost\" aria-label=\"Less\" ng-click=\"nudgeDraft(it, -1)\">−</button>" +
+        "<button class=\"cep-sm ghost\" aria-label=\"More\" ng-click=\"nudgeDraft(it, 1)\">+</button></div>" +
         "<div class=\"cep-sub\">{{ fmt.num(it.min) }}–{{ fmt.num(it.max) }} km</div></div>" +
         "<div class=\"cep-li\" ng-if=\"it.unit !== 'km'\" style=\"cursor:default\"><div class=\"cep-name\">{{ it.label }}</div><div class=\"cep-step2\">" +
         "<button class=\"cep-sm ghost\" ng-click=\"sdo('step', it.key, -1)\">−</button><b>{{ it.value }}</b><button class=\"cep-sm ghost\" ng-click=\"sdo('step', it.key, 1)\">+</button></div></div></div>" +
@@ -1072,7 +1074,6 @@ angular.module('beamng.apps')
             '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'x-\')">Right</button></div></div>' +
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-if="st.dash.nudged" ng-click="sdo(\'dash\', \'reset\')">Back to where it started</button>' +
           '<button class="cep-sm ghost" ng-click="sdo(\'dash\', \'measure\')">Measure this car again</button></div></div>' +
-        '' +
         '<button class="cep-sm ghost" ng-if="st.canPause" ng-disabled="st.savingDamage" ng-click="sdo(\'pause\')">{{ st.savingDamage ? "Saving vehicle damage..." : "Save and switch career" }}</button>' +
         '<button class="cep-sm ghost" ng-if="st.canRestart && !restart.open" ng-click="restartOpen()">Delete this career</button>' +
         '<div class="cep-card" ng-if="st.canRestart && restart.open">' +
@@ -1699,15 +1700,39 @@ angular.module('beamng.apps')
         return 'Choose a job type'
       }
       scope.chooseJobSettings = function (id) { scope.modePicker.jobs = false; scope.sdo('jobType', id) }
+      // Drafts belong to one loaded career; an untouched draft follows the saved values (they can change elsewhere,
+      // e.g. in the old jobs window), while a half-typed one survives polling.
+      scope.rangeBase = {}
+      scope.rangeDraftsCareer = null
+      function sameRange(a, b) {
+        var keys = Object.keys(a || {}).concat(Object.keys(b || {}))
+        return keys.every(function (k) { return (a || {})[k] === (b || {})[k] })
+      }
       scope.jobDraft = function () {
         var state = scope.st || {}, id = state.jobType
         if (!id) return {}
-        if (!scope.rangeDrafts[id]) {
-          var draft = {}
-          ;(state.items || []).forEach(function (it) { if (it.unit === 'km') draft[it.key] = it.value })
-          scope.rangeDrafts[id] = draft
+        if (state.careerEpoch !== scope.rangeDraftsCareer) {
+          scope.rangeDrafts = {}
+          scope.rangeBase = {}
+          scope.rangeDraftsCareer = state.careerEpoch
+        }
+        var saved = {}
+        ;(state.items || []).forEach(function (it) { if (it.unit === 'km') saved[it.key] = it.value })
+        var draft = scope.rangeDrafts[id]
+        if (!draft || (sameRange(draft, scope.rangeBase[id]) && !sameRange(saved, scope.rangeBase[id]))) {
+          scope.rangeDrafts[id] = JSON.parse(JSON.stringify(saved))
+          scope.rangeBase[id] = saved
         }
         return scope.rangeDrafts[id]
+      }
+      // −/+ beside each distance, so it can be set without a keyboard (the dash phone and VR can't type)
+      scope.nudgeDraft = function (it, dir) {
+        var draft = scope.jobDraft(), v = Number(draft[it.key])
+        if (!isFinite(v)) v = it.value
+        var at = dir < 0 ? v - 0.01 : v   // going down from 100 steps by 5, from 10 by 0.5
+        var step = at < 10 ? 0.5 : (at < 100 ? 5 : 25)
+        v = Math.round((v + dir * step) / step) * step
+        draft[it.key] = Math.max(it.min, Math.min(it.max, Math.round(v * 10) / 10))
       }
       scope.jobRangeValid = function () {
         var state = scope.st || {}, draft = scope.jobDraft()
@@ -1723,7 +1748,7 @@ angular.module('beamng.apps')
       scope.resetJobRange = function () { if (scope.st) scope.sdo('resetJobRange', scope.st.jobType) }
       function settingsResult(r) {
         scope.st = r
-        if (r && (r.rangeSaved || r.rangeReset)) delete scope.rangeDrafts[r.rangeChanged]
+        if (r && (r.rangeSaved || r.rangeReset)) { delete scope.rangeDrafts[r.rangeChanged]; delete scope.rangeBase[r.rangeChanged] }
       }
 
       scope.cf = { text: '', kind: null, afford: false, sort: 'price', help: null, detail: null }

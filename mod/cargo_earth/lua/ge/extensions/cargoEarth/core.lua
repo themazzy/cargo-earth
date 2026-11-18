@@ -283,8 +283,7 @@ end
 function M.settingsJobType()
   if M.jobSettings.type(S.settingsJobType) then return S.settingsJobType end
   if S.mode ~= 'trucking' then return S.mode end
-  local tier = freightSettingsTier()
-  return tier == 'car' and 'tow_light' or tier == 'suv' and 'parts' or 'freight_' .. tier
+  return M.windowJobType()
 end
 
 local function clearFreight()
@@ -485,6 +484,7 @@ end
 
 local function loadCareer(c)
   S.career = c
+  S.careerEpoch = (S.careerEpoch or 0) + 1 -- the phone drops distance drafts typed for another career
   M.updateOnLoad = true   -- ask the helper to look for a newer release (Jan: every time a save is loaded)
   c.history = c.history or {}
   c.activeSeconds = tonumber(c.activeSeconds) or 0
@@ -4680,7 +4680,7 @@ function M.settingsState()
   local id = M.settingsJobType()
   local profile, opts = M.jobSettings.type(id), M.jobOptions(id)
   local bounds = M.jobSettings.bounds(id)
-  local out = { mode = S.mode, jobType = id, jobTypes = M.jobSettings.types,
+  local out = { mode = S.mode, jobType = id, jobTypes = M.jobSettings.types, careerEpoch = S.careerEpoch or 0,
     canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil and S.career.garage.started == true, window = S.window,
     savingDamage = S.pauseSaving ~= nil, reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
     canRestart = S.pendingCareer ~= nil or S.career.garage.started == true or nil, restartWord = M.RESTART_WORD }
@@ -5029,7 +5029,31 @@ function M.spawnTrailer(atPickup)
   end
 end
 
+-- The profile the jobs window's distance sliders change: the one new offers in this mode use.
+function M.windowJobType()
+  if S.mode ~= 'trucking' then return M.jobSettings.type(S.mode) and S.mode or nil end
+  local tier = freightSettingsTier()
+  return tier == 'car' and 'tow_light' or tier == 'suv' and 'parts' or 'freight_' .. tier
+end
+
+-- Distances go to the job type's own profile (the one generators read), so the old window and the phone agree.
+-- (M. field: the main chunk is at Lua's 200-local limit)
+function M.setRange(k, v)
+  local id = M.windowJobType()
+  local n, bounds = tonumber(v), id and M.jobSettings.bounds(id)
+  if not (n and bounds and bounds[k]) then return false end
+  local range = M.jobOptions(id)
+  range[k] = math.max(bounds[k][1], math.min(bounds[k][2], n))
+  -- moving one end past the other drags the other along
+  if k == 'minKm' and range.minKm > range.maxKm then range.maxKm = range.minKm end
+  if k == 'maxKm' and range.maxKm < range.minKm then range.minKm = range.maxKm end
+  if not M.jobSettings.set(S.optsByMode, id, range) then return false end
+  S.companyBoard, S.companyBoardDirty = nil, true
+  return true
+end
+
 function M.setOption(k, v)
+  if (k == 'nearKm' or k == 'minKm' or k == 'maxKm') and M.setRange(k, v) then return end
   if S.mode ~= 'trucking' or (k ~= 'minKm' and k ~= 'maxKm') then S.opts[k] = v return end
   local tier = freightSettingsTier()
   S.opts.freightRanges = S.opts.freightRanges or {}

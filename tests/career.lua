@@ -308,6 +308,30 @@ test('Jobs settings selects profiles without changing work and saves only the re
   out = core.settingsDo('jobType', 'bus')
   assert(#out.items == 0 and out.jobHint:find('mapped'))
 end)
+
+test('The old jobs window writes the profile new offers use, after the phone saved one', function()
+  local core, s = fresh()
+  core.settingsDo('jobRange', 'courier', {nearKm = 2, minKm = 1, maxKm = 3})
+  local epoch = core.settingsState().careerEpoch
+  core.setOption('maxKm', 6)
+  assert(core.jobOptions('courier').maxKm == 6, 'window slider reaches the saved courier profile')
+  core.setOption('minKm', 7)
+  local r = core.jobOptions('courier')
+  assert(r.minKm == 7 and r.maxKm == 7, 'shortest past longest drags the longest along')
+  core.setOption('maxKm', 20)
+  assert(core.jobOptions('courier').maxKm == 8, 'clamped to the profile bounds')
+  core.setOption('count', 4)
+  assert(s.opts.count == 4, 'other options keep their old place')
+  s.mode, s.opts = 'trucking', s.optsByMode.trucking
+  local id = core.windowJobType()
+  core.settingsDo('jobRange', id, {nearKm = 30, minKm = 20, maxKm = 100})
+  core.setOption('maxKm', 640)
+  assert(core.jobOptions(id).maxKm == 640, 'trucking window reaches ' .. id)
+  local saved = copy(s.career)
+  s.pendingCareer = saved
+  core.phoneAction('resume')
+  assert(core.settingsState().careerEpoch ~= epoch, 'loading a career gives the phone a new draft scope')
+end)
 local function start(core)
   local board = core.placesDo('refreshCompanies')
   assert(#board.companies == 1)
@@ -1762,11 +1786,11 @@ test('Taxi distance settings are independent and old saved rides resume in Taxi'
   local defaults = core.settingsState().items
   assert(#defaults == 3 and defaults[2].value < 2 and defaults[3].value > 15, 'taxi-specific distance defaults')
   core.settingsDo('step', 'nearKm', -1)
-  assert(s.opts.nearKm == 1)
+  assert(core.jobOptions('taxi').nearKm == 1)
   core.setMode('courier')
-  assert(s.opts.nearKm == nil, 'food pickup range is unchanged')
+  assert(core.jobOptions('courier').nearKm == food.defaults.nearKm, 'food pickup range is unchanged')
   core.setMode('taxi')
-  assert(s.opts.nearKm == 1)
+  assert(core.jobOptions('taxi').nearKm == 1)
   core.take(1)
   assert(s.job and s.job.taxi)
   local id = s.job.id
@@ -1777,7 +1801,7 @@ test('Taxi distance settings are independent and old saved rides resume in Taxi'
   saved.mode = 'trucking'   -- the format used before Taxi was split out
   s.pendingCareer = saved
   core.phoneAction('resume')
-  assert(s.mode == 'taxi' and s.opts == s.optsByMode.taxi and s.opts.nearKm == 1)
+  assert(s.mode == 'taxi' and s.opts == s.optsByMode.taxi and core.jobOptions('taxi').nearKm == 1)
   assert(s.job.id == id and s.phase == 'toPickup', 'the active ride is preserved')
   freeSeats = nil
 end)

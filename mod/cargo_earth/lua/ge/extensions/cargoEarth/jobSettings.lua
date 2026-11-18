@@ -1,6 +1,7 @@
 -- Independent distance profiles. Defaults describe normal jobs; editable limits are separate.
 local M = {}
 M.MAX_KM = 800
+M.NEAR_MAX = {courier = 25, taxi = 5, tow_light = 25, tow_heavy = 25, parcels = 30, parts = 50}
 M.types = {
   {id = 'courier', name = 'Food and groceries', mode = 'courier'},
   {id = 'taxi', name = 'Taxi rides', mode = 'taxi'},
@@ -45,7 +46,10 @@ end
 function M.bounds(id)
   if id == 'bus' then return {} end
   local max = id == 'courier' and 8 or id == 'taxi' and 15.6 or id == 'parcels' and 100 or M.MAX_KM
-  return {nearKm = {0.5, id == 'courier' and 25 or 200}, minKm = {0.5, max}, maxKm = {0.5, max}}
+  -- Pickup radius: address-based jobs (taxi, tow, parcels) copy every address in that radius on each refresh, so
+  -- they stay local; depot-based work (freight, contracts, fuel) may look further.
+  local near = M.NEAR_MAX[id] or 200
+  return {nearKm = {0.5, near}, minKm = {0.5, max}, maxKm = {0.5, max}}
 end
 
 local function finite(value)
