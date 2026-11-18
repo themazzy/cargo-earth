@@ -86,10 +86,10 @@ function M.pickRings(cities, lat, lon, rings)
   for i, r in ipairs(rings) do
     local n = 0
     spares[i] = {}
+    -- only scheduled towns are taken; a spare stays free for later rings (it may be the only town in one)
     for _, c in ipairs(M.pick(cities, lat, lon, r[1], r[2], share * 3)) do
       if not seen[c] then
-        seen[c] = true
-        if n < share then n = n + 1 out[#out + 1] = { city = c, ring = i } else table.insert(spares[i], c) end
+        if n < share then n, seen[c] = n + 1, true out[#out + 1] = { city = c, ring = i } else table.insert(spares[i], c) end
       end
     end
   end
@@ -132,7 +132,8 @@ function M.tick(st, now, p, rings, cities, ask, covered, onSites)
           if #data.depots > 0 then onSites(tostring(data.key or path), data.depots, t.city)
           else
             -- no workplaces there (a resort, a suburb): the next town of the same ring instead
-            local spare = st.spares and st.spares[t.ring] and table.remove(st.spares[t.ring], 1)
+            local list, spare = st.spares and st.spares[t.ring] or {}, nil
+            repeat spare = table.remove(list, 1) until not spare or not M.scheduled(st, spare)
             if spare then st.towns[#st.towns + 1] = { city = spare, ring = t.ring, nextAt = 0 } end
           end
         elseif data.state == 'failed' then t.nextAt = now + M.FAILED_S
@@ -140,6 +141,11 @@ function M.tick(st, now, p, rings, cities, ask, covered, onSites)
       end)
     end
   end
+end
+
+function M.scheduled(st, city)
+  for _, t in ipairs(st.towns or {}) do if t.city == city then return true end end
+  return false
 end
 
 -- For the phone and settings: { towns = n asked, ready = n with workplaces, old = true when the helper is too old }.

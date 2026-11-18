@@ -53,6 +53,16 @@ for _, t in ipairs(both) do
   if road <= 250 then near = near + 1 elseif road >= 1000 then far = far + 1 else error('a town in the gap: ' .. c.n) end
 end
 assert(near >= 1 and far >= 1, near .. ' near, ' .. far .. ' far')
+-- a spare of one ring is still free for a later ring where it is the only town
+local towns0 = longhaul.TOWNS
+longhaul.TOWNS = 2   -- the first ring's two towns leave Berlin as its spare
+local spareCase = longhaul.pickRings(cities, 50.08, 14.42, {{120, 800}, {360, 370}})
+longhaul.TOWNS = towns0
+local berlinRing2 = false
+for _, t in ipairs(spareCase) do if t.city.n == 'Berlin' and t.ring == 2 then berlinRing2 = true end end
+local road = jobs.km(50.08, 14.42, 52.52, 13.4) * jobs.ROAD_FACTOR
+assert(road > 360 and road < 370, road)
+assert(berlinRing2, 'Berlin goes to the ring that has only Berlin')
 -- a town with no workplaces makes way for the next town of its ring
 local st3, asked3 = {}, {}
 longhaul.tick(st3, 0, p, {{300, 450}}, cities, function(path, done) asked3[#asked3 + 1] = done end, nil, function() end)
