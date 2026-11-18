@@ -3,9 +3,9 @@ local longhaul = require('cargoEarth/longhaul')
 local jobs = require('cargoEarth/jobs')
 
 -- the ring only opens for profiles that reach past the nearby areas
-assert(longhaul.ring({{minKm = 20, maxKm = 100}}) == nil)
-local lo, hi = longhaul.ring({{minKm = 20, maxKm = 100}, {minKm = 600, maxKm = 800}, {minKm = 200, maxKm = 300}})
-assert(lo == 200 and hi == 800, tostring(lo) .. '-' .. tostring(hi))
+assert(longhaul.rings({{minKm = 20, maxKm = 100}}) == nil)
+local rings = longhaul.rings({{minKm = 20, maxKm = 100}, {minKm = 600, maxKm = 800}, {minKm = 20, maxKm = 250}, {minKm = 600, maxKm = 800}})
+assert(#rings == 2 and rings[1][1] == 600 and rings[2][1] == 120 and rings[2][2] == 250, 'each profile keeps its own ring')
 
 local cities = longhaul.cities({rows = {
   {'Wien', 'AT', 48.2, 16.37, 1900}, {'Berlin', 'DE', 52.52, 13.4, 3500}, {'Muenchen', 'DE', 48.14, 11.58, 1500},
@@ -29,26 +29,41 @@ local function ask(path, onDone) asked[#asked + 1] = path answers[path] = onDone
 local st = {}
 local p = {lat = 50.08, lon = 14.42}
 local covered = function(lat) return lat > 52 end   -- pretend the pack has Berlin
-longhaul.tick(st, 0, p, 300, 450, cities, ask, covered, function(key, depots, city) added[#added + 1] = {key, #depots, city.n} end)
+longhaul.tick(st, 0, p, {{300, 450}}, cities, ask, covered, function(key, depots, city) added[#added + 1] = {key, #depots, city.n} end)
 assert(#asked == longhaul.IN_FLIGHT, 'only a few requests at once')
 for _, path in ipairs(asked) do assert(not path:find('52.52', 1, true), 'covered town not asked') end
 answers[asked[1]]({state = 'loading', key = 'k1', depots = {}})
 answers[asked[2]]({state = 'ready', key = 'k2', depots = {{id = 'overture:1', n = 'Lager', g = {48.2, 16.37}, t = 'yard'}}})
 assert(#added == 1 and added[1][1] == 'k2' and added[1][2] == 1)
-longhaul.tick(st, 1, p, 300, 450, cities, ask, covered, function(key, depots) added[#added + 1] = {key, #depots} end)
+longhaul.tick(st, 1, p, {{300, 450}}, cities, ask, covered, function(key, depots) added[#added + 1] = {key, #depots} end)
 assert(#asked == 3, 'the third town is asked next; the loading one waits ' .. longhaul.LOADING_S .. ' s')
-longhaul.tick(st, 10, p, 300, 450, cities, ask, covered, function() end)
+longhaul.tick(st, 10, p, {{300, 450}}, cities, ask, covered, function() end)
 assert(longhaul.status(st).ready == 1 and longhaul.status(st).towns == 3)
 -- an old helper (no /v1/sites) stops the asking
 answers[asked[#asked]](nil, 'HTTP 404')
 local n = #asked
-longhaul.tick(st, 100, p, 300, 450, cities, ask, covered, function() end)
+longhaul.tick(st, 100, p, {{300, 450}}, cities, ask, covered, function() end)
 assert(#asked == n and longhaul.status(st).old)
+-- two rings far apart both get towns (none from the gap between them)
+local both = longhaul.pickRings(cities, 50.08, 14.42, {{120, 250}, {1000, 1400}})
+local near, far = 0, 0
+for _, t in ipairs(both) do
+  local c = t.city
+  local road = jobs.km(50.08, 14.42, c.lat, c.lon) * jobs.ROAD_FACTOR
+  if road <= 250 then near = near + 1 elseif road >= 1000 then far = far + 1 else error('a town in the gap: ' .. c.n) end
+end
+assert(near >= 1 and far >= 1, near .. ' near, ' .. far .. ' far')
+-- a town with no workplaces makes way for the next town of its ring
+local st3, asked3 = {}, {}
+longhaul.tick(st3, 0, p, {{300, 450}}, cities, function(path, done) asked3[#asked3 + 1] = done end, nil, function() end)
+local before = #st3.towns
+asked3[1]({state = 'ready', key = 'empty', depots = {}})
+assert(#st3.towns == before + 1 or #st3.spares[1] == 0)
 -- moving far picks again
 local st2 = {}
-longhaul.tick(st2, 0, p, 300, 450, cities, function() end, nil, function() end)
+longhaul.tick(st2, 0, p, {{300, 450}}, cities, function() end, nil, function() end)
 local first = st2.towns
-longhaul.tick(st2, 0, {lat = 48.2, lon = 16.37}, 300, 450, cities, function() end, nil, function() end)
+longhaul.tick(st2, 0, {lat = 48.2, lon = 16.37}, {{300, 450}}, cities, function() end, nil, function() end)
 assert(st2.towns ~= first)
 
 -- far workplaces become delivery points (not pickups) and pass the checked-site rule only as far sites

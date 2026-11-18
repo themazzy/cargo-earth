@@ -25,17 +25,19 @@ function M.cities(data)
   return out
 end
 
--- The ring (road km) the far towns must lie in: the widest of the given distance profiles that reach past LOCAL_KM.
--- profiles: { { minKm, maxKm }, ... }. Returns minKm, maxKm, or nil when every profile stays local.
-function M.ring(profiles)
-  local lo, hi
+-- The rings (road km) far towns are wanted in: one per distance profile that reaches past LOCAL_KM, each kept apart
+-- (a 20-250 km freight profile and a 600-800 km contract one must both get towns, none in the gap between).
+-- profiles: { { minKm, maxKm }, ... }. Returns { { lo, hi }, ... } (the same ring once), or nil when all stay local.
+function M.rings(profiles)
+  local out, seen = {}, {}
   for _, r in ipairs(profiles or {}) do
     if type(r) == 'table' and tonumber(r.maxKm) and r.maxKm > M.LOCAL_KM then
-      local a = math.max(M.LOCAL_KM, tonumber(r.minKm) or 0)
-      lo, hi = math.min(lo or a, a), math.max(hi or r.maxKm, r.maxKm)
+      local lo, hi = math.max(M.LOCAL_KM, tonumber(r.minKm) or 0), r.maxKm
+      local key = string.format('%d-%d', math.floor(lo), math.floor(hi))
+      if not seen[key] then seen[key] = true out[#out + 1] = { lo, hi } end
     end
   end
-  return lo, hi
+  return #out > 0 and out or nil
 end
 
 local function bearing(lat1, lon1, lat2, lon2)
@@ -75,17 +77,40 @@ function M.pick(cities, lat, lon, minKm, maxKm, n)
   return out
 end
 
+-- The towns for several rings, { { city, ring }, ... }: TOWNS shared out between them (each gets its share, at least 2),
+-- no town twice.
+-- Also returns spares per ring (the next towns), tried when a town turns out to have no workplaces.
+function M.pickRings(cities, lat, lon, rings)
+  local out, spares, seen = {}, {}, {}
+  local share = math.max(2, math.ceil(M.TOWNS / #rings))
+  for i, r in ipairs(rings) do
+    local n = 0
+    spares[i] = {}
+    for _, c in ipairs(M.pick(cities, lat, lon, r[1], r[2], share * 3)) do
+      if not seen[c] then
+        seen[c] = true
+        if n < share then n = n + 1 out[#out + 1] = { city = c, ring = i } else table.insert(spares[i], c) end
+      end
+    end
+  end
+  return out, spares
+end
+
 -- One step, from the helper tick. st: this module's state (kept by the caller). p: the player { lat, lon }.
--- lo, hi: the ring from M.ring (nil: nothing far wanted). cities: from M.cities. ask(path, onDone): the helper call.
+-- rings: from M.rings (nil: nothing far wanted). cities: from M.cities. ask(path, onDone): the helper call.
 -- covered(lat, lon): true where the bundled pack already has workplaces. onSites(key, depots): ready workplaces.
-function M.tick(st, now, p, lo, hi, cities, ask, covered, onSites)
-  if not (lo and hi and p) or st.old then return end
-  local ringKey = string.format('%d-%d', math.floor(lo), math.floor(hi))
+function M.tick(st, now, p, rings, cities, ask, covered, onSites)
+  if not (rings and rings[1] and p) or st.old then return end
+  local parts = {}
+  for _, r in ipairs(rings) do parts[#parts + 1] = string.format('%d-%d', math.floor(r[1]), math.floor(r[2])) end
+  local ringKey = table.concat(parts, ',')
   if st.ring ~= ringKey or not st.at or jobs.km(st.at.lat, st.at.lon, p.lat, p.lon) > M.MOVE_KM then
     st.ring, st.at, st.towns = ringKey, { lat = p.lat, lon = p.lon }, {}
-    for _, c in ipairs(M.pick(cities, p.lat, p.lon, lo, hi, M.TOWNS)) do
-      if not (covered and covered(c.lat, c.lon)) then
-        st.towns[#st.towns + 1] = { city = c, nextAt = 0 }
+    local towns, spares = M.pickRings(cities, p.lat, p.lon, rings)
+    st.spares = spares
+    for _, t in ipairs(towns) do
+      if not (covered and covered(t.city.lat, t.city.lon)) then
+        st.towns[#st.towns + 1] = { city = t.city, ring = t.ring, nextAt = 0 }
       end
     end
   end
@@ -104,7 +129,12 @@ function M.tick(st, now, p, lo, hi, cities, ask, covered, onSites)
         end
         if data.state == 'ready' and type(data.depots) == 'table' then
           t.done, t.count = true, #data.depots
-          onSites(tostring(data.key or path), data.depots, t.city)
+          if #data.depots > 0 then onSites(tostring(data.key or path), data.depots, t.city)
+          else
+            -- no workplaces there (a resort, a suburb): the next town of the same ring instead
+            local spare = st.spares and st.spares[t.ring] and table.remove(st.spares[t.ring], 1)
+            if spare then st.towns[#st.towns + 1] = { city = spare, ring = t.ring, nextAt = 0 } end
+          end
         elseif data.state == 'failed' then t.nextAt = now + M.FAILED_S
         else t.nextAt = now + M.LOADING_S end
       end)

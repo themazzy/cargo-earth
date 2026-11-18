@@ -3250,19 +3250,19 @@ function M.longHaulRing()
     profiles[#profiles + 1] = M.jobOptions('company_' .. t)
     if t == (unlocked or 'van') then break end
   end
-  return require('cargoEarth/longhaul').ring(profiles)
+  return require('cargoEarth/longhaul').rings(profiles)
 end
 
 function M.longHaulTick(p)
-  local lo, hi = M.longHaulRing()
-  if not lo then return end
+  local rings = M.longHaulRing()
+  if not rings then return end
   local longhaul = require('cargoEarth/longhaul')
   if not S.cities then
     local ok, data = pcall(jsonReadFile, DATA_DIR .. 'cities.json')
     S.cities = longhaul.cities(ok and data or nil)
   end
   S.longHaul = S.longHaul or {}
-  longhaul.tick(S.longHaul, S.clock, p, lo, hi, S.cities, helper.ask, packDepotsNear, function(key, depots, city)
+  longhaul.tick(S.longHaul, S.clock, p, rings, S.cities, helper.ask, packDepotsNear, function(key, depots, city)
     S.idx = S.idx or jobs.streamIndex()
     local n = jobs.addFar(S.idx, key, depots)
     log('I', 'cargoEarth', string.format('long hauls: %d workplaces around %s', n, tostring(city and city.n)))

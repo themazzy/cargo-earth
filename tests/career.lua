@@ -315,8 +315,8 @@ test('Long hauls: far profiles open the ring, and an unchecked far site can be h
   s.mode, s.opts = 'trucking', s.optsByMode.trucking
   assert(core.longHaulRing() == nil, 'normal distances stay local')
   core.settingsDo('jobRange', 'company_van', {nearKm = 25, minKm = 600, maxKm = 800})
-  local lo, hi = core.longHaulRing()
-  assert(lo == 600 and hi == 800)
+  local rings = core.longHaulRing()
+  assert(#rings == 1 and rings[1][1] == 600 and rings[1][2] == 800)
   local j = {id = 'far-job', kind = 'cargo', cargoName = 'Pallets', pay = 10000, minutes = 900, km = 700,
     from = {id = 'a', n = 'Yard', g = {50, 14}}, to = {id = 'overture:1', n = 'Lager', g = {50.004, 14}, far = true}}
   s.job, s.phase, s.orders = j, 'toDelivery', {{job = j, phase = 'toDelivery'}}
