@@ -4476,7 +4476,7 @@ function M.vehicleKinds()
   local function kg(n) return n >= 1000 and (string.format('%g', math.floor(n / 100 + 0.5) / 10) .. ' t') or (n .. ' kg') end
   local function fits(tier)
     local t = haul.tiers[tier]
-    return string.format('Fits about %d parcels · %s', t.parcel, kg(t.kg))
+    return string.format('Fits about %d parcels, up to %s', t.parcel, kg(t.kg))
   end
   local towJob = 'Tow jobs: one broken-down car on a car trailer (with a tow hitch)'
   local out, list = {}, {
@@ -4484,7 +4484,7 @@ function M.vehicleKinds()
     suv = { fits('suv'), { 'Food delivery', 'Taxi rides with usable passenger seats', 'Parts runs from parts suppliers to repair shops', towJob } },
     van = { fits('van'), { 'Food delivery', 'Taxi rides with usable passenger seats', 'Parcel routes from a depot to real addresses', 'Freight jobs between companies', towJob } },
     rigid = { fits('rigid'), { 'Business shipping between companies', towJob } },
-    semi = { string.format('Pulls trailers · up to %s', kg(haul.tiers.semi.kg)),
+    semi = { string.format('Pulls trailers, up to %s', kg(haul.tiers.semi.kg)),
       { 'Freight jobs with trailers', 'Fuel tanker runs to real fuel stations',
         'Tow jobs: two cars on a flatbed trailer' } },
   }
