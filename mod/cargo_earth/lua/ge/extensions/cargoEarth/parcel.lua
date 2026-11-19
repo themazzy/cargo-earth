@@ -78,7 +78,7 @@ function M.route(depot, addresses, tier, capacity, rnd, n)
   local pay = M.BASE[tier] + M.PER_STOP[tier] * #stops + M.PER_KM[tier] * road
   local job = {
     id = 'route:' .. tostring(depot.id) .. ':' .. tostring(n or 1) .. ':' .. #stops,
-    kind = 'cargo', cargo = 'parcels', cargoName = string.format('Parcel route · %d stops', #stops),
+    kind = 'cargo', cargo = 'parcels', cargoName = string.format('Parcel route, %d stops', #stops),
     from = { id = depot.id, n = depot.n, town = depot.town, g = { depot.g[1], depot.g[2] }, t = depot.t },
     to = stops[1], route = { stops = stops, at = 1, total = total },
     straightKm = legs, km = road, tonnes = total * M.DENSITY / 1000,
