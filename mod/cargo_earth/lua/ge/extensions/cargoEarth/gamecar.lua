@@ -32,12 +32,20 @@ function M.playerId()
   return v and v:getID() or nil
 end
 
-function M.watchForces(id, token)
+function M.vehicleState(action, path, token)
+  local car = playerVeh()
+  if not car then return false end
+  car:queueLuaCommand(string.format(
+    'extensions.load("cargoEarth_vehicleState"); extensions.cargoEarth_vehicleState.run(%q, %q, %d)', action, path, token))
+  return true
+end
+
+function M.watchForces(id, token, busRide)
   local v = getObjectByID and getObjectByID(id)
   if not v then return false end
   if token then
     v:queueLuaCommand(string.format(
-      'extensions.load("cargoEarth_gforce"); if extensions.cargoEarth_gforce then extensions.cargoEarth_gforce.watch(%d) end', token))
+      'extensions.load("cargoEarth_gforce"); if extensions.cargoEarth_gforce then extensions.cargoEarth_gforce.watch(%d, %s) end', token, tostring(busRide == true)))
   else
     v:queueLuaCommand('if extensions.cargoEarth_gforce then extensions.unload("cargoEarth_gforce") end')
   end
@@ -362,8 +370,14 @@ function M.carPassengers(n, seed)
   if not okSeats or type(seats) ~= 'table' then return nil end
   local occupants = require('cargoEarth/occupants')
   local plan = occupants.plan(seats, n, seed)
-  for _, seatId in ipairs(plan.remove) do pcall(so.clearDummyOccupant, id, seatId) end
-  for _, seatId in ipairs(plan.add) do pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG) end
+  for _, seatId in ipairs(plan.remove) do
+    local ok, result = pcall(so.clearDummyOccupant, id, seatId)
+    if not ok or result == false then return nil end
+  end
+  for _, seatId in ipairs(plan.add) do
+    local ok, result = pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG)
+    if not ok or result == false then return nil end
+  end
   return plan.shown
 end
 

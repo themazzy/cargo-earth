@@ -9,7 +9,7 @@ M.TIERS = { van = { stops = { 4, 7 }, each = { 2, 6 }, radiusKm = 5 } }
 -- a van route carries up to about 340 kg (16-48 kg a stop).
 M.DENSITY = 8
 M.ROAD_FACTOR = 1.35
-M.BASE, M.PER_STOP, M.PER_KM = { van = 80 }, { van = 45 }, { van = 10 }
+M.BASE, M.PER_STOP, M.PER_KM = { van = 120 }, { van = 60 }, { van = 10 }
 M.SPEED_KMH, M.STOP_MIN, M.SLACK_MIN = 30, 3, 10
 M.MIN_GAP_M = 150      -- two stops of one route are at least this far apart
 M.MIN_SLOTS = 8
@@ -78,7 +78,7 @@ function M.route(depot, addresses, tier, capacity, rnd, n)
   local pay = M.BASE[tier] + M.PER_STOP[tier] * #stops + M.PER_KM[tier] * road
   local job = {
     id = 'route:' .. tostring(depot.id) .. ':' .. tostring(n or 1) .. ':' .. #stops,
-    kind = 'cargo', cargo = 'parcels', cargoName = string.format('Parcel route · %d stops', #stops),
+    kind = 'cargo', cargo = 'parcels', cargoName = string.format('Parcel route, %d stops', #stops),
     from = { id = depot.id, n = depot.n, town = depot.town, g = { depot.g[1], depot.g[2] }, t = depot.t },
     to = stops[1], route = { stops = stops, at = 1, total = total },
     straightKm = legs, km = road, tonnes = total * M.DENSITY / 1000,

@@ -32,13 +32,37 @@ run(fs.readFileSync('tests/wreck.lua', 'utf8'), 'tests/wreck.lua')
 run(fs.readFileSync('tests/bus-controls.lua', 'utf8'), 'tests/bus-controls.lua')
 // Exercise the actual supplied freight pack as well as the small rule fixtures.
 function toLua(value) {
-  if (value === null) return 'nil'
+  if (value === null || value === undefined) return 'nil'
   if (typeof value === 'string') return JSON.stringify(value).replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   if (Array.isArray(value)) return '{' + value.map(toLua).join(',') + '}'
   return '{' + Object.entries(value).map(([key, item]) => '[' + toLua(key) + ']=' + toLua(item)).join(',') + '}'
 }
-const pack = JSON.parse(fs.readFileSync(`${extensions}/cargoEarth/data/depots_CZ.json`, 'utf8'))
-run('local jobs=require("cargoEarth/jobs"); local employment=require("cargoEarth/employment"); local pack=' + toLua(pack) +
-  '; local board=employment.board(jobs.index(pack),{lat=50.0755,lon=14.4378}); assert(#board>0,"No Prague company contracts"); local all=employment.board(jobs.index(pack),{lat=50.0755,lon=14.4378},"semi"); local n={van=0,rigid=0,semi=0}; for _,o in ipairs(all) do n[o.tier]=n[o.tier]+1 end; assert(n.rigid>0 and n.semi>0,"No Prague truck contracts"); print("Czech data: "..#board.." Prague van contracts; with trucks unlocked "..n.rigid.." box truck and "..n.semi.." tractor contracts")', 'actual-depot-data')
+const catalogue = JSON.parse(fs.readFileSync(`${extensions}/cargoEarth/data/freight.json`, 'utf8'))
+// Helper-style workplaces (unchecked, with catalogue types) around Prague: trucks get contracts without any bundled pack.
+const helperDepots = []
+const kinds = ['logistics', 'factory', 'sawmill', 'brewery', 'food', 'steelworks', 'quarry', 'concrete', 'farm', 'industrial']
+for (let i = 0; i < 120; i++) {
+  const a = i * 2.39996, r = 0.02 + (i % 30) * 0.012
+  helperDepots.push({id: 'overture:' + i, n: 'Site ' + i, t: i % 11 === 0 ? 'shop' : 'yard', k: i % 11 === 0 ? null : kinds[i % kinds.length],
+    g: [50.0755 + r * Math.sin(a), 14.4378 + r * 1.5 * Math.cos(a)], source: 'Overture', access: 'candidate'})
+}
+run('local jobs=require("cargoEarth/jobs"); local employment=require("cargoEarth/employment"); local cat=' + toLua(catalogue) +
+  '; local idx=jobs.index({depots={},cargo=cat.cargo,types=cat.types,trailers=cat.trailers}); jobs.addArea(idx,{key="1_1",depots=' + toLua(helperDepots) + '});' +
+  ' assert(idx.byId["overture:1"].t=="factory","catalogue type kept"); assert(idx.byId["overture:0"].t=="ce:stream:shop");' +
+  ' local board=employment.board(idx,{lat=50.0755,lon=14.4378}); assert(#board>0,"No Prague company contracts"); local all=employment.board(idx,{lat=50.0755,lon=14.4378},"semi"); local n={van=0,rigid=0,semi=0}; for _,o in ipairs(all) do n[o.tier]=n[o.tier]+1 end; assert(n.rigid>0 and n.semi>0,"No Prague truck contracts");' +
+  ' local cargos={}; for _,o in ipairs(all) do for _,j in ipairs(o.jobs or {}) do cargos[j.cargo]=true end end; local kinds=0; for _ in pairs(cargos) do kinds=kinds+1 end; assert(kinds>=3,"cargo variety");' +
+  ' print("Helper workplaces, no bundled pack: "..#board.." Prague van contracts; with trucks unlocked "..n.rigid.." box truck and "..n.semi.." tractor contracts, "..kinds.." kinds of cargo")', 'helper-workplaces')
 require('./phone.cjs')
+
+run(fs.readFileSync('tests/tow-teleport.lua', 'utf8'), 'tests/tow-teleport.lua')
+
+run(fs.readFileSync('tests/vehicle-state.lua', 'utf8'), 'tests/vehicle-state.lua')
+
+run(fs.readFileSync('tests/gforce.lua', 'utf8'), 'tests/gforce.lua')
+
+run(fs.readFileSync('tests/taxi.lua', 'utf8'), 'tests/taxi.lua')
+
+run(fs.readFileSync('tests/marker.lua', 'utf8'), 'tests/marker.lua')
+run(fs.readFileSync('tests/job-settings.lua', 'utf8'), 'tests/job-settings.lua')
+run(fs.readFileSync('tests/longhaul.lua', 'utf8'), 'tests/longhaul.lua')

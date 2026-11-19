@@ -18,6 +18,10 @@ helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
 
 
+CATALOGUE_TYPES = json.loads((Path(__file__).parents[1] / "mod/cargo_earth/lua/ge/extensions/cargoEarth/data/freight.json")
+                             .read_text(encoding="utf-8"))["types"]
+
+
 class Connection:
     def __init__(self, rows):
         self.rows = rows
@@ -41,6 +45,28 @@ class Connection:
         return self.rows
 
 
+class HelperPortTests(unittest.TestCase):
+    def test_default_environment_and_legacy_launch_arguments(self):
+        for arguments, environment, expected in (
+            ([], {}, 47821),
+            (['--port', '47820'], {}, 47821),
+            ([], {'BNE_CARGO_PORT': '47820'}, 47821),
+            ([], {'BNE_CARGO_PORT': '53100'}, 53100),
+            (['--port', '53101'], {'BNE_CARGO_PORT': '53100'}, 53101),
+        ):
+            with self.subTest(arguments=arguments, environment=environment):
+                with patch.dict(os.environ, environment, clear=True), patch.object(helper.sys, 'argv', ['helper.py'] + arguments), \
+                     patch.object(helper, 'bind', side_effect=RuntimeError('stop before network')) as bind:
+                    with self.assertRaisesRegex(RuntimeError, 'stop before network'):
+                        helper.main()
+                    bind.assert_called_once_with('127.0.0.1', expected)
+
+    def test_invalid_ports_are_rejected(self):
+        for value in ('not-a-port', '99999', '0', '1234.5'):
+            with self.subTest(value=value), self.assertRaises(helper.argparse.ArgumentTypeError):
+                helper.helper_port(value)
+
+
 class HelperTests(unittest.TestCase):
     def test_business_classification(self):
         self.assertEqual(helper.depot_kind("warehouse", None, None), "yard")
@@ -50,6 +76,23 @@ class HelperTests(unittest.TestCase):
         self.assertIsNone(helper.depot_kind("gas_station", None, None))
         self.assertIsNone(helper.depot_kind("restaurant", "food", None))
         self.assertIsNone(helper.depot_kind(None, None, None))
+        # the workplace's type in the mod's freight catalogue
+        self.assertEqual(helper.workplace_kind("warehouse", None, None, "yard"), "logistics")
+        self.assertEqual(helper.depot_kind("brewery", "food_and_beverage brewery", None), "yard")
+        self.assertEqual(helper.workplace_kind("brewery", "food_and_beverage brewery", None, "yard"), "brewery")
+        self.assertEqual(helper.workplace_kind("sawmill", None, None, "yard"), "sawmill")
+        self.assertEqual(helper.workplace_kind("steel_fabricators", None, None, "yard"), "steelworks")
+        self.assertEqual(helper.workplace_kind("oil_refiners", None, None, "fuel"), "fuel_depot")
+        self.assertEqual(helper.workplace_kind(None, "industrial manufacturing", None, "yard"), "factory")
+        self.assertEqual(helper.workplace_kind("industrial_company", None, None, "yard"), "factory")
+        self.assertEqual(helper.workplace_kind("lumber_yard_unknown", None, None, "yard"), "sawmill")
+        self.assertEqual(helper.workplace_kind("odd_yard", None, None, "yard"), "industrial")
+        self.assertIsNone(helper.workplace_kind("supermarket", None, None, "shop"))
+        self.assertIsNone(helper.depot_kind("plastic_surgeon", "health plastic_surgeon", None))
+        self.assertIsNone(helper.depot_kind("farmers_market", None, None))
+        self.assertEqual(helper.workplace_kind("dairy_farm", "farm dairy_farm", None, "yard"), "farm")
+        for k, _ in helper.WORKPLACE_RULES:
+            self.assertIn(k, CATALOGUE_TYPES, k)
         self.assertEqual(helper.auto_kind("auto_parts_and_supply_store", None, None), "p")
         self.assertEqual(helper.auto_kind("automotive_repair", None, None), "g")
         self.assertEqual(helper.auto_kind(None, "automotive car_dealer", None), "g")
@@ -83,6 +126,7 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(stations[0][0], "ofull-station-id-")
         self.assertEqual(depots[0]["id"], "overture:full-warehouse-id-123456789")
         self.assertEqual(depots[0]["access"], "candidate")
+        self.assertEqual(depots[0]["k"], "logistics")
         self.assertIn("regexp_matches", con.query)
         self.assertIn("confidence >=", con.query)
         self.assertTrue(con.closed)
@@ -228,6 +272,34 @@ class NetworkAndStorageTests(unittest.TestCase):
             result = areas.near(50, 14)
             self.assertNotIn(key, result["ready"])
             self.assertIn(key, areas.queue)
+
+    def test_far_sites_queue_build_and_serve_from_disk(self):
+        rows = [("abc", "Big Warehouse", "warehouse", "warehouse", "warehouse", 48.2, 16.37, "Wien"),
+                ("def", "Cafe", "cafe", "cafe", "cafe", 48.21, 16.38, "Wien"),
+                ("ghi", "Far Away Depot", "warehouse", "warehouse", "warehouse", 49.5, 16.37, "Elsewhere")]
+        conn = Connection(rows)
+        builder = helper.Builder(SimpleNamespace(release="test"), "")
+        builder._con = lambda key, box: (conn, ["x"])
+        with cache_dir() as cache:
+            sites = helper.Sites(builder, cache, start=False)
+            first = sites.get(48.2, 16.37)
+            self.assertEqual(first["state"], "loading")
+            self.assertEqual(sites.queue, [first["key"]])
+            data = sites.build(sites.queue.pop())
+            self.assertTrue(helper.valid_sites(data, first["key"], "test"))
+            self.assertEqual([d["n"] for d in data["depots"]], ["Big Warehouse"], "only workplaces inside the box")
+            self.assertIn("regexp_matches", conn.query)
+            self.assertNotIn("addresses/address", conn.query)
+            Path(sites.path(first["key"])).write_text(json.dumps(data), encoding="utf-8")
+            ready = sites.get(48.2001, 16.3701)
+            self.assertEqual(ready["state"], "ready")
+            self.assertEqual(ready["depots"][0]["t"], "yard")
+            for lat, lon in ((float("nan"), 14), (91, 14)):
+                with self.assertRaises(ValueError):
+                    sites.get(lat, lon)
+            for i in range(helper.SITE_QUEUE + 5):
+                sites.get(40 + i * 0.1, 10)
+            self.assertLessEqual(len(sites.queue), helper.SITE_QUEUE)
 
     def test_area_validation_rejects_bad_nested_coordinates_and_tile_rows(self):
         data = {"key": "1_1", "release": "test", "restaurants": [], "grocers": [], "depots": [], "fuel": [], "tiles": {"1_1": [[50, 14, 50, 14, "Street 12"]]}}
@@ -417,6 +489,19 @@ class NetworkAndStorageTests(unittest.TestCase):
                     break
                 time.sleep(0.01)
             self.assertEqual((ready["state"], ready["ready"], ready["errors"]), ("ready", 1, []))
+
+    def test_bus_refresh_failure_keeps_only_local_cached_lines(self):
+        with cache_dir() as cache:
+            lines = helper.BusLines(str(cache), lambda box: {"elements": [], "remark": "Query timed out"})
+            key = "1250_350"
+            cached = {"at": 0, "format": lines.CACHE_VERSION, "lines": [{"id": "r123"}]}
+            Path(lines.path(key)).write_text(json.dumps(cached), encoding="utf-8")
+            lines._work(key)
+            result = lines.near(50.02, 14.02)
+            self.assertEqual((result["state"], result["lines"]), ("failed", [{"id": "r123"}]))
+            lines.fetch = lambda box: {"elements": []}
+            lines._work(key)
+            self.assertEqual(lines.near(50.02, 14.02)["lines"], [])
 
     def test_bus_cache_from_before_error_validation_is_refetched(self):
         with cache_dir() as cache:
@@ -615,6 +700,7 @@ class NetworkAndStorageTests(unittest.TestCase):
             a, b = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b"
             radio.state["CZ"] = [[a, "A", f"http://127.0.0.1:{up.server_port}/s", "MP3", 0, "", ""],
                                  [b, "B", f"http://127.0.0.1:{up.server_port}/page", "MP3", 0, "", ""]]
+            radio._api = lambda path: []  # Unknown UUIDs must not make a live Radio Browser request in this fixture.
             srv = helper.bind("127.0.0.1", 0)
             areas = type("Areas", (), {"budget": type("Budget", (), {"stats": {}})()})()
             threading.Thread(target=helper.serve, args=(areas, "r", 0), kwargs={"radio": radio, "srv": srv},

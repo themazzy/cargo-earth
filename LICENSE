@@ -22,9 +22,10 @@ SOFTWARE.
 
 ---
 
-The MIT licence above covers the code. The bundled geographic data in
-mod/cargo_earth/lua/ge/extensions/cargoEarth/data/ is derived from
-OpenStreetMap (© OpenStreetMap contributors, ODbL 1.0) and Overture Maps
-Foundation data, and is distributed under the Open Database License (ODbL 1.0):
-https://opendatacommons.org/licenses/odbl/1-0/
-Keep this attribution when you redistribute the data.
+The MIT licence above covers the code. The bundled data in
+mod/cargo_earth/lua/ge/extensions/cargoEarth/data/ is Natural Earth
+(public domain: country borders, populated places) and the mod's own freight
+catalogue. Places the Cargo Earth helper downloads while you play come from
+Overture Maps Foundation (including OpenStreetMap data, (c) OpenStreetMap
+contributors, ODbL 1.0: https://opendatacommons.org/licenses/odbl/1-0/) and
+keep their attribution.

@@ -10,7 +10,8 @@
 -- where the mod's own data pack covers everything else).
 local M = {}
 
-M.HOST, M.PORT = '127.0.0.1', 47820
+M.DEFAULT_PORT, M.LEGACY_PORT = 47821, 47820 -- EarthRadio uses the retired Cargo Earth port.
+M.HOST, M.PORT = '127.0.0.1', M.DEFAULT_PORT
 M.ASK_EVERY_S = 3          -- ask which areas around the player are ready this often
 M.IDLE_ASK_S = 30          -- loaded and stationary: a release/version heartbeat, not constant polling
 M.RETRY_S = 15             -- helper not answering: try again after this long
@@ -34,10 +35,20 @@ function M.configure(cfg)
   cfg = cfg or {}
   M.enabled = cfg.helper ~= false
   local port = tonumber(cfg.helperPort)
+  if port == M.LEGACY_PORT then
+    port, cfg.helperPort = M.DEFAULT_PORT, M.DEFAULT_PORT
+    M.PORT = port
+    return true -- persist the migrated configuration
+  end
   if port and port == math.floor(port) and port >= 1024 and port <= 65535 then M.PORT = port end
+  return false
 end
 
 function M.status() return st end
+local function unavailable(err)
+  return 'Cargo Earth helper not answering on port ' .. M.PORT .. ' (' .. tostring(err)
+    .. '). Update both the mod and helper with CargoEarthSetup, then restart BeamNG.Earth.'
+end
 -- ask again by time t (the helper was just started: no need to wait out RETRY_S)
 function M.retrySoon(t) if st.state == 'off' and t < nextAsk then nextAsk, nextCameras = t, math.min(nextCameras, t) end end
 function M.hasArea(key) return got[key] == true end
@@ -157,7 +168,7 @@ local function finish(data, err, now, lat, lon, onArea)
     return
   end
   if not data then
-    st.state, st.msg = 'off', 'Cargo Earth helper unavailable (' .. tostring(err) .. ')'
+    st.state, st.msg = 'off', unavailable(err)
     wanted = {}
     nextAsk = now + M.RETRY_S
     return
@@ -302,14 +313,14 @@ function M.tick(lat, lon, now, onArea, onCameras, onlyCameras)
   local k = here == nearCell and next(wanted) or nil
   if k then
     local ok, err = start('/v1/area?key=' .. k, 'area', k, now, here)
-    if not ok then wanted = {} st.state, st.msg, nextAsk = 'off', tostring(err), now + M.RETRY_S end
+    if not ok then wanted = {} st.state, st.msg, nextAsk = 'off', unavailable(err), now + M.RETRY_S end
     return
   end
   if now >= nextAsk then
     if st.state == 'off' then st.state = 'searching' end
     local ok, err = start(string.format('/v1/near?lat=%.5f&lon=%.5f', lat, lon), 'near', nil, now, here)
     if not ok then
-      st.state, st.msg = 'off', 'Cargo Earth helper not running (' .. tostring(err) .. ')'
+      st.state, st.msg = 'off', unavailable(err)
       nextAsk = now + M.RETRY_S
     end
   end
@@ -322,7 +333,7 @@ function M._reset()
   nearCell, socket, nextCameras, queue = nil, nil, 0, {}
   if fast then pcall(function() fast.sock:close() end) end
   fast, fastQueue = nil, {}
-  M.enabled, M.PORT = true, 47820
+  M.enabled, M.PORT = true, M.DEFAULT_PORT
 end
 
 return M

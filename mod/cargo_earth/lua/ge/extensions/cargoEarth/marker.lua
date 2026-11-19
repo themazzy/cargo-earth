@@ -23,6 +23,8 @@ local COLORS = {
 }
 
 local pickup, delivery, depot = {}, {}, {}
+local depotDirections = {}
+for i = 1, 8 do depotDirections[i] = { math.cos(math.pi * i / 4), math.sin(math.pi * i / 4) } end
 local warned = false
 local ringDirections = {}
 for i = 1, RING_SEGMENTS do
@@ -48,6 +50,51 @@ local function groundZ(x, y, z, above, depth)
   if not (castRayStatic and vec3) then return nil end
   local ok, hit = pcall(castRayStatic, vec3(x, y, z + above), vec3(0, 0, -1), depth)
   if ok and type(hit) == 'number' and hit >= 0 and hit < depth then return z + above - hit end
+end
+
+-- Every surface straight down the column (roof, tree crown, pole, bridge deck, ground), top first.
+local MAX_HITS = 6
+local function columnHits(x, y, top, depth)
+  local hits = {}
+  if not (castRayStatic and vec3) then return hits end
+  local z, left = top, depth
+  for _ = 1, MAX_HITS do
+    local ok, hit = pcall(castRayStatic, vec3(x, y, z), vec3(0, 0, -1), left)
+    if not (ok and type(hit) == 'number' and hit >= 0 and hit < left) then break end
+    hits[#hits + 1] = z - hit
+    z, left = z - hit - 0.05, left - hit - 0.05
+    if left <= 0 then break end
+  end
+  return hits
+end
+
+-- The ground under x, y: of all surfaces in the column, the one closest to `ref` (the road there, or the ring
+-- point next to it), so trees, lamp posts, power pylons and roofs above it are skipped. With no reference, the
+-- lowest surface. nil when the column hits nothing (ground not streamed in yet).
+local function surfaceZ(x, y, ref, top, depth)
+  local hits = columnHits(x, y, top, depth)
+  local best
+  for _, z in ipairs(hits) do
+    if not best or (ref and math.abs(z - ref) < math.abs(best - ref)) or (not ref and z < best) then best = z end
+  end
+  return best
+end
+
+-- Height of the nearest streamed road at x, y (a good guess of the ground at a stop next to it).
+local function roadZNear(x, y, z)
+  if not (map and map.findClosestRoad and map.getMap and vec3) then return nil end
+  local ok, a, b = pcall(map.findClosestRoad, vec3(x, y, z), 60)
+  local graph = ok and map.getMap()
+  local nodes = graph and graph.nodes
+  local n1, n2 = nodes and nodes[a], nodes and nodes[b]
+  if not (n1 and n2) then return nil end
+  local p1, p2 = n1.pos, n2.pos
+  local dx, dy = p2.x - p1.x, p2.y - p1.y
+  local len2 = dx * dx + dy * dy
+  local t = len2 > 0.01 and math.max(0, math.min(1, ((x - p1.x) * dx + (y - p1.y) * dy) / len2)) or 0
+  local gx, gy = p1.x + t * dx, p1.y + t * dy
+  if (gx - x)^2 + (gy - y)^2 > 60 * 60 then return nil end
+  return p1.z + (p2.z - p1.z) * t
 end
 
 local function matches(cache, target, p)
@@ -95,7 +142,7 @@ local function pickupPosition(p, stop, now)
     pickup.nextRoad = now + REFRESH_S
     local search = gap < 1 and 80 or 15
     local z = p.z
-    if search == 80 then z = groundZ(x, y, p.z, 30, 150) or z end
+    if search == 80 then z = surfaceZ(x, y, nil, p.z + 30, 150) or z end
     local ok, rx, ry, rz = pcall(roadEdge, x, y, z, doorX, doorY, search)
     if ok and rx then
       pickup.x, pickup.y, pickup.roadZ = rx, ry, rz
@@ -113,21 +160,53 @@ function M.pickupDistance(p, stop, now)
   if x then return distance(x, y, p) end
 end
 
+-- One ring point may climb or drop this much from the one before it (a kerb or a steep street is fine, a tree
+-- crown or a roof is not).
+local POINT_STEP = 3
+
+-- The ground at x, y, `apart` metres from a point at height `ref`: the surface nearest `ref`, and no further from
+-- it than a steep street allows over that distance (else `ref`).
+local function groundNear(x, y, ref, apart)
+  local limit = math.max(POINT_STEP, 0.25 * apart)
+  local z = surfaceZ(x, y, ref, ref + 4 + limit, 12 + 2 * limit)
+  if not z or math.abs(z - ref) > limit then return ref end
+  return z
+end
+
+-- Walk round a circle of `radius` about x, y, z (the centre's ground). Returns the ground height of each point
+-- (directions from `dirs`) and the slope of the plane through them: z = z0 + sx * dx + sy * dy.
+local function groundRing(x, y, z, radius, dirs)
+  local heights, prev, sumC, sumS = {}, z, 0, 0
+  local seg = 2 * radius * math.sin(math.pi / #dirs)
+  for i, dir in ipairs(dirs) do
+    local h = groundNear(x + dir[1] * radius, y + dir[2] * radius, prev, i == 1 and radius or seg)
+    heights[i], prev = h, h
+    sumC, sumS = sumC + (h - z) * dir[1], sumS + (h - z) * dir[2]
+  end
+  return heights, 2 * sumC / (#dirs * radius), 2 * sumS / (#dirs * radius)
+end
+
 local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
   if distance(x, y, p) > RING_RANGE then return end
   if now >= cache.nextGround then
-    -- 41 ground rays: every second until the ring stands, then only now and then (late ground tiles still lift it)
+    -- every second until the ring stands, then only now and then (late ground tiles still lift it)
     cache.nextGround = now + (cache.outer and GROUND_AGAIN_S or REFRESH_S)
-    local z = roadZ and (groundZ(x, y, roadZ, 4, 12) or roadZ) or groundZ(x, y, p.z, 30, 150)
-    if not z and distance(x, y, p) <= 50 then z = groundZ(p.x, p.y, p.z, 2, 12) end
+    local ref = roadZ or roadZNear(x, y, p.z)
+    local z = ref and (surfaceZ(x, y, ref, ref + 4, 12) or ref) or surfaceZ(x, y, nil, p.z + 30, 150)
+    if not z and distance(x, y, p) <= 50 then z = surfaceZ(p.x, p.y, p.z - 0.5, p.z + 2, 12) end
     if z then
       local outer, inner = {}, {}
+      local heights, sx, sy = groundRing(x, y, z, radius, ringDirections)
       for i, dir in ipairs(ringDirections) do
-        local ox, oy = x + dir[1] * radius, y + dir[2] * radius
+        local oz = heights[i]
         local ix, iy = x + dir[1] * (radius - RING_WIDTH), y + dir[2] * (radius - RING_WIDTH)
-        outer[i] = vec3(ox, oy, (groundZ(ox, oy, z, 4, 12) or z) + SURFACE_LIFT)
-        inner[i] = vec3(ix, iy, (groundZ(ix, iy, z, 4, 12) or z) + SURFACE_LIFT)
+        local iz = surfaceZ(ix, iy, oz, oz + 2, 6)
+        if not iz or math.abs(iz - oz) > 1 then iz = oz end
+        outer[i] = vec3(x + dir[1] * radius, y + dir[2] * radius, oz + SURFACE_LIFT)
+        inner[i] = vec3(ix, iy, iz + SURFACE_LIFT)
       end
+      -- the ground inside the ring as a tilted plane through the centre: the stop counts only on that level
+      cache.cx, cache.cy, cache.cz, cache.slopeX, cache.slopeY = x, y, z, sx, sy
       cache.outer, cache.inner = outer, inner
     end
   end
@@ -173,7 +252,14 @@ local function drawDepotPickup(p, stop, radius, inZone, now)
   if not (x and p.z) or distance(x, y, p) > M.FAR_KM * 1000 then return end
   if not matches(depot, stop, p) then depot = newCache(stop, p) end
   if now >= depot.nextGround then
-    depot.z = groundZ(x, y, p.z, 500, 2000)
+    local ref = distance(x, y, p) <= RING_RANGE and roadZNear(x, y, p.z) or nil
+    depot.z = surfaceZ(x, y, ref, (ref or p.z) + 500, 2000) or depot.z
+    depot.cx, depot.cy, depot.cz, depot.slopeX, depot.slopeY = x, y, nil, 0, 0
+    if ref and depot.z then
+      -- the yard's tilt from eight ground points across it, so a sloping yard still counts as one level
+      local _, sx, sy = groundRing(x, y, depot.z, math.max(5, radius * 0.6), depotDirections)
+      depot.cz, depot.slopeX, depot.slopeY = depot.z, sx, sy
+    end
     depot.nextGround = now + REFRESH_S
   end
   local z = depot.z or p.z
@@ -184,6 +270,24 @@ local function drawDepotPickup(p, stop, radius, inZone, now)
   local label = 'Pick up: ' .. (stop.n or '')
   debugDrawer:drawTextAdvanced(vec3(x, y, z + 4), String(label), ColorF(1, 1, 1, 1), true, false,
     ColorI(math.floor(c[1] * 160), math.floor(c[2] * 160), math.floor(c[3] * 160), 220))
+end
+
+-- How far the car sits above (+) or below (-) the ground of the stop's ring, in metres, or nil while that ground
+-- is not known. The stop zone is a column only a few metres tall: a bridge above it or a road under it doesn't count.
+M.LEVEL_ABOVE, M.LEVEL_BELOW = 4.5, 3.5
+function M.heightGap(p, stop)
+  if not (p and p.x and p.y and p.z and stop) then return nil end
+  for _, cache in ipairs({ pickup, delivery, depot }) do
+    if cache.target == stop and cache.cz and matches(cache, stop, p) then
+      local ground = cache.cz + (p.x - cache.cx) * (cache.slopeX or 0) + (p.y - cache.cy) * (cache.slopeY or 0)
+      return p.z - ground
+    end
+  end
+end
+
+function M.offLevel(p, stop)
+  local gap = M.heightGap(p, stop)
+  return gap ~= nil and (gap > M.LEVEL_ABOVE or gap < -M.LEVEL_BELOW)
 end
 
 function M.draw(p, stop, phase, courier, radius, inZone, now)
@@ -217,7 +321,7 @@ local function drawCameras(p, list, now)
         local pole = poles[cam.id] or { nextGround = 0 }
         poles[cam.id] = pole
         if not pole.z and now >= pole.nextGround then
-          pole.z, pole.nextGround = groundZ(x, y, p.z, 30, 150), now + REFRESH_S
+          pole.z, pole.nextGround = surfaceZ(x, y, nil, p.z + 30, 150), now + REFRESH_S
         end
         local z = pole.z or p.z
         debugDrawer:drawCylinder(vec3(x, y, z), vec3(x, y, z + 3.2), 0.09, ColorF(0.45, 0.45, 0.48, 1))
@@ -271,7 +375,7 @@ function M.drawArea(p, key, g, radius, label, now)
   end
 end
 
-M.roadEdge, M.groundZ = roadEdge, groundZ
+M.roadEdge, M.groundZ, M.surfaceZ, M.columnHits = roadEdge, groundZ, surfaceZ, columnHits
 
 function M.reset() pickup, delivery, depot, poles, areas, warned = {}, {}, {}, {}, {}, false end
 

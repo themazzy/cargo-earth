@@ -577,19 +577,21 @@ local wrapped -- { io = module, getPart = original, ... }
 -- module (jbeamIO.getPart(...)), so they see the slot and the part; nothing else changes. Safe to call again.
 function M.install(io)
   if type(io) ~= 'table' or type(io.getPart) ~= 'function' then return false end
-  if wrapped and wrapped.io == io and io.getPart == wrapped.getPartWrapper then return true end
+  if wrapped and wrapped.io == io then return true end
+  if wrapped then M.uninstall() end
   local orig = {
     getPart = io.getPart,
     getAvailableParts = io.getAvailableParts,
     getAvailableSlotNameMap = io.getAvailableSlotNameMap,
     getCompatiblePartNamesForSlot = io.getCompatiblePartNamesForSlot,
   }
-  local w = { io = io, orig = orig }
+  local w = { io = io, orig = orig, enabled = true, hooks = {} }
   local function active(ioCtx)
     local model = modelOf(ioCtx)
-    return model and cfg.on and cfg.spots[model] and model or nil
+    return w.enabled and model and cfg.on and cfg.spots[model] and model or nil
   end
   w.getPartWrapper = function(ioCtx, partName, ...)
+    if not w.enabled then return orig.getPart(ioCtx, partName, ...) end
     if partName == M.PART then
       local model = active(ioCtx)
       local ok, part = pcall(M.partFor, model)
@@ -609,7 +611,7 @@ function M.install(io)
   io.getPart = w.getPartWrapper
   if orig.getCompatiblePartNamesForSlot then
     io.getCompatiblePartNamesForSlot = function(ioCtx, slotDef, ...)
-      if type(slotDef) == 'table' and slotDef.name == M.SLOT then
+      if w.enabled and type(slotDef) == 'table' and slotDef.name == M.SLOT then
         if active(ioCtx) then return { M.PART }, {} end
         return {}, {}
       end
@@ -632,14 +634,18 @@ function M.install(io)
       return res
     end
   end
+  for name in pairs(orig) do w.hooks[name] = io[name] end
   wrapped = w
   return true
 end
 
--- puts the game's own functions back (the mod is unloading)
+-- Restore only hooks we still own. A later add-on may retain our wrapper, which becomes a passive delegate.
 function M.uninstall()
   if not wrapped then return end
-  for k, f in pairs(wrapped.orig) do if f then wrapped.io[k] = f end end
+  wrapped.enabled = false
+  for k, ours in pairs(wrapped.hooks) do
+    if wrapped.io[k] == ours then wrapped.io[k] = wrapped.orig[k] end
+  end
   wrapped = nil
 end
 

@@ -6,12 +6,14 @@
 local jobs = require('cargoEarth/jobs')
 local M = {}
 
-M.NEAR_KM = 4            -- lines whose depot is this close to the player are offered
+M.NEAR_KM = 4            -- lines with a mapped stop this close to the player are offered
 M.DEPOT_KM = 3           -- a bus station or depot this close to the first stop is where the bus is lent
-M.OFFERS = 6
 M.ROAD_FACTOR = 1.25     -- the line's straight stop-to-stop km to road km (until the GPS knows the road)
 -- Pay goes by the timetable's minutes, as a driver's wage does, plus a little per stop and the fares.
-M.BASE, M.PER_MIN, M.PER_STOP, M.PER_PASSENGER = 60, 7, 3, 2   -- about 500-620 CZK/h with fares, near van freight
+-- Career review 2026-11-18 (issue #123): the bus is lent, needs no unlock and costs no fuel, and a line is usually driven
+-- well inside its timetable, so after the company's share it pays about as much as taxi (about 550 CZK/h), below the
+-- work you buy a vehicle for.
+M.BASE, M.PER_MIN, M.PER_STOP, M.PER_PASSENGER = 40, 4.5, 3, 1.5
 -- The timetable: each stop has its own time from the one before. A bus is slow on short hops (pulling out, braking
 -- for the next stop) and faster between stops far apart: its speed grows with the hop's road km, within LEG_KMH.
 M.LEG_KMH, M.LEG_KMH_PER_KM = { 18, 45 }, 8
@@ -24,7 +26,10 @@ M.CAPACITY = 70          -- people a city bus takes
 -- cornering) costs HARSH_LOSS points, a bump or crash from BUMP_G[1] g costs BUMP_LOSS[1]..[2] (the most from
 -- BUMP_G[2] g). An empty bus feels nothing. Comfort sets the line's pay (0.6 + 0.004 x comfort, as a taxi ride) and
 -- its stars.
-M.HARSH_LOSS = 4
+M.HARSH_LOSS = 2
+M.HARSH_G, M.HARSH_GAP_S = 0.8, 5
+M.IMPACT_GAP_S = 3
+M.DAMAGE_MIN, M.DAMAGE_FULL = 1000, 20000
 M.BUMP_G, M.BUMP_LOSS = { 3.5, 5.5 }, { 10, 40 }
 M.DWELL_S, M.PER_PERSON_S, M.MAX_DWELL_S = 3, 0.6, 15
 M.MAX_STOPS = 40         -- a longer line is cut here (its last stop is the end of this run)
@@ -198,26 +203,75 @@ end
 -- Minutes the bus was behind the timetable over the whole line.
 function M.lateMinutes(job) return job.bus.late or 0 end
 
+local function nearbyStopKm(line, lat, lon)
+  local nearest = math.huge
+  for _, stop in ipairs(line.stops) do
+    nearest = math.min(nearest, jobs.km(lat, lon, stop.g[1], stop.g[2]))
+  end
+  return nearest
+end
+
+-- Match distinct mapped relations at opposite termini. Platforms can be across the road.
+-- A shared route number alone also matches branches and short workings.
+local function stopDistance(a, b)
+  return jobs.km(a.g[1], a.g[2], b.g[1], b.g[2])
+end
+
+local function oppositeStops(first, last, a, b)
+  local startKm, endKm = stopDistance(first, b), stopDistance(last, a)
+  return startKm <= 0.5 and endKm <= 0.5 and startKm < stopDistance(first, a) and endKm < stopDistance(last, b)
+end
+
+local function mappedReturn(line, other)
+  if line.id == other.id or (line.operator ~= '' and other.operator ~= '' and line.operator ~= other.operator) then return false end
+  local s, t = line.stops, other.stops
+  if oppositeStops(s[1], s[#s], t[1], t[#t]) then return true end
+  -- Loops can share both termini. Check points around the loop to distinguish its two orientations.
+  if stopDistance(s[1], s[#s]) > 0.5 or stopDistance(s[1], t[1]) > 0.5 or stopDistance(t[1], t[#t]) > 0.5 then return false end
+  local i, k = math.floor(#s / 4), math.floor(#t / 4)
+  return oppositeStops(s[1+i], s[#s-i], t[1+k], t[#t-k])
+end
+
 -- Lines near the player as company offers (cargoEarth/employment): one job each, the depot as the yard.
 function M.board(idx, lat, lon)
   if type(idx) ~= 'table' or not finite(lat) or not finite(lon) then return {} end
-  local rows = {}
+  local rows, groups, nearest = {}, {}, nil
   for _, line in ipairs(idx.lines or {}) do
-    local depot = M.depotFor(idx, line)
-    local k = jobs.km(lat, lon, depot.g[1], depot.g[2])
-    if k <= M.NEAR_KM then rows[#rows + 1] = { line = line, depot = depot, km = k } end
+    local k = nearbyStopKm(line, lat, lon)
+    nearest = math.min(nearest or k, k)
+    groups[line.ref] = groups[line.ref] or {}
+    table.insert(groups[line.ref], { line = line, km = k })
+  end
+  for _, group in pairs(groups) do
+    for _, row in ipairs(group) do
+      if row.km <= M.NEAR_KM then
+        row.offer = true
+        for _, other in ipairs(group) do
+          if mappedReturn(row.line, other.line) then
+            row.hasReturn, other.hasReturn, other.offer = true, true, true
+          end
+        end
+      end
+    end
+    for _, row in ipairs(group) do
+      if row.offer then
+        row.depot = M.depotFor(idx, row.line)
+        rows[#rows + 1] = row
+      end
+    end
   end
   table.sort(rows, function(a, b) if a.km == b.km then return a.line.id < b.line.id end return a.km < b.km end)
   local out = {}
   for _, r in ipairs(rows) do
-    if #out >= M.OFFERS then break end
     local j = M.job(r.line, r.depot)
     local operator = r.line.operator ~= '' and r.line.operator or 'City buses'
     out[#out + 1] = { id = 'bus:' .. r.line.id, companyId = 'bus:' .. operator, tier = 'bus', vehicle = 'City bus',
-      name = operator, yard = r.depot, jobs = { j }, jobCount = 1, gross = j.pay, km = j.km, pickupKm = r.km,
-      minutes = j.minutes, wages = j.pay, fares = M.PER_PASSENGER * M.expectedRiders(#j.bus.stops), bus = { ref = r.line.ref, name = j.bus.name, from = j.from.n,
-      to = j.bus.stops[#j.bus.stops].n, stops = #j.bus.stops, colour = r.line.colour } }
+      name = operator, yard = r.depot, jobs = { j }, jobCount = 1, gross = j.pay, km = j.km, pickupKm = jobs.km(lat, lon, r.depot.g[1], r.depot.g[2]),
+      minutes = j.minutes, wages = j.pay, fares = math.floor(M.PER_PASSENGER * M.expectedRiders(#j.bus.stops) + 0.5), bus = { ref = r.line.ref, name = j.bus.name, from = j.from.n,
+      to = j.bus.stops[#j.bus.stops].n, stops = #j.bus.stops, limited = #r.line.stops > #j.bus.stops,
+      singleDirection = not r.hasReturn, colour = r.line.colour } }
   end
+  idx.nearestKm = nearest
   return out
 end
 
@@ -235,11 +289,44 @@ end
 
 -- A bump or crash of `peak` g with people on board. Returns the loss.
 function M.bump(job, peak)
-  if not M.riding(job) or type(peak) ~= 'number' or peak ~= peak or peak < M.BUMP_G[1] then return 0 end
-  local share = math.min(1, (peak - M.BUMP_G[1]) / (M.BUMP_G[2] - M.BUMP_G[1]))
+  if type(peak) ~= 'number' or peak ~= peak or peak == math.huge then return 0 end
+  return M.impact(job, peak)
+end
+
+-- Combine accelerometer and damage reports from one collision. A stronger later
+-- report adds only the difference, so callback order does not change the total.
+function M.impact(job, peak, damage, now)
+  if not M.riding(job) then return 0 end
+  local loss = 0
+  if peak and peak >= M.BUMP_G[1] then
+    local share = math.min(1, (peak - M.BUMP_G[1]) / (M.BUMP_G[2] - M.BUMP_G[1]))
+    loss = math.floor(M.BUMP_LOSS[1] + share * (M.BUMP_LOSS[2] - M.BUMP_LOSS[1]) + 0.5)
+  end
+  local hasDamage = damage and damage >= M.DAMAGE_MIN
+  if loss == 0 and not hasDamage then return 0 end
+  local b = job.bus
+  if now then
+    if not b.impactAt or now < b.impactAt or now - b.impactAt >= M.IMPACT_GAP_S then
+      b.impactAt, b.impactDamage = now, 0
+      b.impactLoss = b.harshAt and now >= b.harshAt and now - b.harshAt < M.IMPACT_GAP_S and M.HARSH_LOSS or 0
+    end
+    if hasDamage then
+      b.impactDamage = (b.impactDamage or 0) + damage
+      damage = b.impactDamage
+    end
+  end
+  if hasDamage then
+    local share = math.min(1, (damage - M.DAMAGE_MIN) / (M.DAMAGE_FULL - M.DAMAGE_MIN))
+    loss = math.max(loss, math.floor(M.BUMP_LOSS[1] + share * (M.BUMP_LOSS[2] - M.BUMP_LOSS[1]) + 0.5))
+  end
+  local extra = loss
+  if now then
+    extra = math.max(0, loss - b.impactLoss)
+    b.impactLoss = math.max(loss, b.impactLoss)
+  end
   local before = M.comfort(job)
-  job.bus.comfort = math.max(0, before - math.floor(M.BUMP_LOSS[1] + share * (M.BUMP_LOSS[2] - M.BUMP_LOSS[1]) + 0.5))
-  return before - job.bus.comfort
+  b.comfort = math.max(0, before - extra)
+  return before - b.comfort
 end
 
 -- The bus's own signs (the citybus's destination sign and next-stop screen, vehicles/citybus/lua/controller/bus.lua,
@@ -329,7 +416,7 @@ function M.skip(job, nowS)
 end
 
 -- What the line pays at its end: the quote and the fares of the people who rode.
-function M.fares(job) return M.PER_PASSENGER * (job.bus.boarded or 0) end
+function M.fares(job) return math.floor(M.PER_PASSENGER * (job.bus.boarded or 0) + 0.5) end
 
 -- The line's pay at its end: the quote less the skipped stops' share, and the fares.
 function M.linePay(job)
@@ -339,7 +426,7 @@ function M.linePay(job)
 end
 
 -- For the phone: the line, where you are on it and the next few stops.
-function M.state(job, dwell, clock, nowS)
+function M.state(job, dwell, nowS)
   if not job or not job.bus then return nil end
   local b, next = job.bus, {}
   local dueS, dueMin = M.due(job, nowS)
@@ -347,7 +434,7 @@ function M.state(job, dwell, clock, nowS)
   return { ref = b.ref, name = b.name, colour = b.colour, at = b.at, count = #b.stops, onBoard = b.onBoard,
     boarded = b.boarded, skipped = b.skipped or 0, next = next, dueS = math.floor(dueS + 0.5), dueMin = dueMin,
     late = math.floor(M.lateMinutes(job) + 0.5), comfort = M.comfort(job), last = M.last(job), capacity = M.CAPACITY,
-    doors = dwell and { off = dwell.off, on = dwell.on, left = math.max(0, math.ceil(dwell.untilT - (clock or 0))) } or nil }
+    doors = dwell and { off = dwell.off, on = dwell.on, left = math.ceil(dwell.remaining) } or nil }
 end
 
 return M

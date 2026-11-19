@@ -32,7 +32,7 @@ import (
 const (
 	repo       = "themazzy/cargo-earth"
 	addonID    = "cargo-earth-helper"
-	helperPort = 47820
+	helperPort = 47821
 	modMarker  = "lua/ge/extensions/cargoEarth/core.lua"
 	userAgent  = "cargo-earth-installer"
 )
@@ -209,6 +209,9 @@ func run() error {
 		}
 	}
 	if doHelper {
+		if user == "" {
+			user, _ = findUserFolder() // helper-only installs can still synchronize an existing mod configuration
+		}
 		py := opt.helperPath
 		if py == "" {
 			if py, err = getAsset(rel, `^cargo_earth_helper.*\.py$`, "helper", tmp); err != nil {
@@ -217,7 +220,7 @@ func run() error {
 		} else if py, err = existing(py); err != nil {
 			return err
 		}
-		if err := installHelper(py, tag); err != nil {
+		if err := installHelper(py, tag, user); err != nil {
 			return err
 		}
 	}
@@ -232,7 +235,7 @@ func run() error {
 		say(`Start BeamNG.drive, load a BeamNG.Earth world and add the "Cargo Earth: Phone" UI app.`)
 	}
 	if doHelper {
-		say("The helper starts with BeamNG.Earth. In Czechia the mod also works without it.")
+		say("The helper starts with BeamNG.Earth. The mod needs it for places to work at.")
 	}
 	return nil
 }
@@ -584,8 +587,13 @@ func writeAddons(data map[string]any) error {
 	})
 }
 
-func installHelper(py, tag string) error {
+func installHelper(py, tag, user string) error {
 	step("Helper")
+	network, err := planHelperNetwork(user)
+	if err != nil {
+		return err
+	}
+	port := network.port
 	dir := helperDir()
 	name := filepath.Base(py)
 	target := filepath.Join(dir, name)
@@ -606,7 +614,7 @@ func installHelper(py, tag string) error {
 	say("Helper: %s", target)
 
 	if runtime.GOOS == "linux" {
-		if err := installLinuxPython(target); err != nil {
+		if err := installLinuxPython(target, port); err != nil {
 			return err
 		}
 	} else if p := findPython(); p == nil {
@@ -628,7 +636,7 @@ func installHelper(py, tag string) error {
 		launcher := filepath.Join(dir, "start_helper.cmd")
 		parts := []string{`"` + p.exe + `"`}
 		parts = append(parts, p.args...)
-		parts = append(parts, `"`+target+`"`, "--port", strconv.Itoa(helperPort))
+		parts = append(parts, `"`+target+`"`, "--port", strconv.Itoa(port))
 		script := "@echo off\r\ntitle Cargo Earth helper\r\n" + strings.Join(parts, " ") + "\r\npause\r\n"
 		if err := doIt("write "+launcher, func() error { return os.WriteFile(launcher, []byte(script), 0o644) }); err != nil {
 			return err
@@ -641,18 +649,26 @@ func installHelper(py, tag string) error {
 	if err != nil {
 		return err
 	}
+	if err := network.save(); err != nil {
+		return fmt.Errorf("could not synchronize the helper port: %w", err)
+	}
 	entry := map[string]any{
 		"id": addonID, "name": "Cargo Earth helper", "author": "themazzy", "repo": repo, "kind": "companion",
 		"summary": "Restaurants, shops, workplaces and customer addresses anywhere in the world for the Cargo Earth mod.",
 		"licence": "MIT", "asset": `^cargo_earth_helper.*\.py$`,
-		"local": map[string]any{"file": target, "tag": tag},
-		"run":   map[string]any{"args": []any{}, "port": helperPort, "page": fmt.Sprintf("http://127.0.0.1:%d/", helperPort)},
+		"local":   map[string]any{"file": target, "tag": tag},
+		"options": helperPortOption(port),
+		"run":     map[string]any{"args": []any{}, "port": port, "page": "http://127.0.0.1:{port}/"},
 	}
 	data["addons"] = append(withoutHelper(list), entry)
 	if err := writeAddons(data); err != nil {
 		return fmt.Errorf("could not register the helper with BeamNG.Earth: %v", err)
 	}
 	say("Registered with BeamNG.Earth in %s (other add-ons kept, old file saved as local.json.bak).", addonsFile())
+	say("Cargo Earth uses port %d; EarthRadio keeps port %d. Restart BeamNG.Earth to stop any old helper process.", port, legacyHelperPort)
+	if user == "" && port != helperPort {
+		warn("The BeamNG user folder was not found. Set helperPort to %d in settings/cargoEarth/config.json, or rerun with -user-folder.", port)
+	}
 	if err := updateEarthCopy(target, tag); err != nil {
 		warn("BeamNG.Earth's own copy of the helper could not be updated (%v). Open BeamNG.Earth's Add-ons page and press Update on Cargo Earth helper.", err)
 	}

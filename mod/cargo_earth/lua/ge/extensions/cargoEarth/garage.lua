@@ -157,7 +157,7 @@ local function valueOf(G, v)
     local i = info(G, v.ioCtx, name)
     if i then sum = sum + i.value end
   end
-  return round5(sum * M.PRICE_PER_VALUE)
+  return round5(sum * M.PRICE_PER_VALUE * M.kindFactor(haul.carrier(v)))
 end
 function M.carValue(G) return valueOf(G, G.vehicle()) end
 
@@ -247,12 +247,22 @@ M.FREE_PART = 'cargo_earth_phone_auto' -- the phone on the dashboard (cargoEarth
 
 -- Quote the complete difference after BeamNG has resolved the slots and any dependent parts.
 -- Matching parts can move between slots without being bought again.
-function M.partsQuote(G, inventory, before, vehicle)
+-- salvage: { [part] = { n, f } } spares taken off discounted work vehicles (WORK_PRICE): they sell at that share
+-- too, so buying a cheap truck and stripping it can't pay more than the truck cost.
+-- paid: { [part] = count } parts on this car that were paid at the full price (bought here or fitted from full-price
+-- spares): taking them off again gives full-price spares, not salvage. onSalvage: { [part] = { n, f } } salvage spares
+-- fitted to this car: they keep their discount when taken off again.
+function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage)
   if type(before) ~= 'table' or not vehicle or type(vehicle.slotPartMap) ~= 'table' then
     return nil, 'Waiting for the vehicle parts to load.'
   end
   local delta, spares, items, total = {}, {}, {}, 0
   for part, count in pairs(inventory or {}) do spares[part] = count end
+  local cheap, factor = {}, M.kindFactor(haul.carrier(vehicle))
+  for part, row in pairs(salvage or {}) do cheap[part] = { n = row.n, f = row.f } end
+  local full, onCar = {}, {}
+  for part, n in pairs(paid or {}) do full[part] = n end
+  for part, row in pairs(onSalvage or {}) do onCar[part] = { n = row.n, f = row.f } end
   for _, part in pairs(before) do
     if part == M.FREE_PART then -- the dash phone comes and goes with Settings: never bought
     elseif type(part) == 'string' and part ~= '' then delta[part] = (delta[part] or 0) - 1
@@ -270,14 +280,45 @@ function M.partsQuote(G, inventory, before, vehicle)
       local added, removed = math.max(0, count - owned), math.max(0, -count)
       if added > 0 and not detail.jbeam then return nil, 'Could not price ' .. part end
       local cost = added > 0 and added * M.partPrice(detail.value) or 0
-      local left = (spares[part] or 0) + removed - owned
+      local pre = spares[part] or 0
+      local left = pre + removed - owned
       spares[part] = left > 0 and left or nil
+      local row = cheap[part] or { n = 0, f = 1 }
+      local fitted = onCar[part] or { n = 0, f = 1 }
+      local function addCheap(t, n, f)
+        if n > 0 then t.n, t.f = t.n + n, math.min(t.f or 1, f or 1) end
+      end
+      if count > 0 then
+        -- fitted spares: the full-price ones go first; a salvage spare keeps its discount on this car
+        local fitFull = math.min(owned, math.max(0, pre - row.n))
+        local fitCheap = owned - fitFull
+        full[part] = (full[part] or 0) + added + fitFull
+        if fitCheap > 0 then addCheap(fitted, fitCheap, row.f) row.n = row.n - fitCheap end
+      elseif removed > 0 then
+        -- taken off: salvage fitted earlier first, then parts paid in full, then the car's own parts
+        local k1 = math.min(removed, fitted.n)
+        if k1 > 0 then fitted.n = fitted.n - k1 addCheap(row, k1, fitted.f) end
+        local k2 = math.min(removed - k1, full[part] or 0)
+        full[part] = (full[part] or 0) - k2
+        if factor < 1 then addCheap(row, removed - k1 - k2, factor) end
+      end
+      if full[part] and full[part] <= 0 then full[part] = nil end
+      row.n = math.min(row.n, math.max(0, left))
+      cheap[part] = row.n > 0 and row or nil
+      onCar[part] = fitted.n > 0 and fitted or nil
       items[#items + 1] = { part = part, name = detail.name, buy = added, fit = owned, keep = removed, cost = cost }
       total = total + cost
     end
   end
   table.sort(items, function(a, b) return a.name == b.name and a.part < b.part or a.name < b.name end)
-  return { items = items, cost = total, inventory = spares }
+  return { items = items, cost = total, inventory = spares, salvage = next(cheap) and cheap or nil, paid = next(full) and full or nil,
+    fittedSalvage = next(onCar) and onCar or nil }
+end
+
+-- Share of a spare part's value it sells for: salvage from a discounted work vehicle sells at that discount.
+local function sellShare(g, part)
+  local row = g.salvage and g.salvage[part]
+  return M.SELL_PART * (row and (row.n or 0) > 0 and tonumber(row.f) or 1)
 end
 
 -- Spare parts: { { part, name, count, price (to sell) } }
@@ -287,7 +328,7 @@ function M.spares(G, g)
   for name, n in pairs(g.inventory) do
     local i = v and info(G, v.ioCtx, name)
     local value = i and i.value or 0
-    out[#out + 1] = { part = name, name = i and i.name or name, count = n, price = round5(value * M.PRICE_PER_VALUE * M.SELL_PART) }
+    out[#out + 1] = { part = name, name = i and i.name or name, count = n, price = round5(value * M.PRICE_PER_VALUE * sellShare(g, name)) }
   end
   table.sort(out, function(a, b) return a.name < b.name end)
   return out
@@ -297,7 +338,13 @@ function M.sell(G, g, career, partName)
   if (g.inventory[partName] or 0) <= 0 then return false, 'Not in the spare parts' end
   local v = G.vehicle()
   local i = v and info(G, v.ioCtx, partName)
-  local price = round5((i and i.value or 0) * M.PRICE_PER_VALUE * M.SELL_PART)
+  local price = round5((i and i.value or 0) * M.PRICE_PER_VALUE * sellShare(g, partName))
+  local row = g.salvage and g.salvage[partName]
+  if row and (row.n or 0) > 0 then
+    row.n = row.n - 1
+    if row.n <= 0 then g.salvage[partName] = nil end
+    if not next(g.salvage) then g.salvage = nil end
+  end
   g.inventory[partName] = g.inventory[partName] - 1
   if g.inventory[partName] <= 0 then g.inventory[partName] = nil end
   career.money = (career.money or 0) + price
@@ -315,7 +362,13 @@ function M.trackDamage(g, damage)
   local last = g.lastDamage or 0
   g.lastDamage = damage
   local before = g.repair or 0
-  g.repair = (g.carriedRepair or 0) + round5(math.max(0, damage) * M.REPAIR_PER_DAMAGE)
+  local baseline = g.damageBaseline
+  if baseline and baseline.damage > 0 then
+    g.repair = damage < baseline.damage and round5(baseline.bill * math.max(0, damage) / baseline.damage)
+      or baseline.bill + round5((damage - baseline.damage) * M.REPAIR_PER_DAMAGE)
+  else
+    g.repair = (g.carriedRepair or 0) + round5(math.max(0, damage) * M.REPAIR_PER_DAMAGE)
+  end
   local cap = M.repairCap(g)
   if cap and g.repair > cap then g.repair = cap end
   if damage > last then return 'hit', g.repair - before, damage - last end
@@ -340,6 +393,8 @@ function M.repairCar(G, g, career, factor)
   local ok, err = pcall(G.repair)
   if not ok then g.fixUntil = nil return false, 'Repair failed: ' .. tostring(err) end
   career.money = career.money - cost
+  require('cargoEarth/damage').clear(g.car)
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.carriedRepair = 0, nil
   g.spent = (g.spent or 0) + cost
   return true, string.format('Repaired (-%d CZK)', cost), cost
@@ -510,6 +565,18 @@ function M.carWorth(G, g)
   return round5(M.carValue(G) * (1 - math.min(0.5, km / 300000)))
 end
 
+-- Dealer credit for a trade-in or direct sale. Mileage consumes up to 25 percentage points of
+-- installed value at the market's mean mileage. Repairs share the same floor.
+function M.tradeInQuote(G, g)
+  if not g.car or g.car.standIn or g.car.loaner then return 0, 0 end
+  local value = M.carValue(G)
+  if value <= 0 then value = tonumber(g.car.value) or 0 end
+  local fraction = math.min(1, math.max(0, g.car.km or 0) / 80000)
+  local floor = math.ceil(value * 0.25 / 5) * 5
+  local gross = math.max(floor, round5(value * (M.TRADE_IN - 0.25 * fraction)))
+  return math.max(floor, gross - (g.repair or 0)), gross
+end
+
 local function captureCurrent(G, g)
   if not g.car or not M.inOwnCar(G, g) then return true end
   if not M.remember(G, g) then return false end
@@ -541,7 +608,7 @@ end
 function M.newPrice(G, model, key)
   for _, c in ipairs(G.configs() or {}) do
     if c.model == model and c.key == key and tonumber(c.value) and tonumber(c.value) > 0 then
-      return round5(tonumber(c.value) * M.PRICE_PER_VALUE)
+      return round5(tonumber(c.value) * M.PRICE_PER_VALUE * M.kindFactor(haul.configClass(c.model, c.bodyStyle, c.name)))
     end
   end
 end
@@ -560,6 +627,7 @@ function M.repairParked(g, career, id, factor)
   if cost <= 0 then return false, car.name .. ' needs no repair.' end
   if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK needed).', cost) end
   career.money = career.money - cost
+  require('cargoEarth/damage').clear(car)
   car.parkedRepair = 0
   if type(car.breakdown) == 'table' then
     if type(car.service) == 'table' and car.service[car.breakdown.id] then car.service[car.breakdown.id] = 0 end
@@ -613,6 +681,7 @@ function M.switchCar(G, g, id)
   table.remove(g.parked, index)
   if not (g.car and g.car.loaner) then parkCurrent(g) end   -- an old loaner goes back to its company
   g.car, g.repair, g.lastDamage, g.fixUntil = car, car.parkedRepair or 0, 0, nil
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.carriedRepair, car.parkedRepair = g.repair, nil
   return true, 'Now driving ' .. car.name .. '.'
 end
@@ -652,6 +721,7 @@ function M.fallbackCar(G, g)
   if index then table.remove(g.parked, index) end
   if not car.loaner then parkCurrent(g) end   -- kept in My cars for when its mod is back
   g.car, g.repair, g.lastDamage, g.fixUntil, g.pendingUsed = pick, pick.parkedRepair or 0, 0, nil, nil
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.carriedRepair, pick.parkedRepair = g.repair, nil
   if pick.standIn then
     return string.format('%s is not installed (removed vehicle mod?). A %s stands in; %s stays in My cars.',
@@ -677,7 +747,7 @@ function M.buyCar(G, g, career, offer, opts)
   end
   if opts.keepCar and not captureCurrent(G, g) then return false, 'Could not save the current car configuration.' end
   local tradeIn = not opts.keepCar and (opts.tradeIn or
-    ((g.car and M.inOwnCar(G, g)) and round5(M.carWorth(G, g) * M.TRADE_IN) or 0)) or 0
+    ((g.car and M.inOwnCar(G, g)) and M.tradeInQuote(G, g) or 0)) or 0
   local cost = offer.price - tradeIn
   if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK needed)', cost) end
   M.expectFix(g)
@@ -690,6 +760,7 @@ function M.buyCar(G, g, career, offer, opts)
   if kept then parkCurrent(g) end
   g.car = { model = offer.model, key = offer.key, name = offer.name, parts = nil, km = offer.km or 0,
     condition = offer.condition or 1 }
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.lastDamage, g.preview, g.carriedRepair = 0, 0, nil, nil
   return true, string.format('Bought %s for %d CZK%s', offer.name, offer.price,
     kept and '. Previous car parked.' or tradeIn > 0 and string.format(' (%d CZK for the old car)', tradeIn) or ''), cost
@@ -701,7 +772,7 @@ function M.sellCar(G, g, career)
   if g.car.loaner then return false, 'The loaner stays in your garage.' end
   if g.pendingUsed then return false, 'Wait for your car to finish loading its parts' end
   if not M.inOwnCar(G, g) then return false, 'Sit in your car to sell it' end
-  local price = math.max(0, round5(M.carWorth(G, g) * M.TRADE_IN) - (g.repair or 0))
+  local price = M.tradeInQuote(G, g)
   career.money = (career.money or 0) + price
   local name = g.car.name
   local damaged = (g.repair or 0) > 0
@@ -713,12 +784,15 @@ end
 ------------------------------------------------------------------------------------------ the used-car market
 -- A changing list of used cars: new ones appear while you play, old ones are sold to someone else. Each has its
 -- kilometres and condition; the price follows the car's BeamNG value, its condition and a little luck.
-M.MARKET_SIZE = 40             -- listings at most
-M.MARKET_NEW_MIN = 8           -- a new listing about every this many minutes of play
-M.MARKET_LIFE_MIN = { 40, 150 } -- a listing is gone after this many minutes of play
+M.MARKET_LIFE_MIN = { 15, 30 } -- a listing is gone after this many minutes of play
 M.CHEAP_SHARE = 0.5            -- this share of random new listings comes from the cheapest third of its kind
-M.MIN_PER_KIND = 6             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
-M.MARKET_V = 4                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind
+M.MIN_PER_KIND = 8             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
+M.MARKET_V = 5                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price
+-- Work vehicles cost this share of their BeamNG-value price (Jan, 2026-11-18: the first own truck took far too long to
+-- afford and to pay back). Applies to the market, the firm's new vehicles and a vehicle's worth (trade-in, sale,
+-- repair cap). Cars and SUVs keep their price: it follows food pay.
+M.WORK_PRICE = { van = 0.5, rigid = 0.35, semi = 0.35 }
+function M.kindFactor(kind) return M.WORK_PRICE[kind] or 1 end
 
 -- The configs for sale by kind, cheapest first ({ car = {...}, suv = {...}, ... }). Built once per config list.
 local pools = { src = nil }
@@ -785,7 +859,7 @@ local function newListing(G, m, rnd, kind, band)
   local c = list[idx] or list[1]
   local km = math.floor(rnd() * rnd() * 320000 / 100) * 100          -- most cars have few km, some many
   local condition = math.max(0.15, math.min(1, 1 - km / 450000 - rnd() * 0.35))
-  local price = round5(tonumber(c.value) * M.PRICE_PER_VALUE * (0.3 + 0.55 * condition) * (0.88 + 0.24 * rnd()))
+  local price = round5(tonumber(c.value) * M.PRICE_PER_VALUE * M.kindFactor(kind) * (0.3 + 0.55 * condition) * (0.88 + 0.24 * rnd()))
   m.seq = (m.seq or 0) + 1
   return { id = m.seq, model = c.model, key = c.key, name = (c.brand and (c.brand .. ' ') or '') .. (c.name or c.key),
     kind = kind, band = bandOf(list, idx),
@@ -793,76 +867,70 @@ local function newListing(G, m, rnd, kind, band)
     listedAt = m.t, gone = m.t + M.MARKET_LIFE_MIN[1] + rnd() * (M.MARKET_LIFE_MIN[2] - M.MARKET_LIFE_MIN[1]) }
 end
 
--- Every kind the game has keeps at least MIN_PER_KIND listings, spread over cheap, middle and dear ones (at least two
--- of each third): a listing that is sold or gone is replaced at once by one of its kind, from the price third it has
--- fewest of.
-local function topUp(G, m, rnd)
-  local byKind = kindPools(G)
+-- Eight slots per available category, with price variety and a protected test-drive selection.
+local function topUp(G, g, rnd)
+  local m, byKind = g.market, kindPools(G)
   local count, bands = {}, {}
   for _, l in ipairs(m.list) do
-    if l.kind then
-      count[l.kind] = (count[l.kind] or 0) + 1
-      bands[l.kind] = bands[l.kind] or { 0, 0, 0 }
-      if l.band then bands[l.kind][l.band] = bands[l.kind][l.band] + 1 end
+    local kind = l.kind
+    if kind then
+      count[kind] = (count[kind] or 0) + 1
+      bands[kind] = bands[kind] or { 0, 0, 0 }
+      if l.band then bands[kind][l.band] = bands[kind][l.band] + 1 end
+    end
+  end
+  for i = #m.list, 1, -1 do
+    local l = m.list[i]
+    local pool = byKind[l.kind]
+    local surplusBand = pool and #pool >= 3 and l.band and bands[l.kind][l.band] > math.ceil(M.MIN_PER_KIND / 3)
+    if (not pool or count[l.kind] > M.MIN_PER_KIND or surplusBand) and not (g.preview and g.preview.id == l.id) then
+      table.remove(m.list, i)
+      if l.kind then
+        count[l.kind] = count[l.kind] - 1
+        if l.band then bands[l.kind][l.band] = bands[l.kind][l.band] - 1 end
+      end
     end
   end
   for _, kind in ipairs(haul.KIND_ORDER) do
     local list = byKind[kind]
     if list and #list > 0 then
       local b = bands[kind] or { 0, 0, 0 }
-      local each = #list >= 3 and math.floor(M.MIN_PER_KIND / 3) or 0   -- at least this many from each price third
-      for _ = 1, M.MARKET_SIZE do   -- (bounded: never more than a market's worth)
+      for _ = (count[kind] or 0) + 1, M.MIN_PER_KIND do
         local band = 1
         for i = 2, 3 do if b[i] < b[band] then band = i end end
-        if (count[kind] or 0) >= M.MIN_PER_KIND and b[band] >= each then break end
         local l = newListing(G, m, rnd, kind, #list >= 3 and band or nil)
-        if not l then break end
         m.list[#m.list + 1] = l
-        count[kind] = (count[kind] or 0) + 1
         b[l.band] = b[l.band] + 1
       end
     end
   end
 end
 
--- Advances the market by dtMin minutes of play (old listings go, new ones come). rnd: math.random-like (0..1).
+-- Market time is active play time. Free slots are filled immediately after sales and expiries.
 function M.marketTick(G, g, dtMin, rnd)
   rnd = rnd or math.random
   local m = g.market
-  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= M.MARKET_V) then
-    m = { v = M.MARKET_V, t = 0, seq = 0, list = {}, nextAt = 0 } g.market = m
-  end
-  local changed = false
-  if m.v == 3 then
-    -- v3 listings stay (one may be the car you are looking at); they learn their kind
-    for _, l in ipairs(m.list) do l.kind = l.kind or kindOf(G, l.model, l.key) end
-    m.v, changed = M.MARKET_V, true
+  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= 4 and m.v ~= M.MARKET_V) then
+    m = { v = M.MARKET_V, t = 0, seq = 0, list = {} }
+    g.market = m
   end
   m.t = m.t + (dtMin or 0)
+  local reprice = m.v ~= M.MARKET_V   -- listings from before the work-vehicle prices
   for i = #m.list, 1, -1 do
     local l = m.list[i]
-    if l.gone <= m.t and not (g.preview and g.preview.id == l.id) then table.remove(m.list, i) changed = true end   -- not while you look at it
-  end
-  if #m.list == 0 and m.t <= (dtMin or 0) + 1e-9 then
-    -- the first visit: a market already full of cars
-    for _ = 1, math.floor(M.MARKET_SIZE * 0.7) do
-      local l = newListing(G, m, rnd)
-      if l then l.gone = l.gone - rnd() * M.MARKET_LIFE_MIN[1] m.list[#m.list + 1] = l end
+    l.kind = l.kind or kindOf(G, l.model, l.key)
+    if reprice and tonumber(l.price) then l.price = round5(l.price * M.kindFactor(l.kind)) end
+    if not l.band then
+      local list = kindPools(G)[l.kind] or {}
+      for n, c in ipairs(list) do
+        if c.model == l.model and c.key == l.key then l.band = bandOf(list, n) break end
+      end
     end
-    m.nextAt = m.t + M.MARKET_NEW_MIN
-    changed = true
+    l.gone = math.min(l.gone, l.listedAt + M.MARKET_LIFE_MIN[2])
+    if l.gone <= m.t and not (g.preview and g.preview.id == l.id) then table.remove(m.list, i) end
   end
-  while m.t >= m.nextAt do
-    if #m.list < M.MARKET_SIZE then
-      local l = newListing(G, m, rnd)
-      if l then m.list[#m.list + 1] = l changed = true end
-    end
-    m.nextAt = m.nextAt + M.MARKET_NEW_MIN * (0.5 + rnd())
-  end
-  if changed or m.toppedUp ~= #m.list then
-    topUp(G, m, rnd)
-    m.toppedUp = #m.list
-  end
+  m.v = M.MARKET_V
+  topUp(G, g, rnd)
   return m
 end
 
@@ -875,7 +943,8 @@ function M.market(g, filter)
     if not filter or l.name:lower():find(filter, 1, true) then
       out[#out + 1] = { id = l.id, model = l.model, key = l.key, name = l.name, km = l.km, condition = l.condition,
         missing = l.wearVersion == WEAR_VERSION and l.missing and #l.missing or nil, kind = l.kind,
-        price = l.price, isNew = (m.t - l.listedAt) < 15, leftMin = math.max(0, math.floor(l.gone - m.t + 0.5)) }
+        price = l.price, isNew = (m.t - l.listedAt) < 15, held = g.preview and g.preview.id == l.id or nil,
+        leftS = math.max(0, math.ceil((l.gone - m.t) * 60)), leftMin = math.max(0, math.floor(l.gone - m.t + 0.5)) }
     end
   end
   table.sort(out, function(a, b) if a.price ~= b.price then return a.price < b.price end return a.id < b.id end)
@@ -907,6 +976,7 @@ function M.buyListing(G, g, career, id, keepCar)
     keepCar = keepCar })
   if ok then
     table.remove(g.market.list, i)
+    if g.market.v == M.MARKET_V then M.marketTick(G, g, 0) end
     g.preview = nil
     if here then
       g.car.wearVersion = l.wearVersion
@@ -1133,8 +1203,9 @@ function M.previewStart(G, g, id, keepCar)
   if g.car and not M.inOwnCar(G, g) then return false, 'Sit in your car first (Bring my car)' end
   if (g.repair or 0) > 0 then return false, 'Repair your car first' end
   if g.car and g.car.loaner then keepCar = true end
-  local tradeIn = not keepCar and g.car and round5(M.carWorth(G, g) * M.TRADE_IN) or 0
   if not captureCurrent(G, g) then return false, 'Could not save the current car configuration.' end
+  if (g.repair or 0) > 0 then return false, 'Repair your car first' end
+  local tradeIn = not keepCar and M.tradeInQuote(G, g) or 0
   M.expectFix(g)
   local ok, err = pcall(G.spawn, l.model, l.key)
   if not ok then return false, 'Car not spawned: ' .. tostring(err) end
@@ -1174,6 +1245,7 @@ function M.previewEnd(G, g)
   M.expectFix(g)
   local ok, err = pcall(G.spawn, g.car.model, g.car.key, M.savedConfig(g.car))
   if not ok then return false, 'Car not spawned: ' .. tostring(err) end
+  g.damageBaseline, g.restoringDamage = nil, nil
   g.preview, g.carriedRepair, g.lastDamage = nil, g.repair or 0, 0
   return true, 'Back in your ' .. g.car.name .. '.'
 end
@@ -1213,7 +1285,7 @@ function M.start(G, g, career, model)
     km = STARTER_KM, condition = STARTER_CONDITION, starter = true }
   g.pendingUsed = { starter = true }
   g.repair, g.debt, g.lastDamage, g.inventory, g.spent, g.carriedRepair = 0, 0, 0, {}, 0, nil
-  g.debtParts, g.debtLog = nil, nil
+  g.debtParts, g.debtLog, g.salvage = nil, nil, nil
   g.priceV = M.PRICE_V
   return true, 'Your car: ' .. g.car.name .. '. ' .. M.START_MONEY .. ' CZK to start.'
 end

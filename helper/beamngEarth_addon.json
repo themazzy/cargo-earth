@@ -1,5 +1,5 @@
 {"options": [
-  {"key": "port", "label": "Port", "type": "int", "default": 47820, "min": 1024, "max": 65535, "arg": "--port",
-   "help": "The port the Cargo Earth mod asks on (the mod's config.json helperPort, if you change it)."}
+  {"key": "port", "label": "Port", "type": "int", "default": 47821, "min": 1024, "max": 65535, "arg": "--port",
+   "help": "Must match Cargo Earth's config.json helperPort. Port 47820 is reserved for EarthRadio."}
  ],
- "run": {"args": [], "port": 47820, "page": "http://127.0.0.1:{port}/"}}
+ "run": {"args": [], "port": 47821, "page": "http://127.0.0.1:{port}/"}}

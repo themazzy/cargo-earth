@@ -4,15 +4,23 @@ Cargo Earth sorts the vehicle you drive into one of five kinds (`cargoEarth/haul
 sorted by the "Body Style" BeamNG lists for every config; models known to be SUVs or pickups (D-Series, Roamer,
 Hopper) count as such even without a style.
 
-| Kind | Detected by | Food delivery mode | Freight mode |
-| --- | --- | --- | --- |
-| Car | any other road vehicle (Sedan, Hatchback, Wagon, Coupe...) | meals, groceries | taxi rides (1-3 passengers, 2-15 km to airports, stations, museums, sights and hotels; a rough ride costs pay), company contracts |
-| SUV or pickup | Body Style SUV / Pickup / Crossover / Off-Road | meals, groceries | parts runs, company contracts |
-| Van | the H-Series van | meals, groceries | parcel routes (4-7 stops), van freight, company contracts |
-| Box truck | MD-Series, the mid truck, a T-Series without a fifth wheel | meals, groceries | business shipping between companies |
-| Tractor | any truck with a fifth wheel | meals, groceries | trailer freight, fuel tanker runs, heavy tow jobs |
+| Kind | Detected by | Food delivery mode | Taxi mode | Freight mode |
+| --- | --- | --- | --- | --- |
+| Car | any other road vehicle (Sedan, Hatchback, Wagon, Coupe...) | meals, groceries | usable passenger seats required | tow jobs with a tow hitch, company contracts |
+| SUV or pickup | Body Style SUV / Pickup / Crossover / Off-Road | meals, groceries | usable passenger seats required | parts runs, company contracts |
+| Van | the H-Series van | meals, groceries | usable passenger seats required | parcel routes (4-7 stops), van freight, company contracts |
+| Box truck | MD-Series, the mid truck, a T-Series without a fifth wheel | meals, groceries | unavailable | business shipping between companies |
+| Tractor | any truck with a fifth wheel | meals, groceries | unavailable | trailer freight, fuel tanker runs, heavy tow jobs |
 
-City buses come lent with a bus line shift (Bus mode, see BUS_LINES.md). Any vehicle with a tow hitch also gets light tow jobs. Every load travels in BeamNG's own cargo containers.
+City buses come lent with a bus line shift (Bus mode, see BUS_LINES.md). Any vehicle with a tow hitch also gets light tow jobs. Cargo travels in BeamNG's cargo containers; passengers use its seat system.
+
+## Taxi rides
+
+Taxi is its own Work category. It requires an owned car, SUV or passenger van and at least one passenger seat recognized by the game. Groups range from one passenger to the vehicle's verified passenger capacity. Driver and player-occupied seats are excluded. Each dummy passenger contributes 75 kg.
+
+Rides end at airports, stations, museums, sights or hotels. The default trip range is approximately 2–15.6 road km. Pickup drive time is included in the allowance, with road distances used where mapped and estimates otherwise.
+
+The fare is `(50 CZK + 18 CZK × trip km) × (1 + 0.20 × extra passengers)`, with a further 1.25 multiplier for Rush and rounding to 5 CZK. Fuel and reputation adjustments follow afterward. Comfort/Rush driving and tip rules still apply at completion. The phone shows the accepted fare breakdown; an existing saved ride keeps its original price.
 
 ## Tow jobs
 

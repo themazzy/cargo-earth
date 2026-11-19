@@ -105,7 +105,7 @@ func findLinuxUserFolder() (string, error) {
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
-func installLinuxPython(target string) error {
+func installLinuxPython(target string, port int) error {
 	p := findPython()
 	if p == nil {
 		return errors.New("Python 3.9 or newer is required. Install python3 and its venv package, then run this installer again")
@@ -136,7 +136,7 @@ func installLinuxPython(target string) error {
 		}
 	}
 	launcher := filepath.Join(helperDir(), "start_helper.sh")
-	script := "#!/bin/sh\nexec " + shellQuote(p.exe) + " " + shellQuote(target) + " --port " + strconv.Itoa(helperPort) + " \"$@\"\n"
+	script := "#!/bin/sh\nexec " + shellQuote(p.exe) + " " + shellQuote(target) + " --port " + strconv.Itoa(port) + " \"$@\"\n"
 	if err := doIt("write "+launcher, func() error { return os.WriteFile(launcher, []byte(script), 0o755) }); err != nil {
 		return err
 	}

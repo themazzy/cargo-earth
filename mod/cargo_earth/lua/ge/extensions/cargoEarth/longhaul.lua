@@ -1,0 +1,176 @@
+-- cargoEarth/longhaul: delivery points for long-distance freight. The nearby helper areas reach only about 15 km, so
+-- when a freight or contract distance setting goes far, this picks real towns in that ring (a bundled Natural Earth
+-- list, data/cities.json) and asks the helper for their workplaces (/v1/sites). They become delivery points only;
+-- pickups stay near the player. Pure rules plus a tick that is handed the helper call, so it runs without the game.
+local jobs = require('cargoEarth/jobs')
+
+local M = {}
+M.LOCAL_KM = 120       -- a longest distance up to this is served by the nearby areas and the bundled pack
+M.TOWNS = 8            -- far towns asked for at once
+M.MOVE_KM = 50         -- pick the towns again after moving this far
+M.LOADING_S = 4        -- a town the helper is still building: ask again after this long
+M.FAILED_S = 300       -- a town that failed: ask again after this long
+M.IN_FLIGHT = 2        -- requests to the helper at once
+M.LOST_S = 60          -- a request with no answer by then counts as dropped (the helper queue is full or merged it)
+M.SECTORS = 8          -- the ring is split by compass direction, so the towns go every way
+
+-- data/cities.json -> { { n, cc, lat, lon, pop (thousands) }, ... }
+function M.cities(data)
+  local out = {}
+  for _, r in ipairs(type(data) == 'table' and type(data.rows) == 'table' and data.rows or {}) do
+    if type(r) == 'table' and type(r[1]) == 'string' and type(r[3]) == 'number' and type(r[4]) == 'number'
+      and math.abs(r[3]) <= 90 and math.abs(r[4]) <= 180 then
+      out[#out + 1] = { n = r[1], cc = tostring(r[2] or ''), lat = r[3], lon = r[4], pop = tonumber(r[5]) or 0 }
+    end
+  end
+  return out
+end
+
+-- The rings (road km) far towns are wanted in: one per distance profile that reaches past LOCAL_KM, each kept apart
+-- (a 20-250 km freight profile and a 600-800 km contract one must both get towns, none in the gap between).
+-- profiles: { { minKm, maxKm }, ... }. Returns { { lo, hi }, ... } (the same ring once), or nil when all stay local.
+function M.rings(profiles)
+  local out, seen = {}, {}
+  for _, r in ipairs(profiles or {}) do
+    if type(r) == 'table' and tonumber(r.maxKm) and r.maxKm > M.LOCAL_KM then
+      local lo, hi = math.max(M.LOCAL_KM, tonumber(r.minKm) or 0), r.maxKm
+      local key = string.format('%d-%d', math.floor(lo), math.floor(hi))
+      if not seen[key] then seen[key] = true out[#out + 1] = { lo, hi } end
+    end
+  end
+  return #out > 0 and out or nil
+end
+
+local function bearing(lat1, lon1, lat2, lon2)
+  local r = math.pi / 180
+  local y = math.sin((lon2 - lon1) * r) * math.cos(lat2 * r)
+  local x = math.cos(lat1 * r) * math.sin(lat2 * r) - math.sin(lat1 * r) * math.cos(lat2 * r) * math.cos((lon2 - lon1) * r)
+  return (math.atan2 and math.atan2(y, x) or math.atan(y, x)) / r % 360
+end
+
+-- Up to n towns whose road distance (straight x ROAD_FACTOR) is in [minKm, maxKm]: the biggest of each compass sector
+-- first, then the second biggest, and so on. The same place gives the same towns (the offers don't reshuffle).
+function M.pick(cities, lat, lon, minKm, maxKm, n)
+  local sectors = {}
+  for i = 1, M.SECTORS do sectors[i] = {} end
+  local lo, hi = minKm / jobs.ROAD_FACTOR, maxKm / jobs.ROAD_FACTOR
+  for _, c in ipairs(cities or {}) do
+    if math.abs(c.lat - lat) <= hi / 111 then
+      local k = jobs.km(lat, lon, c.lat, c.lon)
+      if k >= lo and k <= hi then
+        local s = math.floor(bearing(lat, lon, c.lat, c.lon) / (360 / M.SECTORS)) % M.SECTORS + 1
+        table.insert(sectors[s], c)
+      end
+    end
+  end
+  for _, list in ipairs(sectors) do table.sort(list, function(a, b) return a.pop > b.pop end) end
+  local out = {}
+  for rank = 1, math.huge do
+    local any = false
+    for _, list in ipairs(sectors) do
+      if list[rank] then
+        any = true
+        if #out < (n or M.TOWNS) then out[#out + 1] = list[rank] end
+      end
+    end
+    if not any or #out >= (n or M.TOWNS) then break end
+  end
+  return out
+end
+
+-- The towns for several rings, { { city, ring }, ... }: TOWNS shared out between them (each gets its share, at least 2),
+-- no town twice.
+-- Also returns spares per ring (the next towns), tried when a town turns out to have no workplaces.
+function M.pickRings(cities, lat, lon, rings)
+  local out, spares, seen = {}, {}, {}
+  local share = math.max(2, math.ceil(M.TOWNS / #rings))
+  for i, r in ipairs(rings) do
+    local n = 0
+    spares[i] = {}
+    -- only scheduled towns are taken; a spare stays free for later rings (it may be the only town in one)
+    for _, c in ipairs(M.pick(cities, lat, lon, r[1], r[2], share * 3)) do
+      if not seen[c] then
+        if n < share then n, seen[c] = n + 1, true out[#out + 1] = { city = c, ring = i } else table.insert(spares[i], c) end
+      end
+    end
+  end
+  return out, spares
+end
+
+-- One step, from the helper tick. st: this module's state (kept by the caller). p: the player { lat, lon }.
+-- rings: from M.rings (nil: nothing far wanted). cities: from M.cities. ask(path, onDone): the helper call.
+-- covered(lat, lon): true where the bundled pack already has workplaces. onSites(key, depots, city): ready workplaces,
+-- returns how many became delivery points.
+function M.tick(st, now, p, rings, cities, ask, covered, onSites)
+  if not (rings and rings[1] and p) or st.old then return end
+  local parts = {}
+  for _, r in ipairs(rings) do parts[#parts + 1] = string.format('%d-%d', math.floor(r[1]), math.floor(r[2])) end
+  local ringKey = table.concat(parts, ',')
+  if st.ring ~= ringKey or not st.at or jobs.km(st.at.lat, st.at.lon, p.lat, p.lon) > M.MOVE_KM then
+    st.ring, st.at, st.towns = ringKey, { lat = p.lat, lon = p.lon }, {}
+    local towns, spares = M.pickRings(cities, p.lat, p.lon, rings)
+    st.spares = spares
+    for _, t in ipairs(towns) do
+      if not (covered and covered(t.city.lat, t.city.lon)) then
+        st.towns[#st.towns + 1] = { city = t.city, ring = t.ring, nextAt = 0 }
+      end
+    end
+  end
+  -- requests in flight, by path: they outlive a new town list, so a town asked again is not asked twice
+  st.pending = st.pending or {}
+  local flying = 0
+  for path, at in pairs(st.pending) do
+    if now - at > M.LOST_S then st.pending[path] = nil else flying = flying + 1 end
+  end
+  for _, t in ipairs(st.towns) do
+    if flying >= M.IN_FLIGHT then break end
+    local path = string.format('/v1/sites?lat=%.4f&lon=%.4f', t.city.lat, t.city.lon)
+    if not t.done and not st.pending[path] and now >= t.nextAt then
+      st.pending[path], flying = now, flying + 1
+      ask(path, function(data, err)
+        st.pending[path] = nil
+        local town   -- the town of the current list (the list may have been picked again meanwhile)
+        for _, x in ipairs(st.towns) do if x.city == t.city then town = x break end end
+        if not town or town.done then return end
+        if type(data) ~= 'table' then
+          if err == 'HTTP 404' then st.old = true end   -- a helper from before long hauls
+          town.nextAt = now + M.FAILED_S
+          return
+        end
+        if data.state == 'ready' and type(data.depots) == 'table' then
+          town.done = true
+          -- usable delivery points (fuel stations and the like are left out), not the raw rows
+          town.count = 0
+          if #data.depots > 0 then
+            local added = onSites(tostring(data.key or path), data.depots, town.city)
+            town.count = type(added) == 'number' and added or #data.depots
+          end
+          if town.count == 0 then
+            -- no workplaces there (a resort, a suburb): the next town of the same ring instead
+            local list, spare = st.spares and st.spares[town.ring] or {}, nil
+            repeat spare = table.remove(list, 1) until not spare or not M.scheduled(st, spare)
+            if spare then st.towns[#st.towns + 1] = { city = spare, ring = town.ring, nextAt = 0 } end
+          end
+        elseif data.state == 'failed' then town.nextAt = now + M.FAILED_S
+        else town.nextAt = now + M.LOADING_S end
+      end)
+    end
+  end
+end
+
+function M.scheduled(st, city)
+  for _, t in ipairs(st.towns or {}) do if t.city == city then return true end end
+  return false
+end
+
+-- For the phone and settings: { towns = n asked, ready = n with workplaces, old = true when the helper is too old }.
+function M.status(st)
+  local out = { towns = 0, ready = 0, old = st.old or nil }
+  for _, t in ipairs(st.towns or {}) do
+    out.towns = out.towns + 1
+    if t.done and (t.count or 0) > 0 then out.ready = out.ready + 1 end
+  end
+  return out
+end
+
+return M

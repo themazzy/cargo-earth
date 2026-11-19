@@ -82,7 +82,7 @@ scope.closeHq()
 assert(!scope.hqOpen)
 scope.setCareerView('money')
 assert(directive.template.includes('!g.fuel.station.at || !g.fuel.fill || g.fuel.fill.canCost <= 0'), 'Fuel delivery stays available at a station you cannot pay')
-assert(directive.template.includes('Parcel route · stop'), 'Template is missing the parcel route card')
+assert(directive.template.includes('Parcel route</div>'), 'Template is missing the parcel route card')
 for (const text of ['Open headquarters', 'Found the firm', 'Speed camera in', 'class="cehq"', 'Fill up']) {
   assert(directive.template.includes(text), 'Template is missing: ' + text)
 }
@@ -121,7 +121,7 @@ assert.equal(scope.tab, 'radio')
 assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("radio")')), 'The game hears which page the phone shows')
 assert(commands.at(-1).includes('pcall(cargoEarth_core.radioState'))
 const stations = [{id: 'a', name: 'Rádio Jih', url: 'http://a/stream', codec: 'MP3', kbps: 128}, {id: 'b', name: 'Two', url: 'https://b/s', codec: 'OGG'}]
-const STREAM = 'http://127.0.0.1:47820/v1/stream?id='
+const STREAM = 'http://127.0.0.1:47821/v1/stream?id='
 scope.rs = {country: 'CZ', countryName: 'Czechia', state: 'ready', top: stations, near: [], stream: STREAM}
 scope.radioPlay(stations[0], stations)
 assert.equal(scope.radio.status, 'loading')
@@ -209,7 +209,82 @@ for (const t of timers.filter(timer => timer.interval === 250)) t.fn()
 assert.equal(scope.tab, 'radio', 'a choice made here a moment ago is not undone by an older answer')
 answer = {screen: 'offline'}
 assert(directive.template.includes('radio-browser.info'))
-assert(directive.template.includes('aria-label="Job type"') && directive.template.includes("act('mode', 'trucking')"), 'the offline screen switches the job type')
+assert.deepEqual(Array.from(scope.workModes, m => m.id), ['courier', 'trucking', 'taxi', 'bus'])
+assert.equal(scope.workModeName('taxi'), 'Taxi')
+assert(directive.template.includes('chooseWorkMode(\'work\', m.id)'), 'the offline buttons switch the job type')
+answer = {screen: 'offline', mode: 'taxi', canSwitch: true, taxi: {eligible: true, seats: 3}}
+scope.s = {screen: 'offline', mode: 'trucking', canSwitch: true}
+scope.modePicker.work = true
+scope.chooseWorkMode('work', 'taxi')
+assert(commands.at(-1).includes('phoneAction("mode", "taxi")'))
+assert.equal(scope.s.mode, 'taxi')
+assert(!scope.modePicker.work, 'Choosing a mode closes the dropdown')
+const modeCommandCount = commands.length
+scope.chooseWorkMode('work', 'taxi')
+scope.s.canSwitch = false
+scope.chooseWorkMode('work', 'bus')
+assert.equal(commands.length, modeCommandCount, 'Active jobs and reselecting the current mode send no switch')
+answer = {mode: 'taxi', canSwitch: true, items: []}
+scope.st = {mode: 'courier', canSwitch: true}
+scope.modePicker.settings = true
+scope.chooseWorkMode('settings', 'taxi')
+assert(commands.at(-1).includes('pcall(cargoEarth_core.settingsDo, "mode", "taxi")'))
+assert.equal(scope.st.mode, 'taxi')
+assert(!scope.modePicker.settings)
+// Settings > Jobs edits a profile without changing active work; polling preserves unfinished numeric input.
+answer = {mode: 'taxi', jobType: 'freight_rigid', jobTypes: [{id: 'freight_rigid', name: 'Own box truck'}], items: [
+  {key: 'nearKm', unit: 'km', min: 0.5, max: 200, value: 30},
+  {key: 'minKm', unit: 'km', min: 0.5, max: 800, value: 12},
+  {key: 'maxKm', unit: 'km', min: 0.5, max: 800, value: 125}
+]}
+scope.openPanel('settings', 'jobs', true)
+assert(scope.jobsSettingsOpen && scope.panelTitle() === 'Jobs settings')
+assert.equal(scope.jobTypeName(), 'Own box truck')
+scope.jobDraft().minKm = 600
+scope.jobDraft().maxKm = 800
+scope.openJobsSettings()
+assert.equal(scope.jobDraft().maxKm, 800, 'polling must not replace typed input')
+assert(scope.jobRangeValid())
+scope.saveJobRange()
+assert(commands.at(-1).includes('pcall(cargoEarth_core.settingsDo, "jobRange", "freight_rigid", {"nearKm":30,"minKm":600,"maxKm":800})'))
+scope.jobDraft().maxKm = 500
+assert(!scope.jobRangeValid())
+const invalidRangeCommands = commands.length
+scope.saveJobRange()
+assert.equal(commands.length, invalidRangeCommands)
+answer = {...answer, rangeReset: true, rangeChanged: 'freight_rigid'}
+scope.resetJobRange()
+assert.equal(scope.jobDraft().maxKm, 125, 'successful reset clears the selected draft')
+// An untouched draft follows saved values changed elsewhere; another career drops drafts.
+answer = {...answer, rangeReset: false, rangeChanged: undefined, careerEpoch: 1}
+scope.st = answer
+scope.jobDraft()
+answer = {...answer, items: answer.items.map(it => it.key === 'maxKm' ? {...it, value: 300} : it)}
+scope.st = answer
+assert.equal(scope.jobDraft().maxKm, 300, 'untouched draft shows the newly saved value')
+scope.jobDraft().maxKm = 400
+answer = {...answer, items: answer.items.map(it => it.key === 'maxKm' ? {...it, value: 350} : it)}
+scope.st = answer
+assert.equal(scope.jobDraft().maxKm, 400, 'typed draft survives a changed saved value')
+answer = {...answer, careerEpoch: 2}
+scope.st = answer
+assert.equal(scope.jobDraft().maxKm, 350, 'another loaded career shows its own saved values')
+const maxItem = answer.items.find(it => it.key === 'maxKm')
+scope.nudgeDraft(maxItem, 1)
+assert.equal(scope.jobDraft().maxKm, 375, 'plus steps by 25 km above 100 km')
+scope.jobDraft().maxKm = 100
+scope.nudgeDraft(maxItem, -1)
+assert.equal(scope.jobDraft().maxKm, 95, 'minus from 100 steps by 5 km')
+scope.jobDraft().maxKm = 1
+scope.nudgeDraft(maxItem, -1); scope.nudgeDraft(maxItem, -1)
+assert.equal(scope.jobDraft().maxKm, 0.5, 'minus stops at the lowest allowed value')
+scope.closeJobsSettings()
+assert(!scope.jobsSettingsOpen && scope.panelTitle() === 'Settings')
+scope.openJobsSettings()
+scope.openPanel('garage', undefined, true)
+scope.openPanel('settings', undefined, true)
+assert(!scope.jobsSettingsOpen, 'Settings menu entry opens general settings')
+answer = {screen: 'offline'}
 scope.setTab('orders')
 scope.setTab('invalid')
 assert.equal(scope.tab, 'orders')
@@ -228,8 +303,29 @@ let asked = commands.length, digested = digests
 for (now = t0 + 10250; now <= t0 + 20000; now += 250) poll()
 assert.equal(commands.length - asked, 20, 'An open phone polls twice a second')
 assert(digests - digested <= 1, 'Unchanged answers must not start a digest')
+// The open market updates from active game time without overlapping requests or resetting filters.
+scope.panel = 'garage'
+scope.gview = 'cars'
+scope.cf.kind = 'van'
+scope.cf.detail = 17
+answer = {cars: [{id: 17, leftS: 3600}], money: 100}
+now += 1000; poll()
+assert.equal(scope.cars[0].leftS, 3600)
+assert.equal(scope.carExpiry(scope.cars[0]), '60:00')
+answer.cars[0].leftS = 3599
+now += 1000; poll()
+assert.equal(scope.carExpiry(scope.cars[0]), '59:59')
+assert.equal(scope.cf.kind, 'van')
+assert.equal(scope.cf.detail, 17)
+scope.panel = null
+scope.gview = 'home'
+answer = {screen: 'offline'}
+let dealerCalls = commands.filter(c => c.includes('garageDealer')).length
+now += 1000; poll()
+assert.equal(commands.filter(c => c.includes('garageDealer')).length, dealerCalls, 'closed market stops polling')
 // Standing in the stop zone the bar fills: four times a second.
 answer = {screen: 'active', active: {stop: {inZone: true, frac: 0}}}
+now += 500
 poll(); now += 250
 asked = commands.length
 for (let i = 0; i < 8; i++) { answer.active.stop.frac = i / 8; poll(); now += 250 }
@@ -339,6 +435,9 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   const request = {panel: 'settings', to: 'menu'}
   for (const m of menus) m.on.CargoEarthOpenMenu({}, request)
   assert.equal(menus.filter(m => m.s.panel).length, 1, 'one request opens one window')
+  const jobsRequest = {panel: 'settings', view: 'jobs', to: 'menu'}
+  for (const m of menus) m.on.CargoEarthOpenMenu({}, jobsRequest)
+  assert(menus[0].s.jobsSettingsOpen && menus[0].s.panelTitle() === 'Jobs settings', 'dash shortcut opens the submenu in the Menu host')
   menus[1].s.openPanel('garage', undefined, true)
   assert(!menus[0].s.panel && menus[1].s.panel === 'garage', 'opening a window closes the other one')
   const toggle = {panel: 'toggle', to: 'menu'}

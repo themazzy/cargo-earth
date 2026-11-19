@@ -23,6 +23,19 @@ local function floatPtr(key, v)
   return ptr[key]
 end
 
+-- Distance sliders show the saved job profile every frame: the phone can change it too.
+local function rangePtr(make, key, v)
+  local p = make(key, v)
+  if v then p[0] = v end
+  return p
+end
+
+-- The distances new offers in this mode use (core.jobOptions of the window's job type), or {} before a career.
+local function ranges(core)
+  local id = core.windowJobType and core.windowJobType()
+  return id and core.jobOptions(id) or {}
+end
+
 local function boolPtr(key, v)
   if not ptr[key] then ptr[key] = im.BoolPtr(v) end
   return ptr[key]
@@ -56,10 +69,10 @@ local function placeLine(d, S)
 end
 
 local function courierOptions(core, S, mods)
-  local o, d = S.opts, mods.food.defaults
-  local minKm = floatPtr('c.minKm', o.minKm or d.minKm)
-  local maxKm = floatPtr('c.maxKm', o.maxKm or d.maxKm)
-  local nearKm = floatPtr('c.nearKm', o.nearKm or d.nearKm)
+  local o, d, r = S.opts, mods.food.defaults, ranges(core)
+  local minKm = rangePtr(floatPtr, 'c.minKm', r.minKm or o.minKm or d.minKm)
+  local maxKm = rangePtr(floatPtr, 'c.maxKm', r.maxKm or o.maxKm or d.maxKm)
+  local nearKm = rangePtr(floatPtr, 'c.nearKm', r.nearKm or o.nearKm or d.nearKm)
   local count = intPtr('c.count', o.count or d.count)
   if im.SliderFloat('Shortest order (km)', minKm, 0.2, 15, '%.1f') then core.setOption('minKm', minKm[0]) end
   if im.SliderFloat('Longest order (km)', maxKm, 0.5, 20, '%.1f') then core.setOption('maxKm', maxKm[0]) end
@@ -79,9 +92,11 @@ local function truckOptions(core, S, mods)
   local o, d = S.opts, mods.jobs.defaults
   S.choices = S.choices or mods.jobs.choices(S.idx)
   local ch, idx = S.choices, S.idx
-  local minKm = intPtr('t.minKm', o.minKm or d.minKm)
-  local maxKm = intPtr('t.maxKm', o.maxKm or d.maxKm)
-  local nearKm = intPtr('t.nearKm', o.nearKm or d.nearKm)
+  local r = ranges(core)
+  local function whole(v) return v and math.floor(v + 0.5) end
+  local minKm = rangePtr(intPtr, 't.minKm', whole(r.minKm or o.minKm or d.minKm))
+  local maxKm = rangePtr(intPtr, 't.maxKm', whole(r.maxKm or o.maxKm or d.maxKm))
+  local nearKm = rangePtr(intPtr, 't.nearKm', whole(r.nearKm or o.nearKm or d.nearKm))
   local count = intPtr('t.count', o.count or d.count)
   if im.SliderInt('Shortest job (km)', minKm, 5, 600) then core.setOption('minKm', minKm[0]) end
   if im.SliderInt('Longest job (km)', maxKm, 10, 800) then core.setOption('maxKm', maxKm[0]) end
@@ -97,7 +112,20 @@ local function truckOptions(core, S, mods)
 end
 
 local function options(core, S, mods)
-  if S.mode == 'courier' then courierOptions(core, S, mods) else truckOptions(core, S, mods) end
+  if S.mode == 'courier' then courierOptions(core, S, mods)
+  elseif S.mode == 'trucking' then truckOptions(core, S, mods)
+  else
+    -- this mode's own profile (the phone's Jobs settings may be showing another job type)
+    local id = core.windowJobType and core.windowJobType()
+    local bounds, r = id and core.jobSettings.bounds(id) or {}, ranges(core)
+    local labels = core.jobSettings.labels(id)
+    for _, key in ipairs({ 'nearKm', 'minKm', 'maxKm' }) do
+      if bounds[key] and r[key] then
+        local value = rangePtr(floatPtr, S.mode .. '.' .. key, r[key])
+        if im.SliderFloat(labels[key] .. ' (km)', value, bounds[key][1], bounds[key][2], '%.1f') then core.setOption(key, value[0]) end
+      end
+    end
+  end
   if im.Button('Generate jobs') then
     core.saveOptions()
     core.generate()
@@ -310,7 +338,7 @@ local function garageSection(core, S)
     local f = textInput('carFilter', 'Find a car')
     if f ~= garageView.dealerFilter then garageView.dealer, garageView.dealerFilter = nil, f end
     garageView.dealer = garageView.dealer or garage.dealer(G, f, 25)
-    local tradeIn = math.floor(garage.carValue(G) * garage.TRADE_IN / 5 + 0.5) * 5
+    local tradeIn = garage.inOwnCar(G, g) and garage.tradeInQuote(G, g) or 0
     txt('Your car is taken in for ' .. czk(tradeIn) .. '. Spare parts stay yours.')
     for i, o in ipairs(garageView.dealer) do
       if im.Button('Buy ' .. czk(o.price) .. '##car' .. i) then did(core.garageBuy(o)) end
@@ -372,7 +400,10 @@ function M.draw(core, S, mods, earth, trailers)
         im.SameLine()
         if im.Button((S.mode == 'trucking' and '[Trucking]' or 'Trucking') .. '##mode2') then core.setMode('trucking') end
         im.SameLine()
-        txt(S.mode == 'courier' and 'Food orders, any car' or 'Cargo with a trailer')
+        if im.Button((S.mode == 'taxi' and '[Taxi]' or 'Taxi') .. '##mode3') then core.setMode('taxi') end
+        im.SameLine()
+        if im.Button((S.mode == 'bus' and '[Bus]' or 'Bus') .. '##mode4') then core.setMode('bus') end
+        if S.mode == 'taxi' then wrapped(core.taxiState().hint) end
       end
       wrapped(S.packInfo)
       local hi = core.helperInfo and core.helperInfo()
@@ -383,7 +414,7 @@ function M.draw(core, S, mods, earth, trailers)
       im.Separator()
       if S.job then
         if im.CollapsingHeader1('Active job', im.TreeNodeFlags_DefaultOpen) then active(core, S, trailers) end
-      elseif (S.mode == 'courier' and not S.fidx) or (S.mode == 'trucking' and not S.idx) then
+      elseif ((S.mode == 'courier' or S.mode == 'taxi') and not S.fidx) or (S.mode == 'trucking' and not S.idx) then
         txt('No data pack for this mode.')
       else
         if im.CollapsingHeader1('Options', im.TreeNodeFlags_DefaultOpen) then options(core, S, mods) end

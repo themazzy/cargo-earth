@@ -1,0 +1,548 @@
+{
+ "format": 1,
+ "note": "Freight catalogue: cargo, trailers and workplace types. Fictional gameplay rules, not claims about real businesses. Workplaces come from the helper (Overture Maps) anywhere on Earth.",
+ "trailers": {
+  "curtain": "Curtainsider",
+  "box": "Box / dry van",
+  "reefer": "Refrigerated",
+  "flatbed": "Flatbed",
+  "tipper": "Tipper",
+  "tanker": "Tanker",
+  "silo": "Bulk silo",
+  "log": "Log trailer",
+  "lowloader": "Low loader",
+  "container": "Container chassis",
+  "livestock": "Livestock"
+ },
+ "cargo": {
+  "pallets_general": {
+   "name": "Mixed pallets",
+   "trailer": "curtain",
+   "tonnes": 18,
+   "pay": 1.0,
+   "adr": false
+  },
+  "consumer_goods": {
+   "name": "Consumer goods",
+   "trailer": "box",
+   "tonnes": 14,
+   "pay": 1.05,
+   "adr": false
+  },
+  "electronics": {
+   "name": "Electronics",
+   "trailer": "box",
+   "tonnes": 8,
+   "pay": 1.4,
+   "adr": false
+  },
+  "furniture": {
+   "name": "Furniture",
+   "trailer": "box",
+   "tonnes": 10,
+   "pay": 1.1,
+   "adr": false
+  },
+  "machinery": {
+   "name": "Machinery",
+   "trailer": "flatbed",
+   "tonnes": 16,
+   "pay": 1.3,
+   "adr": false
+  },
+  "heavy_machinery": {
+   "name": "Heavy machinery",
+   "trailer": "lowloader",
+   "tonnes": 30,
+   "pay": 1.8,
+   "adr": false
+  },
+  "car_parts": {
+   "name": "Car parts",
+   "trailer": "curtain",
+   "tonnes": 14,
+   "pay": 1.2,
+   "adr": false
+  },
+  "steel_coils": {
+   "name": "Steel coils",
+   "trailer": "flatbed",
+   "tonnes": 24,
+   "pay": 1.25,
+   "adr": false
+  },
+  "steel_beams": {
+   "name": "Steel beams",
+   "trailer": "flatbed",
+   "tonnes": 22,
+   "pay": 1.2,
+   "adr": false
+  },
+  "scrap_metal": {
+   "name": "Scrap metal",
+   "trailer": "tipper",
+   "tonnes": 22,
+   "pay": 0.9,
+   "adr": false
+  },
+  "chemicals": {
+   "name": "Chemicals",
+   "trailer": "tanker",
+   "tonnes": 22,
+   "pay": 1.5,
+   "adr": true
+  },
+  "fertilizer": {
+   "name": "Fertilizer",
+   "trailer": "silo",
+   "tonnes": 24,
+   "pay": 1.1,
+   "adr": false
+  },
+  "plastics": {
+   "name": "Plastic granulate",
+   "trailer": "silo",
+   "tonnes": 20,
+   "pay": 1.05,
+   "adr": false
+  },
+  "fuel": {
+   "name": "Fuel (diesel, petrol)",
+   "trailer": "tanker",
+   "tonnes": 26,
+   "pay": 1.55,
+   "adr": true
+  },
+  "lpg": {
+   "name": "LPG",
+   "trailer": "tanker",
+   "tonnes": 20,
+   "pay": 1.65,
+   "adr": true
+  },
+  "logs": {
+   "name": "Logs",
+   "trailer": "log",
+   "tonnes": 24,
+   "pay": 0.95,
+   "adr": false
+  },
+  "lumber": {
+   "name": "Lumber",
+   "trailer": "flatbed",
+   "tonnes": 22,
+   "pay": 1.0,
+   "adr": false
+  },
+  "wood_chips": {
+   "name": "Wood chips",
+   "trailer": "tipper",
+   "tonnes": 18,
+   "pay": 0.8,
+   "adr": false
+  },
+  "gravel": {
+   "name": "Gravel",
+   "trailer": "tipper",
+   "tonnes": 26,
+   "pay": 0.75,
+   "adr": false
+  },
+  "sand": {
+   "name": "Sand",
+   "trailer": "tipper",
+   "tonnes": 26,
+   "pay": 0.75,
+   "adr": false
+  },
+  "stone_blocks": {
+   "name": "Stone blocks",
+   "trailer": "flatbed",
+   "tonnes": 26,
+   "pay": 0.95,
+   "adr": false
+  },
+  "coal": {
+   "name": "Coal",
+   "trailer": "tipper",
+   "tonnes": 26,
+   "pay": 0.85,
+   "adr": false
+  },
+  "cement": {
+   "name": "Cement",
+   "trailer": "silo",
+   "tonnes": 26,
+   "pay": 1.0,
+   "adr": false
+  },
+  "concrete_parts": {
+   "name": "Precast concrete",
+   "trailer": "flatbed",
+   "tonnes": 24,
+   "pay": 1.05,
+   "adr": false
+  },
+  "bricks": {
+   "name": "Bricks",
+   "trailer": "curtain",
+   "tonnes": 22,
+   "pay": 0.95,
+   "adr": false
+  },
+  "glass": {
+   "name": "Glass",
+   "trailer": "flatbed",
+   "tonnes": 18,
+   "pay": 1.35,
+   "adr": false
+  },
+  "glassware": {
+   "name": "Glassware and crystal",
+   "trailer": "box",
+   "tonnes": 10,
+   "pay": 1.45,
+   "adr": false
+  },
+  "grain": {
+   "name": "Grain",
+   "trailer": "tipper",
+   "tonnes": 24,
+   "pay": 0.9,
+   "adr": false
+  },
+  "sugar_beet": {
+   "name": "Sugar beet",
+   "trailer": "tipper",
+   "tonnes": 24,
+   "pay": 0.8,
+   "adr": false
+  },
+  "milk": {
+   "name": "Milk",
+   "trailer": "tanker",
+   "tonnes": 24,
+   "pay": 1.1,
+   "adr": false
+  },
+  "livestock": {
+   "name": "Livestock",
+   "trailer": "livestock",
+   "tonnes": 14,
+   "pay": 1.3,
+   "adr": false
+  },
+  "animal_feed": {
+   "name": "Animal feed",
+   "trailer": "silo",
+   "tonnes": 22,
+   "pay": 0.95,
+   "adr": false
+  },
+  "food_chilled": {
+   "name": "Chilled food",
+   "trailer": "reefer",
+   "tonnes": 16,
+   "pay": 1.35,
+   "adr": false
+  },
+  "food_dry": {
+   "name": "Packaged food",
+   "trailer": "curtain",
+   "tonnes": 18,
+   "pay": 1.05,
+   "adr": false
+  },
+  "beer": {
+   "name": "Beer kegs and crates",
+   "trailer": "curtain",
+   "tonnes": 18,
+   "pay": 1.1,
+   "adr": false
+  },
+  "malt": {
+   "name": "Malt",
+   "trailer": "silo",
+   "tonnes": 22,
+   "pay": 0.95,
+   "adr": false
+  },
+  "waste": {
+   "name": "Waste",
+   "trailer": "tipper",
+   "tonnes": 18,
+   "pay": 0.85,
+   "adr": false
+  },
+  "containers": {
+   "name": "Shipping container",
+   "trailer": "container",
+   "tonnes": 22,
+   "pay": 1.15,
+   "adr": false
+  }
+ },
+ "types": {
+  "logistics": {
+   "label": "Logistics centre",
+   "produces": [
+    "pallets_general",
+    "consumer_goods",
+    "electronics",
+    "furniture",
+    "food_dry"
+   ],
+   "accepts": [
+    "pallets_general",
+    "consumer_goods",
+    "electronics",
+    "furniture",
+    "food_dry",
+    "food_chilled",
+    "car_parts",
+    "beer",
+    "glassware"
+   ]
+  },
+  "factory": {
+   "label": "Factory",
+   "produces": [
+    "machinery",
+    "pallets_general",
+    "plastics",
+    "car_parts"
+   ],
+   "accepts": [
+    "steel_coils",
+    "steel_beams",
+    "plastics",
+    "chemicals",
+    "pallets_general",
+    "machinery"
+   ]
+  },
+  "automotive": {
+   "label": "Car plant",
+   "produces": [
+    "car_parts",
+    "pallets_general"
+   ],
+   "accepts": [
+    "car_parts",
+    "steel_coils",
+    "plastics",
+    "glass",
+    "chemicals"
+   ]
+  },
+  "steelworks": {
+   "label": "Steelworks",
+   "produces": [
+    "steel_coils",
+    "steel_beams"
+   ],
+   "accepts": [
+    "coal",
+    "scrap_metal",
+    "heavy_machinery"
+   ]
+  },
+  "metalworks": {
+   "label": "Metalworks",
+   "produces": [
+    "machinery",
+    "steel_beams"
+   ],
+   "accepts": [
+    "steel_coils",
+    "steel_beams",
+    "scrap_metal"
+   ]
+  },
+  "chemical": {
+   "label": "Chemical plant",
+   "produces": [
+    "chemicals",
+    "fertilizer",
+    "plastics"
+   ],
+   "accepts": [
+    "chemicals",
+    "fuel",
+    "coal"
+   ]
+  },
+  "fuel_depot": {
+   "label": "Fuel depot",
+   "produces": [
+    "fuel",
+    "lpg"
+   ],
+   "accepts": [
+    "fuel",
+    "lpg"
+   ]
+  },
+  "sawmill": {
+   "label": "Sawmill",
+   "produces": [
+    "lumber",
+    "wood_chips"
+   ],
+   "accepts": [
+    "logs",
+    "machinery"
+   ]
+  },
+  "brewery": {
+   "label": "Brewery",
+   "produces": [
+    "beer"
+   ],
+   "accepts": [
+    "malt",
+    "grain",
+    "glass"
+   ]
+  },
+  "food": {
+   "label": "Food plant",
+   "produces": [
+    "food_chilled",
+    "food_dry"
+   ],
+   "accepts": [
+    "milk",
+    "grain",
+    "sugar_beet",
+    "livestock",
+    "food_dry"
+   ]
+  },
+  "farm": {
+   "label": "Farm",
+   "produces": [
+    "grain",
+    "sugar_beet",
+    "milk",
+    "livestock"
+   ],
+   "accepts": [
+    "fertilizer",
+    "animal_feed",
+    "machinery"
+   ]
+  },
+  "quarry": {
+   "label": "Quarry",
+   "produces": [
+    "gravel",
+    "sand",
+    "stone_blocks"
+   ],
+   "accepts": [
+    "heavy_machinery"
+   ]
+  },
+  "mine": {
+   "label": "Mine",
+   "produces": [
+    "coal"
+   ],
+   "accepts": [
+    "heavy_machinery",
+    "steel_beams"
+   ]
+  },
+  "concrete": {
+   "label": "Concrete and cement works",
+   "produces": [
+    "cement",
+    "concrete_parts",
+    "bricks"
+   ],
+   "accepts": [
+    "gravel",
+    "sand",
+    "cement"
+   ]
+  },
+  "glassworks": {
+   "label": "Glassworks",
+   "produces": [
+    "glass",
+    "glassware"
+   ],
+   "accepts": [
+    "sand",
+    "chemicals"
+   ]
+  },
+  "scrap_yard": {
+   "label": "Scrap yard",
+   "produces": [
+    "scrap_metal"
+   ],
+   "accepts": [
+    "scrap_metal",
+    "waste"
+   ]
+  },
+  "landfill": {
+   "label": "Landfill",
+   "produces": [],
+   "accepts": [
+    "waste"
+   ]
+  },
+  "power_plant": {
+   "label": "Power plant",
+   "produces": [],
+   "accepts": [
+    "coal",
+    "wood_chips",
+    "heavy_machinery"
+   ]
+  },
+  "port": {
+   "label": "River port",
+   "produces": [
+    "containers",
+    "grain",
+    "steel_coils",
+    "gravel"
+   ],
+   "accepts": [
+    "containers",
+    "grain",
+    "steel_coils",
+    "fertilizer"
+   ]
+  },
+  "rail_terminal": {
+   "label": "Rail freight terminal",
+   "produces": [
+    "containers",
+    "steel_coils",
+    "lumber"
+   ],
+   "accepts": [
+    "containers",
+    "pallets_general",
+    "lumber"
+   ]
+  },
+  "industrial": {
+   "label": "Industrial estate",
+   "produces": [
+    "pallets_general",
+    "machinery"
+   ],
+   "accepts": [
+    "pallets_general",
+    "steel_beams",
+    "plastics"
+   ]
+  }
+ }
+}

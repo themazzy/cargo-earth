@@ -118,6 +118,69 @@ local function write(path, c)
   disk[path] = copy(c)
   return true
 end
+test('car snapshots live in files of their own, written only when a new one was taken', function()
+  local writes = {}
+  local function counted(path, c, ...) writes[path] = (writes[path] or 0) + 1 return write(path, c, ...) end
+  local snap = {format = 'v2', nodes = {a = 1}}
+  disk = {}
+  -- an older save kept the snapshot inline: it moves out on the next save
+  local c = {money = 10, orders = {}, garage = {car = {model = 'pigeon', physicalDamage = snap},
+    parked = {{model = 'etk', physicalDamage = {format = 'v2', nodes = {b = 2}}}}}}
+  assert(persistence.save(counted, read, 'save', c))
+  local car, parked = c.garage.car, c.garage.parked[1]
+  assert(car.physicalDamage == snap and car.damageFile and parked.damageFile and car.damageFile ~= parked.damageFile)
+  assert(not disk.save.garage.car.physicalDamage and not disk.save.garage.parked[1].physicalDamage, 'not in the career file')
+  assert(disk[car.damageFile].nodes.a == 1 and disk[parked.damageFile].nodes.b == 2)
+  -- nothing new: only the career is written
+  assert(persistence.save(counted, read, 'save', c))
+  assert(writes[car.damageFile] == 1 and writes[parked.damageFile] == 1)
+  -- a new snapshot: a new file; the old one goes once the career naming the new one is written
+  local removed = {}
+  local function remove(file) removed[#removed + 1] = file disk[file] = nil end
+  local oldFile = car.damageFile
+  car.physicalDamage = {format = 'v2', nodes = {a = 3}}
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(car.damageFile ~= oldFile and disk[car.damageFile].nodes.a == 3 and writes[parked.damageFile] == 1)
+  assert(#removed == 1 and removed[1] == oldFile and disk.save.garage.car.damageFile == car.damageFile)
+  -- a failed career write keeps the old file the saved career names
+  local committed = car.damageFile
+  car.physicalDamage = {format = 'v2', nodes = {a = 4}}
+  failPath = 'save.pending'
+  assert(not persistence.save(counted, read, 'save', c, remove))
+  failPath = nil
+  assert(disk[committed].nodes.a == 3 and #removed == 1)
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(disk[car.damageFile].nodes.a == 4 and not disk[committed])
+  -- a save that rotates the backups: the file the new backup names stays until that backup rotates away
+  local backedUp = car.damageFile
+  car.physicalDamage = {format = 'v2', nodes = {a = 5}}
+  c.activeSeconds = persistence.BACKUP_EVERY_S + 1
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(disk['save.backup1'].garage.car.damageFile == backedUp and disk[backedUp], 'kept for .backup1')
+  car.physicalDamage = {format = 'v2', nodes = {a = 6}}
+  c.activeSeconds = 2 * persistence.BACKUP_EVERY_S + 2
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(disk['save.backup2'].garage.car.damageFile == backedUp and disk[backedUp], 'kept for .backup2')
+  car.physicalDamage = {format = 'v2', nodes = {a = 7}}
+  c.activeSeconds = 3 * persistence.BACKUP_EVERY_S + 3
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(not disk[backedUp], 'gone once no backup names it')
+  -- loading puts them back; a missing file leaves that car without one
+  local loaded = persistence.load(read, 'save')
+  disk[parked.damageFile] = nil
+  persistence.attach(read, loaded)
+  assert(loaded.garage.car.physicalDamage.nodes.a == 7 and not loaded.garage.parked[1].physicalDamage)
+  assert(not loaded.garage.parked[1].damageFile)
+  local files = persistence.sidecarFiles(disk.save)
+  assert(#files >= 2)
+  -- a file that cannot be written: the snapshot stays in the career file
+  local other = {money = 1, orders = {}, garage = {car = {model = 'pigeon', physicalDamage = {format = 'v2', nodes = {}}}}}
+  failPath = 'other.car1'
+  assert(persistence.save(write, read, 'other', other))
+  failPath = nil
+  assert(not other.garage.car.damageFile and disk.other.garage.car.physicalDamage)
+end)
+
 test('save migration preserves legacy save, rotates backups and recovers corruption', function()
   disk = { save = {money = 100, delivered = 12, orders = {}, garage = {car = {model = 'pigeon'}}} }
   local c = read('save')
@@ -282,6 +345,95 @@ end
 local function advance(core, n)
   for _ = 1, n or 20 do core.onUpdate(0.5, 0.5) end
 end
+
+test('Jobs settings selects profiles without changing work and saves only the requested range', function()
+  local core, s = fresh()
+  s.job = {id = 'keep-current-job'}
+  local out = core.settingsDo('jobType', 'freight_rigid')
+  assert(out.jobType == 'freight_rigid' and s.mode == 'courier' and s.job.id == 'keep-current-job')
+  assert(out.items[3].max == 800 and out.items[3].value == 125)
+  out = core.settingsDo('jobRange', 'freight_rigid', {nearKm = 30, minKm = 600, maxKm = 800})
+  assert(out.rangeSaved and core.jobOptions('freight_rigid').minKm == 600)
+  assert(s.job.id == 'keep-current-job' and s.optsByMode.courier.maxKm == nil)
+  assert(core.jobOptions('company_rigid').maxKm == 40)
+  out = core.settingsDo('jobRange', 'freight_rigid', {nearKm = 30, minKm = 800, maxKm = 600})
+  assert(out.rangeError and not out.rangeSaved and core.jobOptions('freight_rigid').maxKm == 800)
+  core.settingsDo('jobRange', 'company_rigid', {nearKm = 20, minKm = 80, maxKm = 100})
+  assert(s.career.options.trucking.jobRanges.freight_rigid.maxKm == 800, 'stored with the career')
+  local saved = copy(s.career)
+  s.job = nil
+  s.pendingCareer = saved
+  core.phoneAction('resume')
+  assert(core.jobOptions('freight_rigid').maxKm == 800 and core.companyRanges().rigid.maxKm == 100)
+  out = core.settingsDo('resetJobRange', 'freight_rigid')
+  assert(out.rangeReset and core.jobOptions('freight_rigid').maxKm == 125)
+  assert(core.jobOptions('company_rigid').maxKm == 100)
+  out = core.settingsDo('jobType', 'bus')
+  assert(#out.items == 0 and out.jobHint:find('mapped'))
+end)
+
+test('Long hauls: far profiles open the ring, and an unchecked far site can be handed over nearby', function()
+  local core, s = fresh()
+  assert(core.longHaulRing() == nil, 'not in freight')
+  core.settingsDo('jobRange', 'company_van', {nearKm = 25, minKm = 600, maxKm = 800})
+  s.placesRequestedAt = s.clock
+  assert(#core.longHaulRing() == 1, 'the Companies page wants far contract destinations in any mode')
+  s.placesRequestedAt = nil
+  core.settingsDo('resetJobRange', 'company_van')
+  s.mode, s.opts = 'trucking', s.optsByMode.trucking
+  assert(core.longHaulRing() == nil, 'normal distances stay local')
+  core.settingsDo('jobRange', 'company_van', {nearKm = 25, minKm = 600, maxKm = 800})
+  local rings = core.longHaulRing()
+  assert(#rings == 1 and rings[1][1] == 600 and rings[1][2] == 800)
+  local j = {id = 'far-job', kind = 'cargo', cargoName = 'Pallets', pay = 10000, minutes = 900, km = 700,
+    from = {id = 'a', n = 'Yard', g = {50, 14}}, to = {id = 'overture:1', n = 'Lager', g = {50.004, 14}, far = true}}
+  s.job, s.phase, s.orders = j, 'toDelivery', {{job = j, phase = 'toDelivery'}}
+  s.dist = 2000
+  assert(not core.canHandover(), 'too far from the site')
+  s.dist = 400
+  assert(core.canHandover())
+  core.phoneAction('handover')
+  assert(j.handover and j.pay == 8500 and j.to.g[1] == pose.lat and j.to.g[2] == pose.lon and j.to.n == 'Lager')
+  assert(not core.canHandover(), 'once')
+  local k = {id = 'k', kind = 'cargo', cargoName = 'Pallets', pay = 10000, minutes = 60, km = 30,
+    from = {id = 'overture:5', n = 'Yard', g = {50.003, 14}, access = 'candidate'}, to = {id = 'cz-1', n = 'Checked', g = {50.2, 14}}}
+  s.job, s.phase, s.orders, s.dist = k, 'toPickup', {{job = k, phase = 'toPickup'}}, 300
+  assert(core.canHandover(), 'an unchecked pickup site can load beside the truck')
+  assert(core.phoneState().active.handoverPickup)
+  core.phoneAction('handover')
+  assert(k.handover and k.pay == 8500 and k.from.g[1] == pose.lat and k.from.handedOver)
+  s.phase, s.dist = 'toDelivery', 300
+  assert(not core.canHandover(), 'checked sites have a gate')
+  k.to.access = 'candidate'
+  core.phoneAction('handover')
+  assert(k.pay == 8500, 'the pay is cut once a job')
+  k.route, k.to.handedOver = {}, nil
+  assert(not core.canHandover(), 'parcel addresses are reachable places')
+end)
+
+test('The old jobs window writes the profile new offers use, after the phone saved one', function()
+  local core, s = fresh()
+  core.settingsDo('jobRange', 'courier', {nearKm = 2, minKm = 1, maxKm = 3})
+  local epoch = core.settingsState().careerEpoch
+  core.setOption('maxKm', 6)
+  assert(core.jobOptions('courier').maxKm == 6, 'window slider reaches the saved courier profile')
+  core.setOption('minKm', 7)
+  local r = core.jobOptions('courier')
+  assert(r.minKm == 7 and r.maxKm == 7, 'shortest past longest drags the longest along')
+  core.setOption('maxKm', 20)
+  assert(core.jobOptions('courier').maxKm == 8, 'clamped to the profile bounds')
+  core.setOption('count', 4)
+  assert(s.opts.count == 4, 'other options keep their old place')
+  s.mode, s.opts = 'trucking', s.optsByMode.trucking
+  local id = core.windowJobType()
+  core.settingsDo('jobRange', id, {nearKm = 30, minKm = 20, maxKm = 100})
+  core.setOption('maxKm', 640)
+  assert(core.jobOptions(id).maxKm == 640, 'trucking window reaches ' .. id)
+  local saved = copy(s.career)
+  s.pendingCareer = saved
+  core.phoneAction('resume')
+  assert(core.settingsState().careerEpoch ~= epoch, 'loading a career gives the phone a new draft scope')
+end)
 local function start(core)
   local board = core.placesDo('refreshCompanies')
   assert(#board.companies == 1)
@@ -1578,7 +1730,7 @@ test('a small car in freight mode gets no parcel rounds and still sees company c
   advance(core, 2)
   core.generate()
   for _, offer in ipairs(s.offers) do
-    assert(offer.tow or offer.taxi, 'no parcel rounds and no company freight board in a car')
+    assert(offer.tow, 'a car gets tow jobs in Freight; taxi rides have their own category')
   end
   local t = core.phoneState().trucking
   assert(t.carrier == 'Car' and #t.contracts == 1, 'company contracts are still listed')
@@ -1624,7 +1776,7 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
   end
   local seq = 0
   local function rnd(n) seq = seq % n + 1 return seq end
-  local offers = taxi.offers(near, sights, 50.02, 14.02, rnd)
+  local offers = taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 3)
   assert(#offers == taxi.OFFERS, 'three rides: ' .. #offers)
   local seen = {}
   for _, o in ipairs(offers) do
@@ -1635,10 +1787,10 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
     assert(o.km >= taxi.KM[1] * taxi.ROAD_FACTOR - 1e-9 and o.km <= taxi.KM[2] * taxi.ROAD_FACTOR + 1e-9)
     local rules = taxi.MODES[o.taxi.mode]
     assert(rules, 'every ride has a mode: ' .. tostring(o.taxi.mode))
-    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) * rules.pay / 5 + 0.5) * 5 and o.minutes > 0)
+    assert(o.pay == math.floor((taxi.BASE + taxi.PER_KM * o.km) * (1 + 0.2 * (o.taxi.people - 1)) * rules.pay / 5 + 0.5) * 5 and o.minutes > 0)
     assert(cargo.supports(o) and cargo.handling(o) == 'Fragile', 'a rough ride is felt')
   end
-  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, {maxKm = 1}) == 0, 'the longest-job setting holds')
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, {maxKm = 1}, 3) == 0, 'the longest-job setting holds')
   -- comfort and rush: the same ride, driven fast and rough or slow and smooth
   local function tipFn(pay, m, limit) return m < limit * 0.5 and 50 or 0 end
   local comfortRide, rushRide = { taxi = { people = 1, mode = 'comfort' } }, { taxi = { people = 1, mode = 'rush' } }
@@ -1651,15 +1803,135 @@ test('taxi rules: a passenger near you, a sight at the ride length, paid by the 
   local rpLate = taxi.settle(rushRide, 200, 40, 30, 0.02, 0.5, 100, tipFn)
   assert(rpLate == 100, 'rush, ten minutes late: half the fare (floor): ' .. rpLate)
   assert(taxi.info({ taxi = { people = 2 } }).mode == 'comfort', 'an older ride counts as comfort')
-  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, function() return false end) == 0, 'a long detour is out')
-  assert(#taxi.offers(function() return {} end, sights, 50.02, 14.02, rnd) == 0, 'no addresses, no rides')
-  assert(#taxi.offers(near, function() return {} end, 50.02, 14.02, rnd) == 0, 'no sights, no rides')
+  assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, function() return false end, nil, 3) == 0, 'a long detour is out')
+  assert(#taxi.offers(function() return {} end, sights, 50.02, 14.02, rnd, nil, nil, 3) == 0, 'no addresses, no rides')
+  assert(#taxi.offers(near, function() return {} end, 50.02, 14.02, rnd, nil, nil, 3) == 0, 'no sights, no rides')
   assert(#taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 0) == 0, 'no passenger seats, no rides')
   for _ = 1, 5 do
     for _, o in ipairs(taxi.offers(near, sights, 50.02, 14.02, rnd, nil, nil, 1)) do
       assert(o.taxi.people == 1, 'one free seat: one passenger')
     end
   end
+end)
+
+test('Taxi is separate from Freight and passenger groups fit cars, SUVs and vans', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.autoIdx = fuel.index()
+  fuel.addArea(s.autoIdx, 'taxi', sightRows())
+  s.idx = nil   -- taxi pickup addresses must not depend on the freight depot index
+  freeSeats = 1
+  core.setMode('taxi')
+  for _, row in ipairs({{'pigeon', 'Hatchback'}, {'roamer', 'SUV'}, {'van', 'Van'}}) do
+    vehicle.model, vehicle.bodyStyle = row[1], row[2]
+    s.career.garage.car.model = row[1]
+    core.generate()
+    assert(#s.offers > 0, row[2] .. ' with a verified passenger seat gets rides')
+    assert(core.phoneState().taxi.eligible and not core.phoneState().trucking)
+    for _, offer in ipairs(s.offers) do assert(offer.taxi and offer.taxi.people == 1 and not offer.tow and not offer.haul) end
+  end
+  local ride = s.offers[1]
+  s.idx = idx
+  vehicle.model, vehicle.bodyStyle, s.career.garage.car.model = 'pigeon', 'Hatchback', 'pigeon'
+  core.setMode('trucking')
+  for _, offer in ipairs(s.offers) do assert(not offer.taxi, 'Freight never offers passenger rides') end
+  s.offers = {ride}
+  core.take(1)
+  assert(not s.job, 'a stale taxi offer cannot be accepted from Freight')
+  freeSeats = nil
+end)
+
+test('Taxi rejects missing, loaned, unsuitable and unverifiable passenger vehicles', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.autoIdx = fuel.index()
+  fuel.addArea(s.autoIdx, 'taxi', sightRows())
+  core.setMode('taxi')
+  for _, row in ipairs({{'citybus', 'Bus'}, {'md_series', 'Box Truck'}, {'us_semi', 'Truck'}, {'unicycle', ''}}) do
+    vehicle.model, vehicle.bodyStyle = row[1], row[2]
+    s.career.garage.car.model = row[1]
+    freeSeats = 30
+    s.freeSeats = nil
+    core.generate()
+    assert(#s.offers == 0 and not core.phoneState().taxi.eligible, row[1] .. ' cannot do taxi work')
+  end
+  vehicle.model, vehicle.bodyStyle, s.career.garage.car.model = 'pigeon', 'Hatchback', 'pigeon'
+  for _, n in ipairs({0, -1, math.huge}) do
+    freeSeats, s.freeSeats = n, nil
+    core.generate()
+    assert(#s.offers == 0 and not core.phoneState().taxi.eligible, 'only finite positive seat counts qualify')
+  end
+  freeSeats, s.freeSeats = nil, nil
+  core.phoneAction('online')
+  assert(not s.phone.online and core.phoneState().taxi.hint:find('could not be verified'))
+  freeSeats, s.freeSeats = 3, nil
+  s.career.garage.car.loaner = true
+  core.generate()
+  assert(#s.offers == 0 and not core.phoneState().taxi.eligible, 'loaners are reserved for contract work')
+  s.career.garage.car.loaner = nil
+  vehicle.model = 'someone_elses'
+  assert(not core.taxiState(true).eligible, 'only the owned vehicle qualifies')
+  vehicle.model, freeSeats, s.freeSeats = 'pigeon', 1, nil
+  assert(core.taxiState().seats == 1)
+  vehicle.id, freeSeats = 2, 3
+  assert(core.taxiState().seats == 3, 'changing vehicle invalidates the cached seat count immediately')
+  freeSeats = nil
+end)
+
+test('Taxi distance settings are independent and old saved rides resume in Taxi', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.autoIdx = fuel.index()
+  fuel.addArea(s.autoIdx, 'taxi', sightRows())
+  freeSeats = 3
+  core.setMode('taxi')
+  local defaults = core.settingsState().items
+  assert(#defaults == 3 and defaults[2].value < 2 and defaults[3].value > 15, 'taxi-specific distance defaults')
+  core.settingsDo('step', 'nearKm', -1)
+  assert(core.jobOptions('taxi').nearKm == 1)
+  core.setMode('courier')
+  assert(core.jobOptions('courier').nearKm == food.defaults.nearKm, 'food pickup range is unchanged')
+  core.setMode('taxi')
+  assert(core.jobOptions('taxi').nearKm == 1)
+  core.take(1)
+  assert(s.job and s.job.taxi)
+  local id = s.job.id
+  core.setMode('bus')
+  assert(s.mode == 'taxi', 'active ride locks the category')
+  core.saveOptions()
+  local saved = copy(s.career)
+  saved.mode = 'trucking'   -- the format used before Taxi was split out
+  s.pendingCareer = saved
+  core.phoneAction('resume')
+  assert(s.mode == 'taxi' and s.opts == s.optsByMode.taxi and core.jobOptions('taxi').nearKm == 1)
+  assert(s.job.id == id and s.phase == 'toPickup', 'the active ride is preserved')
+  freeSeats = nil
+end)
+
+test('Taxi requests helper locations even with a complete restaurant pack and refreshes sight-only updates', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.fuelIdx = nil
+  freeSeats = 3
+  core.HELPER_MIN = 0   -- the restaurant pack is sufficient
+  core.setMode('taxi')
+  local helper = require('cargoEarth/helper')
+  local original, asked = helper.tick, 0
+  helper.tick = function(_, _, _, _, _, camerasOnly) if not camerasOnly then asked = asked + 1 end end
+  advance(core, 4)
+  helper.tick = original
+  assert(asked > 0, 'Taxi always streams pickup addresses and destinations')
+  s.offeredAt = {lat = 50, lon = 14}
+  core.onHelperArea({key = '500_140', restaurants = {}, autos = sightRows()})
+  assert(s.offeredAt == nil, 'sights arriving without new restaurants must refresh offers')
+  local originalStatus = helper.status
+  helper.status = function() return {state = 'ready', supportsAutos = false} end
+  assert(core.taxiState().search:find('Update'), 'old helper capabilities have an explicit explanation')
+  helper.status = function() return {state = 'error', msg = 'Offline'} end
+  assert(core.taxiState().search:find('Offline'), 'helper errors reach the Taxi screen')
+  helper.status = function() return {state = 'loading'} end
+  assert(core.taxiState().search:find('Loading passenger'), 'search progress is specific to Taxi')
+  helper.status, freeSeats = originalStatus, nil
 end)
 
 test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and gets out', function()
@@ -1671,7 +1943,7 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   s.config.spawnTrailer, s.config.requireTrailer = true, true   -- the game's defaults: a taxi needs no trailer
   s.fidx = food.index({restaurants = {{'r1', 50, 14, 50, 14, 'Test Pizza', 'pizza', 'Town'}}, cats = {'pizza'}, tile = 0.05},
     everywhere)
-  core.setMode('trucking')
+  core.setMode('taxi')
   advance(core, 2)
   s.autoIdx = fuel.index()
   core.generate()
@@ -1692,7 +1964,10 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   freeSeats = job.taxi.people - 1   -- switched to a smaller car after the offer came
   core.take(i)
   assert(s.job ~= job, 'more passengers than free seats: the ride is refused')
-  freeSeats = nil   -- a mod car without the seat system: seats unknown, the ride is allowed
+  freeSeats = nil   -- a mod car without the seat system: the group must fit verified seats
+  core.take(i)
+  assert(s.job ~= job, 'unknown seat count cannot guarantee room for the group')
+  freeSeats = 4
   core.take(i)
   assert(s.job == job and s.phase == 'toPickup')
   assert(core.phoneState().active.taxi.people == job.taxi.people)
@@ -1702,6 +1977,10 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   advance(core, 10)
   assert(s.phase == 'toPickup', 'nobody gets into another car')
   vehicle.model = ownModel
+  freeSeats = 0
+  advance(core, 10)
+  assert(s.phase == 'toPickup', 'seat changes after acceptance must also prevent boarding')
+  freeSeats = 4
   advance(core)
   assert(s.phase == 'toDelivery' and riders == job.taxi.people, 'the passengers sit in the car')
   s.taxiSeated, riders = nil, 0   -- as a loaded save: the ride is on, nobody seated yet
@@ -1713,6 +1992,56 @@ test('a taxi ride in a car: the passenger sits in, rides to the sight, pays and 
   assert(not s.job and c.money > money, 'paid at the sight')
   advance(core, 4)
   assert(riders == 0, 'and they get out')
+end)
+
+test('taxi seating retries and passengers clear on cancel and pause and return on resume', function()
+  local core, s = fresh()
+  vehicle.model, vehicle.bodyStyle, s.career.garage.car.model = 'van', 'Van', 'van'
+  s.career.garage.debt = 0
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.autoIdx = fuel.index()
+  fuel.addArea(s.autoIdx, 'taxi', sightRows())
+  freeSeats = 7
+  core.random = function(n) return n or 0.99 end
+  core.setMode('taxi')
+  local ride = assert(s.offers[1])
+  assert(ride.taxi.people == 7)
+  assert(ride.pay == ride.taxi.fare.fare + ride.fuelAllowance, 'fuel is added separately from the passenger fare')
+  s.phone.online, s.phone.incoming = true, {job = ride, expiresAt = s.clock + 20}
+  assert(core.phoneState().incoming.taxi.fare.passengerBonus == ride.taxi.fare.passengerBonus, 'offer exposes its stored breakdown')
+  core.take(1)
+  pose.lat, pose.lon = ride.from.g[1], ride.from.g[2]
+  local bad = true
+  core.G.carPassengers = function(n)
+    if n > 0 and bad then return nil end
+    riders = n
+    return n
+  end
+  advance(core, 10)
+  assert(s.phase == 'toPickup' and riders == 0 and core.phoneState().active.taxi.boardingError, 'failed seating does not start a paid ride')
+  bad = false
+  advance(core)
+  assert(s.phase == 'toDelivery' and riders == 7 and not ride.taxi.boardingError)
+  local pay = ride.pay
+  core.saveOptions()
+  core.settingsDo('pause')
+  assert(s.pendingCareer and riders == 0, 'pausing removes passenger mass')
+  core.phoneAction('resume')
+  s.fidx = nil -- restoring occupants must not wait for geographic data
+  advance(core, 2)
+  assert(s.phase == 'toDelivery' and riders == 7 and s.job.pay == pay and s.job.taxi.fare.passengerRate > 1)
+  local clearFails = true
+  core.G.carPassengers = function(n)
+    if n == 0 and clearFails then return nil end
+    riders = n
+    return n
+  end
+  core.cancel(true)
+  assert(not s.job and s.taxiSeated and s.taxiSeated.n == 0, 'a failed removal is kept for retry')
+  clearFails = false
+  advance(core, 12)
+  assert(riders == 0 and not s.taxiSeated, 'cancelled passengers clear even while map data is unavailable')
+  freeSeats = nil
 end)
 
 local cameras = require('cargoEarth/cameras')
@@ -2474,7 +2803,7 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   withStation(s, 50.1, 14)
   -- the game side, stubbed: what trailers.lua would do in BeamNG
   local saved = {}
-  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
+  for _, k in ipairs({ 'existing', 'towModel', 'spawnTow', 'recoverTowed', 'withPlayer', 'towedDistances', 'towedDamage', 'towedCount', 'remove', 'id',
     'spawnRoadside', 'towedNear', 'loadTowed', 'towedAlive', 'removeTow', 'ownTowTrailer', 'adopt',
     'stageTowed', 'towedStaged', 'towedPlaced', 'placeTowed' }) do
     saved[k] = trailers[k]
@@ -2490,6 +2819,12 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
   trailers.ownTowTrailer = function() return 9, 'tiltdeck' end
   trailers.adopt = function() return true end
   local spawned, distances, damage = 0, {}, 0
+  local hitched = false
+  trailers.recoverTowed = function()
+    if not hitched then return false, 'Hitch the job trailer to your vehicle first.' end
+    distances = { 1 }
+    return true
+  end
   trailers.existing = function(list) return { list[1] } end
   trailers.towModel = function() return 'cartrailer' end
   trailers.spawnTow = function(kind, cars) spawned = spawned + 1 distances = { 1 } return kind == 'cartrailer' and #cars == 1 end
@@ -2564,19 +2899,27 @@ test('a tow job: the car goes on the trailer, slides off, is loaded again and to
     assert(not core.phoneState().active.towWaiting)
     advance(core)
     assert(job.tow.damage0 == 500, 'damage before the tow is not yours ' .. tostring(job.tow.damage0) .. ' ' .. tostring(job.tow.spawnedAt) .. ' ' .. tostring(s.clock))
+    local balance = c.money
+    core.phoneAction('restoreTrailer')
+    assert(c.money == balance and spawned == 0, 'an already loaded car cannot be charged again')
     -- it is damaged and slides off
     damage = damage + 300
     distances = { 12 }
     advance(core, 4)
     local state = core.phoneState()
     assert(job.tow.onBoard == 0 and state.active.tow.onBoard == 0 and state.active.canRestoreTrailer)
+    assert(state.active.reloadFee == 150)
     pose.lat, pose.lon = job.to.g[1], job.to.g[2]
     advance(core)
     assert(s.job == job, 'not delivered without the car')
     c.money = 1000
     core.phoneAction('restoreTrailer')
-    assert(spawned == 1 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
-    damage = 0                      -- the cars spawned again are undamaged; the 300 stays counted
+    assert(spawned == 0 and c.money == 1000 and distances[1] == 12)
+    hitched = true
+    core.phoneAction('restoreTrailer')
+    core.phoneAction('restoreTrailer')
+    assert(spawned == 0 and c.money == 1000 - core.TOW_RELOAD_FEE and job.tow.onBoard == 1)
+    assert(job.tow.damage0 == 500 and damage == 800)
     advance(core, 8)
     damage = damage + 600           -- 10 % worse on the way, 5 % before the reload
     advance(core, 30)
@@ -2611,6 +2954,38 @@ local function busData()
     { id = 'bad', ref = 'X', stops = { { 'A', 50, 14 }, { 'B', 50.01, 14 } } },
   }, depots = { { id = 'w7', name = 'Bus Garage', kind = 'depot', lat = 50.0005, lon = 14.0005 } } }
 end
+
+test('bus discovery uses nearby stops and only offers mapped directions', function()
+  local data, idx = busData(), bus.index()
+  local line = data.lines[1]
+  line.stops = {}
+  -- Model the reported Kottayam case: the first stop is beyond 4 km and the last is nearby.
+  for i = 1, 28 do
+    local f = (i - 1) / 27
+    line.stops[i] = { 'Stop ' .. i, 9.55902 + 0.03155*f, 76.492311 + 0.029039*f }
+  end
+  local function offers()
+    bus.set(idx, data)
+    return bus.board(idx, 9.591238, 76.514068)
+  end
+  local board = offers()
+  assert(#board == 1 and board[1].bus.singleDirection and board[1].pickupKm > 4)
+  assert(board[1].bus.stops == 28 and board[1].bus.to == 'Stop 28')
+  local reverse = { id = 'mapped-return', ref = line.ref, operator = line.operator, stops = {} }
+  for i = #line.stops, 1, -1 do
+    local stop = line.stops[i]
+    table.insert(reverse.stops, { stop[1] .. ' inbound', stop[2], stop[3] + 0.0002 })
+  end
+  table.insert(data.lines, reverse)
+  board = offers()
+  assert(#board == 2 and not board[1].bus.singleDirection and not board[2].bus.singleDirection)
+  for _, offer in ipairs(board) do
+    if offer.id == 'bus:mapped-return' then
+      assert(offer.jobs[1].bus.stops[1].g[2] == reverse.stops[1][3])
+      assert(offer.bus.from == 'Stop 28 inbound' and offer.bus.to == 'Stop 1 inbound')
+    end
+  end
+end)
 
 test('bus lines: offers at the depot, passengers on and off, fares', function()
   local idx = bus.index()
@@ -2681,7 +3056,7 @@ test('bus timetable: each stop has its own time from its distance, late minutes 
   -- a skipped stop starts the next one's time too
   bus.skip(j, due + 500)
   assert(j.bus.at == 4 and j.bus.legStart == due + 500)
-  local st = bus.state(j, nil, 0, due + 500)
+  local st = bus.state(j, nil, due + 500)
   assert(st.dueMin == j.bus.stops[4].min and st.late == 2)
   -- a line saved before the timetable existed: its stops have no times, nothing counts as late
   j.bus.stops[5].min = nil
@@ -2698,9 +3073,75 @@ test('bus comfort: passengers feel harsh moments and bumps, an empty bus does no
   assert(bus.harsh(j) == bus.HARSH_LOSS and bus.comfort(j) == 100 - bus.HARSH_LOSS)
   assert(bus.bump(j, 3) == 0, 'below a bump')
   assert(bus.bump(j, 99) == bus.BUMP_LOSS[2])
-  assert(bus.state(j, nil, 0, 60).comfort == bus.comfort(j))
+  assert(bus.state(j, nil, 60).comfort == bus.comfort(j))
   for _ = 1, 40 do bus.harsh(j) end
   assert(bus.comfort(j) == 0)
+end)
+
+test('bus collisions combine damage and G reports once, with stronger reports upgrading the penalty', function()
+  local function ride()
+    return {bus={onBoard=5,comfort=100}}
+  end
+  local j = ride()
+  assert(bus.impact(j, 3, bus.DAMAGE_MIN - 1, 10) == 0)
+  assert(bus.impact(j, 3, bus.DAMAGE_MIN, 10) == 10)
+  assert(bus.impact(j, 3.5, nil, 11) == 0)
+  assert(bus.impact(j, 5.5, nil, 11) == 30 and bus.comfort(j) == 60)
+  assert(bus.impact(j, nil, bus.DAMAGE_FULL, 12) == 0)
+  assert(bus.impact(j, nil, bus.DAMAGE_MIN, 14) == 10)
+  local reverse = ride()
+  bus.impact(reverse, 5.5, nil, 10)
+  bus.impact(reverse, nil, bus.DAMAGE_MIN, 11)
+  assert(bus.comfort(reverse) == 60)
+  j.bus.onBoard = 0
+  assert(bus.impact(j, 10, bus.DAMAGE_FULL, 20) == 0)
+end)
+
+test('bus comfort tolerates ordinary braking and catches damage below the G threshold', function()
+  local core, s = fresh()
+  core.setMode('bus')
+  s.busIdx = bus.index()
+  bus.set(s.busIdx, busData())
+  s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+  pose.lat, pose.lon = 50.0005, 14.0005
+  core.busSelect(s.busBoard[1].id)
+  core.busDepotTick(pose, 2)
+  advance(core, 2)
+  local j = s.job
+  j.bus.onBoard = 5
+  advance(core, 6)
+  core.onCargoEarthHarsh(vehicle.id, impactToken, 0.7)
+  assert(bus.comfort(j) == 100, 'routine braking should not cost comfort')
+  core.onCargoEarthHarsh(vehicle.id, impactToken + 1, 0.9)
+  assert(bus.comfort(j) == 100, 'an expired force reporter must be ignored')
+  core.onCargoEarthHarsh(vehicle.id, impactToken, 0.9)
+  assert(bus.comfort(j) == 98)
+  core.onCargoEarthHarsh(vehicle.id, impactToken, 0.9)
+  assert(bus.comfort(j) == 98, 'one harsh moment must not produce repeated penalties')
+  core.busDamageTick(bus.DAMAGE_MIN - 1)
+  assert(bus.comfort(j) == 98)
+  core.busDamageTick(bus.DAMAGE_MIN)
+  assert(bus.comfort(j) == 90, 'the collision penalty includes the recent harsh-driving penalty')
+  core.busDamageTick(bus.DAMAGE_MIN)
+  assert(bus.comfort(j) == 90)
+  local watched = s.busDamageWatch
+  core.onVehicleSpawned(vehicle.id + 10)
+  core.onVehicleResetted(vehicle.id + 10)
+  assert(s.busDamageWatch == watched, 'traffic spawn and reset must preserve the bus baseline')
+  s.clock = s.clock + 4
+  -- One collision whose damage arrives over two garage ticks.
+  core.busDamageTick(bus.DAMAGE_MIN + 10000)
+  local afterFirst = bus.comfort(j)
+  assert(afterFirst == 66)
+  s.clock = s.clock + 0.5
+  core.busDamageTick(bus.DAMAGE_MIN + 20000)
+  assert(bus.comfort(j) == 50, 'the two increments must total a 40-point loss')
+  core.busDamageTick(bus.DAMAGE_MIN + 20000)
+  assert(bus.comfort(j) == 50, 'the unchanged damage total must not be counted again')
+  core.onVehicleResetted(vehicle.id)
+  assert(not s.busDamageWatch, 'resetting the watched bus clears its baseline')
+  core.busDamageTick(0)
+  assert(bus.comfort(j) == 50, 'a reset is not another crash')
 end)
 
 test('bus signs: the line number, the destination in plain letters and the stops ahead', function()
@@ -2734,11 +3175,36 @@ test('bus names: escapes that lost their backslash on the way into the game are 
   assert(idx.lines[1].stops[1].n == 'Ovčáry' and idx.lines[1].to == 'Nedomice, Škola' and idx.depots[1].n == 'Garáž')
 end)
 
+test('career review: company trucks keep a bigger share, and each work type says what it needs', function()
+  assert(employment.shareFor('van') == 0.8 and employment.shareFor('bus') == 0.8)
+  assert(employment.shareFor('rigid') == 0.65 and employment.shareFor('semi') == 0.65)
+  local progress = require('cargoEarth/progress')
+  local function byId(list) local out = {} for _, w in ipairs(list) do out[w.id] = w end return out end
+  local w = byId(progress.workTypes({ hauls = { van = 2 } }, { owned = { car = true } }))
+  assert(w.food.ready and w.taxi.ready and w.bus.ready and w.company.ready)
+  assert(not w.parcel.ready and w.parcel.missing == 'You own no van.')
+  assert(not w.rigid.ready and not w.semi.ready and not w.firm.ready and not w.drivers.ready)
+  w = byId(progress.workTypes({}, { taxi = { ready = false, why = 'No seats.' }, tow = { ready = false, why = 'No hitch.' } }))
+  assert(not w.taxi.ready and w.taxi.missing == 'No seats.' and not w.tow.ready and w.tow.missing == 'No hitch.')
+  w = byId(progress.workTypes({ hauls = { van = 2 } }, { owned = { rigid = true } }))
+  assert(w.rigid.missing == 'Van hauls: 2 of 3.', 'an owned box truck still waits for the van hauls')
+  w = byId(progress.workTypes({}, { owned = { van = true }, boxless = { van = true } }))
+  assert(not w.parcel.ready and w.parcel.missing:find('cargo boxes', 1, true) and not w.van.ready)
+  w = byId(progress.workTypes({ hauls = { van = 3, rigid = 5 } }, { owned = { semi = true }, firm = true, independent = true }))
+  assert(w.semi.ready and w.firm.ready and w.drivers.ready and w.independent.ready)
+  w = byId(progress.workTypes({}, { firmReq = { { label = 'Founding fee', detail = '100 CZK of 6000 CZK', done = false } } }))
+  assert(w.firm.missing == 'Founding fee: 100 CZK of 6000 CZK.' and not w.firm.ready)
+  w = byId(progress.workTypes({}, { firmReq = { { label = 'Founding fee', detail = '6000 CZK of 6000 CZK', done = true } } }))
+  assert(w.firm.ready and w.firm.missing == nil and not w.drivers.ready, 'every requirement met: the firm can be founded')
+  local core = fresh()
+  assert(#core.careerState().work == #progress.WORK and core.careerState().ranks[4].perk ~= nil)
+end)
+
 test('bus board: the fares a line is expected to bring are shown with its pay', function()
   local idx = bus.index()
   bus.set(idx, busData())
   local o = bus.board(idx, 50, 14)[1]
-  assert(o.fares == bus.PER_PASSENGER * bus.expectedRiders(5) and o.fares > 0)
+  assert(o.fares == math.floor(bus.PER_PASSENGER * bus.expectedRiders(5) + 0.5) and o.fares > 0)
 end)
 
 test('speed cameras are paused even for a save that previously enabled them', function()
@@ -2885,10 +3351,41 @@ test('the native bus doors and phone share boarding; closing early cancels witho
   assert(not s.busDwell and j.bus.at == 1 and j.bus.boarded == 0)
   core.phoneAction('busDoors')
   assert(s.busDwell and commands == 1, 'the phone opens the same boarding flow')
+  local function interrupted()
+    assert(not s.busDwell and j.bus.at == 1 and j.bus.boarded == 0 and j.bus.onBoard == 0)
+  end
+  pose.lat = pose.lat + 0.01
+  core.onUpdate(0.01, 0.01)
+  interrupted()
+  pose.lat = stop.g[1]
+  core.phoneAction('busDoors')
+  local originalId = core.G.playerId
+  core.G.playerId = function() return watched.id + 1 end
+  core.onUpdate(0.01, 0.01)
+  interrupted()
+  core.G.playerId = originalId
+  core.phoneAction('busDoors')
+  local earth = require('cargoEarth/earth')
+  local originalPose = earth.pose
+  earth.pose = function() return nil end
+  core.onUpdate(0.01, 0.01)
+  interrupted()
+  earth.pose = originalPose
+  core.phoneAction('busDoors')
+  core.onBeamNGEarthTeleported(stop)
+  interrupted()
+  core.phoneAction('busDoors')
+  core.onUpdate(0.5, 0.25)
+  local remaining, fraction = s.busDwell.remaining, core.stopInfo().frac
+  assert(remaining == s.busDwell.duration - 0.25)
+  for _ = 1, 40 do core.onUpdate(0.5, 0) end
+  assert(s.busDwell.remaining == remaining and core.stopInfo().frac == fraction)
+  assert(core.stopInfo().leftS == math.ceil(remaining) and core.busState().line.doors.left == math.ceil(remaining))
+  local beforeClose = commands
   advance(core, 4)
   assert(core.stopInfo().frac > 0 and core.stopInfo().leftS == core.busState().line.doors.left)
   advance(core, 32)
-  assert(j.bus.at == 2 and not s.busDwell and commands == 2)
+  assert(j.bus.at == 2 and not s.busDwell and commands == beforeClose + 1)
   pose.lat, pose.lon = j.bus.stops[2].g[1], j.bus.stops[2].g[2]
   advance(core, 40)
   assert(j.bus.at == 2 and not core.stopInfo().stopping and core.stopInfo().stopS == 0,
@@ -3308,6 +3805,235 @@ test('a wreck never costs more to repair than the car is worth', function()
   assert(garage.trackDamage(g, 0) == 'debt' and g.debt == cap and g.repair == 0)
 end)
 
+test('trade-in credit uses market mileage, deducts repairs and guarantees a quarter of installed value', function()
+  local garage = require('cargoEarth/garage')
+  local G = {vehicle = function() return {slotPartMap = {body = 'body'}} end,
+    part = function() return {information = {value = 10000 / garage.PRICE_PER_VALUE}} end,
+    spawn = function() end}
+  local offer = {model = 'etk', name = 'Replacement', price = 8000}
+  for _, row in ipairs({{0, 0, 5000}, {0, 1000, 4000}, {40000, 0, 3750}, {40000, 1000, 2750},
+                        {80000, 0, 2500}, {80000, 1000, 2500}, {200000, 5000, 2500}}) do
+    local g, c = {car = {km = row[1]}, repair = row[2]}, {money = offer.price - row[3] - 1}
+    assert(garage.tradeInQuote(G, g) == row[3])
+    assert(not garage.buyCar(G, g, c, offer) and g.repair == row[2] and g.car.km == row[1])
+    c.money = c.money + 1
+    assert(garage.buyCar(G, g, c, offer) and c.money == 0 and g.repair == 0)
+    g = {car = {name = 'My car', km = row[1]}, repair = row[2]}
+    c = {money = 1000}
+    local ok, _, paid = garage.sellCar(G, g, c)
+    assert(ok and paid == row[3] and c.money == 1000 + row[3])
+    assert(not g.car and g.repair == 0)
+
+  end
+end)
+
+test('buying after a test drive uses the trade-in quote from the owned car', function()
+  local garage = require('cargoEarth/garage')
+  local owned = {model = 'pigeon', slotPartMap = {body = 'body'}}
+  local current = owned
+  local G = {vehicle = function() return current end, isOwned = function() return true end,
+    part = function() return {information = {value = 10000 / garage.PRICE_PER_VALUE}} end,
+    spawn = function(model) current = {model = model, slotPartMap = {}} end}
+  local offer = {id = 9, model = 'etk', name = 'Replacement', price = 8000}
+  local g = {started = true, car = {model = 'pigeon', km = 80000}, market = {list = {offer}}}
+  assert(garage.previewStart(G, g, 9, false) and g.preview.tradeIn == 2500)
+  g.preview.ready = true
+  local career = {money = 5500}
+  assert(garage.buyListing(G, g, career, 9) and career.money == 0 and g.car.model == 'etk')
+end)
+
+test('a restored damaged car keeps its repair bill once and a paid repair clears its snapshot', function()
+  local core, s = fresh()
+  local g = s.career.garage
+  g.debt, g.repair = 0, 500
+  g.car.key = 'custom'
+  g.car.physicalDamage = {format = 'v2', cargoEarthLocalNodes = true, nodes = {}, beams = {}}
+  local snapshots, restored = require('cargoEarth/damage'), 0
+  core.G.vehicleState = function(action, path, token)
+    if action == 'restore' then
+      restored = restored + 1
+      damageValue = 12000
+    else
+      disk[path] = {format = 'v2', cargoEarthLocalNodes = true, nodes = {}, beams = {}}
+    end
+    snapshots.complete(token, 1, true)
+    return true
+  end
+  assert(core.garageBringCar(true))
+  advance(core, 12)
+  assert(restored == 1 and g.repair == 500 and g.debt == 0, 'restore must neither double the repair bill nor create debt ' .. tostring(restored) .. '/' .. tostring(g.repair) .. '/' .. tostring(g.debt))
+  damageValue = damageValue + 1000
+  advance(core, 4)
+  assert(g.repair > 500)
+  local bill = g.repair
+  core.G.vehicleState = nil
+  core.G.repair = function() damageValue = 0 end
+  assert(core.garageRepair())
+  assert(not g.car.physicalDamage and not g.damageBaseline)
+  assert(s.career.money == 1000 - bill)
+end)
+
+test('an older car save loads normally and starts capturing its current state', function()
+  local core, s = fresh()
+  local g = s.career.garage
+  g.car.key = 'custom'
+  g.repair, g.debt = 100, 0
+  local captures, restores = 0, 0
+  core.G.vehicleState = function(action, path, token)
+    if action == 'capture' then captures = captures + 1 else restores = restores + 1 end
+    disk[path] = {format = 'v2'}
+    require('cargoEarth/damage').complete(token, 1, true)
+    return true
+  end
+  assert(core.garageBringCar(true))
+  advance(core, 22)
+  core.saveOptions()
+  assert(restores == 0 and captures > 0 and g.car.physicalDamage)
+  assert(g.repair == 100 and g.debt == 0)
+end)
+
+test('saves in a row snapshot the car once until it is damaged again', function()
+  local core, s = fresh()
+  local g = s.career.garage
+  g.car.key = 'custom'
+  local captures = 0
+  core.G.vehicleState = function(action, path, token)
+    if action == 'capture' then captures = captures + 1 end
+    disk[path] = {format = 'v2'}
+    require('cargoEarth/damage').complete(token, 1, true)
+    return true
+  end
+  advance(core, 2)
+  core.saveOptions()
+  local first = captures
+  core.saveOptions()
+  core.saveOptions()
+  assert(first > 0 and captures == first, 'no new damage: ' .. captures .. ' captures after ' .. first)
+  damageValue = damageValue + 500
+  core.saveOptions()
+  assert(captures == first + 1, 'a new dent is captured')
+  core.G.vehicleState = nil
+end)
+
+test('pausing waits for the completed damage snapshot to reach the career file', function()
+  local core, s = fresh()
+  s.career.garage.car.key = 'custom'
+  core.saveOptions()
+  local g, c = s.career.garage, s.career
+  local request
+  core.G.vehicleState = function(action, path, token)
+    request = {path = path, token = token}
+    return true
+  end
+  core.settingsDo('pause')
+  assert(request and not s.pendingCareer and s.pauseSaving == c)
+  disk[request.path] = {format = 'v2', nodes = {latestDamage = 123}}
+  require('cargoEarth/damage').complete(request.token, 1, true)
+  assert(s.pendingCareer == c and not s.pauseSaving)
+  local saved = disk[core.savePath(c)]
+  local file = saved.garage.car.damageFile
+  assert(not saved.garage.car.physicalDamage and file, 'the snapshot lives in its own file')
+  assert(disk[file].nodes.latestDamage == 123)
+  assert(not saved.pauseSaving)
+end)
+
+test('repairing a parked car clears its damage snapshot and invalidates pending captures', function()
+  local module, garage = require('cargoEarth/damage'), require('cargoEarth/garage')
+  local car = {fleetId = 7, name = 'Parked car', model = 'pigeon', parkedRepair = 500,
+    physicalDamage = {format = 'v2', nodes = {oldDamage = true}}}
+  local g, c, request = {car = car}, {money = 1000}, nil
+  local G = {playerId = function() return 1 end, vehicleState = function(action, path, token)
+    request = {path = path, token = token}
+    return true
+  end}
+  module.capture(G, g, function() end)
+  g.car, g.parked = nil, {car}
+  assert(garage.repairParked(g, c, 7))
+  assert(c.money == 500 and car.parkedRepair == 0 and not car.physicalDamage and car.damageRevision == 1)
+  disk[request.path] = {format = 'v2', nodes = {oldDamage = true}}
+  module.complete(request.token, 1, true)
+  assert(not car.physicalDamage, 'the late capture must not undo the paid repair')
+end)
+
+test('external vehicle replacement checkpoints and pauses even if the vehicle VM cannot answer', function()
+  local core, s = fresh()
+  s.career.garage.car.key = 'custom'
+  core.saveOptions()
+  local path, request = core.savePath(s.career), nil
+  core.G.vehicleState = function(action, file, token) request = {path=file, token=token} return true end
+  local cleared = false
+  core.G.clearOwnership = function() cleared = true end
+  core.settingsDo('pause')
+  assert(s.pauseSaving and not s.pendingCareer)
+  core.onBeforeVehicleReplaced(1)
+  assert(cleared and s.pendingCareer == s.career and not s.pauseSaving)
+  assert(disk[path].garage.car.model == 'pigeon')
+  require('cargoEarth/damage').tick(11)
+  assert(s.pendingCareer == s.career, 'a late timeout must not reactivate the career')
+end)
+
+test('owned car switches capture fresh outgoing damage before spawning the parked vehicle', function()
+  local core, s = fresh()
+  local g, request = s.career.garage, nil
+  local old = g.car
+  old.key = 'custom'
+  g.parked = {{fleetId=5,model='etk',name='Parked car',key='base'}}
+  core.G.vehicleState = function(action, file, token) request = {path=file,token=token} return true end
+  damageValue = 10000
+  require('cargoEarth/damage').capture(core.G, g, function() end)
+  core.garageDo('switchCar', 5)
+  assert(g.car == old and vehicle.model == 'pigeon', 'the outgoing vehicle must survive until capture completes')
+  local earlier = request
+  disk[earlier.path] = {format='v2',nodes={earlierDamage=true}}
+  require('cargoEarth/damage').complete(earlier.token,1,true)
+  assert(request.token ~= earlier.token and g.car == old, 'replacement requires a fresh snapshot after an in-flight save')
+  disk[request.path] = {format='v2',nodes={freshDamage=true}}
+  require('cargoEarth/damage').complete(request.token,1,true)
+  assert(g.car.model == 'etk' and old.physicalDamage.nodes.freshDamage)
+  assert(g.parked[1] == old and old.parkedRepair > 0)
+end)
+
+test('dealer previews and keep-car purchases capture the outgoing car before spawning', function()
+  for _, action in ipairs({'preview','buyListing'}) do
+    local core, s = fresh()
+    local g, request = s.career.garage, nil
+    local old = g.car
+    old.key = 'custom'
+    g.repair, g.debt = 0, 0
+    s.career.money = 100000
+    g.market = {list={{id=9,model='etk',name='Dealer car',key='base',price=100}}}
+    core.G.vehicleState = function(op, file, token) request={path=file,token=token} return true end
+    core.garageDo(action, 9, true)
+    assert(vehicle.model == 'pigeon' and request)
+    disk[request.path] = {format='v2',nodes={latestDealerState=true}}
+    require('cargoEarth/damage').complete(request.token,1,true)
+    assert(vehicle.model == 'etk' and old.physicalDamage.nodes.latestDealerState)
+    if action == 'preview' then assert(g.preview and g.car == old)
+    else assert(g.parked[1] == old and g.car.model == 'etk') end
+  end
+end)
+
+test('snapshot capture rejects late results after a paid repair and retries a lost callback', function()
+  local module = require('cargoEarth/damage')
+  local request, writes = nil, 0
+  local g = {car = {}}
+  local G = {playerId = function() return 1 end, vehicleState = function(action, path, token)
+    request = {path = path, token = token}
+    return true
+  end}
+  module.capture(G, g, function(ok) if ok then writes = writes + 1 end end)
+  module.clear(g.car)
+  disk[request.path] = {format = 'v2'}
+  module.complete(request.token, 1, true)
+  assert(not g.car.physicalDamage and writes == 0)
+  module.capture(G, g, function(ok) if ok then writes = writes + 1 end end)
+  module.tick(11)
+  module.capture(G, g, function(ok) if ok then writes = writes + 1 end end)
+  disk[request.path] = {format = 'v2'}
+  module.complete(request.token, 1, true)
+  assert(g.car.physicalDamage and writes == 1)
+end)
+
 test('Settings puts the phone on the dash of the car you drive, and each new car gets it', function()
   local core = fresh()
   local dash = require('cargoEarth/dash')
@@ -3491,7 +4217,7 @@ test('one radio for both phones: the UI page plays it while it checks in, else t
   local ask, command, enabled, commanding = helper.ask, helper.command, helper.enabled, helper.commanding
   local cmds, stored = {}, nil
   local host, port = helper.HOST, helper.PORT
-  helper.enabled, helper.HOST, helper.PORT = true, '127.0.0.1', 47820
+  helper.enabled, helper.HOST, helper.PORT = true, '127.0.0.1', 47821
   helper.ask = function() end
   helper.command = function(path, cb) cmds[#cmds + 1] = { path, cb } end
   helper.commanding = function() return false end
@@ -3758,6 +4484,44 @@ test('road distance: two points on one edge, and the nearer end of the goal edge
   local k2 = roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 5)
   assert(k2 and math.abs(k2 - 1.05) < 0.001, tostring(k2))
   assert(roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 1) == false, 'the cap counts the whole way')
+end)
+
+test('road searches of one offer list share a node budget; a spent budget says unknown', function()
+  local roads = require('cargoEarth/roads')
+  roads._reset()
+  local function n(x, y, links) return {pos = {x = x, y = y, z = 0}, links = links or {}} end
+  local graph = {nodes = {A = n(0, 0, {U = {}}), U = n(0, 2000, {V = {}}), V = n(300, 2000, {B = {}}), B = n(300, 0)}}
+  local budget = {left = 100}
+  local km = roads.km(graph, {{'A', 10}}, {{'B', 10}}, 10, budget)
+  assert(km and math.abs(km - 4.32) < 0.01 and budget.left < 100 and budget.left > 90, tostring(budget.left))
+  budget.left = 2
+  assert(roads.km(graph, {{'A', 10}}, {{'B', 10}}, 10, budget) == nil, 'the budget runs out on the way: unknown')
+  assert(budget.left <= 0 and roads.km(graph, {{'A', 10}}, {{'B', 10}}, 10, budget) == nil)
+end)
+
+test('an ordinary save snapshots the car only after new damage or now and then', function()
+  local module = require('cargoEarth/damage')
+  local request, dmg = nil, 100
+  local g = {car = {}}
+  local G = {playerId = function() return 1 end, damage = function() return dmg end,
+    vehicleState = function(action, path, token) request = {path = path, token = token} return true end}
+  assert(module.due(G, g), 'never captured')
+  module.capture(G, g, function() end)
+  dmg = 250   -- a dent while the game writes the snapshot out: not in it
+  disk[request.path] = {format = 'v2'}
+  module.complete(request.token, 1, true)
+  assert(module.due(G, g), 'the dent came after the snapshot was asked for')
+  dmg = 100
+  assert(g.car.physicalDamage and not module.due(G, g), 'nothing new since the snapshot')
+  dmg = 400
+  assert(module.due(G, g), 'a new dent')
+  dmg = 100.5
+  assert(not module.due(G, g))
+  module.tick(module.ROUTINE_S + 1)
+  assert(module.due(G, g), 'now and then anyway')
+  module.clear(g.car)
+  module.tick(-module.ROUTINE_S - 1)
+  assert(module.due(G, g), 'a repaired car has no snapshot')
 end)
 
 local truckIdx = jobs.index({depots = {
@@ -4313,7 +5077,7 @@ test('a car goes on the deck by the middle of its body, not its ref node', funct
   assert(f0 == 0 and r0 == 0)
 end)
 
-test('used-car market: every vehicle kind has at least 6 listings at cheap, middle and dear prices', function()
+test('used-car market: every vehicle kind has eight listings at cheap, middle and dear prices', function()
   local garage, haul = require('cargoEarth/garage'), require('cargoEarth/haul')
   assert(haul.configClass('van', 'Van', 'H-Series Vanster') == 'van')
   assert(haul.configClass('us_semi', nil, 'T-Series T75 Box Truck') == 'rigid')
@@ -4335,7 +5099,7 @@ test('used-car market: every vehicle kind has at least 6 listings at cheap, midd
   end
   add('covet', 'Hatchback', 20) add('pickup', 'Pickup', 9, 'Truck') add('van', 'Van', 4, 'Truck')
   add('md_series', 'Box Truck', 2, 'Truck') add('us_semi', 'Semi Truck', 7, 'Truck') add('citybus', 'Bus', 3, 'Truck')
-  local G = { configs = function() return configs end }
+  local G = { configs = function() return configs end, spawn = function() end }
   local seed = 7
   local rnd = function() seed = (seed * 16807) % 2147483647 return seed / 2147483647 end
   local g = {}
@@ -4353,7 +5117,7 @@ test('used-car market: every vehicle kind has at least 6 listings at cheap, midd
   end
   local n, bands = counts()
   for _, kind in ipairs(haul.KIND_ORDER) do
-    assert((n[kind] or 0) >= garage.MIN_PER_KIND, kind .. ' has ' .. tostring(n[kind]))
+    assert((n[kind] or 0) == 8, kind .. ' has ' .. tostring(n[kind]))
   end
   assert(bands.car[1] and bands.car[2] and bands.car[3], 'cars at varied prices')
   assert(bands.semi[1] and bands.semi[3], 'tractors at varied prices')
@@ -4365,11 +5129,91 @@ test('used-car market: every vehicle kind has at least 6 listings at cheap, midd
   n = counts()
   assert(n.van >= garage.MIN_PER_KIND)
   for _, c in ipairs(garage.market(g)) do assert(c.kind and c.hours == nil) end
+  assert(#g.market.list == 40, 'eight slots for each of five categories')
+  local held = g.market.list[1]
+  held.gone = g.market.t
+  g.preview = {id = held.id}
+  garage.marketTick(G, g, 31, rnd)
+  assert(#g.market.list == 40 and garage.findListing(g, held.id) == held, 'test-drive selection stays reserved')
+  for _, l in ipairs(g.market.list) do
+    assert(l == held or l.gone - l.listedAt <= garage.MARKET_LIFE_MIN[2])
+  end
+  g.preview = nil
+  garage.marketTick(G, g, 0, rnd)
+  assert(not garage.findListing(g, held.id) and #g.market.list == 40)
+  -- A legacy oversized category shrinks while the preview survives.
+  for _ = 1, 20 do
+    g.market.seq = g.market.seq + 1
+    table.insert(g.market.list, {id = g.market.seq, model = 'covet', key = 'covet1', kind = 'car', band = 1,
+      name = 'Legacy', km = 0, condition = 1, price = 100, listedAt = g.market.t, gone = g.market.t + 150})
+  end
+  held = g.market.list[#g.market.list]
+  g.preview = {id = held.id}
+  garage.marketTick(G, g, 0, rnd)
+  assert(#g.market.list == 40 and garage.findListing(g, held.id))
+  assert(held.gone - held.listedAt == garage.MARKET_LIFE_MIN[2], 'legacy expiry shortened to the new maximum')
+  g.preview = nil
+  local listing = g.market.list[1]
+  assert(garage.buyListing(G, g, {money = 1000000}, listing.id))
+  assert(#g.market.list == 40 and not garage.findListing(g, listing.id), 'buying refills the freed slot immediately')
   -- an older save's market keeps its listings and learns their kinds
   local old = { market = { v = 3, t = 5, seq = 1, nextAt = 100,
     list = { { id = 1, model = 'van', key = 'van2', name = 'van 2', km = 0, condition = 1, price = 10, listedAt = 0, gone = 90 } } } }
   garage.marketTick(G, old, 0, rnd)
   assert(old.market.v == garage.MARKET_V and old.market.list[1].id == 1 and old.market.list[1].kind == 'van')
+  assert(old.market.list[1].price == 5, 'an older listing of a work vehicle is repriced once')
+  garage.marketTick(G, old, 0, rnd)
+  assert(old.market.list[1].price == 5, 'and only once')
+  -- work vehicles cost a share of their value-based price; a new tractor for the firm too
+  assert(garage.kindFactor('car') == 1 and garage.kindFactor('suv') == 1 and garage.kindFactor('van') == 0.5)
+  assert(garage.kindFactor('rigid') == 0.35 and garage.kindFactor('semi') == 0.35)
+  assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.35 / 5 + 0.5) * 5)
+  assert(garage.newPrice(G, 'covet', 'covet7') == math.floor(7000 * garage.PRICE_PER_VALUE / 5 + 0.5) * 5)
+  -- parts stripped off a discounted truck sell at the truck's discount, so buy-and-strip can't beat the price
+  local PG = { part = function(_, name) return { information = { name = name, value = 1000 } } end }
+  local truck = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = 'engine' }, ioCtx = {} }
+  local stripped = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = '' }, ioCtx = {} }
+  local q = garage.partsQuote(PG, {}, truck.slotPartMap, stripped)
+  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1 and q.salvage.engine.f == 0.35)
+  PG.vehicle = function() return stripped end
+  local sg = { inventory = { engine = 2 }, salvage = q.salvage }
+  local full = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART / 5 + 0.5) * 5
+  local cheap = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART * 0.35 / 5 + 0.5) * 5
+  assert(garage.spares(PG, sg)[1].price == cheap)
+  local _, _, got = garage.sell(PG, sg, { money = 0 }, 'engine')
+  assert(got == cheap and sg.salvage == nil)
+  _, _, got = garage.sell(PG, sg, { money = 0 }, 'engine')
+  assert(got == full, 'a spare bought at full price still sells at the full share')
+  -- fitting a spare again uses the full-price ones first; the salvage count never exceeds the spares
+  q = garage.partsQuote(PG, { engine = 2 }, stripped.slotPartMap, truck, { engine = { n = 1, f = 0.35 } })
+  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1)
+  q = garage.partsQuote(PG, { engine = 1 }, stripped.slotPartMap, truck, { engine = { n = 1, f = 0.35 } })
+  assert(q.inventory.engine == nil and q.salvage == nil)
+  -- a part bought at full price for the truck comes off as a full-price spare, not salvage
+  q = garage.partsQuote(PG, {}, stripped.slotPartMap, truck)
+  assert(q.cost > 0 and q.paid.engine == 1)
+  local back = garage.partsQuote(PG, q.inventory, truck.slotPartMap, stripped, q.salvage, q.paid)
+  assert(back.inventory.engine == 1 and back.salvage == nil and back.paid == nil)
+  -- a full-price spare fitted to the truck stays full price when it comes off again
+  local fit = garage.partsQuote(PG, back.inventory, stripped.slotPartMap, truck, back.salvage, back.paid)
+  assert(fit.cost == 0 and fit.paid.engine == 1)
+  back = garage.partsQuote(PG, fit.inventory, truck.slotPartMap, stripped, fit.salvage, fit.paid)
+  assert(back.inventory.engine == 1 and back.salvage == nil)
+  -- a salvage spare fitted back stays salvage
+  fit = garage.partsQuote(PG, { engine = 1 }, stripped.slotPartMap, truck, { engine = { n = 1, f = 0.35 } })
+  assert(fit.paid == nil and fit.salvage == nil)
+  back = garage.partsQuote(PG, fit.inventory, truck.slotPartMap, stripped, fit.salvage, fit.paid, fit.fittedSalvage)
+  assert(back.salvage.engine.n == 1)
+  -- a salvage spare moved onto an ordinary car keeps its discount when it comes off there
+  local car = { model = 'covet', slotPartMap = { b = 'engine' }, ioCtx = {} }
+  local bare = { model = 'covet', slotPartMap = { b = '' }, ioCtx = {} }
+  fit = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car, { engine = { n = 1, f = 0.35 } })
+  assert(fit.cost == 0 and fit.salvage == nil and fit.fittedSalvage.engine.n == 1 and fit.fittedSalvage.engine.f == 0.35)
+  back = garage.partsQuote(PG, fit.inventory, car.slotPartMap, bare, fit.salvage, fit.paid, fit.fittedSalvage)
+  assert(back.salvage.engine.n == 1 and back.salvage.engine.f == 0.35 and back.fittedSalvage == nil)
+  -- the car's own part comes off at full price
+  back = garage.partsQuote(PG, {}, car.slotPartMap, bare)
+  assert(back.inventory.engine == 1 and back.salvage == nil)
 end)
 
 test('a save whose car mod is gone: another owned car, else a base Pigeon; the missing car is kept', function()
@@ -4464,4 +5308,51 @@ test('used-car list: picture and numbers come from the game list without a spawn
   core_vehicles = oldCv
   gamecar._reset()
   assert(ok, err)
+end)
+
+test('experience pay grows with each job of a kind, higher for later-unlocked work', function()
+  local experience = require('cargoEarth/experience')
+  local employment = require('cargoEarth/employment')
+  local c = {}
+  assert(experience.rate(c, 'semi') == 0 and experience.kind({ kind = 'food' }) == 'food')
+  assert(experience.kind({ taxi = {} }) == 'taxi' and experience.kind({ route = {} }) == 'parcel')
+  assert(experience.kind({ partsRun = true }) == 'parts' and experience.kind({ haul = { tier = 'rigid' } }) == 'rigid')
+  assert(experience.kind({ haul = { tier = 'car' } }) == nil)
+  experience.add(c, 'food', 50)
+  assert(experience.rate(c, 'food') == 0.05)
+  experience.add(c, 'food', 500)
+  assert(experience.rate(c, 'food') == 0.10, 'capped')
+  experience.add(c, 'semi', 40)
+  assert(experience.rate(c, 'semi') == 0.25 and experience.KINDS.semi.max > experience.KINDS.van.max)
+  local job = experience.apply(c, { kind = 'food', pay = 200 })
+  assert(job.pay == 220 and job.expBonus == 20 and job.expRate == 0.10)
+  experience.apply(c, job)
+  assert(job.pay == 220, 'only once')
+  assert(experience.apply(c, { kind = 'food', pay = 200, companyShift = 's1' }).pay == 200, 'company jobs are paid by share')
+  -- company work: the driver's share grows, never past the whole contract
+  assert(employment.shareFor('semi', c) == 0.65 * 1.25 and employment.shareFor('semi') == 0.65)
+  assert(employment.shareFor('bus', c) == employment.SHARE)
+  c.experience.van = 1000
+  assert(employment.shareFor('van', c) == math.min(1, employment.SHARE * 1.15))
+  -- the Progress page shows it per work type; company van contracts share the van's experience
+  local progress = require('cargoEarth/progress')
+  local rows = {}
+  for _, w in ipairs(progress.workTypes(c, { owned = {} })) do rows[w.id] = w end
+  assert(rows.food.exp.jobs == 550 and rows.food.exp.rate == 0.10 and rows.company.exp.rate == 0.15)
+  assert(rows.firm.exp == nil)
+end)
+
+test('freight pays the distance rate for a full load and less for a light one', function()
+  local haul = require('cargoEarth/haul')
+  assert(haul.fill({ tier = 'van', kind = 'parcel', amount = 96, kg = 864 }) == 1)
+  assert(haul.fill({ tier = 'van', kind = 'parcel', amount = 48, kg = 432 }) == 0.5)
+  assert(haul.fill({ tier = 'rigid', kind = 'parcel', amount = 200, kg = 2800 }) == 0.35, 'heavy goods count by weight')
+  assert(haul.fill({ tier = 'semi', kind = 'dryBulk', amount = 12800, kg = 4480 }) == 1, 'the bulk trailer full by space')
+  local idx = { cargo = { pallets_general = { pay = 1 } } }
+  local rowsFor = function(n) return { { id = 1, capacity = n, cargoTypes = { 'parcel' } } } end
+  local full = { cargo = 'pallets_general', km = 10, pickupKm = 1 }
+  assert(haul.prepare(full, 'van', rowsFor(96), idx) and full.pay == 150 + 18 * 10 and full.loadBonus == 0)
+  local light = { cargo = 'pallets_general', km = 10, pickupKm = 1 }
+  assert(haul.prepare(light, 'van', rowsFor(48), idx))
+  assert(light.loadFill == 0.5 and light.pay == math.floor(330 * 0.875 / 5 + 0.5) * 5 and light.loadBonus == light.pay - 330)
 end)

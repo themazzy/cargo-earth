@@ -6,7 +6,7 @@ the parts of the files it needs, with HTTP Range requests, cached on disk) and s
 http://127.0.0.1:<port>. Where a place has no addresses in Overture, houses (building outlines) are the customers.
 
 Run it as a BeamNG.Earth add-on (its Add-ons page, kind "companion": BeamNG.Earth's own Python runs it, "Start with
-BeamNG.Earth" starts it every time), or by hand:  python3 cargo_earth_helper.py [--port 47820] [--cache DIR]
+BeamNG.Earth" starts it every time), or by hand:  python3 cargo_earth_helper.py [--port 47821] [--cache DIR]
 Needs duckdb and fsspec (both come with BeamNG.Earth).  python3 cargo_earth_helper.py --test LAT,LON  builds one area
 and prints what it found.
 
@@ -35,6 +35,9 @@ API (GET, JSON):
   /v1/near?lat=..&lon=..      the 3 x 3 areas around the point: {"ready": ["r_c", ...], "loading": n, "failed": n,
                               "errors": [...], "grocers": true, "depots": true, "fuel": true}; builds missing areas
                               nearest first
+  /v1/sites?lat=..&lon=..     workplaces only (warehouses, yards, shops, fuel depots) in a box SITE_HALF degrees
+                              around a far town, for long-distance freight destinations; built in the background and
+                              kept on disk: {"state": "ready" | "loading" | "failed", "key", "depots": [as /v1/area's]}
   /v1/area?key=r_c            one ready area: {"key", "restaurants": [[id, lat, lon, curbLat, curbLon, name, cat, town],
                               ...], "grocers": [rows in the same format],
                               "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...],
@@ -43,7 +46,7 @@ API (GET, JSON):
                               [[lat, lon, curbLat, curbLon, label, town], ...]}, "houses": bool,
                               "depots": [{id, n, g: [lat, lon], t: "yard" | "shop", town, source, access}, ...]}
 Areas are AREA x AREA degrees (r = floor(lat / AREA), c = floor(lon / AREA)); address tiles inside are TILE degrees,
-the same keys as the mod's own data pack (food_CZ/a/<row>_<col>.json).
+the keys the mod's address tiles use. A depot's "k" is its type in the mod's freight catalogue (data/freight.json).
 
 Data: Overture Maps Foundation, places (CDLA-Permissive-2.0), addresses (sources' licences), buildings (ODbL and
 others); https://docs.overturemaps.org/attribution/
@@ -67,8 +70,12 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from contextlib import contextmanager
 
-VERSION = "0.10.3"
-AREA_CACHE_VERSION = "7"  # taxi destinations (airports, stations, sights); retain existing downloaded Parquet blocks
+VERSION = "0.10.4"
+SITES_CACHE_VERSION = "2"  # /v1/sites: far workplaces for long-distance freight (2: catalogue types "k")
+SITE_GRID = 0.05           # a far town's point is snapped to this grid (one cached box per grid point)
+SITE_HALF = 0.12           # half the size of that box, degrees (about 27 x 17 km in central Europe)
+SITE_QUEUE = 24            # far boxes waiting at most; older requests drop first
+AREA_CACHE_VERSION = "8"  # 8: workplaces carry their freight catalogue type "k"; retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
 BUCKET = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
 STAC_ROOT = "https://stac.overturemaps.org"
@@ -126,7 +133,42 @@ def auto_kind(primary, hierarchy, basic):
         if pattern.search(taxonomy):
             return kind
     return None
-DEPOT_SQL_RX = "|".join(pattern for _, pattern in DEPOT_RULES)
+# The workplace's type in the mod's freight catalogue (data/freight.json): what it ships and takes in. First match
+# wins; a yard no rule names is an industrial estate. Also fictional gameplay rules, by the place's Overture category.
+WORKPLACE_RULES = [
+    ("fuel_depot", r"fuel_depot|fuel_terminal|oil_refiner|petroleum|oil_and_gas|fuel_supplier"),
+    ("automotive", r"automotive_parts_manufactur|car_manufactur|vehicle_manufactur|automobile_manufactur|auto_manufactur"),
+    ("steelworks", r"steel|foundry|metal_supplier|smelt"),
+    ("chemical", r"chemical|pharmaceutical_manufactur|plastic_manufactur|plastic_fabricat|plastics"),
+    ("sawmill", r"sawmill|lumber|timber|wood_product"),
+    ("brewery", r"brewery|distillery|winery"),
+    ("food", r"food_processing|food_manufactur|food_production|dairy_manufactur|meat_process|meat_packing|slaughter|beverage_manufactur|bottling"),
+    ("glassworks", r"glass_manufactur|glassblow|ceramic_manufactur|porcelain"),
+    ("concrete", r"concrete|cement|brick"),
+    ("scrap_yard", r"scrap|recycl|waste_management"),
+    ("mine", r"coal|(^| )mining|mine( |$)"),
+    ("quarry", r"quarr|gravel"),
+    ("farm", r"(^|[ _])farm($|[ _])|agricultur|livestock|ranch|dairy_farm|crop_farm"),
+    ("port", r"harbo|seaport|cargo_port|(^| )port( |$)"),
+    ("rail_terminal", r"rail_freight|intermodal|container_terminal|freight_terminal"),
+    ("power_plant", r"power_plant|power_station|energy_plant"),
+    ("logistics", r"warehous|logistic|freight|courier|distribution|wholesal|storage_facilit|shipping_cent|trucking"),
+    ("metalworks", r"metal_fabricat|machine_shop|machinery|industrial_equipment|tool_manufactur|metal"),
+    ("factory", r"manufactur|factory|industrial_company|textile_mill|electronics_manufactur|paper_mill"),
+]
+WORKPLACE_RX = [(kind, re.compile(pattern)) for kind, pattern in WORKPLACE_RULES]
+DEPOT_SQL_RX = "|".join([pattern for _, pattern in DEPOT_RULES] + [pattern for _, pattern in WORKPLACE_RULES])
+
+
+def workplace_kind(primary, hierarchy, basic, kind):
+    """The catalogue type of a workplace whose depot kind is `kind` (yard / shop / fuel), or None for a shop."""
+    if kind == "shop":
+        return None
+    taxonomy = " ".join(str(value or "") for value in (primary, hierarchy, basic)).lower()
+    for k, pattern in WORKPLACE_RX:
+        if pattern.search(taxonomy):
+            return k
+    return "fuel_depot" if kind == "fuel" else "industrial"
 
 
 def depot_kind(primary, hierarchy, basic):
@@ -134,6 +176,9 @@ def depot_kind(primary, hierarchy, basic):
     for kind, pattern in DEPOT_RX:
         if pattern.search(taxonomy):
             return kind
+    for k, pattern in WORKPLACE_RX:     # a brewery, quarry, farm...: a yard of its own kind
+        if pattern.search(taxonomy):
+            return "fuel" if k == "fuel_depot" else "yard"
     return None
 
 # Which files of the release cover which box: [name, [xmin, ymin, xmax, ymax], size]. Places from Overture's STAC
@@ -277,7 +322,7 @@ class CacheBudget:
             self.last = time.monotonic()
             pinned = {os.path.normcase(os.path.realpath(p)) for p in pinned}
             files = []
-            for sub, extension in (("blocks", ".blk"), ("areas", ".json")):
+            for sub, extension in (("blocks", ".blk"), ("areas", ".json"), ("sites", ".json")):
                 for directory, _, names in os.walk(os.path.join(self.root, sub), followlinks=False):
                     for name in names:
                         if not name.endswith(extension):
@@ -555,11 +600,38 @@ class Builder:
                 kind = depot_kind(prim, hier, basic)
                 if kind:
                     depots.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)],
-                                   "t": kind, "town": town, "source": "Overture", "access": "candidate"})
+                                   "t": kind, "k": workplace_kind(prim, hier, basic, kind), "town": town,
+                                   "source": "Overture", "access": "candidate"})
                 car = auto_kind(prim, hier, basic)
                 if car:
                     autos.append([f"o{pid[:16]}", round(lat, 6), round(lon, 6), name, car, town])
         return out, depots, stations, autos
+    def sites(self, box):
+        """Workplaces only (no food, addresses or buildings): a cheap query for a far town's box."""
+        con, paths = self._con("places/place", box)
+        if not paths:
+            con.close()
+            return []
+        depot = ("regexp_matches(lower(concat_ws(' ', basic_category, taxonomy.primary, "
+                 f"array_to_string(taxonomy.hierarchy, ' '))), '{DEPOT_SQL_RX}')")
+        q = f"""SELECT id, names.primary, basic_category, taxonomy.primary, array_to_string(taxonomy.hierarchy, ' '),
+                       (bbox.ymin + bbox.ymax) / 2, (bbox.xmin + bbox.xmax) / 2, addresses[1].locality
+                FROM read_parquet({paths!r}, union_by_name = true)
+                WHERE {self._where(box)} AND coalesce(operating_status, 'open') = 'open'
+                  AND {depot} AND confidence >= {MIN_CONF} AND names.primary IS NOT NULL"""
+        try:
+            rows = con.execute(q).fetchall()
+        finally:
+            con.close()
+        out = []
+        for pid, name, basic, prim, hier, lat, lon, town in rows:
+            name, kind = (name or "").strip(), depot_kind(prim, hier, basic)
+            if name and kind and box[1] <= lat < box[3] and box[0] <= lon < box[2]:
+                out.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)], "t": kind,
+                            "k": workplace_kind(prim, hier, basic, kind), "town": (town or "").strip(),
+                            "source": "Overture", "access": "candidate"})
+        return out
+
     def addresses(self, box):
         con, paths = self._con("addresses/address", box)
         if not paths:
@@ -847,9 +919,101 @@ class Areas:
         return body
 
 
+def site_key(lat, lon):
+    """The grid point a far town snaps to: "row_col" in SITE_GRID steps."""
+    if not math.isfinite(lat) or not math.isfinite(lon) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError("coordinates must be finite WGS84 latitude/longitude")
+    return f"{int(round(lat / SITE_GRID))}_{int(round(lon / SITE_GRID))}"
+
+
+def valid_sites(data, key, release):
+    if not isinstance(data, dict) or data.get("key") != key or data.get("release") != release:
+        return False
+    rows = data.get("depots")
+    if not isinstance(rows, list):
+        return False
+    return valid_area({"key": key, "release": release, "tiles": {}, "restaurants": [], "grocers": [], "fuel": [],
+                       "depots": rows}, key, release)
+
+
+class Sites:
+    """Workplaces around far towns (long-distance freight destinations): one box per town, built one at a time in the
+    background (a cheap places-only query) and kept on disk like the areas."""
+
+    def __init__(self, builder, cache_dir, start=True):
+        self.builder = builder
+        self.dir = os.path.join(cache_dir, "sites", builder.index.release, SITES_CACHE_VERSION)
+        os.makedirs(self.dir, exist_ok=True)
+        self.state, self.queue, self._fail_at = {}, [], {}
+        self.cv = threading.Condition()
+        if start:
+            threading.Thread(target=self._work, daemon=True, name="cargo-earth-sites").start()
+
+    def path(self, key):
+        return os.path.join(self.dir, key + ".json")
+
+    def _cached(self, key):
+        with open(self.path(key), encoding="utf-8") as f:
+            data = json.load(f)
+        if not valid_sites(data, key, self.builder.index.release):
+            raise ValueError("invalid cached sites")
+        touch_cache(self.path(key))
+        return data
+
+    def get(self, lat, lon):
+        key = site_key(lat, lon)
+        try:
+            data = self._cached(key)
+            return {"state": "ready", "key": key, "depots": data["depots"]}
+        except (OSError, ValueError, TypeError):
+            pass
+        with self.cv:
+            s = self.state.get(key)
+            if s and s.startswith("failed") and time.time() < self._fail_at.get(key, 0) + 300:
+                return {"state": "failed", "key": key, "error": s[8:], "depots": []}
+            if s != "loading" and key not in self.queue:
+                self.queue.append(key)
+                del self.queue[:-SITE_QUEUE]
+                self.state[key] = "queued"
+                self.cv.notify()
+        return {"state": "loading", "key": key, "depots": []}
+
+    def build(self, key):
+        r, c = map(int, key.split("_"))
+        lat, lon = r * SITE_GRID, c * SITE_GRID
+        box = (lon - SITE_HALF, lat - SITE_HALF, lon + SITE_HALF, lat + SITE_HALF)
+        t0 = time.time()
+        depots = self.builder.sites(box)
+        log(f"far sites {key}: {len(depots)} workplaces in {time.time() - t0:.1f} s")
+        return {"key": key, "release": self.builder.index.release, "depots": depots}
+
+    def _work(self):
+        while True:
+            with self.cv:
+                while not self.queue:
+                    self.cv.wait()
+                key = self.queue.pop()        # the newest request first: it is the one the game waits on now
+                self.state[key] = "loading"
+            try:
+                data = self.build(key)
+                if not valid_sites(data, key, self.builder.index.release):
+                    raise ValueError("invalid sites; not published")
+                tmp = self.path(key) + f".{threading.get_ident()}.tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+                os.replace(tmp, self.path(key))
+                with self.cv:
+                    self.state.pop(key, None)
+            except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
+                log(f"far sites {key} failed:", repr(e))
+                with self.cv:
+                    self._fail_at[key] = time.time()
+                    self.state[key] = "failed: " + str(e)[:200]
+
+
 ######################################################################################## speed cameras (OpenStreetMap)
 
-OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
+OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"]
 OVERPASS_TIMEOUT_S = 40       # fail over without blocking the queue for minutes per mirror
 OVERPASS_ONE = threading.Condition()
 OVERPASS_WAITING = []
@@ -963,7 +1127,7 @@ class OsmCells:
 
     def _overpass(self, box, progress=lambda **fields: None):
         q = self.query(box)
-        err = None
+        errors = []
         with overpass_slot(0 if self.NAME == "lines" else 1):
             for attempt, base in enumerate(OVERPASS, 1):
                 progress(phase="fetching", server=urllib.parse.urlsplit(base).hostname, attempt=attempt)
@@ -977,14 +1141,14 @@ class OsmCells:
                         raise ValueError(str(data["remark"])[:300])
                     return data
                 except Exception as e2:  # noqa: BLE001 - the next mirror
-                    err = e2
-        raise err
+                    errors.append(f"{urllib.parse.urlsplit(base).hostname}: {str(e2)[:110] or type(e2).__name__}")
+        raise RuntimeError("; ".join(errors))
 
-    def _load(self, key):
+    def _load(self, key, allow_expired=False):
         try:
             with open(self.path(key), "rb") as f:
                 data = json.loads(f.read(self.MAX_BYTES))
-            if (data.get("format", 1) == self.CACHE_VERSION and time.time() - data["at"] < self.DAYS * 86400
+            if (data.get("format", 1) == self.CACHE_VERSION and (allow_expired or time.time() - data["at"] < self.DAYS * 86400)
                     and isinstance(data[self.NAME], list)):
                 return data[self.NAME]
         except (OSError, ValueError, KeyError, TypeError):
@@ -1036,7 +1200,8 @@ class OsmCells:
                     self.state.pop(key, None)
                     self.fail_at.pop(key, None)
                     try:
-                        os.remove(self.path(key))
+                        if not self._load(key, allow_expired=True):
+                            os.remove(self.path(key))
                     except FileNotFoundError:
                         pass
                     rows = None
@@ -1217,7 +1382,14 @@ class BusLines(OsmCells):
         """The lines once each (a line crosses cells), and the depots apart: {"state", "cells", "lines", "depots"}."""
         out = super().near(lat, lon, retry)
         lines, depots, seen = [], [], set()
-        for row in out["lines"]:
+        rows = out["lines"]
+        if out["state"] != "ready":
+            for key in out["cells"]:
+                with self.lock:
+                    pending = not isinstance(self.state.get(key), list)
+                if pending:
+                    rows.extend(self._load(key, allow_expired=True) or [])
+        for row in rows:
             if row.get("id") in seen:
                 continue
             seen.add(row.get("id"))
@@ -1847,7 +2019,7 @@ td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
 
 
 def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None,
-          buslines=None):
+          buslines=None, sites=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -1923,7 +2095,7 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
-                                            "cameras": cameras is not None, "buslines": buslines is not None, "radio": radio is not None,
+                                            "cameras": cameras is not None, "buslines": buslines is not None, "sites": sites is not None, "radio": radio is not None,
                                             "player": player is not None, "missing": missing_libraries(),
                                             "network": network, "cache": areas.budget.stats,
                                             "update": updates.info() if updates else None})
@@ -1961,6 +2133,8 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     return self._send(200, radio.click(q.get("id", "")))
                 if u.path == "/v1/near":
                     return self._send(200, areas.near(float(q["lat"]), float(q["lon"])))
+                if u.path == "/v1/sites" and sites:
+                    return self._send(200, sites.get(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/area":
                     key = q.get("key", "")
                     if not re.fullmatch(r"-?\d+_-?\d+", key):
@@ -1994,9 +2168,26 @@ def bind(host, port, handler=BaseHTTPRequestHandler):
         sys.exit(2)
 
 
+DEFAULT_PORT, LEGACY_PORT = 47821, 47820
+
+
+def helper_port(value):
+    """Retire the old EarthRadio-conflicting port, including saved launch arguments and environment settings."""
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("port must be an integer") from None
+    if not 1024 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1024 and 65535")
+    if port == LEGACY_PORT:
+        log(f"port {LEGACY_PORT} is reserved for EarthRadio; using {DEFAULT_PORT}. Update CargoEarthSetup to refresh launchers and the add-on page.")
+        return DEFAULT_PORT
+    return port
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--port", type=int, default=int(os.environ.get("BNE_CARGO_PORT", "47820")))
+    ap.add_argument("--port", type=helper_port, default=os.environ.get("BNE_CARGO_PORT", str(DEFAULT_PORT)))
     here = os.path.dirname(os.path.abspath(__file__))
     ap.add_argument("--cache", default=os.environ.get("BNE_CARGO_CACHE") or os.path.join(here, "cache"))
     ap.add_argument("--release", default=RELEASE, help="Overture release (default: the pinned one, else the latest)")
@@ -2037,7 +2228,7 @@ def main():
         return
     updates = Updates(a.cache, enabled=not a.no_update_check).start()
     serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=Player(), srv=srv,
-          updates=updates, buslines=BusLines(a.cache))
+          updates=updates, buslines=BusLines(a.cache), sites=Sites(builder, a.cache))
 
 
 if __name__ == "__main__":
