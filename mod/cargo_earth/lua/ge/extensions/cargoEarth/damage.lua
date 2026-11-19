@@ -96,7 +96,9 @@ end
 
 function M.clear(car)
   if car then
-    car.physicalDamage = nil
+    -- its own file goes too (a backup that still names it just loads the car without a snapshot)
+    if car.damageFile and FS and FS.removeFile then pcall(FS.removeFile, FS, car.damageFile) end
+    car.physicalDamage, car.damageFile = nil, nil
     seen[car] = nil
     car.damageRevision = (car.damageRevision or 0) + 1
   end

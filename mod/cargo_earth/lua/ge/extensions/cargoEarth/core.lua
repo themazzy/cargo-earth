@@ -494,6 +494,7 @@ end
 
 local function loadCareer(c)
   S.career = c
+  persistence.attach(jsonReadFile, c)   -- each car's snapshot from its own file
   S.careerEpoch = (S.careerEpoch or 0) + 1 -- the phone drops distance drafts typed for another career
   M.updateOnLoad = true   -- ask the helper to look for a newer release (Jan: every time a save is loaded)
   c.history = c.history or {}
@@ -785,6 +786,13 @@ function M.deleteSlotFiles(id)
   local slot = id and saves.find(M.saveIndex(), id)
   local left = {}
   if not slot then return left end
+  -- the cars' snapshot files, named in the save and its backups
+  for _, suffix in ipairs(saves.SUFFIXES) do
+    local okR, c = pcall(jsonReadFile, slot.path .. suffix)
+    for _, file in ipairs(okR and persistence.sidecarFiles(c) or {}) do
+      if FS and FS.removeFile then pcall(FS.removeFile, FS, file) end
+    end
+  end
   for _, suffix in ipairs(saves.SUFFIXES) do
     local path = slot.path .. suffix
     if FS and FS.removeFile and (not FS.fileExists or FS:fileExists(path)) then pcall(FS.removeFile, FS, path) end
