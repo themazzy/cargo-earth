@@ -2,7 +2,7 @@
 
 A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight, work company contracts and build a garage at an address you choose.
 
-**Early development · mod 0.10.3 · helper 0.10.3**
+**Early development · mod 0.10.4 · helper 0.10.4**
 
 [Download the mod and helper (latest release)](https://github.com/themazzy/cargo-earth/releases/latest) · [Landing page](website/index.html) · [Payout statistics](docs/research/payout-statistics-0.3.5/README.md)
 
@@ -12,9 +12,9 @@ Cargo Earth turns BeamNG.Earth's real-world maps into a working life. Real resta
 fuel stations, bus lines and speed cameras come from Overture Maps and OpenStreetMap, so the same game works in your
 own town and anywhere else on Earth. Every action is available on the in-game phone; buses also support the normal door key (O).
 
-### Three ways to work
+### Four ways to work
 
-Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or in Settings).
+Pick **Food delivery**, **Freight**, **Taxi** or **Bus** on the phone's offline screen (or in Settings).
 
 **Food delivery**
 - Deliver meals, family orders and grocery baskets from real restaurants and shops to real addresses. Fit real cargo
@@ -25,7 +25,7 @@ Pick **Food delivery**, **Freight** or **Bus** on the phone's offline screen (or
 
 **Taxi** (owned cars, SUVs and passenger vans with verified passenger seats)
 - Pick up a group at a real nearby address and drive to an airport, station, museum, sight or hotel. Groups can fill all usable passenger seats, with seated dummies adding 75 kg each.
-- The fare starts at 50 CZK plus 18 CZK/km. Each passenger after the first adds 20%; Rush then adds 25%. Fuel and reputation supplements follow their existing rules. The phone shows the breakdown before acceptance.
+- The fare starts at 45 CZK plus 13 CZK/km, plus up to 45 % in a more valuable car. Each passenger after the first adds 20%; Rush then adds 25%. Fuel and reputation supplements follow their existing rules. The phone shows the breakdown before acceptance.
 - Comfort passengers reward a smooth ride; Rush passengers reward speed. Time allowances include the pickup drive and use road distances where mapped, with labelled pickup estimates elsewhere. Existing accepted rides keep their agreed fares.
 
 **Freight** (the work depends on what you drive, see [vehicle types](docs/VEHICLE_TYPES.md))
@@ -137,7 +137,7 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | Option | What it does |
 | --- | --- |
 | `-user-folder "D:\BeamNG\user"` | Use this BeamNG user folder when it is not found automatically |
-| `-version 0.10.3` | Install a specific release instead of the latest |
+| `-version 0.10.4` | Install a specific release instead of the latest |
 | `-mod-only`, `-helper-only` | Install only one part |
 | `-skip-python` | Don't install the helper's Python libraries |
 | `-zip <file>`, `-helper <file>` | Use files you already downloaded |
@@ -218,9 +218,9 @@ node tools/payout-stats.cjs
 
 Both installers share the Go program in `installer/`. From that folder, build with `GOOS=windows GOARCH=amd64 go build -o CargoEarthSetup.exe .` or `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o CargoEarthSetup-linux-x86_64 .`. Run installer checks with `go test ./...` and `go vet ./...`.
 
-To publish a release, create a GitHub release with a tag such as `v0.10.3` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
+To publish a release, create a GitHub release with a tag such as `v0.10.4` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.3 notes](docs/CAREER_0.10.3.md), [0.10.2 notes](docs/CAREER_0.10.2.md), [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.4 notes](docs/CAREER_0.10.4.md), [0.10.3 notes](docs/CAREER_0.10.3.md), [0.10.2 notes](docs/CAREER_0.10.2.md), [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
