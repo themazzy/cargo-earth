@@ -81,24 +81,20 @@ module.exports = function auditPhoneLayout (directive) {
       'Missing menu section: ' + panel)
   }
   assert(nodes.some(n => n.classes.has('cep-notices')), 'Unbounded alerts can displace the action bar')
-  const modeSelectors = nodes.filter(n => n.name === 'button' && n.classes.has('cep-mode-select'))
-  assert.equal(modeSelectors.length, 2, 'Work and Settings both need a category dropdown')
-  for (const select of modeSelectors) {
-    if (select.classes.has('cep-job-select')) {
-      assert.equal(select.attrs['aria-label'], 'Job type to configure')
-      assert(!select.attrs['ng-disabled'], 'Editing future job settings must not require switching active work')
-    } else {
-      assert(select.attrs['ng-disabled'].includes('canSwitch'), 'An active job or shift must lock its work category')
-      assert.equal(select.attrs['aria-label'], 'Job type')
-    }
-    assert.equal(select.attrs['aria-haspopup'], 'menu')
-  }
-  assert(!scrollAncestor(modeSelectors.find(n => n.attrs['ng-click'].includes('modePicker.work'))), 'Work category must stay above the scroll area')
+  // Work: one row of job type buttons (no pop-up: it could not be scrolled with the holder's buttons in VR)
+  const workModes = nodes.filter(n => n.name === 'button' && n.ancestors.some(p => p.classes.has('cep-work-modes')))
+  assert.equal(workModes.length, 1, 'Work has one repeated job type button')
+  assert(workModes[0].attrs['ng-disabled'].includes('canSwitch'), 'An active job or shift must lock its work category')
+  assert(!scrollAncestor(workModes[0]), 'Work category must stay above the scroll area')
+  assert(template.includes('Finish or cancel the current job to switch.'), 'A locked switcher says why')
+  const jobSelect = nodes.filter(n => n.name === 'button' && n.classes.has('cep-mode-select'))
+  assert.equal(jobSelect.length, 1, 'Jobs settings keeps its job type list')
+  assert.equal(jobSelect[0].attrs['aria-label'], 'Job type to configure')
+  assert(!jobSelect[0].attrs['ng-disabled'], 'Editing future job settings must not require switching active work')
   const modeMenus = nodes.filter(n => n.classes.has('cep-mode-menu'))
-  assert.equal(modeMenus.length, 2)
-  for (const menu of modeMenus) {
-    if (menu.attrs['aria-label'] === 'Job types') assert(menu.attrs['ng-if'].includes('canSwitch'), 'Locked work categories cannot open their menu')
-  }
+  assert.equal(modeMenus.length, 1)
+  assert(modeMenus[0].ancestors.some(p => p.classes.has('cep-scroll')), 'The job type list opens inside the scroll area (VR scroll buttons)')
+  assert(!/\.cep-mode-menu\{[^}]*(position:absolute|overflow-y)/.test(template), 'The job type list must not scroll on its own')
   pinned('Jobs settings back', click => click === 'closeJobsSettings()')
   pinned('Apply job distances', click => click === 'saveJobRange()')
   pinned('Reset selected job type', click => click === 'resetJobRange()')

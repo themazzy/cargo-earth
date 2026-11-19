@@ -19,6 +19,13 @@ M.types = {
   {id = 'bus', name = 'Mapped bus lines', mode = 'bus'},
 }
 
+-- what the distance fields are called for a job type
+function M.labels(id)
+  local word = id == 'taxi' and 'ride' or id == 'courier' and 'delivery' or id == 'parcels' and 'round'
+    or (id or ''):find('tow_', 1, true) == 1 and 'tow' or 'job'
+  return { nearKm = 'Pickups within', minKm = 'Shortest ' .. word, maxKm = 'Longest ' .. word }
+end
+
 function M.type(id)
   for _, t in ipairs(M.types) do if t.id == id then return t end end
 end

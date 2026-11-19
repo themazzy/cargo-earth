@@ -211,7 +211,7 @@ answer = {screen: 'offline'}
 assert(directive.template.includes('radio-browser.info'))
 assert.deepEqual(Array.from(scope.workModes, m => m.id), ['courier', 'trucking', 'taxi', 'bus'])
 assert.equal(scope.workModeName('taxi'), 'Taxi')
-assert(directive.template.includes('chooseWorkMode(\'work\', m.id)'), 'the offline dropdown switches the job type')
+assert(directive.template.includes('chooseWorkMode(\'work\', m.id)'), 'the offline buttons switch the job type')
 answer = {screen: 'offline', mode: 'taxi', canSwitch: true, taxi: {eligible: true, seats: 3}}
 scope.s = {screen: 'offline', mode: 'trucking', canSwitch: true}
 scope.modePicker.work = true

@@ -205,11 +205,13 @@ angular.module('beamng.apps')
     '.cep-subtabs{display:flex;flex-shrink:0;gap:4px;margin:10px 14px 0;padding:4px;background:var(--line);border-radius:12px}' +
     '.cep-subtabs button{flex:1;min-width:0;border:0;border-radius:9px;padding:8px 4px;font:inherit;font-size:12px;font-weight:700;background:transparent;color:var(--muted);cursor:pointer}' +
     '.cep-modes{display:block;position:relative;flex:0 0 auto;min-width:0;margin:0}.cep-modes>span{display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px}' +
+    '.cep-modes>small{display:block;margin-top:4px;font-size:11px;color:var(--muted)}.cep-work-modes{margin:0}.cep-work-modes button{min-height:36px;font-size:13px}' +
+    '.cep-work-modes button:disabled{cursor:default;opacity:.45}' +
     '.cep-mode-select{display:block;box-sizing:border-box;width:100%;max-width:100%;min-width:0;min-height:42px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;' +
       'background:var(--card);color:var(--ink);font:inherit;font-size:14px;font-weight:700;text-align:left;cursor:pointer}.cep-mode-select:disabled{cursor:default;opacity:.65}' +
-    '.cep-mode-select>b{float:right}.cep-mode-menu{position:absolute;z-index:10;top:100%;left:0;right:0;max-height:300px;overflow-y:auto;padding:4px;' +
-      'border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:0 6px 18px rgba(0,0,0,.25)}' +
-    '.cep-mode-menu>button{display:block;width:100%;min-height:42px;padding:9px 10px;border:0;border-radius:7px;text-align:left;font:inherit;' +
+    '.cep-mode-select>b{float:right}.cep-mode-menu{margin-top:4px;padding:4px;' +
+      'border:1px solid var(--line);border-radius:10px;background:var(--card)}' +
+    '.cep-mode-menu>button{display:block;width:100%;min-height:36px;padding:7px 10px;border:0;border-radius:7px;text-align:left;font:inherit;' +
       'background:transparent;color:var(--ink);cursor:pointer}.cep-mode-menu>button.on{background:var(--line);font-weight:700}' +
     '.cep-mode-menu>button>small{display:block;margin-top:2px;font-size:11px;font-weight:400;line-height:1.3;color:var(--muted)}' +
     '.cep-subtabs button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(29,27,25,.1)}' +
@@ -263,7 +265,10 @@ angular.module('beamng.apps')
     '.cep-pump-head .cep-sm{margin:0;padding:3px 8px}.cep-pump-msg{margin-top:3px}' +
     '.cep-pump-row{display:flex;gap:4px;margin-top:5px}.cep-pump-row .cep-sm{flex:1;margin:0;padding:4px 2px;display:flex;flex-direction:column;align-items:center;line-height:1.2}' +
     '.cep-pump-row small{font-size:10px;font-weight:500;color:inherit;opacity:.85}' +
-    '.cep-step2{display:flex;align-items:center;gap:8px}.cep-step2 b{min-width:62px;text-align:center;font-variant-numeric:tabular-nums}' +
+    '.cep-km{padding:8px 10px}.cep-km small{color:var(--muted);font-size:11px}.cep-km-row{display:flex;align-items:center;gap:6px;margin-top:4px}' +
+    '.cep-card .cep-km-row .cep-sm{margin:0;flex:0 0 44px;min-height:40px;font-size:20px;padding:0}.cep-km-row .cep-input{flex:1;min-width:0;text-align:center;font-size:16px;font-weight:700}' +
+    '.cep-km-row>span{color:var(--muted);font-size:12px}' +
+    '.cep-step2>.cep-sm{min-width:44px;min-height:40px}.cep-step2{display:flex;align-items:center;gap:8px}.cep-step2 b{min-width:62px;text-align:center;font-variant-numeric:tabular-nums}' +
     '.cep-li>div{min-width:0}' +
     // used-car pictures: the game's config preview over a plain car outline (shown when a mod car has no picture)
     '.cep-thumb{position:relative;flex:0 0 auto;width:78px;height:48px;border:0;padding:0;border-radius:8px;overflow:hidden;cursor:pointer;' +
@@ -1043,11 +1048,11 @@ angular.module('beamng.apps')
         "<div class=\"cep-mode-menu\" role=\"menu\" aria-label=\"Job settings categories\" ng-if=\"modePicker.jobs\">" +
         "<button ng-repeat=\"m in st.jobTypes\" role=\"menuitemradio\" aria-checked=\"{{ st.jobType === m.id }}\" ng-class=\"{on: st.jobType === m.id}\" ng-click=\"chooseJobSettings(m.id)\">{{ m.name }}</button></div></div>" +
         "<div class=\"cep-sub\">{{ st.jobHint }}</div>" +
-        "<div ng-repeat=\"it in st.items\"><div class=\"cep-card\" ng-if=\"it.unit === 'km'\"><label><span class=\"cep-label\">{{ it.label }}</span>" +
-        "<input class=\"cep-input cep-job-input\" type=\"number\" step=\"any\" min=\"{{ it.min }}\" max=\"{{ it.max }}\" aria-label=\"{{ it.label }} in kilometres\" ng-model=\"jobDraft()[it.key]\"></label>" +
-        "<div class=\"cep-step2\"><button class=\"cep-sm ghost\" aria-label=\"Less\" ng-click=\"nudgeDraft(it, -1)\">−</button>" +
-        "<button class=\"cep-sm ghost\" aria-label=\"More\" ng-click=\"nudgeDraft(it, 1)\">+</button></div>" +
-        "<div class=\"cep-sub\">{{ fmt.num(it.min) }}–{{ fmt.num(it.max) }} km</div></div>" +
+        "<div ng-repeat=\"it in st.items\"><div class=\"cep-card cep-km\" ng-if=\"it.unit === 'km'\"><div class=\"cep-keyval\"><span class=\"cep-label\">{{ it.label }}</span>" +
+        "<small>{{ fmt.num(it.min) }}–{{ fmt.num(it.max) }} km</small></div><div class=\"cep-km-row\">" +
+        "<button class=\"cep-sm ghost\" aria-label=\"Less\" ng-click=\"nudgeDraft(it, -1)\">−</button>" +
+        "<input class=\"cep-input cep-job-input\" type=\"number\" step=\"any\" min=\"{{ it.min }}\" max=\"{{ it.max }}\" aria-label=\"{{ it.label }} in kilometres\" ng-model=\"jobDraft()[it.key]\"><span>km</span>" +
+        "<button class=\"cep-sm ghost\" aria-label=\"More\" ng-click=\"nudgeDraft(it, 1)\">+</button></div></div>" +
         "<div class=\"cep-li\" ng-if=\"it.unit !== 'km'\" style=\"cursor:default\"><div class=\"cep-name\">{{ it.label }}</div><div class=\"cep-step2\">" +
         "<button class=\"cep-sm ghost\" ng-click=\"sdo('step', it.key, -1)\">−</button><b>{{ it.value }}</b><button class=\"cep-sm ghost\" ng-click=\"sdo('step', it.key, 1)\">+</button></div></div></div>" +
         "<div class=\"cep-li\" ng-if=\"st.jobType === 'courier'\" ng-click=\"sdo('autoReach', !st.autoReach)\"><div><div class=\"cep-name\">Look further in the countryside</div><small>Automatically widen the search where restaurants are few</small></div><b>{{ st.autoReach ? \"On\" : \"Off\" }}</b></div>" +
@@ -1183,12 +1188,10 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="s.helperStart.error">Could not start it: {{ s.helperStart.error }}</div>' +
         '<button class="cep-btn ok" ng-disabled="s.helperStart.busy" ng-click="act(\'helperStart\')">{{ s.helperStart.busy ? "Starting…" : (s.helperStart.installed ? "Start helper" : "Install and start") }}</button>' +
         '<button class="cep-sm ghost" ng-click="act(\'helperHide\')">Not now</button></div>' +
-      '<div class="cep-modes" ng-keydown="$event.keyCode === 27 && (modePicker.work = false)"><span>Job type</span>' +
-        '<button class="cep-mode-select" aria-label="Job type" aria-haspopup="menu" aria-expanded="{{ modePicker.work && s.canSwitch }}" ' +
-          'ng-disabled="!s.canSwitch" ng-click="modePicker.work = !modePicker.work">{{ workModeName(s.mode) }}<b aria-hidden="true">▾</b></button>' +
-        '<div class="cep-mode-menu" role="menu" aria-label="Job types" ng-if="modePicker.work && s.canSwitch">' +
-          '<button ng-repeat="m in workModes" role="menuitemradio" aria-checked="{{ s.mode === m.id }}" ng-class="{on: s.mode === m.id}" ' +
-            'ng-attr-title="{{ m.tip }}" ng-click="chooseWorkMode(\'work\', m.id)">{{ m.name }}<small>{{ m.tip }}</small></button></div></div>' +
+      '<div class="cep-modes" role="radiogroup" aria-label="Job type"><div class="cep-subtabs cep-work-modes">' +
+        '<button ng-repeat="m in workModes" role="radio" aria-checked="{{ s.mode === m.id }}" aria-label="{{ m.name }}" ng-class="{on: s.mode === m.id}" ' +
+          'ng-disabled="!s.canSwitch && s.mode !== m.id" ng-attr-title="{{ m.tip }}" ng-click="chooseWorkMode(\'work\', m.id)">{{ m.short }}</button></div>' +
+        '<small ng-if="!s.canSwitch">Finish or cancel the current job to switch.</small></div>' +
       // city bus lines: the lines near you (the bus is lent at a depot near the first stop), or the shift you are on
       '<div class="cep-scroll" ng-if="s.bus">' +
         '<div class="cep-card" ng-if="s.bus.shift"><div class="cep-label">{{ s.bus.shift.name }}</div>' +
@@ -1217,7 +1220,7 @@ angular.module('beamng.apps')
           '<div class="cep-sub">From {{ l.from }} · {{ l.stops }} stops · {{ fmt.km(l.km) }} · about {{ l.minutes }} min<span ng-if="l.fares"> · plus about {{ fmt.money(l.fares) }} in fares</span></div>' +
           '<div class="cep-sub" ng-if="l.singleDirection">Only this direction found in local map data.</div>' +
           '<div class="cep-sub" ng-if="l.limited">This shift serves the first {{ l.stops }} mapped stops.</div>' +
-          '<div class="cep-sub">Bus at {{ l.depot }}<span ng-if="l.depotM !== undefined"> · {{ fmt.dist(l.depotM).v }}{{ fmt.dist(l.depotM).u }} away</span></div>' +
+          '<div class="cep-sub">Bus at {{ l.depot }}<span ng-if="l.depotM !== undefined"> · {{ fmt.dist(l.depotM).v }} {{ fmt.dist(l.depotM).u }} away</span></div>' +
           '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'busGps\', l.id)">Route</button>' +
             '<button class="cep-sm go" ng-click="act(\'busStart\', l.id)">Choose line</button></div></div>' +
         '<div class="cep-sub" ng-if="!s.bus.shift && s.bus.lines.length">Choose a line, then park your own car in its depot marker to collect the bus.</div>' +
@@ -1664,13 +1667,14 @@ angular.module('beamng.apps')
         var arg = value === undefined ? '' : ', ' + bngApi.serializeToLua(value)
         bngApi.engineLua('cargoEarth_core and cargoEarth_core.phoneAction("' + name + '"' + arg + ') or nil', apply)
       }
-      // Buttons keep the dropdown inside the rendered dashboard texture; native select popups cannot receive its taps.
+      // One row of buttons, no pop-up: native select pop-ups never reach the dashboard texture, and a list that scrolls on
+      // its own cannot be scrolled with the holder's buttons in VR.
       // tip: what the work is (the same words as cargoEarth/progress M.WORK, shown on the Progress page)
       scope.workModes = [
-        {id: 'courier', name: 'Food delivery', tip: 'Bring meals and groceries from restaurants and shops to customers, in any car you own.'},
-        {id: 'trucking', name: 'Freight', tip: 'Goods between companies, parcel routes, parts runs and tow jobs, by the vehicle you drive. No van or truck of your own: take a company contract.'},
-        {id: 'taxi', name: 'Taxi', tip: 'Take passengers to stations, airports, hotels and sights. Needs a free passenger seat. A nicer car earns more.'},
-        {id: 'bus', name: 'Bus', tip: 'Drive a real city bus line in a lent bus. Nothing to buy.'}]
+        {id: 'courier', name: 'Food delivery', short: 'Food', tip: 'Bring meals and groceries from restaurants and shops to customers, in any car you own.'},
+        {id: 'trucking', name: 'Freight', short: 'Freight', tip: 'Goods between companies, parcel routes, parts runs and tow jobs, by the vehicle you drive. No van or truck of your own: take a company contract.'},
+        {id: 'taxi', name: 'Taxi', short: 'Taxi', tip: 'Take passengers to stations, airports, hotels and sights. Needs a free passenger seat. A nicer car earns more.'},
+        {id: 'bus', name: 'Bus', short: 'Bus', tip: 'Drive a real city bus line in a lent bus. Nothing to buy.'}]
       scope.modePicker = {work: false, settings: false, jobs: false}
       scope.workModeName = function (id) {
         for (var i = 0; i < scope.workModes.length; i++) if (scope.workModes[i].id === id) return scope.workModes[i].name
