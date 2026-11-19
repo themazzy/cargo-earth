@@ -3829,6 +3829,29 @@ test('an older car save loads normally and starts capturing its current state', 
   assert(g.repair == 100 and g.debt == 0)
 end)
 
+test('saves in a row snapshot the car once until it is damaged again', function()
+  local core, s = fresh()
+  local g = s.career.garage
+  g.car.key = 'custom'
+  local captures = 0
+  core.G.vehicleState = function(action, path, token)
+    if action == 'capture' then captures = captures + 1 end
+    disk[path] = {format = 'v2'}
+    require('cargoEarth/damage').complete(token, 1, true)
+    return true
+  end
+  advance(core, 2)
+  core.saveOptions()
+  local first = captures
+  core.saveOptions()
+  core.saveOptions()
+  assert(first > 0 and captures == first, 'no new damage: ' .. captures .. ' captures after ' .. first)
+  damageValue = damageValue + 500
+  core.saveOptions()
+  assert(captures == first + 1, 'a new dent is captured')
+  core.G.vehicleState = nil
+end)
+
 test('pausing waits for the completed damage snapshot to reach the career file', function()
   local core, s = fresh()
   s.career.garage.car.key = 'custom'
@@ -4396,6 +4419,44 @@ test('road distance: two points on one edge, and the nearer end of the goal edge
   local k2 = roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 5)
   assert(k2 and math.abs(k2 - 1.05) < 0.001, tostring(k2))
   assert(roads.km(g2, {{'S', 0}}, {{'A', 900}, {'B', 50}}, 1) == false, 'the cap counts the whole way')
+end)
+
+test('road searches of one offer list share a node budget; a spent budget says unknown', function()
+  local roads = require('cargoEarth/roads')
+  roads._reset()
+  local function n(x, y, links) return {pos = {x = x, y = y, z = 0}, links = links or {}} end
+  local graph = {nodes = {A = n(0, 0, {U = {}}), U = n(0, 2000, {V = {}}), V = n(300, 2000, {B = {}}), B = n(300, 0)}}
+  local budget = {left = 100}
+  local km = roads.km(graph, {{'A', 10}}, {{'B', 10}}, 10, budget)
+  assert(km and math.abs(km - 4.32) < 0.01 and budget.left < 100 and budget.left > 90, tostring(budget.left))
+  budget.left = 2
+  assert(roads.km(graph, {{'A', 10}}, {{'B', 10}}, 10, budget) == nil, 'the budget runs out on the way: unknown')
+  assert(budget.left <= 0 and roads.km(graph, {{'A', 10}}, {{'B', 10}}, 10, budget) == nil)
+end)
+
+test('an ordinary save snapshots the car only after new damage or now and then', function()
+  local module = require('cargoEarth/damage')
+  local request, dmg = nil, 100
+  local g = {car = {}}
+  local G = {playerId = function() return 1 end, damage = function() return dmg end,
+    vehicleState = function(action, path, token) request = {path = path, token = token} return true end}
+  assert(module.due(G, g), 'never captured')
+  module.capture(G, g, function() end)
+  dmg = 250   -- a dent while the game writes the snapshot out: not in it
+  disk[request.path] = {format = 'v2'}
+  module.complete(request.token, 1, true)
+  assert(module.due(G, g), 'the dent came after the snapshot was asked for')
+  dmg = 100
+  assert(g.car.physicalDamage and not module.due(G, g), 'nothing new since the snapshot')
+  dmg = 400
+  assert(module.due(G, g), 'a new dent')
+  dmg = 100.5
+  assert(not module.due(G, g))
+  module.tick(module.ROUTINE_S + 1)
+  assert(module.due(G, g), 'now and then anyway')
+  module.clear(g.car)
+  module.tick(-module.ROUTINE_S - 1)
+  assert(module.due(G, g), 'a repaired car has no snapshot')
 end)
 
 local truckIdx = jobs.index({depots = {

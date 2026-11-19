@@ -458,7 +458,8 @@ local function saveCareer(skipDamage)
   end
   local g = c.garage
   if not skipDamage and g.car and not g.pendingUsed and not g.preview and not S.parts and not S.skipCapture
-      and not conditionAt and not g.restoringDamage and garage.inOwnCar(M.G, g) then
+      and not conditionAt and not g.restoringDamage and garage.inOwnCar(M.G, g)
+      and require('cargoEarth/damage').due(M.G, g) then
     require('cargoEarth/damage').capture(M.G, g, function(ok)
       if ok and S.career == c and not S.pendingCareer and not S.pauseSaving then saveCareer(true) end
     end)
@@ -897,6 +898,9 @@ end
 -- The road distance between two points (lat, lon) on the game's road graph, for food orders and tow jobs: km, false when longer
 -- than maxKm, nil when the graph does not reach both points (a road further than ROAD_SNAP_M from them).
 M.ROAD_SNAP_M = 80
+-- Road nodes all the searches of one offer list may look at together: the searches run in one frame, so an offer list
+-- in a big town (up to 4 searches for each of 8 restaurants) must not stall it. Past it, distances are estimated.
+M.ROAD_BUDGET = 60000
 local function roadKmFn(p)
   if not (M.G.road and p and p.x) then return nil end
   local function ends(pt)
@@ -913,13 +917,15 @@ local function roadKmFn(p)
     end
     return graph, out
   end
+  local budget = { left = M.ROAD_BUDGET }
   return function(from, to, maxKm)
+    if budget.left <= 0 then return nil end
     local ok, km = pcall(function()
       local graph, a = ends(from)
       if not graph then return nil end
       local graph2, b = ends(to)
       if graph2 ~= graph then return nil end
-      return roads.km(graph, a, b, maxKm)
+      return roads.km(graph, a, b, maxKm, budget)
     end)
     if ok then return km end
     return nil
@@ -3645,7 +3651,10 @@ function M.helperStartInfo()
   if not helper.enabled or S.helperStartHidden or h.state ~= 'off' or not (h.msg or h.down) then return nil end
   local ea = require('cargoEarth/earthaddon')
   ea.tick(S.clock)
-  local e = ea.state()
+  -- BeamNG.Earth builds its whole Add-ons page for this: once a second is plenty (every phone asks twice a second)
+  local kept = S.addonState
+  if not kept or S.clock - kept.at >= 1 or S.clock < kept.at then kept = { at = S.clock, e = ea.state() } S.addonState = kept end
+  local e = kept.e
   if not e or not e.connected then return nil end
   local starting = S.helperStartAt and S.clock - S.helperStartAt < M.HELPER_STARTING_S
   return { installed = e.installed, running = e.running, busy = e.busy or starting or false,
@@ -3655,6 +3664,7 @@ end
 function M.helperStartDo(a)
   if a == 'helperHide' then S.helperStartHidden = true return end
   local ok, why = require('cargoEarth/earthaddon').start(S.clock)
+  S.addonState = nil
   S.helperStartAt, S.helperStartError = ok and S.clock or nil, not ok and tostring(why or 'failed') or nil
   -- ask the helper again soon instead of after its retry wait
   if ok and type(helper.retrySoon) == 'function' then helper.retrySoon(S.clock + 5) end

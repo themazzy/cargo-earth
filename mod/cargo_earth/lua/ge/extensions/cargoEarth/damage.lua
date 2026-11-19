@@ -2,6 +2,11 @@
 local M = {}
 local requests, capturing, serial = {}, {}, 0
 local session, clock = tostring(os.time()), 0
+-- What the car's damage was at its last snapshot, and when: { damage, at } per car table (gone with the car).
+local seen = setmetatable({}, { __mode = 'k' })
+-- An ordinary save takes a new snapshot only when the car was damaged since the last one, or this long after it
+-- (wear the damage number does not show). Pausing, switching cars and parking always take one.
+M.ROUTINE_S = 300
 function M.complete(token, id, ok)
   local r = requests[token]
   if not r or r.id ~= id then return end
@@ -45,12 +50,16 @@ function M.capture(G, g, done)
     table.insert(capturing[car], done)
     return true
   end
-  local revision, callbacks = car.damageRevision, {done}
+  -- the damage as the snapshot is asked for: a dent while the game writes it out leaves the next save due
+  local revision, callbacks, before = car.damageRevision, {done}, G.damage and G.damage() or nil
   capturing[car] = callbacks
   local sent = request(G, 'capture', nil, function(ok, data)
     capturing[car] = nil
     ok = ok and type(data) == 'table' and data.format == 'v2' and car.damageRevision == revision
-    if ok then car.physicalDamage = data end
+    if ok then
+      car.physicalDamage = data
+      seen[car] = { damage = before, at = clock }
+    end
     for _, callback in ipairs(callbacks) do callback(ok == true) end
   end)
   if not sent then capturing[car] = nil end
@@ -70,6 +79,17 @@ function M.captureFresh(G, g, done)
   return M.capture(G, g, done)
 end
 
+-- Does an ordinary save need a new snapshot of the car? (The snapshot is the slow part of a save: the whole car is
+-- written out by the game, read back and kept in the career file.)
+function M.due(G, g)
+  local car = g.car
+  local last = car and seen[car]
+  if not last or not car.physicalDamage or clock - last.at >= M.ROUTINE_S then return true end
+  local now = G.damage and G.damage() or nil
+  if type(now) ~= 'number' or type(last.damage) ~= 'number' then return now ~= last.damage end
+  return math.abs(now - last.damage) > 1
+end
+
 function M.restore(G, g, done)
   return request(G, 'restore', g.car.physicalDamage, done)
 end
@@ -77,6 +97,7 @@ end
 function M.clear(car)
   if car then
     car.physicalDamage = nil
+    seen[car] = nil
     car.damageRevision = (car.damageRevision or 0) + 1
   end
 end
