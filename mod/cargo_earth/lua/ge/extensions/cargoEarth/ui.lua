@@ -118,7 +118,7 @@ local function options(core, S, mods)
     -- this mode's own profile (the phone's Jobs settings may be showing another job type)
     local id = core.windowJobType and core.windowJobType()
     local bounds, r = id and core.jobSettings.bounds(id) or {}, ranges(core)
-    local labels = { nearKm = 'Pickups within', minKm = 'Shortest delivery', maxKm = 'Longest delivery' }
+    local labels = core.jobSettings.labels(id)
     for _, key in ipairs({ 'nearKm', 'minKm', 'maxKm' }) do
       if bounds[key] and r[key] then
         local value = rangePtr(floatPtr, S.mode .. '.' .. key, r[key])

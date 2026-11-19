@@ -4795,17 +4795,7 @@ end
 
 ------------------------------------------------------------------------------------------ settings for the phone
 
--- numeric options the phone can change: key, label, step, min, max, unit
 local aboutHelper   -- (the support report, below)
-M.SETTINGS = {
-  courier = { { 'nearKm', 'Pickups within', 0.5, 0.5, 25, 'km' }, { 'minKm', 'Shortest order', 0.5, 0.5, 8, 'km' },
-    { 'maxKm', 'Longest order', 0.5, 1, 8, 'km' }, { 'maxOrders', 'Orders at once', 1, 1, 3, '' } },
-  trucking = { { 'nearKm', 'Pickups within', 5, 5, 200, 'km' }, { 'minKm', 'Shortest job', 10, 10, 600, 'km' },
-    { 'maxKm', 'Longest job', 10, 20, 1000, 'km' } },
-  taxi = { { 'nearKm', 'Pickups within', 0.5, 0.5, 1.5, 'km' }, { 'minKm', 'Shortest ride', 0.5, 1.95, 15.6, 'km' },
-    { 'maxKm', 'Longest ride', 0.5, 1.95, 15.6, 'km' } },
-  bus = {},   -- the lines near you are offered as they are
-}
 
 function M.settingsState()
   local id = M.settingsJobType()
@@ -4815,7 +4805,7 @@ function M.settingsState()
     canSwitch = S.job == nil and not S.career.employment, canPause = S.career.savedAt ~= nil and S.career.garage.started == true, window = S.window,
     savingDamage = S.pauseSaving ~= nil, reviewingParts = S.parts ~= nil, paused = S.pendingCareer ~= nil, dark = M.uiPrefs().dark or false, items = {},
     canRestart = S.pendingCareer ~= nil or S.career.garage.started == true or nil, restartWord = M.RESTART_WORD }
-  local labels = {nearKm = 'Pickups within', minKm = 'Shortest delivery', maxKm = 'Longest delivery'}
+  local labels = M.jobSettings.labels(id)
   for _, key in ipairs({'nearKm', 'minKm', 'maxKm'}) do
     if bounds[key] then
       out.items[#out.items + 1] = {key = key, label = labels[key], step = 0.5, min = bounds[key][1], max = bounds[key][2], unit = 'km', value = opts[key]}
@@ -4825,15 +4815,16 @@ function M.settingsState()
     out.items[#out.items + 1] = {key = 'maxOrders', label = 'Orders at once', step = 1, min = 1, max = 3, unit = '',
       value = S.optsByMode.courier.maxOrders or food.defaults.maxOrders}
   end
-  out.jobHint = id == 'bus' and 'Bus lines follow their mapped stops and lengths. Choose a line on Work.'
-    or profile.company and 'Distance per loaded delivery. A company shift also includes return legs. Changes apply to new contracts.'
-    or id:find('tow_', 1, true) == 1 and 'Distance with the car loaded. Borrowing a trailer adds empty travel.'
-    or id == 'parcels' and 'Filters the total parcel round length; the route still serves its normal number of stops.'
-    or 'Changes apply to new offers. Distances are estimated where road data is unavailable.'
+  -- one or two short lines: the holder phone has little room
+  out.jobHint = id == 'bus' and 'Bus lines keep their mapped stops and length. Choose a line on Work.'
+    or profile.company and 'Distance per delivery; the drives back come on top. Applies to new contracts.'
+    or id:find('tow_', 1, true) == 1 and 'Distance with the car loaded. A borrowed trailer adds an empty drive.'
+    or id == 'parcels' and 'Length of the whole round. The number of stops stays the same.'
+    or 'Applies to new offers.'
   if id ~= 'bus' then
     out.jobHint = out.jobHint .. ((profile.tier and id ~= 'parcels')
-      and ' Past 120 km, the helper loads workplaces in real towns that far: delivery points only, unchecked for truck access.'
-      or ' Offers need destinations in loaded data; increasing a range does not download a wider area.')
+      and ' Over 120 km, jobs go to real towns; truck access there is not checked.'
+      or ' A wider range only finds places already loaded around you.')
   end
   out.dash = dash.state(M.G.vehicle and M.G.vehicle() or nil)
   out.dash.error = S.dashError
