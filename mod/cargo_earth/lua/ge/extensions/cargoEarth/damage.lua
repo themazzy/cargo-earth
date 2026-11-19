@@ -96,7 +96,8 @@ end
 
 function M.clear(car)
   if car then
-    car.physicalDamage = nil
+    -- (its file goes after the next save: persistence cleanup)
+    car.physicalDamage, car.damageFile = nil, nil
     seen[car] = nil
     car.damageRevision = (car.damageRevision or 0) + 1
   end

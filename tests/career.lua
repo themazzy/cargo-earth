@@ -118,6 +118,69 @@ local function write(path, c)
   disk[path] = copy(c)
   return true
 end
+test('car snapshots live in files of their own, written only when a new one was taken', function()
+  local writes = {}
+  local function counted(path, c, ...) writes[path] = (writes[path] or 0) + 1 return write(path, c, ...) end
+  local snap = {format = 'v2', nodes = {a = 1}}
+  disk = {}
+  -- an older save kept the snapshot inline: it moves out on the next save
+  local c = {money = 10, orders = {}, garage = {car = {model = 'pigeon', physicalDamage = snap},
+    parked = {{model = 'etk', physicalDamage = {format = 'v2', nodes = {b = 2}}}}}}
+  assert(persistence.save(counted, read, 'save', c))
+  local car, parked = c.garage.car, c.garage.parked[1]
+  assert(car.physicalDamage == snap and car.damageFile and parked.damageFile and car.damageFile ~= parked.damageFile)
+  assert(not disk.save.garage.car.physicalDamage and not disk.save.garage.parked[1].physicalDamage, 'not in the career file')
+  assert(disk[car.damageFile].nodes.a == 1 and disk[parked.damageFile].nodes.b == 2)
+  -- nothing new: only the career is written
+  assert(persistence.save(counted, read, 'save', c))
+  assert(writes[car.damageFile] == 1 and writes[parked.damageFile] == 1)
+  -- a new snapshot: a new file; the old one goes once the career naming the new one is written
+  local removed = {}
+  local function remove(file) removed[#removed + 1] = file disk[file] = nil end
+  local oldFile = car.damageFile
+  car.physicalDamage = {format = 'v2', nodes = {a = 3}}
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(car.damageFile ~= oldFile and disk[car.damageFile].nodes.a == 3 and writes[parked.damageFile] == 1)
+  assert(#removed == 1 and removed[1] == oldFile and disk.save.garage.car.damageFile == car.damageFile)
+  -- a failed career write keeps the old file the saved career names
+  local committed = car.damageFile
+  car.physicalDamage = {format = 'v2', nodes = {a = 4}}
+  failPath = 'save.pending'
+  assert(not persistence.save(counted, read, 'save', c, remove))
+  failPath = nil
+  assert(disk[committed].nodes.a == 3 and #removed == 1)
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(disk[car.damageFile].nodes.a == 4 and not disk[committed])
+  -- a save that rotates the backups: the file the new backup names stays until that backup rotates away
+  local backedUp = car.damageFile
+  car.physicalDamage = {format = 'v2', nodes = {a = 5}}
+  c.activeSeconds = persistence.BACKUP_EVERY_S + 1
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(disk['save.backup1'].garage.car.damageFile == backedUp and disk[backedUp], 'kept for .backup1')
+  car.physicalDamage = {format = 'v2', nodes = {a = 6}}
+  c.activeSeconds = 2 * persistence.BACKUP_EVERY_S + 2
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(disk['save.backup2'].garage.car.damageFile == backedUp and disk[backedUp], 'kept for .backup2')
+  car.physicalDamage = {format = 'v2', nodes = {a = 7}}
+  c.activeSeconds = 3 * persistence.BACKUP_EVERY_S + 3
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(not disk[backedUp], 'gone once no backup names it')
+  -- loading puts them back; a missing file leaves that car without one
+  local loaded = persistence.load(read, 'save')
+  disk[parked.damageFile] = nil
+  persistence.attach(read, loaded)
+  assert(loaded.garage.car.physicalDamage.nodes.a == 7 and not loaded.garage.parked[1].physicalDamage)
+  assert(not loaded.garage.parked[1].damageFile)
+  local files = persistence.sidecarFiles(disk.save)
+  assert(#files >= 2)
+  -- a file that cannot be written: the snapshot stays in the career file
+  local other = {money = 1, orders = {}, garage = {car = {model = 'pigeon', physicalDamage = {format = 'v2', nodes = {}}}}}
+  failPath = 'other.car1'
+  assert(persistence.save(write, read, 'other', other))
+  failPath = nil
+  assert(not other.garage.car.damageFile and disk.other.garage.car.physicalDamage)
+end)
+
 test('save migration preserves legacy save, rotates backups and recovers corruption', function()
   disk = { save = {money = 100, delivered = 12, orders = {}, garage = {car = {model = 'pigeon'}}} }
   local c = read('save')
@@ -3868,7 +3931,9 @@ test('pausing waits for the completed damage snapshot to reach the career file',
   require('cargoEarth/damage').complete(request.token, 1, true)
   assert(s.pendingCareer == c and not s.pauseSaving)
   local saved = disk[core.savePath(c)]
-  assert(saved.garage.car.physicalDamage.nodes.latestDamage == 123)
+  local file = saved.garage.car.damageFile
+  assert(not saved.garage.car.physicalDamage and file, 'the snapshot lives in its own file')
+  assert(disk[file].nodes.latestDamage == 123)
   assert(not saved.pauseSaving)
 end)
 
