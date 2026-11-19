@@ -199,7 +199,7 @@ angular.module('beamng.apps')
     '.cep-pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;min-width:0}.cep-pills>span{display:inline-block;max-width:100%;box-sizing:border-box;' +
       'padding:1px 8px;border-radius:999px;background:var(--line);color:var(--ink);font-size:11px;font-weight:600;line-height:1.6;' +
       'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cep-pills>span.warn{color:var(--warn)}.cep-pills>span.late{color:var(--tomato)}' +
-    '.cep-pills-mid{justify-content:center}.cep-pill{margin-left:6px;padding:0 6px;border-radius:999px;background:var(--line);font-size:10px;font-weight:600}' +
+    '.cep-pills-mid{justify-content:center}.cep-badge{margin-left:6px;padding:0 6px;border-radius:999px;background:var(--line);font-size:10px;font-weight:600}' +
     '.cep-keyval .cep-pills{display:inline-flex;margin:0 0 0 6px;vertical-align:middle}' +
     '.cep-foot.cep-pills{margin:0;padding:5px 10px}.cep-foot.cep-pills>span{font-size:10px;padding:0 7px}' +
     '.cep-foot-warn{color:var(--tomato)}' +
@@ -1422,7 +1422,7 @@ angular.module('beamng.apps')
           '<div class="cep-card" ng-if="s.active.route"><div class="cep-label">Parcel route</div>' +
             '<div class="cep-pills"><span>Stop {{ s.active.route.at }} of {{ s.active.route.count }}</span><span>{{ s.active.route.left }} parcels on board</span></div>' +
             '<ul class="cep-order-items"><li ng-repeat="st in s.active.route.stops track by $index" ng-style="{opacity: st.done ? 0.45 : 1, fontWeight: st.current ? 700 : 400}">' +
-              '<b>{{ st.done ? "✓" : st.slots + "×" }}</b>{{ st.name }}<small class="cep-pill" ng-if="!st.done">{{ fmt.kg(st.kg) }}</small></li></ul></div>' +
+              '<b>{{ st.done ? "✓" : st.slots + "×" }}</b>{{ st.name }}<small class="cep-badge" ng-if="!st.done">{{ fmt.kg(st.kg) }}</small></li></ul></div>' +
           '<div class="cep-sub" ng-if="s.active.freight && !s.active.route">{{ fmt.freight(s.active.freight) }}</div>' +
           '<div class="cep-sub" ng-if="s.active.freightStatus">{{ s.active.freightStatus }}</div>' +
           '<div class="cep-card" ng-if="s.bus && s.bus.line"><div class="cep-label"><span class="cep-busref" ng-style="s.bus.line.colour ? {background: s.bus.line.colour} : {}">{{ s.bus.line.ref || "Bus" }}</span> ' +
@@ -1503,7 +1503,7 @@ angular.module('beamng.apps')
           '<div class="cep-label">{{ radio.station ? (radio.status === "playing" ? "Now playing" : (radio.status === "loading" ? "Tuning in…" : (radio.status === "error" ? "Cannot play" : "Paused"))) : "Radio" }}</div>' +
           '<div class="cep-name" title="{{ radio.station.name }}"><span class="cep-eq" ng-if="radio.status === \'playing\'"><i></i><i></i><i></i></span>{{ radio.station ? radio.station.name : "Pick a station below" }}</div>' +
           '<div class="cep-meta" ng-if="radio.why && radio.status !== \'error\'">{{ radio.why }}</div>' +
-          '<div class="cep-meta" ng-if="radio.station">{{ stationMeta(radio.station) }}</div>' +
+          '<div class="cep-pills" ng-if="radio.station && stationMeta(radio.station).length"><span ng-repeat="m in stationMeta(radio.station) track by $index">{{ m }}</span></div>' +
           '<div class="cep-sub" ng-if="radio.status === \'error\'">This stream does not play{{ radio.why ? " (" + radio.why + ")" : "" }}.</div>' +
           '<div class="cep-radio-ctl">' +
             '<button class="cep-sm ghost" title="Previous station" ng-disabled="!radio.station" ng-click="radioSkip(-1)">⏮</button>' +
@@ -1521,7 +1521,7 @@ angular.module('beamng.apps')
         '<div class="cep-msg" ng-if="radio.moved">You are in {{ rs.countryName }} now.</div>' +
         '<div class="cep-label" ng-if="radio.saved.length">Saved stations</div>' +
         '<div class="cep-li" ng-repeat="st in radio.saved track by st.id" ng-class="{on: radio.station.id === st.id}" ng-click="radioPlay(st, radio.saved)">' +
-          '<div><div class="cep-name">{{ st.name }}</div><small>{{ stationMeta(st) }}</small></div>' +
+          '<div><div class="cep-name">{{ st.name }}</div><div class="cep-pills" ng-if="stationMeta(st).length"><span ng-repeat="m in stationMeta(st) track by $index">{{ m }}</span></div></div>' +
           '<button class="cep-fav" title="Remove from saved" ng-click="radioFav(st, $event)">★</button></div>' +
         '<div class="cep-sub" ng-if="!rs || rs.state === \'loading\'">Finding stations{{ rs && rs.countryName ? " in " + rs.countryName : "" }}…</div>' +
         '<div class="cep-msg" ng-if="rs.state === \'off\' || rs.state === \'disabled\'">Start the Cargo Earth helper to find stations.</div>' +
@@ -1531,11 +1531,11 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="rs.state === \'noworld\'">Load a BeamNG.Earth map to find local stations.</div>' +
         '<div class="cep-label" ng-if="rs.near.length">Near you</div>' +
         '<div class="cep-li" ng-repeat="st in rs.near track by st.id" ng-class="{on: radio.station.id === st.id}" ng-click="radioPlay(st, rs.near)">' +
-          '<div><div class="cep-name">{{ st.name }}</div><div class="cep-pills"><span>{{ st.km }} km</span><span ng-repeat="m in stationBits(st)">{{ m }}</span></div></div>' +
+          '<div><div class="cep-name">{{ st.name }}</div><div class="cep-pills"><span>{{ st.km }} km</span><span ng-repeat="m in stationMeta(st) track by $index">{{ m }}</span></div></div>' +
           '<button class="cep-fav" title="Save station" ng-click="radioFav(st, $event)">{{ isSaved(st) ? "★" : "☆" }}</button></div>' +
         '<div class="cep-label" ng-if="rs.top.length">Popular in {{ rs.countryName }}</div>' +
         '<div class="cep-li" ng-repeat="st in rs.top | limitTo: radio.show track by st.id" ng-class="{on: radio.station.id === st.id}" ng-click="radioPlay(st, rs.top)">' +
-          '<div><div class="cep-name">{{ st.name }}</div><small>{{ stationMeta(st) }}</small></div>' +
+          '<div><div class="cep-name">{{ st.name }}</div><div class="cep-pills" ng-if="stationMeta(st).length"><span ng-repeat="m in stationMeta(st) track by $index">{{ m }}</span></div></div>' +
           '<button class="cep-fav" title="Save station" ng-click="radioFav(st, $event)">{{ isSaved(st) ? "★" : "☆" }}</button></div>' +
         '<button class="cep-sm ghost" ng-if="rs.top.length > radio.show" ng-click="radioMore()">More stations</button>' +
         '<div class="cep-sub" ng-if="rs.state === \'ready\' && !rs.top.length">No working stations listed for {{ rs.countryName }}.</div>' +
@@ -2282,14 +2282,14 @@ angular.module('beamng.apps')
         out.country = cc || null
         return out
       }
-      scope.stationMeta = function (st) {   // the station's facts, shown as pills
+      // the station's facts as a list, shown as pills (ng-repeat compares the items, so a new list each time is fine)
+      scope.stationMeta = function (st) {
         var bits = []
         if (st.region) bits.push(st.region)
         if (st.codec) bits.push(st.codec + (st.kbps ? ' ' + st.kbps + ' kbps' : ''))
         if (!st.region && st.tags) bits.push(st.tags)
         return bits
       }
-      scope.stationBits = function (st) { return st.$bits || (st.$bits = scope.stationMeta(st)) }
       scope.isSaved = function (st) {
         for (var i = 0; i < scope.radio.saved.length; i++) if (scope.radio.saved[i].id === st.id) return true
         return false
