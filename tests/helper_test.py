@@ -251,6 +251,34 @@ class NetworkAndStorageTests(unittest.TestCase):
             self.assertNotIn(key, result["ready"])
             self.assertIn(key, areas.queue)
 
+    def test_far_sites_queue_build_and_serve_from_disk(self):
+        rows = [("abc", "Big Warehouse", "warehouse", "warehouse", "warehouse", 48.2, 16.37, "Wien"),
+                ("def", "Cafe", "cafe", "cafe", "cafe", 48.21, 16.38, "Wien"),
+                ("ghi", "Far Away Depot", "warehouse", "warehouse", "warehouse", 49.5, 16.37, "Elsewhere")]
+        conn = Connection(rows)
+        builder = helper.Builder(SimpleNamespace(release="test"), "")
+        builder._con = lambda key, box: (conn, ["x"])
+        with cache_dir() as cache:
+            sites = helper.Sites(builder, cache, start=False)
+            first = sites.get(48.2, 16.37)
+            self.assertEqual(first["state"], "loading")
+            self.assertEqual(sites.queue, [first["key"]])
+            data = sites.build(sites.queue.pop())
+            self.assertTrue(helper.valid_sites(data, first["key"], "test"))
+            self.assertEqual([d["n"] for d in data["depots"]], ["Big Warehouse"], "only workplaces inside the box")
+            self.assertIn("regexp_matches", conn.query)
+            self.assertNotIn("addresses/address", conn.query)
+            Path(sites.path(first["key"])).write_text(json.dumps(data), encoding="utf-8")
+            ready = sites.get(48.2001, 16.3701)
+            self.assertEqual(ready["state"], "ready")
+            self.assertEqual(ready["depots"][0]["t"], "yard")
+            for lat, lon in ((float("nan"), 14), (91, 14)):
+                with self.assertRaises(ValueError):
+                    sites.get(lat, lon)
+            for i in range(helper.SITE_QUEUE + 5):
+                sites.get(40 + i * 0.1, 10)
+            self.assertLessEqual(len(sites.queue), helper.SITE_QUEUE)
+
     def test_area_validation_rejects_bad_nested_coordinates_and_tile_rows(self):
         data = {"key": "1_1", "release": "test", "restaurants": [], "grocers": [], "depots": [], "fuel": [], "tiles": {"1_1": [[50, 14, 50, 14, "Street 12"]]}}
         self.assertTrue(helper.valid_area(data, "1_1", "test"))

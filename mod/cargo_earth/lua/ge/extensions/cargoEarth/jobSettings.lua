@@ -1,7 +1,7 @@
 -- Independent distance profiles. Defaults describe normal jobs; editable limits are separate.
 local M = {}
 M.MAX_KM = 800
-M.NEAR_MAX = {courier = 25, taxi = 5, tow_light = 25, tow_heavy = 25, parcels = 30, parts = 50}
+M.NEAR_MAX = {courier = 25, taxi = 15, tow_light = 25, tow_heavy = 25, parcels = 30, parts = 50}
 M.types = {
   {id = 'courier', name = 'Food and groceries', mode = 'courier'},
   {id = 'taxi', name = 'Taxi rides', mode = 'taxi'},
