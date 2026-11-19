@@ -1013,30 +1013,76 @@ class Sites:
 
 ######################################################################################## speed cameras (OpenStreetMap)
 
-OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"]
+# Public Overpass servers (wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances). Any of them can
+# be busy (HTTP 502/504, 429) or slow at a given moment, so a request fails over to the next one.
+OVERPASS = ["https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+            "https://overpass.kumi.systems/api/interpreter"]
 OVERPASS_TIMEOUT_S = 40       # fail over without blocking the queue for minutes per mirror
+OVERPASS_PARALLEL = 2         # requests at once, never two on the same server
+OVERPASS_REST_S = 600         # a server that just failed is asked last for this long
+OVERPASS_RETRY_S = (60, 120, 300)   # an area that failed is asked again after this long (1st, 2nd, later failures)
 OVERPASS_ONE = threading.Condition()
 OVERPASS_WAITING = []
-OVERPASS_ACTIVE = False
+OVERPASS_BUSY = set()
+OVERPASS_HEALTH = {}          # server -> {"ok": time of last answer, "bad": time of last failure}
+
+
+def overpass_order():
+    """Servers best first: the one that answered last, then the others in list order; recently failed ones last."""
+    now = time.time()
+    def rank(item):
+        i, base = item
+        h = OVERPASS_HEALTH.get(base, {})
+        resting = now - h.get("bad", -1e12) < OVERPASS_REST_S and h.get("bad", 0) > h.get("ok", 0)
+        return (resting, -h.get("ok", 0), i)
+    return [base for _, base in sorted(enumerate(OVERPASS), key=rank)]
+
+
+def overpass_mark(base, ok):
+    with OVERPASS_ONE:
+        OVERPASS_HEALTH.setdefault(base, {})["ok" if ok else "bad"] = time.time()
+
+
+def overpass_reason(e):
+    """A short reason a player can read: 'busy (HTTP 502)', 'no answer in 40 s', ..."""
+    if isinstance(e, urllib.error.HTTPError):
+        return {429: "too many requests (HTTP 429)"}.get(e.code, f"busy (HTTP {e.code})" if e.code >= 500 else f"HTTP {e.code}")
+    text = str(e)
+    if isinstance(e, TimeoutError) or "timed out" in text.lower() and "runtime" not in text.lower():
+        return f"no answer in {OVERPASS_TIMEOUT_S} s"
+    return text[:110] or type(e).__name__
 
 
 @contextmanager
-def overpass_slot(priority=1):
-    """One request at a time; the player's bus search goes ahead of background camera downloads."""
-    global OVERPASS_ACTIVE
-    ticket = (priority, time.monotonic(), object())
+def overpass_slot(priority=1, tried=()):
+    """A free server for one request (yields its URL). At most OVERPASS_PARALLEL requests run, one per server; the
+    player's bus search goes ahead of background camera downloads. tried: servers this request already asked."""
+    ticket = (priority, time.monotonic(), object(), frozenset(tried))
+    def free(t):
+        if len(OVERPASS_BUSY) >= OVERPASS_PARALLEL:
+            return []
+        return [b for b in overpass_order() if b not in OVERPASS_BUSY and b not in t[3]]
     with OVERPASS_ONE:
         OVERPASS_WAITING.append(ticket)
-        while OVERPASS_ACTIVE or min(OVERPASS_WAITING, key=lambda t: t[:2]) is not ticket:
-            OVERPASS_ONE.wait()
+        while True:
+            ready = [t for t in OVERPASS_WAITING if free(t)]
+            if ready and min(ready, key=lambda t: t[:2]) is ticket:
+                break
+            OVERPASS_ONE.wait(1)    # also wakes when a resting server's time is up
+        base = free(ticket)[0]
         OVERPASS_WAITING.remove(ticket)
-        OVERPASS_ACTIVE = True
+        OVERPASS_BUSY.add(base)
+        OVERPASS_ONE.notify_all()   # the next waiter may still fit on another server
     try:
-        yield
+        yield base
     finally:
         with OVERPASS_ONE:
-            OVERPASS_ACTIVE = False
+            OVERPASS_BUSY.discard(base)
             OVERPASS_ONE.notify_all()
+
+
 CAMERA_CELL = 0.5          # one Overpass request covers this many degrees
 CAMERA_REACH = 0.15        # cells this close to the player are fetched too, degrees
 CAMERA_DAYS = 30           # a cached cell is asked for again after this long
@@ -1112,7 +1158,7 @@ class OsmCells:
         self.dir = os.path.join(cache_dir, self.NAME)
         os.makedirs(self.dir, exist_ok=True)
         self.fetch = fetch
-        self.state, self.fail_at = {}, {}
+        self.state, self.fail_at, self.fails = {}, {}, {}
         self.details, self.retried_at = {}, {}
         self.lock = threading.Lock()
 
@@ -1122,15 +1168,21 @@ class OsmCells:
     def query(self, box):
         raise NotImplementedError
 
+    def retry_wait(self, key):
+        """Seconds a failed cell waits before it is asked again: short at first, longer when it keeps failing."""
+        return OVERPASS_RETRY_S[min(self.fails.get(key, 1), len(OVERPASS_RETRY_S)) - 1]
+
     def rows(self, data):
         raise NotImplementedError
 
     def _overpass(self, box, progress=lambda **fields: None):
         q = self.query(box)
-        errors = []
-        with overpass_slot(0 if self.NAME == "lines" else 1):
-            for attempt, base in enumerate(OVERPASS, 1):
-                progress(phase="fetching", server=urllib.parse.urlsplit(base).hostname, attempt=attempt)
+        errors, tried = [], []
+        while len(tried) < len(OVERPASS):
+            with overpass_slot(0 if self.NAME == "lines" else 1, tried) as base:
+                tried.append(base)
+                host = urllib.parse.urlsplit(base).hostname
+                progress(phase="fetching", server=host, attempt=len(tried))
                 try:
                     data = json.loads(http_get(base + "?data=" + urllib.parse.quote(q), tries=1,
                                                timeout=OVERPASS_TIMEOUT_S))
@@ -1139,9 +1191,11 @@ class OsmCells:
                         raise ValueError("OpenStreetMap returned an invalid response")
                     if data.get("remark"):
                         raise ValueError(str(data["remark"])[:300])
+                    overpass_mark(base, True)
                     return data
                 except Exception as e2:  # noqa: BLE001 - the next mirror
-                    errors.append(f"{urllib.parse.urlsplit(base).hostname}: {str(e2)[:110] or type(e2).__name__}")
+                    overpass_mark(base, False)
+                    errors.append(f"{host}: {overpass_reason(e2)}")
         raise RuntimeError("; ".join(errors))
 
     def _load(self, key, allow_expired=False):
@@ -1175,11 +1229,13 @@ class OsmCells:
                 self.state[key] = rows
                 self.details[key] = {"phase": "ready"}
                 self.fail_at.pop(key, None)
+                self.fails.pop(key, None)
         except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
             log(f"{self.NAME} {key} failed:", repr(e))
             with self.lock:
                 self.state.pop(key, None)
                 self.fail_at[key] = time.time()
+                self.fails[key] = self.fails.get(key, 0) + 1
                 self.details[key] = {"phase": "failed", "error": str(e)[:300] or type(e).__name__}
 
     def near(self, lat, lon, retry=False):
@@ -1209,7 +1265,7 @@ class OsmCells:
                     rows = self._load(key)
                     if rows is not None:
                         self.state[key] = rows
-                    elif time.time() - self.fail_at.get(key, 0) < 300:
+                    elif time.time() - self.fail_at.get(key, 0) < self.retry_wait(key):
                         rows = "failed"
                     else:
                         rows = self.state[key] = "loading"
@@ -1221,7 +1277,7 @@ class OsmCells:
                 elif rows == "failed":
                     out["failed"] += 1
                     out["errors"].append(detail.get("error", "OpenStreetMap request failed"))
-                    out["retryAfter"] = max(out["retryAfter"], math.ceil(max(0, 300 - (time.time() - self.fail_at[key]))))
+                    out["retryAfter"] = max(out["retryAfter"], math.ceil(max(0, self.retry_wait(key) - (time.time() - self.fail_at[key]))))
                 else:
                     out["loading"] += 1
                     out["queued"] += int(detail.get("phase") == "queued")

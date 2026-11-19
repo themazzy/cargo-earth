@@ -523,7 +523,7 @@ class NetworkAndStorageTests(unittest.TestCase):
                 return json.dumps({"elements": []}).encode()
             with patch.object(helper, "http_get", side_effect=fetch):
                 try:
-                    with helper.overpass_slot():
+                    with helper.overpass_slot(), helper.overpass_slot():   # every slot taken
                         queued = lines.near(50.02, 14.02)
                         self.assertEqual((queued["loading"], queued["queued"]), (1, 1))
                         again = lines.near(50.02, 14.02, retry=True)
@@ -539,6 +539,59 @@ class NetworkAndStorageTests(unittest.TestCase):
                         break
                     time.sleep(0.01)
 
+    def test_overpass_fails_over_through_every_server_with_readable_reasons(self):
+        import urllib.error
+        helper.OVERPASS_HEALTH.clear()
+        asked = []
+        def fetch(url, **kw):
+            asked.append(url.split("?")[0])
+            if len(asked) == 1:
+                raise urllib.error.HTTPError(url, 502, "Bad Gateway", {}, None)
+            if len(asked) == 2:
+                raise TimeoutError("The read operation timed out")
+            if len(asked) == 3:
+                raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+            return json.dumps({"elements": []}).encode()
+        with cache_dir() as cache, patch.object(helper, "http_get", side_effect=fetch):
+            data = helper.BusLines(str(cache))._overpass((50, 14, 50.04, 14.04))
+        self.assertEqual(data, {"elements": []})
+        self.assertEqual(asked, helper.OVERPASS)
+        # the server that answered is asked first next time, the ones that just failed last
+        self.assertEqual(helper.overpass_order()[0], helper.OVERPASS[3])
+        with cache_dir() as cache, patch.object(helper, "http_get", side_effect=[
+                urllib.error.HTTPError("u", 502, "Bad Gateway", {}, None), TimeoutError("timed out")] * 2):
+            with self.assertRaises(RuntimeError) as err:
+                helper.BusLines(str(cache))._overpass((50, 14, 50.04, 14.04))
+        self.assertIn("busy (HTTP 502)", str(err.exception))
+        self.assertIn(f"no answer in {helper.OVERPASS_TIMEOUT_S} s", str(err.exception))
+        helper.OVERPASS_HEALTH.clear()
+
+    def test_failed_bus_area_is_retried_sooner_first_then_backs_off(self):
+        with cache_dir() as cache:
+            lines = helper.BusLines(str(cache), lambda box: {"elements": [], "remark": "Query timed out"})
+            lines._work("1250_350")
+            first = lines.near(50.02, 14.02)["retryAfter"]
+            self.assertTrue(0 < first <= helper.OVERPASS_RETRY_S[0])
+            lines._work("1250_350")
+            lines._work("1250_350")
+            lines._work("1250_350")
+            self.assertGreater(lines.near(50.02, 14.02)["retryAfter"], helper.OVERPASS_RETRY_S[1])
+
+    def test_two_requests_run_at_once_on_different_servers(self):
+        helper.OVERPASS_HEALTH.clear()
+        with helper.overpass_slot() as a, helper.overpass_slot() as b:
+            self.assertNotEqual(a, b)
+            got = []
+            t = threading.Thread(target=lambda: got.append(helper.overpass_slot(0).__enter__()))
+            t.start()
+            t.join(0.2)
+            self.assertEqual(got, [], "a third request waits")
+        t.join(2)
+        self.assertEqual(len(got), 1)
+        with helper.OVERPASS_ONE:
+            helper.OVERPASS_BUSY.clear()
+            helper.OVERPASS_ONE.notify_all()
+
     def test_bus_query_includes_public_transport_stops_without_bus_yes(self):
         with cache_dir() as cache:
             q = helper.BusLines(str(cache)).query((50, 14, 50.04, 14.04))
@@ -551,7 +604,7 @@ class NetworkAndStorageTests(unittest.TestCase):
             with helper.overpass_slot(priority):
                 order.append(name)
         threads = []
-        with helper.overpass_slot():
+        with helper.overpass_slot(), helper.overpass_slot():
             for name, priority in (("camera", 1), ("bus", 0)):
                 t = threading.Thread(target=request, args=(name, priority))
                 threads.append(t)
