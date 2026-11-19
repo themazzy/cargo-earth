@@ -50,14 +50,15 @@ function M.capture(G, g, done)
     table.insert(capturing[car], done)
     return true
   end
-  local revision, callbacks = car.damageRevision, {done}
+  -- the damage as the snapshot is asked for: a dent while the game writes it out leaves the next save due
+  local revision, callbacks, before = car.damageRevision, {done}, G.damage and G.damage() or nil
   capturing[car] = callbacks
   local sent = request(G, 'capture', nil, function(ok, data)
     capturing[car] = nil
     ok = ok and type(data) == 'table' and data.format == 'v2' and car.damageRevision == revision
     if ok then
       car.physicalDamage = data
-      seen[car] = { damage = G.damage and G.damage() or nil, at = clock }
+      seen[car] = { damage = before, at = clock }
     end
     for _, callback in ipairs(callbacks) do callback(ok == true) end
   end)

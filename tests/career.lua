@@ -4442,8 +4442,11 @@ test('an ordinary save snapshots the car only after new damage or now and then',
     vehicleState = function(action, path, token) request = {path = path, token = token} return true end}
   assert(module.due(G, g), 'never captured')
   module.capture(G, g, function() end)
+  dmg = 250   -- a dent while the game writes the snapshot out: not in it
   disk[request.path] = {format = 'v2'}
   module.complete(request.token, 1, true)
+  assert(module.due(G, g), 'the dent came after the snapshot was asked for')
+  dmg = 100
   assert(g.car.physicalDamage and not module.due(G, g), 'nothing new since the snapshot')
   dmg = 400
   assert(module.due(G, g), 'a new dent')
