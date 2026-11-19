@@ -1253,7 +1253,7 @@ angular.module('beamng.apps')
             '<button class="cep-sm go" ng-disabled="!c.atYard" ng-click="act(\'contractStart\', c.id)">Start</button></div></div>' +
       '</div>' +
       '<button class="cep-sm ghost" ng-if="s.bus.shift && !s.bus.shift.handover" ng-click="act(\'busEnd\')">End shift</button>' +
-      '<div class="cep-row" ng-if="s.bus && !s.bus.shift"><button class="cep-sm ghost" ng-disabled="s.bus.state === \'loading\'" ng-click="act(\'busRetry\')">Retry bus search</button>' +
+      '<div class="cep-row" ng-if="s.bus && !s.bus.shift"><button class="cep-sm ghost" ng-disabled="s.bus.state === \'loading\' && !(s.bus.progress && s.bus.progress.failed)" ng-click="act(\'busRetry\')">Retry bus search</button>' +
         '<button class="cep-sm ghost" ng-if="s.bus.selected" ng-click="act(\'busCancelSelection\')">Cancel selection</button></div>' +
       '<button class="cep-sm ghost" ng-if="s.trucking" ng-click="setTab(\'companies\')">All contracts</button>' +
       '<div class="cep-card cep-stats" ng-if="!s.bus && !s.trucking"><div>{{ s.todayCount }}<span>orders today</span></div>' +

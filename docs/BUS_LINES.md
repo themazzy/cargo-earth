@@ -5,7 +5,11 @@ A third work mode beside food delivery and freight: pick **Bus** on the phone's 
 ## Where the lines come from
 
 The helper asks OpenStreetMap (Overpass API), one request per 0.04 degree cell (about 4 x 3 km) around the player,
-one request at a time (waits up to 40 s per server), kept for 14 days (`/v1/buslines`). It finds the bus stops and platforms of
+at most two requests at once and never two on the same server, kept for 14 days (`/v1/buslines`). It tries four
+public Overpass servers in turn (overpass-api.de, overpass.private.coffee, maps.mail.ru, overpass.kumi.systems; up to
+40 s each), the one that answered last first and the ones that just failed (in the last 10 minutes) last. An area
+where every server failed is asked again after 60 s, then 120 s, then every 5 minutes; Retry bus search asks again at
+once, also while other areas are still loading. It finds the bus stops and platforms of
 the cell first, then only the bus and trolleybus route relations (`type=route`, `route=bus|trolleybus`) that stop
 there, then only those lines' stops and platforms (not their roads), and the bus stations / depots of the cell
 (`amenity=bus_station`, `depot=bus`; a bare `landuse=depot` is left out, it is as often a tram or train depot). Each relation is one direction of a
