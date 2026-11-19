@@ -151,11 +151,25 @@ test('car snapshots live in files of their own, written only when a new one was 
   assert(disk[committed].nodes.a == 3 and #removed == 1)
   assert(persistence.save(counted, read, 'save', c, remove))
   assert(disk[car.damageFile].nodes.a == 4 and not disk[committed])
+  -- a save that rotates the backups: the file the new backup names stays until that backup rotates away
+  local backedUp = car.damageFile
+  car.physicalDamage = {format = 'v2', nodes = {a = 5}}
+  c.activeSeconds = persistence.BACKUP_EVERY_S + 1
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(disk['save.backup1'].garage.car.damageFile == backedUp and disk[backedUp], 'kept for .backup1')
+  car.physicalDamage = {format = 'v2', nodes = {a = 6}}
+  c.activeSeconds = 2 * persistence.BACKUP_EVERY_S + 2
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(disk['save.backup2'].garage.car.damageFile == backedUp and disk[backedUp], 'kept for .backup2')
+  car.physicalDamage = {format = 'v2', nodes = {a = 7}}
+  c.activeSeconds = 3 * persistence.BACKUP_EVERY_S + 3
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(not disk[backedUp], 'gone once no backup names it')
   -- loading puts them back; a missing file leaves that car without one
   local loaded = persistence.load(read, 'save')
   disk[parked.damageFile] = nil
   persistence.attach(read, loaded)
-  assert(loaded.garage.car.physicalDamage.nodes.a == 4 and not loaded.garage.parked[1].physicalDamage)
+  assert(loaded.garage.car.physicalDamage.nodes.a == 7 and not loaded.garage.parked[1].physicalDamage)
   assert(not loaded.garage.parked[1].damageFile)
   local files = persistence.sidecarFiles(disk.save)
   assert(#files >= 2)

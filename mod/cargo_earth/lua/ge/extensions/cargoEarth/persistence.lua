@@ -169,10 +169,23 @@ local function writeSidecars(writer, path, c)
   end)
 end
 
+-- the snapshot files the cars of a career name
+local function refs(c)
+  local out = {}
+  if type(c) == 'table' then eachCar(c, function(car) if type(car.damageFile) == 'string' then out[#out + 1] = car.damageFile end end) end
+  return out
+end
+
+-- c.backupRefs: the files the two backups name (noted as they rotate, so a save never reads them only for this): a
+-- file goes only once neither the career nor a backup names it.
 local function cleanup(c, remove)
   if type(c.damageFiles) ~= 'table' or not remove then return end
   local used, kept = {}, {}
-  eachCar(c, function(car) if type(car.damageFile) == 'string' then used[car.damageFile] = true end end)
+  for _, file in ipairs(refs(c)) do used[file] = true end
+  local b = type(c.backupRefs) == 'table' and c.backupRefs or {}
+  for _, list in ipairs({ b.b1, b.b2 }) do
+    for _, file in ipairs(type(list) == 'table' and list or {}) do used[file] = true end
+  end
   for _, file in ipairs(c.damageFiles) do
     if used[file] then kept[#kept + 1] = file else pcall(remove, file) end
   end
@@ -265,6 +278,8 @@ function M.save(writer, reader, path, c, remove)
       local prior = read(reader, path .. '.backup1')
       if prior and not write(writer, reader, path .. '.backup2', prior) then return fail() end
       if not write(writer, reader, path .. '.backup1', old) then return fail() end
+      c.backupRefs = { b1 = refs(old), b2 = refs(prior) }
+      out.backupRefs = c.backupRefs
     end
   end
   if not write(writer, reader, path, out) then return fail() end
