@@ -63,8 +63,12 @@ local function pop(h)
 end
 
 -- from / to: { { node, metres from the point to that node }, ... } (the two ends of the nearest edge).
-function M.km(graph, from, to, maxKm)
+-- budget (optional): { left = n } nodes several searches may look at together (one offer list: its searches all run in
+-- the same frame). Each search takes what it looked at; once it is spent, a search says nil (unknown).
+function M.km(graph, from, to, maxKm, budget)
   if not (graph and graph.nodes and from and to and #from > 0 and #to > 0) then return nil end
+  if budget and (budget.left or 0) <= 0 then return nil end
+  local maxVisits = budget and math.min(M.MAX_VISITS, budget.left) or M.MAX_VISITS
   local nodes = graph.nodes
   local goal, goals = {}, {}
   for _, t in ipairs(to) do
@@ -111,7 +115,7 @@ function M.km(graph, from, to, maxKm)
     if f - h(name) <= d + 1e-6 then   -- not a stale heap entry
       if goal[name] and d + goal[name] < best then best = d + goal[name] end
       visits = visits + 1
-      if visits > M.MAX_VISITS then searched = false break end
+      if visits > maxVisits then searched = false break end
       for _, e in ipairs(adj[name] or {}) do
         local nd = d + e[2]
         if dist[e[1]] == nil or nd < dist[e[1]] then
@@ -121,6 +125,7 @@ function M.km(graph, from, to, maxKm)
       end
     end
   end
+  if budget then budget.left = budget.left - visits end
   if best <= maxM then return best / 1000 end
   if best < math.huge then return false end   -- a way, but longer than the cap
   if not searched then return nil end

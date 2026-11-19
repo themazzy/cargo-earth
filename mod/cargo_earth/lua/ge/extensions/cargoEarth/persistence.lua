@@ -108,11 +108,14 @@ local function same(a, b, depth)
   return true
 end
 
-local function write(writer, reader, path, c)
+-- quick: the same table was already written and checked in full (the .pending copy): reading it back whole and
+-- checking its revision is enough to know this copy is complete, without comparing every value again.
+local function write(writer, reader, path, c, quick)
   -- compact JSON: the game's pretty printer is several times slower, and a save runs on accept, pickup and delivery
   local ok, written = pcall(writer, path, c, false, nil, true)
   if not ok or not written then return false end
   local check = read(reader, path)
+  if quick then return check ~= nil and check.money == c.money and check.writeRevision == c.writeRevision end
   return check ~= nil and check.money == c.money and same(c, check, 0)
 end
 
@@ -151,7 +154,7 @@ function M.save(writer, reader, path, c)
       if not write(writer, reader, path .. '.backup1', old) then return fail() end
     end
   end
-  if not write(writer, reader, path, out) then return fail() end
+  if not write(writer, reader, path, out, true) then return fail() end
   return true
 end
 
