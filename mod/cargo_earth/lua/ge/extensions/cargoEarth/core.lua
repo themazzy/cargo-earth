@@ -477,7 +477,8 @@ local function saveCareer(skipDamage)
   local path = M.savePath(c)
   local restoring = g.restoringDamage
   g.restoringDamage = nil
-  local ok, saved = pcall(persistence.save, jsonWriteFile, jsonReadFile, path, c)
+  local ok, saved = pcall(persistence.save, jsonWriteFile, jsonReadFile, path, c,
+    FS and FS.removeFile and function(file) FS:removeFile(file) end or nil)
   g.restoringDamage = restoring
   if ok and saved and S.indexDirty then saved = M.writeIndex() end
   if ok and saved then
@@ -786,12 +787,22 @@ function M.deleteSlotFiles(id)
   local slot = id and saves.find(M.saveIndex(), id)
   local left = {}
   if not slot then return left end
-  -- the cars' snapshot files, named in the save and its backups
+  -- the cars' snapshot files: named in the save and its backups, and any other <save>.carN left beside it
+  local files = {}
   for _, suffix in ipairs(saves.SUFFIXES) do
     local okR, c = pcall(jsonReadFile, slot.path .. suffix)
-    for _, file in ipairs(okR and persistence.sidecarFiles(c) or {}) do
-      if FS and FS.removeFile then pcall(FS.removeFile, FS, file) end
+    for _, file in ipairs(okR and persistence.sidecarFiles(c) or {}) do files[#files + 1] = file end
+  end
+  local dir, name = slot.path:match('^(.*/)([^/]+)$')
+  if dir and FS and FS.findFiles then
+    local okF, found = pcall(FS.findFiles, FS, dir, name .. '.car*', 0, false, false)
+    for _, file in ipairs(okF and type(found) == 'table' and found or {}) do
+      local at = type(file) == 'string' and file:find('/' .. name .. '.car', 1, true)
+      if at and file:sub(at + #name + 5):match('^%d+$') then files[#files + 1] = file end
     end
+  end
+  for _, file in ipairs(files) do
+    if FS and FS.removeFile then pcall(FS.removeFile, FS, file) end
   end
   for _, suffix in ipairs(saves.SUFFIXES) do
     local path = slot.path .. suffix

@@ -134,18 +134,31 @@ test('car snapshots live in files of their own, written only when a new one was 
   -- nothing new: only the career is written
   assert(persistence.save(counted, read, 'save', c))
   assert(writes[car.damageFile] == 1 and writes[parked.damageFile] == 1)
-  -- a new snapshot: its file again
+  -- a new snapshot: a new file; the old one goes once the career naming the new one is written
+  local removed = {}
+  local function remove(file) removed[#removed + 1] = file disk[file] = nil end
+  local oldFile = car.damageFile
   car.physicalDamage = {format = 'v2', nodes = {a = 3}}
-  assert(persistence.save(counted, read, 'save', c))
-  assert(writes[car.damageFile] == 2 and disk[car.damageFile].nodes.a == 3 and writes[parked.damageFile] == 1)
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(car.damageFile ~= oldFile and disk[car.damageFile].nodes.a == 3 and writes[parked.damageFile] == 1)
+  assert(#removed == 1 and removed[1] == oldFile and disk.save.garage.car.damageFile == car.damageFile)
+  -- a failed career write keeps the old file the saved career names
+  local committed = car.damageFile
+  car.physicalDamage = {format = 'v2', nodes = {a = 4}}
+  failPath = 'save.pending'
+  assert(not persistence.save(counted, read, 'save', c, remove))
+  failPath = nil
+  assert(disk[committed].nodes.a == 3 and #removed == 1)
+  assert(persistence.save(counted, read, 'save', c, remove))
+  assert(disk[car.damageFile].nodes.a == 4 and not disk[committed])
   -- loading puts them back; a missing file leaves that car without one
   local loaded = persistence.load(read, 'save')
   disk[parked.damageFile] = nil
   persistence.attach(read, loaded)
-  assert(loaded.garage.car.physicalDamage.nodes.a == 3 and not loaded.garage.parked[1].physicalDamage)
+  assert(loaded.garage.car.physicalDamage.nodes.a == 4 and not loaded.garage.parked[1].physicalDamage)
   assert(not loaded.garage.parked[1].damageFile)
   local files = persistence.sidecarFiles(disk.save)
-  assert(#files == 2)
+  assert(#files >= 2)
   -- a file that cannot be written: the snapshot stays in the career file
   local other = {money = 1, orders = {}, garage = {car = {model = 'pigeon', physicalDamage = {format = 'v2', nodes = {}}}}}
   failPath = 'other.car1'

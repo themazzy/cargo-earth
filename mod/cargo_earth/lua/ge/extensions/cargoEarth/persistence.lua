@@ -149,22 +149,34 @@ local function eachCar(c, fn)
   end
 end
 
+-- A new snapshot always goes to a new file: the one the saved career (and its backups) name stays as it is until the
+-- career that names the new one is safely written. c.damageFiles lists every file made for the career; after a save,
+-- the ones no car names any more (an older snapshot, a car sold or handed back) are removed (cleanup).
 local function writeSidecars(writer, path, c)
   eachCar(c, function(car)
     local snap = car.physicalDamage
     if type(snap) ~= 'table' or (car.damageFile and written[car] == snap) then return end
-    local file = car.damageFile
-    if not file then
-      c.damageSeq = (tonumber(c.damageSeq) or 0) + 1
-      file = path .. '.car' .. c.damageSeq
-    end
+    c.damageSeq = (tonumber(c.damageSeq) or 0) + 1
+    local file = path .. '.car' .. c.damageSeq
     local ok, done = pcall(writer, file, snap, false, nil, true)
     if ok and done ~= false then
+      c.damageFiles = type(c.damageFiles) == 'table' and c.damageFiles or {}
+      c.damageFiles[#c.damageFiles + 1] = file
       car.damageFile, written[car] = file, snap
     else
       car.damageFile, written[car] = nil, nil   -- kept in the career file instead
     end
   end)
+end
+
+local function cleanup(c, remove)
+  if type(c.damageFiles) ~= 'table' or not remove then return end
+  local used, kept = {}, {}
+  eachCar(c, function(car) if type(car.damageFile) == 'string' then used[car.damageFile] = true end end)
+  for _, file in ipairs(c.damageFiles) do
+    if used[file] then kept[#kept + 1] = file else pcall(remove, file) end
+  end
+  c.damageFiles = kept
 end
 
 local function stripCar(car)
@@ -220,7 +232,11 @@ end
 -- Every snapshot file the career refers to (deleting a career removes them too).
 function M.sidecarFiles(c)
   local out = {}
-  if type(c) == 'table' then eachCar(c, function(car) if type(car.damageFile) == 'string' then out[#out + 1] = car.damageFile end end) end
+  if type(c) ~= 'table' then return out end
+  eachCar(c, function(car) if type(car.damageFile) == 'string' then out[#out + 1] = car.damageFile end end)
+  for _, file in ipairs(type(c.damageFiles) == 'table' and c.damageFiles or {}) do
+    if type(file) == 'string' then out[#out + 1] = file end
+  end
   return out
 end
 
@@ -228,7 +244,8 @@ end
 -- A save happens on every accept, pickup and delivery; rotating every time made each one stutter.
 M.BACKUP_EVERY_S = 300
 
-function M.save(writer, reader, path, c)
+-- remove (optional): deletes a file; snapshot files no car names any more go once the career is written.
+function M.save(writer, reader, path, c, remove)
   if not valid(c) then return false end
   local previousRevision, previousBackupAt = c.writeRevision, c.backupAt
   c.schemaVersion, c.writeRevision = M.VERSION, (c.writeRevision or 0) + 1
@@ -251,6 +268,7 @@ function M.save(writer, reader, path, c)
     end
   end
   if not write(writer, reader, path, out) then return fail() end
+  cleanup(c, remove)
   return true
 end
 
