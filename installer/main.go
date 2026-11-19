@@ -235,7 +235,7 @@ func run() error {
 		say(`Start BeamNG.drive, load a BeamNG.Earth world and add the "Cargo Earth: Phone" UI app.`)
 	}
 	if doHelper {
-		say("The helper starts with BeamNG.Earth. In Czechia the mod also works without it.")
+		say("The helper starts with BeamNG.Earth. The mod needs it for places to work at.")
 	}
 	return nil
 }

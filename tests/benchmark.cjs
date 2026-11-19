@@ -1,4 +1,4 @@
-// Compare geographic work counts using the real depot pack; this is not a BeamNG FPS benchmark.
+// Compare geographic work counts on a reproducible set of helper-like workplaces; this is not a BeamNG FPS benchmark.
 const fs = require('node:fs')
 const path = require('node:path')
 const f = require(process.env.FENGARI_PATH || 'fengari')
@@ -15,7 +15,7 @@ function literal(v) {
   if (Array.isArray(v)) return '{' + v.map(literal).join(',') + '}'
   return '{' + Object.entries(v).map(([k, x]) => '[' + literal(k) + ']=' + literal(x)).join(',') + '}'
 }
-const pack = JSON.parse(fs.readFileSync(`${modules}/cargoEarth/data/depots_CZ.json`, 'utf8'))
+const pack = require('../tools/sample-sites.cjs').pack([[50.0755, 14.4378], [49.1951, 16.6068], [49.8209, 18.2625]], 1300)
 const lua = `package.path='${modules}/?.lua;'..package.path
 package.loaded['cargoEarth/jobs']=assert(loadfile('${source}/${modules}/cargoEarth/jobs.lua'))()
 local jobs=require('cargoEarth/jobs')

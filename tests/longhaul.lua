@@ -110,9 +110,13 @@ assert(jobs.hasFar(idx, 'k2') and not jobs.hasFar(idx, 'k3'))
 local offers = jobs.generate(idx, {minKm = 300, maxKm = 450, nearKm = 5, requireValidatedSites = true, count = 5},
   50.08, 14.42, function() return 1 end)
 assert(#offers == 1 and offers[1].to.far and offers[1].to.n == 'Lager Wien' and offers[1].km > 300)
-jobs.FAR_UNCHECKED = false
+jobs.UNCHECKED_SITES = false
 assert(#jobs.generate(idx, {minKm = 300, maxKm = 450, nearKm = 5, requireValidatedSites = true}, 50.08, 14.42) == 0)
-jobs.FAR_UNCHECKED = true
+jobs.UNCHECKED_SITES = true
+-- a far workplace with a catalogue type keeps it
+jobs.addFar(idx, 'k9', {{id = 'overture:9', n = 'Brauerei', g = {48.3, 16.3}, t = 'yard', k = 'logistics'},
+  {id = 'overture:10', n = 'Odd', g = {48.31, 16.3}, t = 'yard', k = 'no_such_type'}})
+assert(idx.byId['overture:9'].t == 'logistics' and idx.byId['overture:10'].t == 'ce:far:yard')
 -- a far workplace is never a pickup
 assert(#jobs.generate(idx, {minKm = 1, maxKm = 900, nearKm = 5}, 48.2, 16.37) == 0)
 -- the far store is bounded

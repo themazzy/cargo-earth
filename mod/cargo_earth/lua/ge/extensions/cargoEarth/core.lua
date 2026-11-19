@@ -383,7 +383,16 @@ local function loadPacks()
       info[#info + 1] = (p.country or '?') .. ': ' .. #p.depots .. ' depots'
     end
   end
-  if merged then S.idx, S.packDepots = jobs.index(merged), merged.depots end
+  if merged then S.idx, S.packDepots = jobs.index(merged), merged.depots
+  else
+    -- no bundled workplaces (the Czech pack is gone, Jan 2026-11-18): the freight catalogue, and the helper brings the
+    -- workplaces anywhere on Earth (jobs.addArea maps them to the catalogue's types)
+    local cat = jsonReadFile(DATA_DIR .. 'freight.json')
+    if type(cat) == 'table' and type(cat.cargo) == 'table' and type(cat.types) == 'table' then
+      S.idx = jobs.index({ depots = {}, cargo = cat.cargo, types = cat.types, trailers = cat.trailers or {} })
+      info[#info + 1] = 'workplaces from the helper'
+    end
+  end
   -- food: data/food_<CC>/restaurants.json and its address tiles (the first country found, for now)
   local rf = FS:findFiles(DATA_DIR, 'restaurants.json', 1, false, false) or {}
   table.sort(rf)
@@ -1954,30 +1963,37 @@ function M.busSkip()
   end
 end
 
--- A long haul to a far workplace nobody checked for truck access (jobs.FAR_UNCHECKED, Jan 2026-11-18: "allow, no fee
--- if blocked"): close to it, the load can be handed over where the truck stands, for HANDOVER_PAY of the pay.
+-- Workplaces from the helper are not checked for truck access (jobs.UNCHECKED_SITES, Jan 2026-11-18: "allow, no fee if
+-- blocked"). Close to such a site, the load can be picked up or handed over where the truck stands, for HANDOVER_PAY of
+-- the pay (once a job). Fuel stations, parcel addresses, tow, taxi and food stops are reachable places and don't offer it.
 M.HANDOVER_M = 600
 M.HANDOVER_PAY = 0.85
-function M.canHandover()
+function M.handoverSite()
   local j = S.job
-  return j ~= nil and S.phase == 'toDelivery' and j.to and j.to.far == true and not j.handover and not j.route
-    and S.dist ~= nil and S.dist <= M.HANDOVER_M and S.dist > arrivalRadius(j)
+  if not j or j.kind == 'food' or j.taxi or j.tow or j.bus or j.route then return nil end
+  local site = S.phase == 'toPickup' and j.from or S.phase == 'toDelivery' and j.to or nil
+  if not site or site.handedOver or not (site.access == 'candidate' or site.far == true) then return nil end
+  return site
+end
+function M.canHandover()
+  return M.handoverSite() ~= nil and S.dist ~= nil and S.dist <= M.HANDOVER_M and S.dist > arrivalRadius(S.job)
 end
 
 function M.handover()
   if not M.canHandover() then return false end
   local j, p = S.job, earth.pose()
   if not p then return false end
-  -- the delivery point moves to the truck; arriving, stopping and unloading then go as at any gate
-  local to = {}
-  for k, v in pairs(j.to) do to[k] = v end
-  to.g, to.r, to.d = { p.lat, p.lon }, nil, nil
-  to.label = 'Handed over near ' .. tostring(j.to.n)
-  j.to, j.handover = to, true
-  j.pay = math.floor(j.pay * M.HANDOVER_PAY + 0.5)
+  local key = S.phase == 'toPickup' and 'from' or 'to'
+  -- the site moves to the truck; arriving, stopping and (un)loading then go as at any gate
+  local site = {}
+  for k, v in pairs(j[key]) do site[k] = v end
+  site.g, site.r, site.d, site.handedOver = { p.lat, p.lon }, nil, nil, true
+  j[key] = site
+  if not j.handover then j.pay = math.floor(j.pay * M.HANDOVER_PAY + 0.5) end
+  j.handover = true
   S.dist, S.roadM, S.etaS, S.stopT = 0, nil, nil, 0
   saveCareer()
-  say('The site staff come out to you. Stop and unload here.', 5)
+  say(key == 'from' and 'The site staff bring the load out to you. Stop here.' or 'The site staff come out to you. Stop and unload here.', 5)
   return true
 end
 
@@ -2817,7 +2833,7 @@ function M.placesDo(name, value)
     S.companyBoard = employment.board(S.idx, p, haul.state(S.career).unlocked, M.companyRanges())
     S.companyBoardDirty, S.nextBoardAt = nil, S.clock + 2
     S.placesMsg = #S.companyBoard > 0 and 'Fictional employers at mapped depot locations. Check access on arrival; you can end work without a cancellation fee.'
-      or 'Looking for nearby workplaces through the helper. Contracts appear as local data loads; the Czech pack also works offline.'
+      or 'Looking for nearby workplaces through the helper. Contracts appear as local data loads.'
   elseif name == 'companyGps' then
     if S.job then why = 'Follow the current delivery GPS.'
     elseif c.employment then
@@ -2973,7 +2989,8 @@ function M.phoneState()
       cancelAsk = S.phone.cancelAskUntil ~= nil and S.clock <= S.phone.cancelAskUntil, trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or S.idx and S.idx.trailers[j.trailer] or j.trailer) or nil,
       trailerM = j.trailerSpawned and trailers.distanceToPlayer() and math.floor(trailers.distanceToPlayer()) or nil,
       cancelFee = rules(j).cancelFee, count = #S.orders, carrying = carrying, orders = {},
-      canHandover = M.canHandover() or nil, handoverPay = M.canHandover() and math.floor(j.pay * M.HANDOVER_PAY + 0.5) or nil,
+      canHandover = M.canHandover() or nil, handoverPickup = S.phase == 'toPickup' or nil,
+      handoverPay = M.canHandover() and (j.handover and j.pay or math.floor(j.pay * M.HANDOVER_PAY + 0.5)) or nil,
       handedOver = j.handover or nil,
       loadKg = r1(cargo.onBoard(S.orders)) }
     -- List the current stop first, then the remaining orders.

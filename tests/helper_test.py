@@ -18,6 +18,10 @@ helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
 
 
+CATALOGUE_TYPES = json.loads((Path(__file__).parents[1] / "mod/cargo_earth/lua/ge/extensions/cargoEarth/data/freight.json")
+                             .read_text(encoding="utf-8"))["types"]
+
+
 class Connection:
     def __init__(self, rows):
         self.rows = rows
@@ -72,6 +76,23 @@ class HelperTests(unittest.TestCase):
         self.assertIsNone(helper.depot_kind("gas_station", None, None))
         self.assertIsNone(helper.depot_kind("restaurant", "food", None))
         self.assertIsNone(helper.depot_kind(None, None, None))
+        # the workplace's type in the mod's freight catalogue
+        self.assertEqual(helper.workplace_kind("warehouse", None, None, "yard"), "logistics")
+        self.assertEqual(helper.depot_kind("brewery", "food_and_beverage brewery", None), "yard")
+        self.assertEqual(helper.workplace_kind("brewery", "food_and_beverage brewery", None, "yard"), "brewery")
+        self.assertEqual(helper.workplace_kind("sawmill", None, None, "yard"), "sawmill")
+        self.assertEqual(helper.workplace_kind("steel_fabricators", None, None, "yard"), "steelworks")
+        self.assertEqual(helper.workplace_kind("oil_refiners", None, None, "fuel"), "fuel_depot")
+        self.assertEqual(helper.workplace_kind(None, "industrial manufacturing", None, "yard"), "factory")
+        self.assertEqual(helper.workplace_kind("industrial_company", None, None, "yard"), "factory")
+        self.assertEqual(helper.workplace_kind("lumber_yard_unknown", None, None, "yard"), "sawmill")
+        self.assertEqual(helper.workplace_kind("odd_yard", None, None, "yard"), "industrial")
+        self.assertIsNone(helper.workplace_kind("supermarket", None, None, "shop"))
+        self.assertIsNone(helper.depot_kind("plastic_surgeon", "health plastic_surgeon", None))
+        self.assertIsNone(helper.depot_kind("farmers_market", None, None))
+        self.assertEqual(helper.workplace_kind("dairy_farm", "farm dairy_farm", None, "yard"), "farm")
+        for k, _ in helper.WORKPLACE_RULES:
+            self.assertIn(k, CATALOGUE_TYPES, k)
         self.assertEqual(helper.auto_kind("auto_parts_and_supply_store", None, None), "p")
         self.assertEqual(helper.auto_kind("automotive_repair", None, None), "g")
         self.assertEqual(helper.auto_kind(None, "automotive car_dealer", None), "g")
@@ -105,6 +126,7 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(stations[0][0], "ofull-station-id-")
         self.assertEqual(depots[0]["id"], "overture:full-warehouse-id-123456789")
         self.assertEqual(depots[0]["access"], "candidate")
+        self.assertEqual(depots[0]["k"], "logistics")
         self.assertIn("regexp_matches", con.query)
         self.assertIn("confidence >=", con.query)
         self.assertTrue(con.closed)

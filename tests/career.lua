@@ -332,8 +332,20 @@ test('Long hauls: far profiles open the ring, and an unchecked far site can be h
   core.phoneAction('handover')
   assert(j.handover and j.pay == 8500 and j.to.g[1] == pose.lat and j.to.g[2] == pose.lon and j.to.n == 'Lager')
   assert(not core.canHandover(), 'once')
-  j.to.far, j.handover, s.dist = nil, nil, 400
+  local k = {id = 'k', kind = 'cargo', cargoName = 'Pallets', pay = 10000, minutes = 60, km = 30,
+    from = {id = 'overture:5', n = 'Yard', g = {50.003, 14}, access = 'candidate'}, to = {id = 'cz-1', n = 'Checked', g = {50.2, 14}}}
+  s.job, s.phase, s.orders, s.dist = k, 'toPickup', {{job = k, phase = 'toPickup'}}, 300
+  assert(core.canHandover(), 'an unchecked pickup site can load beside the truck')
+  assert(core.phoneState().active.handoverPickup)
+  core.phoneAction('handover')
+  assert(k.handover and k.pay == 8500 and k.from.g[1] == pose.lat and k.from.handedOver)
+  s.phase, s.dist = 'toDelivery', 300
   assert(not core.canHandover(), 'checked sites have a gate')
+  k.to.access = 'candidate'
+  core.phoneAction('handover')
+  assert(k.pay == 8500, 'the pay is cut once a job')
+  k.route, k.to.handedOver = {}, nil
+  assert(not core.canHandover(), 'parcel addresses are reachable places')
 end)
 
 test('The old jobs window writes the profile new offers use, after the phone saved one', function()
