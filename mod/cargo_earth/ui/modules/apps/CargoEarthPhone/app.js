@@ -171,6 +171,8 @@ angular.module('beamng.apps')
     '.cep-row{display:flex;flex-wrap:wrap;gap:8px;min-width:0}.cep-row .cep-btn,.cep-row .cep-sm{flex:1;min-width:0}' +
     '.cep-card{background:var(--card);border-radius:16px;padding:12px 14px;box-shadow:0 1px 0 var(--line),0 4px 14px rgba(29,27,25,.06)}' +
     '.cep-stop{display:grid;grid-template-columns:14px 1fr;gap:2px 10px;align-items:start}' +
+    '.cep-coachtrip{margin-top:8px;padding:8px;border-radius:10px;background:var(--paper);box-shadow:inset 0 0 0 1px var(--line);display:flex;flex-direction:column;gap:4px}' +
+    '.cep-coachtrip .cep-sm{margin-top:2px}' +
     '.cep-busref{display:inline-block;min-width:22px;padding:0 5px;border-radius:4px;background:var(--ink);color:#fff;text-align:center;font-weight:700}' +
     '.cep-dot{width:12px;height:12px;border-radius:50%;margin-top:3px;background:var(--tomato)}.cep-dot.to{background:var(--ink);border-radius:3px}' +
     '.cep-line{width:2px;height:16px;margin:2px 0 2px 5px;background:var(--line)}' +
@@ -1235,18 +1237,21 @@ angular.module('beamng.apps')
           '<div class="cep-label">Coach rides from {{ s.bus.coach.from ? s.bus.coach.from.n : "a station near you" }}</div>' +
           '<div class="cep-sub" role="status">{{ coachStatus(s.bus.coach) }}</div>' +
           '<div class="cep-card" ng-repeat="r in s.bus.coach.rides track by r.id">' +
-            '<div class="cep-keyval"><strong style="white-space:normal"><span class="cep-busref">Coach</span> to {{ r.town }}</strong>' +
-              '<strong style="white-space:nowrap">{{ fmt.money(r.pay) }}</strong></div>' +
-            '<div class="cep-sub">To {{ r.to }}{{ r.rail ? " (railway station)" : "" }}</div>' +
-            '<div class="cep-pills"><span>One way {{ fmt.km(r.km) }}</span><span>About {{ r.minutes }} min</span><span ng-if="r.fares">+{{ fmt.money(r.fares) }} fares</span>' +
-              '<span ng-if="r.depotM !== undefined">Pickup {{ fmt.dist(r.depotM).v }} {{ fmt.dist(r.depotM).u }}</span></div>' +
-            '<div class="cep-pills" ng-if="r.back"><span>Return trip {{ fmt.km(r.back.km) }}</span><span>About {{ r.back.minutes }} min</span>' +
-              '<span>{{ fmt.money(r.back.pay) }}</span><span ng-if="r.back.fares">+{{ fmt.money(r.back.fares) }} fares</span></div>' +
-            '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'busGps\', r.id)">Route</button>' +
-              '<button class="cep-sm go" ng-click="act(\'busStart\', r.id)">One way</button>' +
-              '<button class="cep-sm go" ng-if="r.back" ng-click="act(\'busStart\', r.back.id)">Return trip</button></div></div>' +
+            '<strong style="white-space:normal"><span class="cep-busref">Coach</span> to {{ r.town }}</strong>' +
+            '<div class="cep-sub">{{ r.to }}{{ r.rail ? " (railway station)" : "" }}</div>' +
+            '<div class="cep-pills" ng-if="r.depotM !== undefined"><span>Coach at {{ r.depot }}, {{ fmt.dist(r.depotM).v }} {{ fmt.dist(r.depotM).u }}</span></div>' +
+            // one way and the return trip, each with its own figures and button
+            '<div class="cep-coachtrip">' +
+              '<div class="cep-keyval"><span class="cep-name">One way</span><strong style="white-space:nowrap">{{ fmt.money(r.pay) }}</strong></div>' +
+              '<div class="cep-pills"><span>{{ fmt.km(r.km) }}</span><span>About {{ r.minutes }} min</span><span ng-if="r.fares">+{{ fmt.money(r.fares) }} fares</span></div>' +
+              '<button class="cep-sm go" ng-click="act(\'busStart\', r.id)">Choose one way</button></div>' +
+            '<div class="cep-coachtrip" ng-if="r.back">' +
+              '<div class="cep-keyval"><span class="cep-name">Return trip</span><strong style="white-space:nowrap">{{ fmt.money(r.back.pay) }}</strong></div>' +
+              '<div class="cep-pills"><span>{{ fmt.km(r.back.km) }}</span><span>About {{ r.back.minutes }} min</span><span ng-if="r.back.fares">+{{ fmt.money(r.back.fares) }} fares</span></div>' +
+              '<button class="cep-sm go" ng-click="act(\'busStart\', r.back.id)">Choose return trip</button></div>' +
+            '<button class="cep-sm ghost" style="margin-top:6px" ng-click="act(\'busGps\', r.id)">Route to the coach</button></div>' +
           '<div class="cep-sub" ng-if="s.bus.coach.rides.length">Choose a ride, then park your own car in the marker at the station to collect the coach. ' +
-            'One way: everyone gets off at the far station and you are taken back here. Return trip: new passengers board there and you drive them back here.</div>' +
+            'One way: everyone gets off at the far station and you are taken back to your car. Return trip: new passengers board there and you drive them back.</div>' +
         '</div>' +
       '</div>' +
       '<div class="cep-center" ng-if="!s.bus" ng-class="{\'cep-freight-summary\': s.trucking}">' +
