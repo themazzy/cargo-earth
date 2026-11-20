@@ -2540,7 +2540,7 @@ function M.placesState()
     S.companyBoardDirty, S.nextBoardAt = nil, S.clock + 2
   end
   local c, p = S.career, earth.pose()
-  local out = { home = c.home, addresses = S.homeAddresses or {}, selected = S.selectedHome,
+  local out = { home = c.home,
     companies = {}, msg = S.placesMsg, status = earth.status(), busy = S.job ~= nil or S.parts ~= nil,
     started = c.garage.started, blocked = S.pendingCareer ~= nil, last = c.lastContract,
     discovery = helper.status() }
@@ -2831,24 +2831,13 @@ function M.placesDo(name, value)
   if S.pendingCareer then return M.placesState() end
   local c, p, ok, why = S.career, earth.pose(), false, nil
   if earth.status() ~= 'ok' or not p then S.placesMsg = earth.status() return M.placesState() end
-  if name == 'search' then
-    S.homeAddresses = food.addresses(S.fidx, p.lat, p.lon, value)
-    S.placesMsg = #S.homeAddresses > 0 and 'Select an address, route there, then park safely to confirm your garage.'
-      or 'No matching addresses within 3 km. Try another search or wait for local address data.'
-  elseif name == 'select' then
-    for _, address in ipairs(S.homeAddresses or {}) do
-      if address.id == value then S.selectedHome = address break end
-    end
-  elseif name == 'routeSelected' and S.selectedHome then
-    if S.job or c.employment then why = 'Finish your current work before changing GPS.'
-    else ok, why = earth.gps(S.selectedHome.g[1], S.selectedHome.g[2], S.selectedHome.n) end
-  elseif name == 'claimHome' then
+  if name == 'claimHome' then
     if S.job or c.employment or S.parts then why = 'Finish your current work first.'
     elseif not c.garage.started then why = 'A home garage is part of the career. Start one on the phone first.'
-    elseif not garage.inOwnCar(M.G, c.garage) then why = 'Park your career car at this address.'
+    elseif not garage.inOwnCar(M.G, c.garage) then why = 'Sit in your career car to set your home here.'
     else
       local old = c.home
-      ok, why = home.claim(c, S.selectedHome, p)
+      ok, why = home.claim(c, p, food.addresses(S.fidx, p.lat, p.lon, '')[1])
       if ok and not saveCareer() then c.home, ok, why = old, false, S.saveError end
     end
   elseif name == 'homeGps' and c.home then

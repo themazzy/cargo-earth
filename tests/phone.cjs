@@ -20,7 +20,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
   localStorage: localStorage = { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
   setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: fn => { later.push(fn); return later.length }, clearTimeout: id => { if (later[id - 1]) later[id - 1] = () => {} }
 })
-assert(directive.template.includes('placeSearch.text'))
+assert(directive.template.includes('ng-click="claimHome()"') && !directive.template.includes('placeSearch'))
 assert(directive.template.includes('startCompany'))
 // while looking at a car the deal is fixed: no keep-car toggle, no Buy on other rows
 assert(directive.template.includes('market.tradeIn > 0 && !g.preview"><input type="checkbox" ng-model="purchase.keep"'), 'keep-car toggle hidden during a preview')
@@ -44,8 +44,17 @@ assert(scope.busStatus({state: 'old'}).includes('Update'))
 assert(scope.busStatus({state: 'ready', lines: [], found: 6, radiusKm: 4, nearestKm: 8.25}).includes('8.3 km'))
 assert(scope.busStatus({state: 'ready', lines: [], found: 0}).includes('No usable bus routes'))
 assert(scope.busStatus({state: 'ready', lines: [{id: 1}]}).includes('Choose a line'))
-scope.pdo('search', 'Dlouhá \"12\"')
-assert(commands.some(command => command.includes('pcall(cargoEarth_core.placesDo, ' + JSON.stringify('search') + ', ' + JSON.stringify('Dlouhá \"12\"'))))
+scope.pdo('companyGps', 'Dlouhá \"12\"')
+assert(commands.some(command => command.includes('pcall(cargoEarth_core.placesDo, ' + JSON.stringify('companyGps') + ', ' + JSON.stringify('Dlouhá \"12\"'))))
+scope.places = null
+scope.claimHome()
+assert(commands.at(-1).includes(JSON.stringify('claimHome')), 'a first home is one press')
+scope.places = {home: {name: 'Old'}}
+const homeBefore = commands.length
+scope.claimHome()
+assert(commands.length === homeBefore && scope.homeAsk, 'moving the home asks for a second press')
+scope.claimHome()
+assert(commands.at(-1).includes(JSON.stringify('claimHome')) && !scope.homeAsk)
 scope.openCompany()
 assert.equal(scope.tab, 'orders', 'The phone stays on Work')
 assert.equal(scope.panel, 'companies', 'Company contracts open in the menu window')

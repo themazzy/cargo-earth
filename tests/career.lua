@@ -92,15 +92,18 @@ test('settlement identities survive display-history pruning', function()
   assert(not economy.post(c, 0/0, 'bad', 'bad'))
 end)
 
-test('home address requires actual parked proximity and stores an independent point', function()
-  local c, address = {}, { id = 'a', n = 'Test Street 12', town = 'Town', g = { 50, 14 } }
-  assert(not home.claim(c, address, {lat = 51, lon = 14, speed = 0}))
-  assert(not home.claim(c, address, {lat = 50, lon = 14, speed = 10}))
-  assert(not home.claim(c, address, {lat = 50, lon = 14, camera = true}))
-  assert(home.claim(c, address, {lat = 50.0001, lon = 14, speed = 0}))
-  address.g[1] = 70
+test('home is set where the car is parked and named from the nearest address', function()
+  local c = {}
+  assert(not home.claim(c, {lat = 50, lon = 14, speed = 10}))
+  assert(not home.claim(c, {lat = 50, lon = 14, camera = true}))
+  assert(not home.claim(c, nil) and c.home == nil)
+  assert(home.claim(c, {lat = 50.0001, lon = 14, speed = 0}, {n = 'Test Street 12', town = 'Town', km = 0.05}))
+  assert(c.home.name == 'Test Street 12' and c.home.town == 'Town' and c.home.g[1] == 50.0001 and c.home.capacity == 3)
   assert(home.near(c, {lat = 50.0001, lon = 14}))
-  assert(c.home.capacity == 3 and c.home.address[1] == 50)
+  assert(home.claim(c, {lat = 50.2, lon = 14, speed = 0}, {n = 'Far 1', town = 'Village', km = 0.8}))
+  assert(c.home.name == 'Near Village' and c.home.town == 'Village')
+  assert(home.claim(c, {lat = 50.3, lon = 14.5, speed = 0}))
+  assert(c.home.name == '50.30000, 14.50000' and c.home.town == nil and home.near(c, {lat = 50.3, lon = 14.5}))
 end)
 
 test('address search combines local tiles, literal punctuation and stable IDs', function()
@@ -582,16 +585,18 @@ test('without a home the owned-car limit still applies', function()
   assert(not ok and why:find('full') and career.money == 100000 and #g.parked == 3)
 end)
 
-test('home claim persists the selected address through the real phone action', function()
+test('home is set where the career car is parked through the real phone action', function()
   local core, s = fresh()
   s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.01}, function()
-    return {{50, 14, 50, 14, 'Test Street 12', 'Town'}}
+    return {{50.0003, 14, 50.0003, 14, 'Test Street 12', 'Town'}, {50.02, 14, 50.02, 14, 'Other 1', 'Town'}}
   end)
-  local places = core.placesDo('search', 'Test')
-  core.placesDo('select', places.addresses[1].id)
-  core.placesDo('claimHome')
-  assert(s.career.home.name == 'Test Street 12')
+  local places = core.placesDo('claimHome')
+  assert(s.career.home.name == 'Test Street 12' and s.career.home.g[1] == 50, places.msg)
+  assert(places.home.name == 'Test Street 12' and places.addresses == nil)
   assert(disk['/settings/cargoEarth/career.json'].home.name == 'Test Street 12')
+  pose.speed = 5
+  core.placesDo('claimHome')
+  assert(s.career.home.g[1] == 50, 'a moving car cannot set a home')
 end)
 
 test('independent contracts require reputation and a real owned cargo van', function()

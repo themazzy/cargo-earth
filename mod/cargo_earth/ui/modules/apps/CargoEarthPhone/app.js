@@ -761,19 +761,13 @@ angular.module('beamng.apps')
         '<div class="cep-scroll" ng-if="places && !places.blocked">' +
           '<div ng-if="panel === \'home\'" style="display:flex;flex-direction:column;gap:8px">' +
           '<div class="cep-card" ng-if="places.home"><div class="cep-label">Home garage</div>' +
-            '<div class="cep-name" style="white-space:normal">{{ places.home.name }}</div><div class="cep-sub">{{ places.home.town }}</div>' +
+            '<div class="cep-name" style="white-space:normal">{{ places.home.name }}</div><div class="cep-sub" ng-if="places.home.town && places.home.name.indexOf(places.home.town) < 0">{{ places.home.town }}</div>' +
             '<div class="cep-sub">{{ places.used }} / {{ places.capacity || places.home.capacity }} owned vehicles. {{ places.atHome ? "You are home." : fmt.num(places.homeKm) + " km away." }}</div>' +
           '</div>' +
-          '<div class="cep-label">{{ places.home ? "Change home address" : "Choose your home garage" }}</div>' +
-          '<div class="cep-sub">Find an address within 3 km, drive there and park to make it home.</div>' +
-          '<input class="cep-search" type="text" maxlength="100" aria-label="Street or town" placeholder="Street or town" ng-model="placeSearch.text">' +
-          '<button class="cep-sm ghost" ng-click="pdo(\'search\', placeSearch.text)">Search</button>' +
-          '<div class="cep-card" ng-repeat="address in places.addresses track by address.id">' +
-            '<div class="cep-name" style="white-space:normal">{{ address.n }}</div><div class="cep-pills"><span>{{ address.town }}</span><span>{{ fmt.num(address.km) }} km</span></div>' +
-            '<button class="cep-sm" ng-click="pdo(\'select\', address.id)">{{ places.selected.id === address.id ? "Selected" : "Select address" }}</button></div>' +
-          '<div class="cep-card" ng-if="places.selected"><div class="cep-label">Selected address</div>' +
-            '<div class="cep-name" style="white-space:normal">{{ places.selected.n }}</div>' +
-          '</div></div>' +
+          '<div class="cep-label">{{ places.home ? "Move your home garage" : "Choose your home garage" }}</div>' +
+          '<div class="cep-sub">Park your career car where you want your garage, then set it here. Your cars stay yours when you move.</div>' +
+          '<div class="cep-sub" ng-if="!places.started">Start a career on the phone first.</div>' +
+          '</div>' +
           '<div ng-if="panel === \'companies\'" style="display:flex;flex-direction:column;gap:8px">' +
           '<div class="cep-sub" ng-if="places.discovery.state === \'loading\' || places.discovery.state === \'searching\'">Finding workplaces around you…</div>' +
           '<div class="cep-sub" ng-if="places.discovery.state === \'off\'">Start the Cargo Earth helper to find workplaces here.</div>' +
@@ -819,10 +813,9 @@ angular.module('beamng.apps')
             '<div class="cep-sub" ng-if="places.last.reputationScore < 0">Score {{ places.last.reputationScore }} (reputation stops at zero).</div>' +
             '<div class="cep-sub" ng-if="places.last.aborted">Ended early; done deliveries paid.</div></div></div>' +
         '</div>' +
-        '<div class="cep-actionbar" aria-label="Home address actions" ng-if="panel === \'home\' && (places.selected || places.home) && !places.blocked">' +
-          '<div class="cep-label" ng-if="places.selected">Selected: {{ places.selected.n }}</div><div class="cep-row" ng-if="places.selected">' +
-            '<button class="cep-btn ghost" ng-disabled="places.busy || places.shift" ng-click="pdo(\'routeSelected\')">Route to address</button>' +
-            '<button class="cep-btn go" ng-disabled="places.busy || places.shift" ng-click="pdo(\'claimHome\')">Make this my home</button></div>' +
+        '<div class="cep-actionbar" aria-label="Home garage actions" ng-if="panel === \'home\' && places.started && !places.blocked">' +
+          '<button class="cep-btn go" ng-disabled="places.busy || places.shift" ng-click="claimHome()">' +
+            '{{ homeAsk ? "Press again: move home here" : (places.home ? "Move home here" : "Make this spot my home") }}</button>' +
           '<button class="cep-sm ghost" ng-if="places.home" ng-disabled="places.busy || places.shift" ng-click="pdo(\'homeGps\')">Route home</button></div>' +
         '<div class="cep-actionbar" aria-label="Company shift actions" ng-if="panel === \'companies\' && places.shift && !places.blocked">' +
           '<button class="cep-btn ok" ng-if="places.shift.phase === \'returning\' || places.shift.phase === \'settled\'" ' +
@@ -1714,7 +1707,7 @@ angular.module('beamng.apps')
       scope.ready = cargoEarthLook.known || scope.dash || scope.menuOnly
       scope.career = null
       scope.places = null
-      scope.placeSearch = { text: '' }
+      scope.homeAsk = false
       scope.panel = null // the menu window's section, or null while it is closed
       scope.careerView = 'progress'
       scope.endCompanyAsk = false
@@ -2159,6 +2152,12 @@ angular.module('beamng.apps')
         var args = [name]
         if (value !== undefined) args.push(value)
         lua('placesDo', args, function (r) { scope.places = r; poll() })
+      }
+      // one press sets a first home; moving an existing one asks for a second press
+      scope.claimHome = function () {
+        if (!(scope.places && scope.places.home) || scope.homeAsk) { scope.homeAsk = false; scope.pdo('claimHome'); return }
+        scope.homeAsk = true
+        setTimeout(function () { scope.$evalAsync(function () { scope.homeAsk = false }) }, 5000)
       }
       scope.openCompany = function () { scope.openPanel('companies') }
       scope.endCompany = function () {
