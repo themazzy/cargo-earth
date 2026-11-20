@@ -14,6 +14,9 @@ M.MOVE_KM = 40           -- pick the far towns again after moving this far
 M.ORIGIN_MOVE_KM = 5     -- ask for the stations around the player again after moving this far
 M.TOWN_KM = 6            -- a far town's station is this close to the town's point
 M.LOADING_S, M.FAILED_S, M.LOST_S, M.IN_FLIGHT = 4, 300, 60, 2
+-- The helper answers one box per point: SITE_HALF (0.12 degrees) around the point snapped to a 0.05 degree grid, so a
+-- box surely covers BOX_REACH degrees around the point asked. Around the player, points BOX_STEP apart cover nearKm.
+M.BOX_REACH, M.BOX_STEP = 0.095, 0.19
 M.defaults = { nearKm = 15, minKm = 40, maxKm = 200 }
 
 local function finite(x) return type(x) == 'number' and x == x and x ~= math.huge and x ~= -math.huge end
@@ -66,16 +69,18 @@ function M.tick(st, now, p, range, cities, ask)
       if i <= M.TOWNS then st.towns[#st.towns + 1] = { city = c, nextAt = 0 } else st.spares[#st.spares + 1] = c end
     end
   end
-  if not st.origin or jobs.km(st.origin.lat, st.origin.lon, p.lat, p.lon) > M.ORIGIN_MOVE_KM then
-    st.origin = { lat = p.lat, lon = p.lon, nextAt = 0 }
+  local near = range.nearKm or M.defaults.nearKm
+  if not st.origin or st.origin.near ~= near or jobs.km(st.origin.lat, st.origin.lon, p.lat, p.lon) > M.ORIGIN_MOVE_KM then
+    st.origin = { lat = p.lat, lon = p.lon, near = near, points = M.points(p.lat, p.lon, near) }
   end
   st.pending = st.pending or {}
   local flying = 0
   for path, at in pairs(st.pending) do
     if now - at > M.LOST_S then st.pending[path] = nil else flying = flying + 1 end
   end
-  -- the stations around the player first (the board needs a start), then the far towns
-  local wanted = { st.origin }
+  -- the stations around the player first (the board needs a start; the nearest box first), then the far towns
+  local wanted = {}
+  for _, b in ipairs(st.origin.points) do wanted[#wanted + 1] = b end
   for _, t in ipairs(st.towns) do wanted[#wanted + 1] = t end
   for _, w in ipairs(wanted) do
     if flying >= M.IN_FLIGHT then break end
@@ -85,7 +90,8 @@ function M.tick(st, now, p, range, cities, ask)
       st.pending[path], flying = now, flying + 1
       ask(path, function(data, err)
         st.pending[path] = nil
-        if w ~= st.origin and not M.scheduled(st, w) then return end   -- picked again meanwhile
+        local own = w.box and M.isOrigin(st, w)
+        if not own and not M.scheduled(st, w) then return end   -- picked again meanwhile
         if type(data) ~= 'table' then
           if err == 'HTTP 404' then st.old = true end    -- a helper from before coach rides
           w.nextAt, w.failed = now + M.FAILED_S, true
@@ -94,7 +100,7 @@ function M.tick(st, now, p, range, cities, ask)
         if data.state == 'ready' then
           w.done, w.failed = true, nil
           local rows = M.rows(data)
-          if w == st.origin then
+          if w.box then
             w.rows = rows
           else
             w.station = M.best(rows, w.city.lat, w.city.lon, M.TOWN_KM)
@@ -111,6 +117,40 @@ function M.tick(st, now, p, range, cities, ask)
   end
 end
 
+-- The points whose helper boxes together cover nearKm around (lat, lon), the point itself first, then by distance.
+function M.points(lat, lon, nearKm)
+  local dLat = nearKm / 111.32
+  local dLon = nearKm / (111.32 * math.max(0.05, math.cos(math.rad(lat))))
+  local nLat = math.max(0, math.ceil((dLat - M.BOX_REACH) / M.BOX_STEP))
+  local nLon = math.max(0, math.ceil((dLon - M.BOX_REACH) / M.BOX_STEP))
+  local out = {}
+  for i = -nLat, nLat do
+    for k = -nLon, nLon do
+      local la = math.max(-90, math.min(90, lat + i * M.BOX_STEP))
+      local lo = k == 0 and lon or (lon + k * M.BOX_STEP + 180) % 360 - 180
+      out[#out + 1] = { lat = la, lon = lo, box = true, nextAt = 0, d = i * i + k * k }
+    end
+  end
+  table.sort(out, function(a, b) return a.d < b.d end)
+  return out
+end
+
+function M.isOrigin(st, w)
+  for _, b in ipairs(st.origin and st.origin.points or {}) do if b == w then return true end end
+  return false
+end
+
+-- Every station found around the player so far.
+function M.originRows(st)
+  local out, seen = {}, {}
+  for _, b in ipairs(st.origin and st.origin.points or {}) do
+    for _, r in ipairs(b.rows or {}) do
+      if not seen[r.id] then seen[r.id] = true out[#out + 1] = r end
+    end
+  end
+  return out
+end
+
 function M.scheduled(st, w)
   for _, t in ipairs(st.towns or {}) do if t == w then return true end end
   return false
@@ -125,8 +165,8 @@ end
 -- Returns the offers and the station they leave from (nil: none near).
 function M.board(st, p, range)
   local bus = require('cargoEarth/bus')
-  if not (st and p and range and st.origin and st.origin.rows) then return {}, nil end
-  local from = M.best(st.origin.rows, p.lat, p.lon, range.nearKm or M.defaults.nearKm)
+  if not (st and p and range and st.origin) then return {}, nil end
+  local from = M.best(M.originRows(st), p.lat, p.lon, range.nearKm or M.defaults.nearKm)
   if not from then return {}, nil end
   local rows = {}
   for _, t in ipairs(st.towns or {}) do
@@ -162,7 +202,14 @@ end
 function M.status(st)
   local out = { towns = 0, ready = 0, old = st and st.old or nil }
   if not st then return out end
-  out.origin = st.origin and (st.origin.done and 'ready' or st.origin.failed and 'failed' or 'loading') or 'loading'
+  -- ready once every box around the player answered (a failed one is asked again later)
+  local pts = st.origin and st.origin.points or {}
+  local done, failed = 0, 0
+  for _, b in ipairs(pts) do
+    if b.done then done = done + 1 elseif b.failed then failed = failed + 1 end
+  end
+  out.origin = #pts > 0 and (done == #pts and 'ready' or done + failed == #pts and done == 0 and 'failed' or 'loading') or 'loading'
+  out.originBoxes, out.originReady = #pts, done
   for _, t in ipairs(st.towns or {}) do
     out.towns = out.towns + 1
     if t.station then out.ready = out.ready + 1 end

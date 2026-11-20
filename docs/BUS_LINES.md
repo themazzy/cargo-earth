@@ -95,7 +95,9 @@ to the bus station of a far town, one way, with all the passengers on board from
 - **Where to.** Far towns as for long-distance freight: Natural Earth towns of 30,000 people or more
   (`data/cities.json`), the biggest per compass direction, 8 at a time; a town whose station box has nothing within
   6 km of its centre gives way to the next one. The ride leaves from the surest station within *Coach station within*
-  (default 15 km) of you.
+  (default 15 km) of you; the helper is asked for as many boxes around you as it takes to cover that radius (9 at
+  15 km in central Europe, the nearest first). The pickup marker at the start station is 60 m wide in radius (the
+  station's point is the middle of its building or yard).
 - **Job settings → Intercity coaches:** coach station within (1-30 km, default 15), shortest and longest ride
   (road km, default 40-200; straight km x 1.3).
 - **A ride.** Choose a ride, drive your own car to the station and park in the 12 m marker for 2 s; the coach replaces

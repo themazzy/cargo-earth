@@ -44,7 +44,14 @@ M.DEPOT_RADIUS, M.PARK_S, M.PARK_SPEED = 12, 2, 0.5  -- choose a line, then park
 M.COACH = {
   LEG_KMH = { 30, 78 }, LEG_KMH_PER_KM = 1.2, LEG_SLACK = 1.15, LEG_STOP_MIN = 2, BOARD_MIN = 3,
   BASE = 60, PER_MIN = 5.5, FARE_KM = 0.1, SEATS = 34, RIDERS = { 16, 34 }, RIDERS_AVG = 25,
+  -- a station's point is the middle of its building or yard (Overture), not a bus bay: park within this to collect
+  DEPOT_RADIUS = 60,
 }
+
+-- Where the bus is collected: within this many metres of the offer's yard.
+function M.depotRadius(offer)
+  return offer and offer.coach and M.COACH.DEPOT_RADIUS or M.DEPOT_RADIUS
+end
 
 local function place(id, n, lat, lon)
   return { id = id, n = n, town = '', g = { lat, lon } }

@@ -36,28 +36,42 @@ local cities = longhaul.cities({rows = {
 local asked, answers = {}, {}
 local function ask(path, onDone) asked[#asked + 1] = path answers[path] = onDone end
 local st, p, range = {}, {lat = 50.08, lon = 14.43}, {nearKm = 15, minKm = 40, maxKm = 200}
+-- the boxes around the player cover the whole station radius (a box reaches about 0.095 degrees)
+local pts = coach.points(50.08, 14.43, 15)
+assert(#pts == 9 and pts[1].lat == 50.08 and pts[1].lon == 14.43, 'the player first, then the boxes around: ' .. #pts)
+assert(#coach.points(50.08, 14.43, 5) == 1 and #coach.points(50.08, 14.43, 30) == 15, "3 rows x 5 columns at 50 degrees")
 local saved = coach.TOWNS
 coach.TOWNS = 2
 coach.tick(st, 0, p, range, cities, ask)
 assert(#asked == coach.IN_FLIGHT and asked[1] == '/v1/stations?lat=50.0800&lon=14.4300', 'the stations near the player first')
 assert(coach.status(st).origin == 'loading')
-answers[asked[1]]({state = 'ready', stations = {{id = 'b', n = 'Prague Bus Station', g = {50.0894, 14.4404}, k = 'bus', s = 2}}})
--- the first far town (Plzen, west, 85 road km) has no station: the next town is scheduled
-local plzen = asked[2]
-answers[plzen]({state = 'ready', stations = {{id = 'far', n = 'Somewhere', g = {49.0, 13.0}, k = 'bus', s = 2}}})
-assert(#st.towns == 3, 'a spare town replaces the one without a station')
-local answered = {[asked[1]] = true, [plzen] = true}
-for tick = 1, 6 do
+local answered = {}
+local noStation = 0
+for tick = 1, 40 do
   coach.tick(st, tick, p, range, cities, ask)
   for _, path in ipairs(asked) do
     if not answered[path] then
       answered[path] = true
       local lat, lon = path:match('lat=([%d%.%-]+)&lon=([%d%.%-]+)')
-      answers[path]({state = 'ready', stations = {{id = path, n = 'AN ' .. path, g = {tonumber(lat) + 0.01, tonumber(lon)}, k = 'bus', s = 2}}})
+      lat, lon = tonumber(lat), tonumber(lon)
+      local found = {}
+      if path == asked[1] then
+        found = {{id = 'b', n = 'Prague Bus Station', g = {50.0894, 14.4404}, k = 'bus', s = 2}}
+      elseif path == asked[2] then
+        -- a station 12 km east of the player, in a neighbouring box: found, but the surer one nearer wins
+        found = {{id = 'east', n = 'AN East', g = {50.08, 14.60}, k = 'bus', s = 2}}
+      elseif math.abs(lat - 50.08) > 0.3 or math.abs(lon - 14.43) > 0.4 then
+        if noStation == 0 then noStation = 1 found = {{id = 'far', n = 'Somewhere', g = {lat - 1, lon}, k = 'bus', s = 2}}
+        else found = {{id = path, n = 'AN ' .. path, g = {lat + 0.01, lon}, k = 'bus', s = 2}} end
+      end
+      answers[path]({state = 'ready', stations = found})
     end
   end
 end
+assert(#st.towns == 3, 'a spare town replaces the one without a station')
 assert(coach.status(st).ready == 2 and coach.status(st).origin == 'ready')
+assert(#coach.originRows(st) == 2)
+assert(coach.best(coach.originRows(st), 50.08, 14.60, 15).id == 'east', 'a station in another box is a start too')
 coach.TOWNS = saved
 local offers, from = coach.board(st, p, range)
 assert(from and from.id == 'b', 'rides leave from the bus station near the player')

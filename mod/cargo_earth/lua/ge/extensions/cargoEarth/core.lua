@@ -1857,7 +1857,7 @@ function M.busState()
     out.lines[#out.lines + 1] = { id = o.id, ref = o.bus.ref, name = o.bus.name, from = o.bus.from, to = o.bus.to,
       singleDirection = o.bus.singleDirection, limited = o.bus.limited, stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.shareFor('bus', S.career) / 5 + 0.5) * 5,
       fares = math.floor((o.fares or 0) * employment.shareFor('bus', S.career) / 5 + 0.5) * 5, minutes = o.minutes, depot = o.yard.n,
-      depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= bus.DEPOT_RADIUS and not p.camera
+      depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= bus.depotRadius(o) and not p.camera
         and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour }
   end
   out.message = S.contractMsg and S.clock - S.contractMsg.at < 8 and S.contractMsg.text or nil
@@ -2661,7 +2661,7 @@ local function companyStart(id, independent)
   for _, row in ipairs(S.companyBoard or {}) do if row.id == id then offer = row break end end
   offer = offer or M.busOffer(id)
   if not offer then return false, 'Refresh the company board.' end
-  local radius = offer.tier == 'bus' and require('cargoEarth/bus').DEPOT_RADIUS or employment.RADIUS
+  local radius = offer.tier == 'bus' and require('cargoEarth/bus').depotRadius(offer) or employment.RADIUS
   if jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) * 1000 > radius then
     return false, 'Drive to the company yard, then park to start.'
   end
@@ -2752,7 +2752,7 @@ end
 function M.busDepotInfo(p)
   local d, bus = S.busDepot, require('cargoEarth/bus')
   if not d or S.job or S.career.employment or not p then return nil end
-  local inside = jobs.km(p.lat, p.lon, d.offer.yard.g[1], d.offer.yard.g[2]) * 1000 <= bus.DEPOT_RADIUS
+  local inside = jobs.km(p.lat, p.lon, d.offer.yard.g[1], d.offer.yard.g[2]) * 1000 <= bus.depotRadius(d.offer)
   return {depot = true, inZone = inside, stopping = inside and (d.parked or 0) > 0,
     frac = math.min(1, (d.parked or 0) / bus.PARK_S), leftS = math.max(0, bus.PARK_S - (d.parked or 0)),
     title = d.error and 'Bus unavailable' or (d.offer.coach and 'Park here to collect your coach' or 'Park here to collect your bus'),
@@ -3220,7 +3220,7 @@ function M.phoneAction(a, orderId)
     if S.coach then
       S.coach.old = nil
       for _, t in ipairs(S.coach.towns or {}) do if not t.done then t.nextAt = 0 end end
-      if S.coach.origin and not S.coach.origin.done then S.coach.origin.nextAt = 0 end
+      for _, b in ipairs(S.coach.origin and S.coach.origin.points or {}) do if not b.done then b.nextAt = 0 end end
     end
     M.coachTick(earth.pose())
   elseif a == 'busCancelSelection' then
@@ -5623,8 +5623,8 @@ function M.onUpdate(dtReal, dtSim)
       if hq and hq.g then marker.drawArea(pose, 'hq', hq.g, firm.HQ_RADIUS, 'Headquarters', S.clock) end
       local depot = S.busDepot
       if depot and S.mode == 'bus' and not S.career.employment then
-        marker.drawArea(pose, 'busDepot', depot.offer.yard.g, require('cargoEarth/bus').DEPOT_RADIUS,
-          'Park to collect your bus', S.clock)
+        marker.drawArea(pose, 'busDepot', depot.offer.yard.g, require('cargoEarth/bus').depotRadius(depot.offer),
+          depot.offer.coach and 'Park to collect your coach' or 'Park to collect your bus', S.clock)
       end
     end
     local okC, errC = pcall(cameraTick, pose)
