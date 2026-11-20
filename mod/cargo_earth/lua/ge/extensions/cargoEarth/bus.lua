@@ -39,11 +39,12 @@ M.DEPOT_RADIUS, M.PARK_S, M.PARK_SPEED = 12, 2, 0.5  -- choose a line, then park
 -- Intercity coaches (cargoEarth/coach): a ride is a job of this module with two stops (`coach = true`). Its timetable
 -- runs at road speeds (LEG_KMH grows with the leg: towns at both ends, open road between), people board at the first
 -- station (seated only: SEATS) and all get off at the last. Pay goes by the timetable's minutes as a line's does, and
--- each rider pays FARE_KM a km. A coach line of 100 km: about 95 min, 60 + 5.5 x 95 = 580 + about 300 in fares; after
--- the company's share about 450 CZK an hour, the drive back is free (Earth takes you back).
+-- each rider pays FARE_KM a km. Raised 2026-11-20 (Jan: too low) to about 620-650 CZK an hour after the company's share
+-- at every length, above a city line (550) and taxi: a 112 road km ride is about 107 min, 60 + 8.5 x 107 = 970 plus
+-- about 420 in fares; the drive back is free (Earth takes you back).
 M.COACH = {
   LEG_KMH = { 30, 78 }, LEG_KMH_PER_KM = 1.2, LEG_SLACK = 1.15, LEG_STOP_MIN = 2, BOARD_MIN = 3,
-  BASE = 60, PER_MIN = 5.5, FARE_KM = 0.1, SEATS = 34, RIDERS = { 16, 34 }, RIDERS_AVG = 25,
+  BASE = 60, PER_MIN = 8.5, FARE_KM = 0.15, SEATS = 34, RIDERS = { 16, 34 }, RIDERS_AVG = 25,
   -- a station's point is the middle of its building or yard (Overture), not a bus bay: park within this to collect
   DEPOT_RADIUS = 60,
 }

@@ -104,7 +104,7 @@ local coachMinutes = bus.legMinutes(j.km, true)
 assert(coachMinutes < cityMinutes * 0.7, 'a coach runs at road speeds')
 assert(j.minutes >= j.km / 78 * 60, 'never faster than the top leg speed')
 assert(j.cargoName == 'Coach to Brno' and j.bus.name == 'Coach to Brno')
-assert(j.pay > 400 and j.pay < 900, 'a 100 km ride pays: ' .. j.pay)
+assert(j.pay > 800 and j.pay < 1300, 'a 100 km ride pays: ' .. j.pay)
 -- boarding: many at the first station, nobody gets off before the end, everyone at the end; seats only
 local function rnd(n) return n end    -- the most
 local off, on = bus.passengers(j, rnd)

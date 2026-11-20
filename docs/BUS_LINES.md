@@ -108,9 +108,9 @@ to the bus station of a far town, one way, with all the passengers on board from
 - **Timetable.** As a line's, at road speeds: 30 km/h plus 1.2 km/h a km, at most 78 km/h, times 1.15, plus 2 min at
   the far station and 3 min to board at the start. Comfort, the minutes late (1 % a minute) and the stars work as on a
   line.
-- **Pay.** 60 + 5.5 per timetable minute, and each rider pays 0.1 CZK a km (`bus.COACH`); 80 % of it is your wage, as on
-  a line. A 100 km ride: about 95 minutes, about 580 + 250 in fares (gross), about 450 CZK an hour after the company's
-  share; the way back is free.
+- **Pay.** 60 + 8.5 per timetable minute, and each rider pays 0.15 CZK a km (`bus.COACH`); 80 % of it is your wage, as
+  on a line. About 620-650 CZK an hour after the company's share at any length (40 km: about 450 CZK for 42 min; 112 km:
+  about 1,100 CZK for 107 min; 200 km: about 1,900 CZK for 3 h), above a city line; the way back is free.
 
 Rules: `cargoEarth/coach.lua` (stations, far towns, the board; pure) and `cargoEarth/bus.lua` (`bus.COACH`, the job
 with `coach = true`). Needs the helper from this version (an older one answers 404 and the phone says to update it).
