@@ -367,6 +367,18 @@ angular.module('beamng.apps')
     '.dark .cep-pump{background:#3a2e14;color:#ffd58a}.dark .cep-input{background:var(--card);color:var(--ink)}' +
     '.dark .cep-map{background:#2a2724}.dark .cep-search{background:var(--card);color:var(--ink)}'
 
+  var HOME_CSS =
+    '.cehm-grid{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));align-content:start;gap:12px}' +
+    '.cehm-room{display:flex;flex-direction:column;gap:7px;padding:14px 16px;border:3px solid #7fb7d1;border-radius:6px;' +
+    'background-image:linear-gradient(#1a2733 1px,transparent 1px),linear-gradient(90deg,#1a2733 1px,transparent 1px);background-size:22px 22px}' +
+    '.cehm-room.free{border-style:dashed;border-color:#3a4d5c}.cehm-room.garage{grid-column:1/-1;background:#232a31}' +
+    '.cehm-cars{display:flex;flex-wrap:wrap;gap:6px}.cehm-cars .cehq-car{width:30px;height:54px}.cehm-cars .cehq-car.empty{opacity:.2}' +
+    '.cehm-steps{display:flex;flex-wrap:wrap;gap:6px}.cehm-steps span{font-size:12px;padding:4px 8px;border-radius:6px;background:#22313d;color:#9fb2bf}' +
+    '.cehm-steps span.on{background:#7fd19b;color:#15202a;font-weight:700}' +
+    '.cehm-pick{display:flex;flex-direction:column;gap:6px}.cehm-pick .cehq-btn{text-align:left}' +
+    '.cehm-row{display:flex;flex-wrap:wrap;gap:8px}' +
+    '@media (max-width:620px){.cehq-panel{width:100vw;height:100vh;max-height:none;border-radius:0;padding:14px 16px}.cehq-head{flex-direction:column}.cehq-head-right{max-width:none;justify-content:flex-start}}'
+
   var HQ_CSS =
     '.cehq{position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:99999;display:flex;align-items:center;justify-content:center;' +
     'background:rgba(10,14,18,.72);font-family:"Segoe UI",Roboto,system-ui,sans-serif;color:#e8eef2;pointer-events:auto}' +
@@ -468,7 +480,45 @@ angular.module('beamng.apps')
 
   return {
     template:
-      '<div style="width:100%;height:100%"><style>' + CSS + DASH_CSS + MENU_CSS + DARK_CSS + HQ_CSS + '</style>' +
+      '<div style="width:100%;height:100%"><style>' + CSS + DASH_CSS + MENU_CSS + DARK_CSS + HQ_CSS + HOME_CSS + '</style>' +
+      '<div class="cehq" ng-show="homeOpen" role="dialog" aria-label="Home garage">' +
+      '<div class="cehq-panel" ng-if="homeOpen">' +
+        '<div class="cehq-head">' +
+          '<div><div class="cehq-kicker">Home garage · {{ places.homeInfo.levelName || "Not set" }}</div>' +
+            '<div class="cehq-title">{{ places.homeInfo.name || "No home yet" }}</div>' +
+            '<div class="cep-pills" ng-if="places.homeInfo"><span ng-if="places.homeInfo.town && places.homeInfo.name.indexOf(places.homeInfo.town) < 0">{{ places.homeInfo.town }}</span>' +
+              '<span>{{ places.homeInfo.here ? "You are home" : fmt.num(places.homeKm) + " km away" }}</span>' +
+              '<span ng-if="places.homeInfo.rested">Rested: +10 % pay, {{ places.homeInfo.rested }} min left</span>' +
+              '<span ng-if="places.homeInfo.resting">Resting: {{ places.homeInfo.resting }} min to Rested</span></div></div>' +
+          '<div class="cehq-head-right">' +
+            '<div class="cehq-money" ng-if="places.homeInfo">{{ fmt.money(places.money) }}</div>' +
+            '<button class="cehq-btn ghost" ng-if="places.home && !places.atHome" ng-disabled="places.busy || places.shift" ng-click="pdo(\'homeGps\')">Route home</button>' +
+            '<button class="cehq-btn" ng-click="closeHome()">Close</button></div></div>' +
+        '<div class="cehq-msg" ng-if="!places">Loading your home…</div>' +
+        '<div class="cehq-msg" ng-if="places.msg">{{ fmt.text(places.msg) }}</div>' +
+        '<div class="cehq-empty" ng-if="places && !places.homeInfo">' +
+          '<div class="cehq-title">Make a home where you park</div>' +
+          '<p>A home is never needed. It gives you room for more cars and cheaper repairs, servicing and fuel when you are there.</p>' +
+          '<button class="cehq-btn build" ng-disabled="!places.started || places.busy || places.shift" ng-click="claimHome()">Make this spot my home</button></div>' +
+        '<div class="cehm-grid" ng-if="places.homeInfo">' +
+          '<div class="cehm-room garage"><div class="cehq-label">Garage · {{ places.used }} of {{ places.capacity || places.homeInfo.cars }} cars</div>' +
+            '<div class="cehm-cars"><svg class="cehq-car" ng-repeat="on in carSpots() track by $index" ng-class="{empty: !on}" viewBox="0 0 60 110" aria-hidden="true">' +
+              '<rect x="8" y="4" width="44" height="102" rx="14"/><path class="glass" d="M14 30h32l-4 16H18zM18 78h24l4 12H14z"/></svg></div>' +
+            '<div class="cehm-steps"><span ng-repeat="st in homeSteps track by $index" ng-class="{on: $index < places.homeInfo.level}">{{ st }}</span></div>' +
+            '<div class="cehq-note" ng-if="places.homeInfo.next">Next: {{ places.homeInfo.next.name }}, room for {{ places.homeInfo.next.cars }} cars and {{ places.homeInfo.next.rooms }} rooms.</div>' +
+            '<div class="cehq-note" ng-if="!places.homeInfo.next">Your home is fully built.</div>' +
+            '<div class="cehm-row"><button class="cehq-btn build" ng-if="places.homeInfo.next" ng-disabled="!places.homeInfo.next.can" ng-click="pdo(\'upgradeHome\')">Upgrade · {{ fmt.money(places.homeInfo.next.cost) }}</button>' +
+              '<button class="cehq-btn ghost" ng-disabled="places.busy || places.shift" ng-click="claimHome()">{{ homeAsk ? "Press again: move home here" : "Move home here" }}</button></div>' +
+            '<div class="cehq-note">Moving keeps the rooms you built. Your cars move with the home.</div></div>' +
+          '<div class="cehm-room" ng-repeat="r in places.homeInfo.rooms track by r.id" ng-if="r.built"><div class="cehq-label">{{ r.name }}</div>' +
+            '<div class="cehq-note">{{ r.text }}.</div></div>' +
+          '<div class="cehm-room free" ng-repeat="n in range(places.homeInfo.slots - places.homeInfo.used) track by $index" ng-if="!allRoomsBuilt()"><div class="cehq-label small">Free room</div>' +
+            '<div class="cehm-pick"><div ng-repeat="r in places.homeInfo.rooms track by r.id" ng-if="!r.built">' +
+              '<button class="cehq-btn small build" ng-disabled="!r.can" ng-click="pdo(\'buildRoom\', r.id)">Build {{ r.name }} · {{ fmt.money(r.cost) }}</button>' +
+              '<div class="cehq-note">{{ r.text }}.</div></div></div></div>' +
+          '<div class="cehm-room free" ng-if="places.homeInfo.used >= places.homeInfo.slots && !allRoomsBuilt()"><div class="cehq-label small">No free room</div>' +
+            '<div class="cehq-note">Upgrade your home to build another room.</div></div>' +
+        '</div></div></div>' +
       '<div class="cehq" ng-show="hqOpen" role="dialog" aria-label="Headquarters">' +
       '<div class="cehq-panel" ng-if="hqOpen">' +
         '<div class="cehq-head">' +
@@ -765,9 +815,11 @@ angular.module('beamng.apps')
           '<div class="cep-card" ng-if="places.home"><div class="cep-label">Home garage</div>' +
             '<div class="cep-name" style="white-space:normal">{{ places.home.name }}</div><div class="cep-sub" ng-if="places.home.town && places.home.name.indexOf(places.home.town) < 0">{{ places.home.town }}</div>' +
             '<div class="cep-sub">{{ places.used }} / {{ places.capacity || places.home.capacity }} owned vehicles. {{ places.atHome ? "You are home." : fmt.num(places.homeKm) + " km away." }}</div>' +
+            '<div class="cep-sub" ng-if="places.homeInfo">{{ places.homeInfo.levelName }}<span ng-if="places.homeInfo.rested"> · Rested, {{ places.homeInfo.rested }} min left</span></div>' +
+            '<button class="cep-btn go" ng-click="openHome()">Open home</button>' +
           '</div>' +
           '<div class="cep-label">{{ places.home ? "Move your home garage" : "Choose your home garage" }}</div>' +
-          '<div class="cep-sub">Park your career car where you want your garage, then set it here. Your cars stay yours when you move.</div>' +
+          '<div class="cep-sub">Park your career car where you want your garage, then set it here. A home is never needed: it gives room for more cars and cheaper repairs, servicing and fuel there.</div>' +
           '<div class="cep-sub" ng-if="!places.started">Start a career on the phone first.</div>' +
           '</div>' +
           '<div ng-if="panel === \'companies\'" style="display:flex;flex-direction:column;gap:8px">' +
@@ -1833,7 +1885,7 @@ angular.module('beamng.apps')
         return scope.fmt.int(load.amount) + (load.kind === 'parcel' ? ' slots' : ' L') + ', ' + scope.fmt.int(load.kg) + ' kg'
       }
       var CATS = {delivery: 'Delivery', company_wages: 'Company wages', drivers: 'Drivers', garage: 'Garage', parts: 'Parts',
-        cancel_fee: 'Cancel fee', adjustment: 'Other', fuel: 'Fuel', fine: 'Speeding fine', firm: 'Firm', upkeep: 'Upkeep'}
+        cancel_fee: 'Cancel fee', adjustment: 'Other', fuel: 'Fuel', fine: 'Speeding fine', firm: 'Firm', home: 'Home', upkeep: 'Upkeep'}
       scope.fmt.stars = function (n) { return '★★★★★'.slice(0, Math.max(0, Math.min(5, Math.round(n || 0)))) }
       scope.fmt.noStars = function (n) { return '★★★★★'.slice(0, 5 - Math.max(0, Math.min(5, Math.round(n || 0)))) }
       scope.fmt.pct = function (share) { return Math.round((share || 0) * 100) + ' %' }
@@ -2195,6 +2247,21 @@ angular.module('beamng.apps')
         if (value !== undefined) args.push(value)
         lua('placesDo', args, function (r) { scope.places = r; poll() })
       }
+      // the full-screen home view (Menu > Home garage > Open home)
+      scope.homeOpen = false
+      scope.homeSteps = ['Rented lock-up', 'Own garage', 'House with yard', 'Small depot']
+      scope.openHome = function () { scope.homeOpen = true; scope.homeAsk = false; loadPlaces() }
+      scope.closeHome = function () { scope.homeOpen = false }
+      scope.carSpots = function () {
+        var p = scope.places || {}, cap = Math.min(12, p.capacity || (p.homeInfo && p.homeInfo.cars) || 0), out = []
+        for (var i = 0; i < cap; i++) out.push(i < (p.used || 0))
+        return out
+      }
+      scope.allRoomsBuilt = function () {
+        var rooms = (scope.places && scope.places.homeInfo && scope.places.homeInfo.rooms) || []
+        for (var i = 0; i < rooms.length; i++) if (!rooms[i].built) return false
+        return true
+      }
       // one press sets a first home; moving an existing one asks for a second press
       scope.claimHome = function () {
         if (!(scope.places && scope.places.home) || scope.homeAsk) { scope.homeAsk = false; scope.pdo('claimHome'); return }
@@ -2403,6 +2470,7 @@ angular.module('beamng.apps')
       var slowTicks = 0
       var slow = setInterval(function () {
         if (scope.hqOpen) loadHq()
+        if (scope.homeOpen && scope.panel !== 'home') loadPlaces()
         if (scope.min || (scope.s && scope.s.hidden)) return
         // an open Menu section follows the game every 2 s (an action's answer updates it at once)
         if (scope.panel && slowTicks++ % 2 === 0) loadPanel(scope.panel)

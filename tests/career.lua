@@ -106,6 +106,42 @@ test('home is set where the car is parked and named from the nearest address', f
   assert(c.home.name == '50.30000, 14.50000' and c.home.town == nil and home.near(c, {lat = 50.3, lon = 14.5}))
 end)
 
+test('an old home becomes the first step and grows by paid steps and rooms', function()
+  local c = { money = 40000, home = { id = 'a', name = 'Old Street 1', g = { 50, 14 }, capacity = 3 } }
+  local h = home.restore(c)
+  assert(h.level == 1 and h.capacity == 3 and next(h.rooms) == nil)
+  assert(home.build(c, 'workshop', 0))
+  assert(not home.build(c, 'tank', 0), 'the lock-up has one room')
+  assert(not home.upgrade(c, 50), 'debt first')
+  assert(home.upgrade(c, 0) and c.home.level == 2 and c.home.capacity == 4 and c.money == 40000 - 1500 - 2500)
+  assert(home.build(c, 'rest', 0) and home.has(c, 'rest'))
+  assert(not home.build(c, 'rest', 0))
+  assert(home.upgrade(c, 0) and home.upgrade(c, 0) and c.home.capacity == 8)
+  assert(not home.upgrade(c, 0), 'fully built')
+  local st = home.state(c, { lat = 50, lon = 14 }, 0)
+  assert(st.here and st.levelName == 'Small depot' and st.slots == 4 and st.used == 2 and st.next == nil)
+  -- moving keeps the step and rooms
+  assert(home.claim(c, { lat = 50.3, lon = 14.5, speed = 0 }))
+  assert(c.home.level == 4 and home.has(c, 'workshop') and c.home.capacity == 8 and c.home.g[1] == 50.3)
+  assert(home.factorHere(c, 'workshop', { lat = 50.3, lon = 14.5 }) == 0.7)
+  assert(home.factorHere(c, 'workshop', { lat = 50, lon = 14 }) == nil, 'only at home')
+  assert(home.factorHere(c, 'tank', { lat = 50.3, lon = 14.5 }) == nil, 'not built')
+end)
+
+test('Rested: three minutes parked at a home with a rest room adds 10 % pay for an hour of play', function()
+  local c = { money = 0, home = { g = { 50, 14 }, capacity = 3, rooms = {} } }
+  assert(not home.restTick(c, true, 400) and not home.rested(c), 'needs the rest room')
+  c.home.rooms.rest = true
+  assert(not home.restTick(c, true, 100))
+  assert(not home.restTick(c, false, 10) and c.restingT == nil, 'leaving restarts the count')
+  assert(not home.restTick(c, true, 170))
+  assert(home.restTick(c, true, 15) and home.rested(c))
+  local paid, extra = home.restedPay(c, 200)
+  assert(paid == 220 and extra == 20)
+  home.restTick(c, false, home.RESTED_S)
+  assert(not home.rested(c) and home.restedPay(c, 200) == 200)
+end)
+
 test('address search combines local tiles, literal punctuation and stable IDs', function()
   local rows = { {50, 14, 50, 14, "O'Neil [12]", 'Town'}, {50.001, 14, 50.001, 14, 'Other 8', 'Town'} }
   local idx = food.index({restaurants = {}, cats = {}, tile = 0.01}, function() return rows end)
@@ -597,6 +633,20 @@ test('home is set where the career car is parked through the real phone action',
   pose.speed = 5
   core.placesDo('claimHome')
   assert(s.career.home.g[1] == 50, 'a moving car cannot set a home')
+end)
+
+test('home rooms are bought through the real phone action and saved', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.01}, function() return {} end)
+  s.career.money, s.career.garage.debt = 5000, 0
+  local places = core.placesDo('claimHome')
+  assert(places.homeInfo and places.homeInfo.level == 1 and s.career.home.name == '50.00000, 14.00000')
+  places = core.placesDo('buildRoom', 'tank')
+  assert(places.homeInfo.rooms[2].built and s.career.money == 4000, places.msg)
+  places = core.placesDo('upgradeHome')
+  assert(places.homeInfo.level == 2 and s.career.money == 1500, places.msg)
+  assert(disk['/settings/cargoEarth/career.json'].home.rooms.tank == true)
+  assert(disk['/settings/cargoEarth/career.json'].home.level == 2)
 end)
 
 test('independent contracts require reputation and a real owned cargo van', function()
