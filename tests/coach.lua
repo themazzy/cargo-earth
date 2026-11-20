@@ -79,16 +79,19 @@ do
     {city = {n = 'A', lat = 50.6, lon = 14.4}, station = {id = 'shared', n = 'AN Shared', g = {50.6, 14.4}, k = 'bus', s = 2}},
     {city = {n = 'B', lat = 50.62, lon = 14.42}, station = {id = 'shared', n = 'AN Shared', g = {50.6, 14.4}, k = 'bus', s = 2}}}}
   local list = coach.board(same, p, range)
-  assert(#list == 1 and list[1].bus.town == 'A', 'one ride per destination station')
+  assert(#list == 2 and list[1].bus.town == 'A' and list[2].bus.back and list[2].id == list[1].id .. '+back',
+    'one ride per destination station, one way and return')
 end
 local offers, from = coach.board(st, p, range)
 assert(from and from.id == 'b', 'rides leave from the bus station near the player')
 assert(#offers >= 1, 'rides to the far towns with stations')
 for _, o in ipairs(offers) do
   assert(o.tier == 'bus' and o.coach and o.yard.n == 'Prague Bus Station' and #o.jobs == 1)
-  assert(o.km >= range.minKm and o.km <= range.maxKm, 'ride within the distances: ' .. o.km)
+  assert(#o.jobs[1].bus.stops == (o.bus.back and 3 or 2))
+  local legKm = o.km / (#o.jobs[1].bus.stops - 1)
+  assert(legKm >= range.minKm and legKm <= range.maxKm, 'ride within the distances: ' .. legKm)
   local j = o.jobs[1]
-  assert(j.bus.coach and #j.bus.stops == 2 and j.kind == 'bus')
+  assert(j.bus.coach and j.kind == 'bus')
 end
 -- outside the station radius: no rides
 assert(#coach.board(st, {lat = 49.5, lon = 15.5}, range) == 0)
@@ -122,6 +125,22 @@ assert(bus.state(j, nil, 0).capacity == bus.COACH.SEATS and bus.state(j, nil, 0)
 local j2 = bus.job(line, {id = 'y', n = 'Praha', g = {50.0894, 14.4404}})
 local _, few = bus.passengers(j2, function() return 1 end)
 assert(few == bus.COACH.RIDERS[1])
+-- a return trip: everyone off at the far station, new people on for the way back, all off where it started
+local back = bus.job({id = 'coach:a>b+back', ref = '', coach = true, roadFactor = 1.3, name = 'Coach to Brno and back',
+  stops = {line.stops[1], line.stops[2], line.stops[1]}}, {id = 'y', n = 'Praha', g = {50.0894, 14.4404}})
+local oneWay = bus.job(line, {id = 'y', n = 'Praha', g = {50.0894, 14.4404}})
+assert(math.abs(back.km - 2 * oneWay.km) < 1e-6 and back.pay > 1.8 * oneWay.pay, 'twice the road, about twice the pay')
+local o1, n1 = bus.passengers(back, function() return 5 end)
+assert(o1 == 0 and n1 == 20)
+bus.served(back, o1, n1, 0)
+local o2, n2 = bus.passengers(back, function() return 10 end)
+assert(o2 == 20 and n2 == 25 and not bus.last(back), 'all off at the far station, new people on')
+bus.served(back, o2, n2, 100)
+assert(back.bus.onBoard == 25 and bus.last(back))
+local o3, n3 = bus.passengers(back, rnd)
+assert(o3 == 25 and n3 == 0)
+bus.served(back, o3, n3, 200)
+assert(bus.fares(back) == bus.coachFares(oneWay.km, 45), 'each rider pays one leg')
 -- a city line keeps its own rules
 local city = bus.job({id = 'l', ref = '7', name = '', stops = {{n = 'A', g = {50, 14}}, {n = 'B', g = {50.01, 14}}, {n = 'C', g = {50.02, 14}}, {n = 'D', g = {50.03, 14}}}},
   {id = 'dep', n = 'Depot', g = {50, 14}})

@@ -418,10 +418,11 @@ function M.passengers(job, rnd)
   if at >= n then
     off, on = b.onBoard, 0
   elseif b.coach then
-    -- a coach fills up at its first station; people with tickets to the end stay on
+    -- a coach fills up at its first station; on a return trip everyone gets off at the far station and new people
+    -- get on there for the way back
     local r = M.COACH.RIDERS
-    off = 0
-    on = at == 1 and math.min(r[1] + rnd(r[2] - r[1] + 1) - 1, M.COACH.SEATS - b.onBoard) or 0
+    off = at == 1 and 0 or b.onBoard
+    on = math.min(r[1] + rnd(r[2] - r[1] + 1) - 1, M.COACH.SEATS - (b.onBoard - off))
   else
     off = at == 1 and 0 or math.floor(b.onBoard * (rnd(5) - 1) / 10 + 0.5)       -- 0..40 % of those on board
     local most = math.max(1, math.ceil(14 * (1 - (at - 1) / n)))
@@ -457,7 +458,8 @@ end
 
 -- What the line pays at its end: the quote and the fares of the people who rode.
 function M.fares(job)
-  if job.bus.coach then return M.coachFares(job.bus.km or job.km, job.bus.boarded or 0) end
+  -- each rider rides one leg (station to station) of a coach
+  if job.bus.coach then return M.coachFares((job.bus.km or job.km) / math.max(1, #job.bus.stops - 1), job.bus.boarded or 0) end
   return math.floor(M.PER_PASSENGER * (job.bus.boarded or 0) + 0.5)
 end
 

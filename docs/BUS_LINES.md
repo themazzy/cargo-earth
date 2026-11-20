@@ -105,6 +105,10 @@ to the bus station of a far town, one way, with all the passengers on board from
   station's point is the middle of its building or yard), open the doors, everyone gets off, the coach is handed over
   and BeamNG.Earth takes you back to your car. No Skip stop (a coach has only its two stations); End shift works as on
   a line (150 CZK away from the start station).
+- **Return trip** (the second button on each ride, Jan 2026-11-20): the same ride there and back, three stops
+  (start, far station, start). At the far station everyone gets off and 16-34 new people board for the way back; at
+  the start everyone gets off and the shift is paid there, with your car (no trip back by Earth). Twice the road,
+  about twice the pay; each rider pays the fare of one leg.
 - **Timetable.** As a line's, at road speeds: 30 km/h plus 1.2 km/h a km, at most 78 km/h, times 1.15, plus 2 min at
   the far station and 3 min to board at the start. Comfort, the minutes late (1 % a minute) and the stars work as on a
   line.

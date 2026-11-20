@@ -1789,13 +1789,23 @@ function M.coachState(p)
   local st = coach.status(S.coach)
   local out = { status = st, rides = {}, helper = helper.status().state, range = M.jobOptions('coach'),
     from = S.coachFrom and { n = S.coachFrom.n, rail = S.coachFrom.k == 'rail' or nil } or nil }
+  local share = employment.shareFor('bus', S.career)
+  local function money(x) return math.floor((x or 0) * share / 5 + 0.5) * 5 end
+  local byRide = {}
   for _, o in ipairs(S.coachBoard or {}) do
     local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
-    out.rides[#out.rides + 1] = { id = o.id, name = o.bus.name, from = o.bus.from, to = o.bus.to, town = o.bus.town,
-      rail = o.bus.station == 'rail' or nil, km = math.floor(o.km + 0.5), minutes = o.minutes,
-      pay = math.floor(o.gross * employment.shareFor('bus', S.career) / 5 + 0.5) * 5,
-      fares = math.floor((o.fares or 0) * employment.shareFor('bus', S.career) / 5 + 0.5) * 5, depot = o.yard.n,
-      depotM = km and math.floor(km * 1000 + 0.5), seats = bus.COACH.SEATS }
+    local row = byRide[o.bus.ride]
+    if not row then
+      row = { name = o.bus.name, from = o.bus.from, to = o.bus.to, town = o.bus.town, rail = o.bus.station == 'rail' or nil,
+        depot = o.yard.n, depotM = km and math.floor(km * 1000 + 0.5), seats = bus.COACH.SEATS }
+      byRide[o.bus.ride] = row
+      out.rides[#out.rides + 1] = row
+    end
+    -- one way and the return trip, each with its own button
+    local leg = { id = o.id, km = math.floor(o.km + 0.5), minutes = o.minutes, pay = money(o.gross), fares = money(o.fares) }
+    if o.bus.back then row.back = leg else
+      row.id, row.km, row.minutes, row.pay, row.fares = leg.id, leg.km, leg.minutes, leg.pay, leg.fares
+    end
   end
   return out
 end
@@ -2723,8 +2733,8 @@ local function companyStart(id, independent)
   S.offeredAt, S.odometerPose = nil, nil
   saveCareer()
   if want == 'bus' and offer.coach then
-    return true, string.format('Your %s is ready. Open the doors for your passengers, then drive them to %s.',
-      preset.label, offer.jobs[1].bus.stops[2].n)
+    return true, string.format('Your %s is ready. Open the doors for your passengers, then drive them to %s%s.',
+      preset.label, offer.jobs[1].bus.stops[2].n, #offer.jobs[1].bus.stops > 2 and ' and back' or '')
   end
   if want == 'bus' then
     return true, string.format('Your %s is ready. Drive %s, open the doors at every stop, then bring the bus back here.',

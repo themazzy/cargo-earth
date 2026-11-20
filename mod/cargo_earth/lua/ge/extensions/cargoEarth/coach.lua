@@ -182,20 +182,26 @@ function M.board(st, p, range)
     end
   end
   table.sort(rows, function(a, b) if a.road == b.road then return a.to.id < b.to.id end return a.road < b.road end)
+  -- each ride twice: one way (Earth takes you back after the handover) and there and back (new passengers at the far
+  -- station, the coach ends where it started)
   local out = {}
   for i = 1, math.min(#rows, M.RIDES) do
     local r = rows[i]
     local town = r.city.n
-    local line = { id = 'coach:' .. from.id .. '>' .. r.to.id, ref = '', coach = true, roadFactor = jobs.ROAD_FACTOR,
-      name = 'Coach to ' .. town, operator = '', stops = { { n = from.n, g = from.g }, { n = r.to.n, g = r.to.g } } }
     local yard = place('coachstation:', from)
-    local j = bus.job(line, yard)
-    out[#out + 1] = { id = line.id, companyId = 'coach:' .. from.id, tier = 'bus', coach = true, vehicle = 'Coach',
-      name = 'Intercity coaches', yard = yard, jobs = { j }, jobCount = 1, gross = j.pay, km = j.km,
-      pickupKm = jobs.km(p.lat, p.lon, from.g[1], from.g[2]), minutes = j.minutes, wages = j.pay,
-      fares = bus.coachFares(j.km, bus.COACH.RIDERS_AVG),
-      bus = { ref = '', name = j.bus.name, from = from.n, to = r.to.n, town = town, stops = 2, coach = true,
-        station = r.to.k, fromKind = from.k } }
+    for _, back in ipairs({ false, true }) do
+      local stops = { { n = from.n, g = from.g }, { n = r.to.n, g = r.to.g } }
+      if back then stops[3] = { n = from.n, g = from.g } end
+      local line = { id = 'coach:' .. from.id .. '>' .. r.to.id .. (back and '+back' or ''), ref = '', coach = true,
+        roadFactor = jobs.ROAD_FACTOR, name = 'Coach to ' .. town .. (back and ' and back' or ''), operator = '', stops = stops }
+      local j = bus.job(line, yard)
+      out[#out + 1] = { id = line.id, companyId = 'coach:' .. from.id, tier = 'bus', coach = true, vehicle = 'Coach',
+        name = 'Intercity coaches', yard = yard, jobs = { j }, jobCount = 1, gross = j.pay, km = j.km,
+        pickupKm = jobs.km(p.lat, p.lon, from.g[1], from.g[2]), minutes = j.minutes, wages = j.pay,
+        fares = bus.coachFares(j.km / (#stops - 1), bus.COACH.RIDERS_AVG * (#stops - 1)),
+        bus = { ref = '', name = j.bus.name, from = from.n, to = r.to.n, town = town, stops = #stops, coach = true,
+          station = r.to.k, fromKind = from.k, back = back or nil, ride = i } }
+    end
   end
   return out, from
 end

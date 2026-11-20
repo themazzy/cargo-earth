@@ -1245,12 +1245,15 @@ angular.module('beamng.apps')
             '<div class="cep-keyval"><strong style="white-space:normal"><span class="cep-busref">Coach</span> to {{ r.town }}</strong>' +
               '<strong style="white-space:nowrap">{{ fmt.money(r.pay) }}</strong></div>' +
             '<div class="cep-sub">To {{ r.to }}{{ r.rail ? " (railway station)" : "" }}</div>' +
-            '<div class="cep-pills"><span>{{ fmt.km(r.km) }}</span><span>About {{ r.minutes }} min</span><span ng-if="r.fares">+{{ fmt.money(r.fares) }} fares</span>' +
+            '<div class="cep-pills"><span>One way {{ fmt.km(r.km) }}</span><span>About {{ r.minutes }} min</span><span ng-if="r.fares">+{{ fmt.money(r.fares) }} fares</span>' +
               '<span ng-if="r.depotM !== undefined">Pickup {{ fmt.dist(r.depotM).v }} {{ fmt.dist(r.depotM).u }}</span></div>' +
+            '<div class="cep-pills" ng-if="r.back"><span>Return trip {{ fmt.km(r.back.km) }}</span><span>About {{ r.back.minutes }} min</span>' +
+              '<span>{{ fmt.money(r.back.pay) }}</span><span ng-if="r.back.fares">+{{ fmt.money(r.back.fares) }} fares</span></div>' +
             '<div class="cep-row" style="margin-top:6px"><button class="cep-sm ghost" ng-click="act(\'busGps\', r.id)">Route</button>' +
-              '<button class="cep-sm go" ng-click="act(\'busStart\', r.id)">Choose ride</button></div></div>' +
+              '<button class="cep-sm go" ng-click="act(\'busStart\', r.id)">One way</button>' +
+              '<button class="cep-sm go" ng-if="r.back" ng-click="act(\'busStart\', r.back.id)">Return trip</button></div></div>' +
           '<div class="cep-sub" ng-if="s.bus.coach.rides.length">Choose a ride, then park your own car in the marker at the station to collect the coach. ' +
-            'People board there and all get off at the far station; then you are taken back here.</div>' +
+            'One way: everyone gets off at the far station and you are taken back here. Return trip: new passengers board there and you drive them back here.</div>' +
         '</div>' +
       '</div>' +
       '<div class="cep-center" ng-if="!s.bus" ng-class="{\'cep-freight-summary\': s.trucking}">' +
