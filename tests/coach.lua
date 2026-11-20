@@ -73,6 +73,14 @@ assert(coach.status(st).ready == 2 and coach.status(st).origin == 'ready')
 assert(#coach.originRows(st) == 2)
 assert(coach.best(coach.originRows(st), 50.08, 14.60, 15).id == 'east', 'a station in another box is a start too')
 coach.TOWNS = saved
+-- two towns that picked the same station make one ride
+do
+  local same = {origin = st.origin, towns = {
+    {city = {n = 'A', lat = 50.6, lon = 14.4}, station = {id = 'shared', n = 'AN Shared', g = {50.6, 14.4}, k = 'bus', s = 2}},
+    {city = {n = 'B', lat = 50.62, lon = 14.42}, station = {id = 'shared', n = 'AN Shared', g = {50.6, 14.4}, k = 'bus', s = 2}}}}
+  local list = coach.board(same, p, range)
+  assert(#list == 1 and list[1].bus.town == 'A', 'one ride per destination station')
+end
 local offers, from = coach.board(st, p, range)
 assert(from and from.id == 'b', 'rides leave from the bus station near the player')
 assert(#offers >= 1, 'rides to the far towns with stations')

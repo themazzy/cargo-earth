@@ -168,10 +168,12 @@ function M.board(st, p, range)
   if not (st and p and range and st.origin) then return {}, nil end
   local from = M.best(M.originRows(st), p.lat, p.lon, range.nearKm or M.defaults.nearKm)
   if not from then return {}, nil end
-  local rows = {}
+  local rows, seen = {}, {}
   for _, t in ipairs(st.towns or {}) do
     local to = t.station
-    if to and to.id ~= from.id then
+    -- two towns close together can pick the same station: one ride to it (the first town, the bigger one)
+    if to and to.id ~= from.id and not seen[to.id] then
+      seen[to.id] = true
       local straight = jobs.km(from.g[1], from.g[2], to.g[1], to.g[2])
       local road = straight * jobs.ROAD_FACTOR
       if road >= (range.minKm or 0) and road <= (range.maxKm or math.huge) then
