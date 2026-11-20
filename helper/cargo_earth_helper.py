@@ -38,6 +38,9 @@ API (GET, JSON):
   /v1/sites?lat=..&lon=..     workplaces only (warehouses, yards, shops, fuel depots) in a box SITE_HALF degrees
                               around a far town, for long-distance freight destinations; built in the background and
                               kept on disk: {"state": "ready" | "loading" | "failed", "key", "depots": [as /v1/area's]}
+  /v1/stations?lat=..&lon=..  coach stations (bus stations, else railway stations) in the same box as /v1/sites, for
+                              intercity coach rides: {"state", "key", "stations": [{"id", "n", "g": [lat, lon],
+                              "k": "bus" | "rail", "s": 0-2 (how much the name reads as a station), "town"}, ...]}
   /v1/area?key=r_c            one ready area: {"key", "restaurants": [[id, lat, lon, curbLat, curbLon, name, cat, town],
                               ...], "grocers": [rows in the same format],
                               "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...],
@@ -74,6 +77,7 @@ VERSION = "0.10.4"
 SITES_CACHE_VERSION = "2"  # /v1/sites: far workplaces for long-distance freight (2: catalogue types "k")
 SITE_GRID = 0.05           # a far town's point is snapped to this grid (one cached box per grid point)
 SITE_HALF = 0.12           # half the size of that box, degrees (about 27 x 17 km in central Europe)
+STATIONS_CACHE_VERSION = "1"  # /v1/stations: coach stations around a town (intercity coach rides)
 SITE_QUEUE = 24            # far boxes waiting at most; older requests drop first
 AREA_CACHE_VERSION = "8"  # 8: workplaces carry their freight catalogue type "k"; retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
@@ -124,6 +128,42 @@ AUTO_RULES = [
           r"|convention_center|exhibition_center"),
 ]
 AUTO_RX = [(kind, re.compile(pattern)) for kind, pattern in AUTO_RULES]
+# Coach stations for intercity rides: "bus" (bus or coach stations), else "rail" (coaches often stop at the railway
+# station where a town has no bus station in Overture). By the place's Overture category, worldwide.
+STATION_RULES = [
+    ("bus", r"bus_station|coach_station|bus_terminal|coach_terminal|intercity_bus"),
+    ("rail", r"train_station|railway_station"),
+]
+STATION_RX = [(kind, re.compile(pattern)) for kind, pattern in STATION_RULES]
+STATION_SQL_RX = "|".join(pattern for _, pattern in STATION_RULES)
+# Overture files many shops and travel agencies under bus_station, so the name says how sure a row is: "s" 2 = it
+# reads as a coach/bus station or terminal (many languages), 1 = it names a bus, a station or a terminal, 0 = neither.
+STATION_NAME_RX = [
+    (2, re.compile(r"bus ?station|coach ?station|bus ?terminal|coach ?terminal|busbahnhof|zob\b|autobusov|"
+                   r"omnibus|gare routi|estaci[oó]n de autobuses|terminal de (autobuses|[oô]nibus)|rodovi[aá]ri|autostazione|"
+                   r"stazione (degli )?autobus|dworzec autobusowy|autobusni kolodvor|autobusna|busstation|"
+                   r"autobusové|autobusová|otogar|otob[uü]s terminal|flixbus|megabus|greyhound|national express|regiojet|"
+                   r"автовокзал|автостанц|автогара|автобуска|автобусна|κτελ|バスターミナル|汽车站|客运站|버스터미널|"
+                   r"محطة (الحافلات|الباصات)", re.I)),
+    (2, re.compile(r"(^|\s)[UÚ]?AN(\s|$)")),   # Czech/Slovak "AN Holešovice", "ÚAN Florenc" (capitals only)
+    (1, re.compile(r"\bbus\b|autobus|terminal|terminus|station|nádraží|nadrazi|bahnhof|\bgare\b|estaci|dworzec|"
+                   r"kolodvor|stanice|vokzal|вокзал|станц", re.I)),
+]
+
+
+def station_score(name):
+    for score, pattern in STATION_NAME_RX:
+        if pattern.search(name or ""):
+            return score
+    return 0
+
+
+def station_kind(primary, hierarchy, basic):
+    taxonomy = " ".join(str(value or "") for value in (primary, hierarchy, basic)).lower()
+    for kind, pattern in STATION_RX:
+        if pattern.search(taxonomy):
+            return kind
+    return None
 AUTO_SQL_RX = "|".join(pattern for _, pattern in AUTO_RULES)
 
 
@@ -322,7 +362,7 @@ class CacheBudget:
             self.last = time.monotonic()
             pinned = {os.path.normcase(os.path.realpath(p)) for p in pinned}
             files = []
-            for sub, extension in (("blocks", ".blk"), ("areas", ".json"), ("sites", ".json")):
+            for sub, extension in (("blocks", ".blk"), ("areas", ".json"), ("sites", ".json"), ("stations", ".json")):
                 for directory, _, names in os.walk(os.path.join(self.root, sub), followlinks=False):
                     for name in names:
                         if not name.endswith(extension):
@@ -632,6 +672,31 @@ class Builder:
                             "source": "Overture", "access": "candidate"})
         return out
 
+    def stations(self, box):
+        """Coach stations (bus stations, railway stations) in a box: a cheap places-only query."""
+        con, paths = self._con("places/place", box)
+        if not paths:
+            con.close()
+            return []
+        rx = ("regexp_matches(lower(concat_ws(' ', basic_category, taxonomy.primary, "
+              f"array_to_string(taxonomy.hierarchy, ' '))), '{STATION_SQL_RX}')")
+        q = f"""SELECT id, names.primary, basic_category, taxonomy.primary, array_to_string(taxonomy.hierarchy, ' '),
+                       (bbox.ymin + bbox.ymax) / 2, (bbox.xmin + bbox.xmax) / 2, addresses[1].locality
+                FROM read_parquet({paths!r}, union_by_name = true)
+                WHERE {self._where(box)} AND coalesce(operating_status, 'open') = 'open'
+                  AND {rx} AND confidence >= {FUEL_MIN_CONF} AND names.primary IS NOT NULL"""
+        try:
+            rows = con.execute(q).fetchall()
+        finally:
+            con.close()
+        out = []
+        for pid, name, basic, prim, hier, lat, lon, town in rows:
+            name, kind = (name or "").strip(), station_kind(prim, hier, basic)
+            if name and kind and box[1] <= lat < box[3] and box[0] <= lon < box[2]:
+                out.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)], "k": kind,
+                            "s": station_score(name), "town": (town or "").strip()})
+        return out
+
     def addresses(self, box):
         con, paths = self._con("addresses/address", box)
         if not paths:
@@ -936,18 +1001,35 @@ def valid_sites(data, key, release):
                        "depots": rows}, key, release)
 
 
+def valid_stations(data, key, release):
+    if not isinstance(data, dict) or data.get("key") != key or data.get("release") != release:
+        return False
+    rows = data.get("stations")
+    if not isinstance(rows, list):
+        return False
+    for row in rows:
+        g = row.get("g") if isinstance(row, dict) else None
+        if not (isinstance(row, dict) and isinstance(row.get("id"), str) and isinstance(row.get("n"), str)
+                and row.get("k") in ("bus", "rail") and isinstance(g, list) and len(g) == 2
+                and all(type(n) in (int, float) and math.isfinite(n) for n in g) and abs(g[0]) <= 90 and abs(g[1]) <= 180):
+            return False
+    return True
+
+
 class Sites:
     """Workplaces around far towns (long-distance freight destinations): one box per town, built one at a time in the
-    background (a cheap places-only query) and kept on disk like the areas."""
+    background (a cheap places-only query) and kept on disk like the areas. Subclasses serve other places the same
+    way (NAME: cache folder and log name, FIELD: the list in the answer)."""
+    NAME, FIELD, VERSION = "sites", "depots", SITES_CACHE_VERSION
 
     def __init__(self, builder, cache_dir, start=True):
         self.builder = builder
-        self.dir = os.path.join(cache_dir, "sites", builder.index.release, SITES_CACHE_VERSION)
+        self.dir = os.path.join(cache_dir, self.NAME, builder.index.release, self.VERSION)
         os.makedirs(self.dir, exist_ok=True)
         self.state, self.queue, self._fail_at = {}, [], {}
         self.cv = threading.Condition()
         if start:
-            threading.Thread(target=self._work, daemon=True, name="cargo-earth-sites").start()
+            threading.Thread(target=self._work, daemon=True, name="cargo-earth-" + self.NAME).start()
 
     def path(self, key):
         return os.path.join(self.dir, key + ".json")
@@ -955,8 +1037,8 @@ class Sites:
     def _cached(self, key):
         with open(self.path(key), encoding="utf-8") as f:
             data = json.load(f)
-        if not valid_sites(data, key, self.builder.index.release):
-            raise ValueError("invalid cached sites")
+        if not self.valid(data, key):
+            raise ValueError("invalid cached " + self.NAME)
         touch_cache(self.path(key))
         return data
 
@@ -964,19 +1046,22 @@ class Sites:
         key = site_key(lat, lon)
         try:
             data = self._cached(key)
-            return {"state": "ready", "key": key, "depots": data["depots"]}
+            return {"state": "ready", "key": key, self.FIELD: data[self.FIELD]}
         except (OSError, ValueError, TypeError):
             pass
         with self.cv:
             s = self.state.get(key)
             if s and s.startswith("failed") and time.time() < self._fail_at.get(key, 0) + 300:
-                return {"state": "failed", "key": key, "error": s[8:], "depots": []}
+                return {"state": "failed", "key": key, "error": s[8:], self.FIELD: []}
             if s != "loading" and key not in self.queue:
                 self.queue.append(key)
                 del self.queue[:-SITE_QUEUE]
                 self.state[key] = "queued"
                 self.cv.notify()
-        return {"state": "loading", "key": key, "depots": []}
+        return {"state": "loading", "key": key, self.FIELD: []}
+
+    def valid(self, data, key):
+        return valid_sites(data, key, self.builder.index.release)
 
     def build(self, key):
         r, c = map(int, key.split("_"))
@@ -996,8 +1081,8 @@ class Sites:
                 self.state[key] = "loading"
             try:
                 data = self.build(key)
-                if not valid_sites(data, key, self.builder.index.release):
-                    raise ValueError("invalid sites; not published")
+                if not self.valid(data, key):
+                    raise ValueError(f"invalid {self.NAME}; not published")
                 tmp = self.path(key) + f".{threading.get_ident()}.tmp"
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
@@ -1005,10 +1090,27 @@ class Sites:
                 with self.cv:
                     self.state.pop(key, None)
             except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
-                log(f"far sites {key} failed:", repr(e))
+                log(f"far {self.NAME} {key} failed:", repr(e))
                 with self.cv:
                     self._fail_at[key] = time.time()
                     self.state[key] = "failed: " + str(e)[:200]
+
+
+class Stations(Sites):
+    """Coach stations around a town (intercity coach rides): the player's own town and far ones, one box each."""
+    NAME, FIELD, VERSION = "stations", "stations", STATIONS_CACHE_VERSION
+
+    def valid(self, data, key):
+        return valid_stations(data, key, self.builder.index.release)
+
+    def build(self, key):
+        r, c = map(int, key.split("_"))
+        lat, lon = r * SITE_GRID, c * SITE_GRID
+        box = (lon - SITE_HALF, lat - SITE_HALF, lon + SITE_HALF, lat + SITE_HALF)
+        t0 = time.time()
+        rows = self.builder.stations(box)
+        log(f"stations {key}: {len(rows)} in {time.time() - t0:.1f} s")
+        return {"key": key, "release": self.builder.index.release, "stations": rows}
 
 
 ######################################################################################## speed cameras (OpenStreetMap)
@@ -2075,7 +2177,7 @@ td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
 
 
 def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None,
-          buslines=None, sites=None):
+          buslines=None, sites=None, stations=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -2151,7 +2253,8 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
-                                            "cameras": cameras is not None, "buslines": buslines is not None, "sites": sites is not None, "radio": radio is not None,
+                                            "cameras": cameras is not None, "buslines": buslines is not None, "sites": sites is not None,
+                                            "stations": stations is not None, "radio": radio is not None,
                                             "player": player is not None, "missing": missing_libraries(),
                                             "network": network, "cache": areas.budget.stats,
                                             "update": updates.info() if updates else None})
@@ -2191,6 +2294,8 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     return self._send(200, areas.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/sites" and sites:
                     return self._send(200, sites.get(float(q["lat"]), float(q["lon"])))
+                if u.path == "/v1/stations" and stations:
+                    return self._send(200, stations.get(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/area":
                     key = q.get("key", "")
                     if not re.fullmatch(r"-?\d+_-?\d+", key):
@@ -2284,7 +2389,8 @@ def main():
         return
     updates = Updates(a.cache, enabled=not a.no_update_check).start()
     serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=Player(), srv=srv,
-          updates=updates, buslines=BusLines(a.cache), sites=Sites(builder, a.cache))
+          updates=updates, buslines=BusLines(a.cache), sites=Sites(builder, a.cache),
+          stations=Stations(builder, a.cache))
 
 
 if __name__ == "__main__":

@@ -36,6 +36,23 @@ M.MAX_STOPS = 40         -- a longer line is cut here (its last stop is the end 
 M.STOP_ARRIVE_M = 30     -- a stop counts as reached this close
 M.COLLECT_FEE = 150      -- CZK: ending a shift away from the depot, the company fetches the bus
 M.DEPOT_RADIUS, M.PARK_S, M.PARK_SPEED = 12, 2, 0.5  -- choose a line, then park in its marker to collect the bus
+-- Intercity coaches (cargoEarth/coach): a ride is a job of this module with two stops (`coach = true`). Its timetable
+-- runs at road speeds (LEG_KMH grows with the leg: towns at both ends, open road between), people board at the first
+-- station (seated only: SEATS) and all get off at the last. Pay goes by the timetable's minutes as a line's does, and
+-- each rider pays FARE_KM a km. Raised 2026-11-20 (Jan: too low) to about 620-650 CZK an hour after the company's share
+-- at every length, above a city line (550) and taxi: a 112 road km ride is about 107 min, 60 + 8.5 x 107 = 970 plus
+-- about 420 in fares; the drive back is free (Earth takes you back).
+M.COACH = {
+  LEG_KMH = { 30, 78 }, LEG_KMH_PER_KM = 1.2, LEG_SLACK = 1.15, LEG_STOP_MIN = 2, BOARD_MIN = 3,
+  BASE = 60, PER_MIN = 8.5, FARE_KM = 0.15, SEATS = 34, RIDERS = { 16, 34 }, RIDERS_AVG = 25,
+  -- a station's point is the middle of its building or yard (Overture), not a bus bay: park within this to collect
+  DEPOT_RADIUS = 60,
+}
+
+-- Where the bus is collected: within this many metres of the offer's yard.
+function M.depotRadius(offer)
+  return offer and offer.coach and M.COACH.DEPOT_RADIUS or M.DEPOT_RADIUS
+end
 
 local function place(id, n, lat, lon)
   return { id = id, n = n, town = '', g = { lat, lon } }
@@ -107,10 +124,22 @@ local function lineKm(stops)
 end
 
 -- Minutes the timetable gives a hop of this many road km (the doors at its end included).
-function M.legMinutes(roadKm)
+-- coach: a coach's leg (road speeds).
+function M.legMinutes(roadKm, coach)
   roadKm = math.max(0, tonumber(roadKm) or 0)
-  local kmh = math.max(M.LEG_KMH[1], math.min(M.LEG_KMH[2], M.LEG_KMH[1] + M.LEG_KMH_PER_KM * roadKm))
-  return math.max(M.LEG_MIN, roadKm / kmh * 60 * M.LEG_SLACK + M.LEG_STOP_MIN)
+  local t = coach and M.COACH or M
+  local kmh = math.max(t.LEG_KMH[1], math.min(t.LEG_KMH[2], t.LEG_KMH[1] + t.LEG_KMH_PER_KM * roadKm))
+  return math.max(M.LEG_MIN, roadKm / kmh * 60 * t.LEG_SLACK + t.LEG_STOP_MIN)
+end
+
+-- What riders of a coach pay over `roadKm` (riders: how many).
+function M.coachFares(roadKm, riders)
+  return math.floor(M.COACH.FARE_KM * math.max(0, tonumber(roadKm) or 0) * math.max(0, riders or 0) + 0.5)
+end
+
+-- People a bus of this job takes.
+function M.capacity(job)
+  return job and job.bus and job.bus.coach and M.COACH.SEATS or M.CAPACITY
 end
 
 local function round1(x) return math.floor(x * 10 + 0.5) / 10 end
@@ -137,22 +166,27 @@ end
 function M.job(line, depot)
   local stops = {}
   for i = 1, math.min(#line.stops, M.MAX_STOPS) do stops[i] = { n = line.stops[i].n, g = { line.stops[i].g[1], line.stops[i].g[2] } } end
-  local km = lineKm(stops) * M.ROAD_FACTOR
+  local coach = line.coach and true or nil
+  local factor = tonumber(line.roadFactor) or M.ROAD_FACTOR
+  local km = lineKm(stops) * factor
   local depotKm = jobs.km(depot.g[1], depot.g[2], stops[1].g[1], stops[1].g[2])
   local total = 0
   for i, st in ipairs(stops) do
     local from = i == 1 and depot.g or stops[i - 1].g
-    st.min = round1(M.legMinutes(jobs.km(from[1], from[2], st.g[1], st.g[2]) * M.ROAD_FACTOR) + (i == 1 and M.BOARD_MIN or 0))
+    local board = i == 1 and (coach and M.COACH.BOARD_MIN or M.BOARD_MIN) or 0
+    st.min = round1(M.legMinutes(jobs.km(from[1], from[2], st.g[1], st.g[2]) * factor, coach) + board)
     total = total + st.min
   end
   local function stopPlace(i) return place('bus:' .. line.id .. ':' .. i, stops[i].n, stops[i].g[1], stops[i].g[2]) end
+  local name = coach and line.name or title(line)
+  local pay = coach and (M.COACH.BASE + M.COACH.PER_MIN * total) or (M.BASE + M.PER_MIN * total + M.PER_STOP * #stops)
   return {
-    id = 'bus:' .. line.id, kind = 'bus', cargoName = title(line) .. ' to ' .. stops[#stops].n,
+    id = 'bus:' .. line.id, kind = 'bus', cargoName = coach and name or (name .. ' to ' .. stops[#stops].n),
     from = stopPlace(1), to = stopPlace(2), km = km, straightKm = lineKm(stops), pickupKm = depotKm,
-    pay = math.floor((M.BASE + M.PER_MIN * total + M.PER_STOP * #stops) / 5 + 0.5) * 5,
+    pay = math.floor(pay / 5 + 0.5) * 5,
     minutes = math.ceil(total),
-    bus = { line = line.id, ref = line.ref, name = title(line), colour = line.colour, stops = stops, at = 1,
-      onBoard = 0, boarded = 0, legStart = 0, late = 0 },
+    bus = { line = line.id, ref = line.ref, name = name, colour = line.colour, stops = stops, at = 1,
+      onBoard = 0, boarded = 0, legStart = 0, late = 0, coach = coach, km = coach and km or nil },
   }
 end
 
@@ -181,7 +215,8 @@ function M.roadKnown(job, roadKm, nowS)
   if not st or b.timed == b.at or b.arrivedAt == b.at or not finite(roadKm) or roadKm < 0 then return false end
   b.timed = b.at
   local driven = math.max(0, (nowS or 0) - (b.legStart or 0)) / 60
-  local min = round1(driven + M.legMinutes(roadKm) + (b.at == 1 and M.BOARD_MIN or 0))
+  local board = b.at == 1 and (b.coach and M.COACH.BOARD_MIN or M.BOARD_MIN) or 0
+  local min = round1(driven + M.legMinutes(roadKm, b.coach) + board)
   if math.abs(min - (st.min or 0)) < 0.2 then return false end
   job.minutes = math.max(1, math.ceil(job.minutes + min - (st.min or 0)))
   st.min = min
@@ -382,10 +417,16 @@ function M.passengers(job, rnd)
   local off, on
   if at >= n then
     off, on = b.onBoard, 0
+  elseif b.coach then
+    -- a coach fills up at its first station; on a return trip everyone gets off at the far station and new people
+    -- get on there for the way back
+    local r = M.COACH.RIDERS
+    off = at == 1 and 0 or b.onBoard
+    on = math.min(r[1] + rnd(r[2] - r[1] + 1) - 1, M.COACH.SEATS - (b.onBoard - off))
   else
     off = at == 1 and 0 or math.floor(b.onBoard * (rnd(5) - 1) / 10 + 0.5)       -- 0..40 % of those on board
     local most = math.max(1, math.ceil(14 * (1 - (at - 1) / n)))
-    on = math.min(rnd(most + 1) - 1, M.CAPACITY - (b.onBoard - off))
+    on = math.min(rnd(most + 1) - 1, M.capacity(job) - (b.onBoard - off))
   end
   local dwell = math.min(M.MAX_DWELL_S, M.DWELL_S + M.PER_PERSON_S * (off + on))
   return off, math.max(0, on), dwell
@@ -416,7 +457,11 @@ function M.skip(job, nowS)
 end
 
 -- What the line pays at its end: the quote and the fares of the people who rode.
-function M.fares(job) return math.floor(M.PER_PASSENGER * (job.bus.boarded or 0) + 0.5) end
+function M.fares(job)
+  -- each rider rides one leg (station to station) of a coach
+  if job.bus.coach then return M.coachFares((job.bus.km or job.km) / math.max(1, #job.bus.stops - 1), job.bus.boarded or 0) end
+  return math.floor(M.PER_PASSENGER * (job.bus.boarded or 0) + 0.5)
+end
 
 -- The line's pay at its end: the quote less the skipped stops' share, and the fares.
 function M.linePay(job)
@@ -433,7 +478,8 @@ function M.state(job, dwell, nowS)
   for i = b.at, math.min(#b.stops, b.at + 3) do next[#next + 1] = { n = b.stops[i].n, current = i == b.at or nil } end
   return { ref = b.ref, name = b.name, colour = b.colour, at = b.at, count = #b.stops, onBoard = b.onBoard,
     boarded = b.boarded, skipped = b.skipped or 0, next = next, dueS = math.floor(dueS + 0.5), dueMin = dueMin,
-    late = math.floor(M.lateMinutes(job) + 0.5), comfort = M.comfort(job), last = M.last(job), capacity = M.CAPACITY,
+    late = math.floor(M.lateMinutes(job) + 0.5), comfort = M.comfort(job), last = M.last(job), capacity = M.capacity(job),
+    coach = b.coach,
     doors = dwell and { off = dwell.off, on = dwell.on, left = math.ceil(dwell.remaining) } or nil }
 end
 

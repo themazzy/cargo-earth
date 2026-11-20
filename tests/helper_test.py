@@ -301,6 +301,42 @@ class NetworkAndStorageTests(unittest.TestCase):
                 sites.get(40 + i * 0.1, 10)
             self.assertLessEqual(len(sites.queue), helper.SITE_QUEUE)
 
+    def test_coach_stations_queue_build_rank_and_serve(self):
+        hier = "travel_and_transportation public_transit_facility_or_service bus_station"
+        rows = [("a1", "Autobusové nádraží Písek", "public_transit_facility_or_service", "bus_station", hier, 49.30, 14.15, "Písek"),
+                ("a2", "Steel Fish", "public_transit_facility_or_service", "bus_station", hier, 49.31, 14.15, "Písek"),
+                ("a3", "Železniční stanice Písek", "train_station", "train_station", "travel train_station", 49.29, 14.16, "Písek"),
+                ("a4", "Cafe", "cafe", "cafe", "cafe", 49.30, 14.15, "Písek"),
+                ("a5", "Far Station", "bus_station", "bus_station", hier, 51.0, 14.15, "")]
+        conn = Connection(rows)
+        builder = helper.Builder(SimpleNamespace(release="test"), "")
+        builder._con = lambda key, box: (conn, ["x"])
+        with cache_dir() as cache:
+            stations = helper.Stations(builder, cache, start=False)
+            first = stations.get(49.30, 14.15)
+            self.assertEqual(first, {"state": "loading", "key": first["key"], "stations": []})
+            data = stations.build(stations.queue.pop())
+            self.assertTrue(helper.valid_stations(data, first["key"], "test"))
+            self.assertFalse(helper.valid_sites(data, first["key"], "test"))
+            got = {r["n"]: (r["k"], r["s"]) for r in data["stations"]}
+            self.assertEqual(got, {"Autobusové nádraží Písek": ("bus", 2), "Steel Fish": ("bus", 0),
+                                   "Železniční stanice Písek": ("rail", 1)})
+            self.assertIn("bus_station", conn.query)
+            Path(stations.path(first["key"])).write_text(json.dumps(data), encoding="utf-8")
+            ready = stations.get(49.3001, 14.1501)
+            self.assertEqual(ready["state"], "ready")
+            self.assertEqual(len(ready["stations"]), 3)
+            self.assertIn(os.path.join("stations", "test", helper.STATIONS_CACHE_VERSION), stations.dir)
+            bad = dict(data, stations=[{"id": "x", "n": "X", "g": [99, 14], "k": "bus"}])
+            self.assertFalse(helper.valid_stations(bad, first["key"], "test"))
+
+    def test_station_names_say_how_sure_a_row_is(self):
+        for name, score in (("Prague Bus Station", 2), ("ÚAN Florenc", 2), ("AN Holešovice", 2), ("ZOB Hamburg", 2),
+                            ("Gare routière de Perrache", 2), ("Автовокзал Казань", 2), ("Flixbus Stop", 2),
+                            ("Na Knížecí (tram, bus)", 1), ("Gare de Lyon Part-Dieu", 1), ("An der Kirche", 0),
+                            ("Bigben Travel", 0), ("JYSK", 0)):
+            self.assertEqual(helper.station_score(name), score, name)
+
     def test_area_validation_rejects_bad_nested_coordinates_and_tile_rows(self):
         data = {"key": "1_1", "release": "test", "restaurants": [], "grocers": [], "depots": [], "fuel": [], "tiles": {"1_1": [[50, 14, 50, 14, "Street 12"]]}}
         self.assertTrue(helper.valid_area(data, "1_1", "test"))
