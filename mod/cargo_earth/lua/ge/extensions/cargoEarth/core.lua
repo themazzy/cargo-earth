@@ -52,6 +52,8 @@ M.RULES = {
   courier = { arriveM = 30, stopS = 5, cancelFee = 50 },
   trucking = { arriveM = 35, stopS = 3, cancelFee = 2000 },
   bus = { arriveM = 30, stopS = 1, cancelFee = 0 },   -- city bus lines (cargoEarth/bus): doors open from the phone
+  -- intercity coaches (cargoEarth/coach): a station's point is the middle of its building or yard, not a bus bay
+  coach = { arriveM = 60, stopS = 1, cancelFee = 0 },
 }
 M.COUNTRY_S = 5   -- seconds between border checks
 M.TOW_RULES = { arriveM = 30, stopS = 3, cancelFee = 200 }
@@ -359,7 +361,7 @@ end
 local function rules(job)
   if job and job.kind == 'tow' then return M.TOW_RULES end
   if job and job.kind == 'taxi' then return M.TAXI_RULES end
-  if job and job.kind == 'bus' then return M.RULES.bus end
+  if job and job.kind == 'bus' then return job.bus and job.bus.coach and M.RULES.coach or M.RULES.bus end
   return M.RULES[(job and job.kind == 'food') and 'courier' or (job and 'trucking') or S.mode]
 end
 local function arrivalRadius(job)
@@ -1744,6 +1746,7 @@ end
 
 function M.busFetch(p)
   if S.mode ~= 'bus' or (S.job and not M.busNamesNeedRefresh()) or not p or S.clock < (S.busAskAt or 0) then return end
+  if S.busKind == 'coach' and not S.job then return end   -- the Coaches list asks for stations instead
   S.busAskAt = S.clock + M.BUS_ASK_S
   S.busIdx = S.busIdx or require('cargoEarth/bus').index()
   local retry = S.busRetry and '&retry=1' or ''
@@ -1763,6 +1766,45 @@ function M.busFetch(p)
     local here = earth.pose()
     if here then S.busBoard = bus.board(S.busIdx, here.lat, here.lon) end
   end, '/v1/buslines')
+end
+
+-- Intercity coaches (cargoEarth/coach): stations near you and in far towns from the helper (/v1/stations), while the
+-- Bus page shows Coaches.
+function M.coachTick(p)
+  if S.mode ~= 'bus' or S.busKind ~= 'coach' or S.job or S.career.employment or not p then return end
+  local coach, longhaul = require('cargoEarth/coach'), require('cargoEarth/longhaul')
+  if not S.cities then
+    local ok, data = pcall(jsonReadFile, DATA_DIR .. 'cities.json')
+    S.cities = longhaul.cities(ok and data or nil)
+  end
+  S.coach = S.coach or {}
+  local range = M.jobOptions('coach')
+  coach.tick(S.coach, S.clock, p, range, S.cities, helper.ask)
+  S.coachBoard, S.coachFrom = coach.board(S.coach, p, range)
+end
+
+-- The coach rides for the phone (the Bus page's Coaches list).
+function M.coachState(p)
+  local coach, bus = require('cargoEarth/coach'), require('cargoEarth/bus')
+  local st = coach.status(S.coach)
+  local out = { status = st, rides = {}, helper = helper.status().state, range = M.jobOptions('coach'),
+    from = S.coachFrom and { n = S.coachFrom.n, rail = S.coachFrom.k == 'rail' or nil } or nil }
+  for _, o in ipairs(S.coachBoard or {}) do
+    local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
+    out.rides[#out.rides + 1] = { id = o.id, name = o.bus.name, from = o.bus.from, to = o.bus.to, town = o.bus.town,
+      rail = o.bus.station == 'rail' or nil, km = math.floor(o.km + 0.5), minutes = o.minutes,
+      pay = math.floor(o.gross * employment.shareFor('bus', S.career) / 5 + 0.5) * 5,
+      fares = math.floor((o.fares or 0) * employment.shareFor('bus', S.career) / 5 + 0.5) * 5, depot = o.yard.n,
+      depotM = km and math.floor(km * 1000 + 0.5), seats = bus.COACH.SEATS }
+  end
+  return out
+end
+
+-- An offer of the bus board or the coach board, by id.
+function M.busOffer(id)
+  for _, list in ipairs({ S.busBoard or {}, S.coachBoard or {} }) do
+    for _, offer in ipairs(list) do if offer.id == id then return offer end end
+  end
 end
 
 -- The phone and upper overlay share this stop state and the boarding clock.
@@ -1787,18 +1829,19 @@ end
 function M.busState()
   local bus, c, p = require('cargoEarth/bus'), S.career, earth.pose()
   local shift = c.employment
-  local out = { state = S.busIdx and S.busIdx.state or 'loading', helper = helper.status().state, collectFee = bus.COLLECT_FEE }
+  local out = { state = S.busIdx and S.busIdx.state or 'loading', helper = helper.status().state, collectFee = bus.COLLECT_FEE,
+    kind = S.busKind == 'coach' and 'coach' or 'lines' }
   out.progress, out.error = S.busIdx and S.busIdx.progress, S.busIdx and S.busIdx.error
   out.found = S.busIdx and #(S.busIdx.lines or {}) or 0
   out.nearestKm = S.busIdx and S.busIdx.nearestKm
   out.radiusKm = bus.NEAR_KM
   if S.busDepot and not shift then
     local d = S.busDepot
-    out.selected = {id = d.offer.id, name = d.offer.jobs[1].cargoName, depot = d.offer.yard.n,
+    out.selected = {id = d.offer.id, name = d.offer.jobs[1].cargoName, depot = d.offer.yard.n, coach = d.offer.coach,
       leftS = math.max(0, math.ceil(bus.PARK_S - (d.parked or 0))), error = d.error}
   end
   if shift and shift.tier == 'bus' then
-    out.shift = { name = shift.companyName, depot = shift.yard.n, phase = shift.phase, error = S.companyError,
+    out.shift = { name = shift.companyName, depot = shift.yard.n, phase = shift.phase, error = S.companyError, coach = shift.coach,
       atDepot = employment.atYard(c, p), handover = shift.handover }
   end
   if S.job and S.job.bus then
@@ -1807,8 +1850,9 @@ function M.busState()
     out.canDoors, out.stop = stop and stop.canDoors, stop
     return out
   end
+  if out.kind == 'coach' and not shift then out.coach = M.coachState(p) end
   out.lines = {}
-  for _, o in ipairs(not shift and S.busBoard or {}) do
+  for _, o in ipairs(not shift and out.kind == 'lines' and S.busBoard or {}) do
     local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
     out.lines[#out.lines + 1] = { id = o.id, ref = o.bus.ref, name = o.bus.name, from = o.bus.from, to = o.bus.to,
       singleDirection = o.bus.singleDirection, limited = o.bus.limited, stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.shareFor('bus', S.career) / 5 + 0.5) * 5,
@@ -1976,7 +2020,7 @@ end
 -- A stop the bus cannot reach: skipped, unpaid, and the line goes on (or ends, at the last stop).
 function M.busSkip()
   local j = S.job
-  if not (j and j.bus) or S.busDwell then return end
+  if not (j and j.bus) or j.bus.coach or S.busDwell then return end   -- a coach has only its two stations
   local bus = require('cargoEarth/bus')
   local name, last = j.bus.stops[j.bus.at].n, bus.last(j)
   bus.skip(j, M.elapsed(j))
@@ -2615,7 +2659,7 @@ local function companyStart(id, independent)
   if earth.status() ~= 'ok' or not p or p.camera or (p.speed or 0) > M.STOP_SPEED then return false, 'Park at the company yard first.' end
   local offer
   for _, row in ipairs(S.companyBoard or {}) do if row.id == id then offer = row break end end
-  for _, row in ipairs(not offer and S.busBoard or {}) do if row.id == id then offer = row break end end
+  offer = offer or M.busOffer(id)
   if not offer then return false, 'Refresh the company board.' end
   local radius = offer.tier == 'bus' and require('cargoEarth/bus').DEPOT_RADIUS or employment.RADIUS
   if jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) * 1000 > radius then
@@ -2647,8 +2691,9 @@ local function companyStart(id, independent)
   local preset, config = haul.loaners[want], nil
   if want == 'bus' then
     local key
-    config, key = M.G.busLoanerConfig and M.G.busLoanerConfig()
-    preset = { model = haul.loaners.bus.model, key = key, name = haul.loaners.bus.name, label = haul.loaners.bus.label }
+    local lent = offer.coach and haul.loaners.coach or haul.loaners.bus
+    config, key = M.G.busLoanerConfig and M.G.busLoanerConfig(offer.coach)
+    preset = { model = lent.model, key = key, name = lent.name, label = lent.label }
   else
     config = M.G.freightLoanerConfig and M.G.freightLoanerConfig(preset.model, preset.key)
   end
@@ -2677,6 +2722,10 @@ local function companyStart(id, independent)
   S.phone.online, S.phone.incoming, S.phone.lastDone = false, nil, nil
   S.offeredAt, S.odometerPose = nil, nil
   saveCareer()
+  if want == 'bus' and offer.coach then
+    return true, string.format('Your %s is ready. Open the doors for your passengers, then drive them to %s.',
+      preset.label, offer.jobs[1].bus.stops[2].n)
+  end
   if want == 'bus' then
     return true, string.format('Your %s is ready. Drive %s, open the doors at every stop, then bring the bus back here.',
       preset.label, offer.jobs[1].cargoName)
@@ -2691,14 +2740,13 @@ function M.busSelect(id)
     S.contractMsg = {text = 'Choose a line while driving your own career car.', at = S.clock}
     return
   end
-  for _, offer in ipairs(S.busBoard or {}) do
-    if offer.id == id then
-      S.busDepot = {offer = offer, parked = 0}
-      earth.gps(offer.yard.g[1], offer.yard.g[2], 'Bus pickup: ' .. offer.yard.n)
-      return
-    end
+  local offer = M.busOffer(id)
+  if offer then
+    S.busDepot = {offer = offer, parked = 0}
+    earth.gps(offer.yard.g[1], offer.yard.g[2], (offer.coach and 'Coach pickup: ' or 'Bus pickup: ') .. offer.yard.n)
+    return
   end
-  S.contractMsg = {text = 'Refresh the bus lines and choose a line again.', at = S.clock}
+  S.contractMsg = {text = S.busKind == 'coach' and 'Choose the ride again.' or 'Refresh the bus lines and choose a line again.', at = S.clock}
 end
 
 function M.busDepotInfo(p)
@@ -2707,7 +2755,7 @@ function M.busDepotInfo(p)
   local inside = jobs.km(p.lat, p.lon, d.offer.yard.g[1], d.offer.yard.g[2]) * 1000 <= bus.DEPOT_RADIUS
   return {depot = true, inZone = inside, stopping = inside and (d.parked or 0) > 0,
     frac = math.min(1, (d.parked or 0) / bus.PARK_S), leftS = math.max(0, bus.PARK_S - (d.parked or 0)),
-    title = d.error and 'Bus unavailable' or 'Park here to collect your bus',
+    title = d.error and 'Bus unavailable' or (d.offer.coach and 'Park here to collect your coach' or 'Park here to collect your bus'),
     detail = d.error or 'Your own car will be stored when the bus replaces it.', stopS = bus.PARK_S}
 end
 
@@ -2721,12 +2769,13 @@ function M.busDepotTick(p, dt)
   d.parked = d.parked + dt
   if d.parked < bus.PARK_S then return end
   -- Keep the chosen offer even if the nearby board refreshed while driving to it.
-  S.busBoard = S.busBoard or {}
+  local field = d.offer.coach and 'coachBoard' or 'busBoard'
+  S[field] = S[field] or {}
   local found = false
-  for i, offer in ipairs(S.busBoard) do
-    if offer.id == d.offer.id then S.busBoard[i], found = d.offer, true break end
+  for i, offer in ipairs(S[field]) do
+    if offer.id == d.offer.id then S[field][i], found = d.offer, true break end
   end
-  if not found then S.busBoard[#S.busBoard + 1] = d.offer end
+  if not found then S[field][#S[field] + 1] = d.offer end
   local ok, why = companyStart(d.offer.id)
   if ok or S.career.employment then S.busDepot = nil else d.error = why end
 end
@@ -3161,6 +3210,19 @@ function M.phoneAction(a, orderId)
     end
   elseif a == 'busGps' or a == 'busStart' then
     M.busSelect(orderId)
+  elseif a == 'busKind' then
+    -- the Bus page's City lines | Coaches switch (not while a bus is chosen or driven)
+    if (orderId == 'coach' or orderId == 'lines') and not S.busDepot and not S.career.employment then
+      S.busKind = orderId == 'coach' and 'coach' or nil
+      if S.busKind then M.coachTick(earth.pose()) else S.busAskAt = 0 M.busFetch(earth.pose()) end
+    end
+  elseif a == 'coachRetry' then
+    if S.coach then
+      S.coach.old = nil
+      for _, t in ipairs(S.coach.towns or {}) do if not t.done then t.nextAt = 0 end end
+      if S.coach.origin and not S.coach.origin.done then S.coach.origin.nextAt = 0 end
+    end
+    M.coachTick(earth.pose())
   elseif a == 'busCancelSelection' then
     if S.busDepot then S.busDepot = nil earth.gpsClear() end
   elseif a == 'contractGps' or a == 'contractStart' then
@@ -3382,6 +3444,7 @@ local function helperTick(p)
   local areas = S.mode == 'taxi' or (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
   local wantCameras = camerasOn() and onHelperCameras or nil
   M.busFetch(p)
+  M.coachTick(p)
   M.longHaulTick(p)
   radioAlive()
   askUpdate()
@@ -4849,8 +4912,9 @@ function M.settingsState()
     or profile.company and 'Distance per delivery; the drives back come on top. Applies to new contracts.'
     or id:find('tow_', 1, true) == 1 and 'Distance with the car loaded. A borrowed trailer adds an empty drive.'
     or id == 'parcels' and 'Length of the whole round. The number of stops stays the same.'
+    or id == 'coach' and 'Road km to the far town. Rides go to towns of 30,000 people or more, from the coach station nearest you.'
     or 'Applies to new offers.'
-  if id ~= 'bus' then
+  if id ~= 'bus' and id ~= 'coach' then
     out.jobHint = out.jobHint .. ((profile.tier and id ~= 'parcels')
       and ' Over 120 km, jobs go to real towns; truck access there is not checked.'
       or ' A wider range only finds places already loaded around you.')

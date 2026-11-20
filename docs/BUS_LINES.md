@@ -61,8 +61,7 @@ letters, 20 at most: its letter atlas has no accents), the next-stop screen insi
 Sent as the citybus controller's `bus_onRouteChange` event (`gamecar.busSign`, `bus.sign`) whenever the bus moves on
 to a new stop, and every 30 s for a reset bus.
 
-The phone button opens the real doors (citybus controller `bus`, `bus_doorsRequestedOpen`; fallback: the `doors` pneumatics on frontDoors/rearDoors). Not done yet: coaches between towns, and
-buying your own bus. Not tested in game.
+The phone button opens the real doors (citybus controller `bus`, `bus_doorsRequestedOpen`; fallback: the `doors` pneumatics on frontDoors/rearDoors). Not done yet: buying your own bus. Not tested in game.
 
 ## People in the seats
 
@@ -77,3 +76,40 @@ shows the player in the driver's seat, and the game can seat dummy people in the
   player sits in a seat and asks the game to seat them if not. Mod cars without seat occupant slots show no driver;
   that is up to the car's author.
 
+
+## Intercity coaches
+
+The Bus page has two lists: **City lines** (above) and **Coaches**. A coach ride goes from a real bus station near you
+to the bus station of a far town, one way, with all the passengers on board from start to end.
+
+- **Vehicle.** BeamNG has no separate coach model; the company lends the stock Wentward DT40L in its **Highway**
+  configuration (6-speed gearbox, taller highway gearing) when the game has it, else a coach one, else the city one
+  (`gamecar.busLoanerConfig(true)`). Its 34 passenger seats get people as on a line (seated only, no standing).
+- **Stations.** The helper's `/v1/stations?lat=..&lon=..` reads Overture places (worldwide) in the same box as
+  `/v1/sites` (0.24 degrees around the point, kept on disk): `bus_station` and the like as `"k": "bus"`, railway
+  stations as `"k": "rail"` (coaches often stop there when a town has no bus station). Overture files many shops and
+  travel agencies under bus_station too, so each row has `"s"`: 2 when its name reads as a bus or coach station or
+  terminal (many languages: Bus Station, ÚAN/AN, ZOB, Busbahnhof, Gare routière, Автовокзал...), 1 when it names a bus
+  or a station, 0 otherwise. The mod takes a named bus station first, then a bus stop, then the railway station, a
+  bus_station row with an unrelated name last; the nearest of the surest.
+- **Where to.** Far towns as for long-distance freight: Natural Earth towns of 30,000 people or more
+  (`data/cities.json`), the biggest per compass direction, 8 at a time; a town whose station box has nothing within
+  6 km of its centre gives way to the next one. The ride leaves from the surest station within *Coach station within*
+  (default 15 km) of you.
+- **Job settings → Intercity coaches:** coach station within (1-30 km, default 15), shortest and longest ride
+  (road km, default 40-200; straight km x 1.3).
+- **A ride.** Choose a ride, drive your own car to the station and park in the 12 m marker for 2 s; the coach replaces
+  your car. Open the doors: 16-34 people board (up to 15 s). Drive to the far station (arrival within 60 m: a
+  station's point is the middle of its building or yard), open the doors, everyone gets off, the coach is handed over
+  and BeamNG.Earth takes you back to your car. No Skip stop (a coach has only its two stations); End shift works as on
+  a line (150 CZK away from the start station).
+- **Timetable.** As a line's, at road speeds: 30 km/h plus 1.2 km/h a km, at most 78 km/h, times 1.15, plus 2 min at
+  the far station and 3 min to board at the start. Comfort, the minutes late (1 % a minute) and the stars work as on a
+  line.
+- **Pay.** 60 + 5.5 per timetable minute, and each rider pays 0.1 CZK a km (`bus.COACH`); 80 % of it is your wage, as on
+  a line. A 100 km ride: about 95 minutes, about 580 + 250 in fares (gross), about 450 CZK an hour after the company's
+  share; the way back is free.
+
+Rules: `cargoEarth/coach.lua` (stations, far towns, the board; pure) and `cargoEarth/bus.lua` (`bus.COACH`, the job
+with `coach = true`). Needs the helper from this version (an older one answers 404 and the phone says to update it).
+Not tested in game.

@@ -17,10 +17,12 @@ M.types = {
   {id = 'company_rigid', name = 'Company contracts: box truck', mode = 'trucking', tier = 'rigid', company = true},
   {id = 'company_semi', name = 'Company contracts: semi', mode = 'trucking', tier = 'semi', company = true},
   {id = 'bus', name = 'Mapped bus lines', mode = 'bus'},
+  {id = 'coach', name = 'Intercity coaches', mode = 'bus'},
 }
 
 -- what the distance fields are called for a job type
 function M.labels(id)
+  if id == 'coach' then return { nearKm = 'Coach station within', minKm = 'Shortest ride', maxKm = 'Longest ride' } end
   local word = id == 'taxi' and 'ride' or id == 'courier' and 'delivery' or id == 'parcels' and 'round'
     or (id or ''):find('tow_', 1, true) == 1 and 'tow' or 'job'
   return { nearKm = 'Pickups within', minKm = 'Shortest ' .. word, maxKm = 'Longest ' .. word }
@@ -36,6 +38,7 @@ function M.defaults(id)
   if id == 'courier' then return require('cargoEarth/food').defaults end
   if id == 'taxi' then return require('cargoEarth/taxi').defaults end
   if id == 'bus' then return {} end -- mapped lines keep their actual routes
+  if id == 'coach' then return require('cargoEarth/coach').defaults end
   if t.company then
     local range = require('cargoEarth/employment').KM[t.tier]
     return {nearKm = 25, minKm = range[1], maxKm = range[2]}
@@ -55,6 +58,7 @@ function M.bounds(id)
   local max = id == 'courier' and 8 or id == 'taxi' and 15.6 or id == 'parcels' and 100 or M.MAX_KM
   -- Pickup radius: address-based jobs (taxi, tow, parcels) copy every address in that radius on each refresh, so
   -- they stay local; depot-based work (freight, contracts, fuel) may look further.
+  if id == 'coach' then return {nearKm = {1, 30}, minKm = {10, M.MAX_KM}, maxKm = {10, M.MAX_KM}} end
   local near = M.NEAR_MAX[id] or 200
   return {nearKm = {0.5, near}, minKm = {0.5, max}, maxKm = {0.5, max}}
 end

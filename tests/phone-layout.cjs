@@ -27,13 +27,13 @@ module.exports = function auditPhoneLayout (directive) {
     actionGroups++
   }
   for (const command of ['accept', 'decline', 'resume', 'freePlay', 'dismiss', 'busDoors',
-    'busSkip', 'busEnd', 'busRetry', 'busCancelSelection', 'towLoad', 'towHitch', 'restoreTrailer']) {
+    'busSkip', 'busEnd', 'busRetry', 'coachRetry', 'busCancelSelection', 'towLoad', 'towHitch', 'restoreTrailer']) {
     pinned(command, click => click === "act('" + command + "')")
   }
   const screenForAction = {
     accept: ['incoming'], decline: ['incoming'], resume: ['resume'], freePlay: ['choose', 'resume'],
     dismiss: ['done', 'failed'], busDoors: ['active'], busSkip: ['active'], busEnd: ['active', 'offline'],
-    busRetry: ['offline'], busCancelSelection: ['offline'], towLoad: ['active'], towHitch: ['active'], restoreTrailer: ['active']
+    busRetry: ['offline'], coachRetry: ['offline'], busCancelSelection: ['offline'], towLoad: ['active'], towHitch: ['active'], restoreTrailer: ['active']
   }
   for (const [command, screens] of Object.entries(screenForAction)) {
     for (const button of buttons.filter(n => n.attrs['ng-click'] === "act('" + command + "')")) {

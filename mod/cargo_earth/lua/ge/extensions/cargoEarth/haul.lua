@@ -27,6 +27,8 @@ M.loaners = {
   semi = { model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', label = 'tractor' },
   -- a city bus line (cargoEarth/bus): the stock Wentward city bus, its configuration found in the game
   bus = { model = 'citybus', name = 'city bus', label = 'city bus' },
+  -- an intercity coach ride (cargoEarth/coach): the same Wentward bus in its highway configuration (taller gearing)
+  coach = { model = 'citybus', name = 'coach', label = 'coach' },
 }
 
 -- kg per parcel slot of freight. Real loads (Jan, 2026-11-15): a van leaves with about 0.6-1 t, a box truck with 4-8 t and a
