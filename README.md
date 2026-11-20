@@ -56,7 +56,7 @@ Pick **Food delivery**, **Freight**, **Taxi** or **Bus** on the phone's offline 
 - Buy used cars with real wear (each with the game's own picture and a Details card: power, torque, weight, top speed,
   0-100, drive, gearbox and fuel; filter by kind, see cargo space and the jobs each can do), trade in, and buy real BeamNG parts. Repairs cost money; repairing for free through the
   game's menu puts the bill on your debt, and Finances shows where every charge came from.
-- Choose a home garage at a real address, store and switch cars there.
+- Set a home garage where you park, grow it from a lock-up to a small depot and build rooms (workshop, fuel tank, rest room) for bonuses at home. A home is never required.
 - If a car you own came from a vehicle mod you have since removed, the career still loads: another of your cars (or a
   stand-in Pigeon) takes its place until the mod is back.
 - Earn 1 to 5 stars on every order. They build two reputations, courier and freight, that bring premium work and better

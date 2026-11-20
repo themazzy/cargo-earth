@@ -1652,6 +1652,9 @@ local function finishDelivery(force)
     pay, tip, tipWhy = require('cargoEarth/taxi').settle(j, j.pay, minutes, j.minutes, perMin, M.LATE_FLOOR, condition, food.tip)
   end
   local c = S.career
+  local restedExtra
+  pay, restedExtra = home.restedPay(c, pay)
+  j.restedExtra = restedExtra > 0 and restedExtra or nil
   local toDebt = 0
   if j.companyShift then
     if not employment.delivered(c, j, pay + tip) then return end
@@ -2599,7 +2602,10 @@ function M.placesState()
     started = c.garage.started, blocked = S.pendingCareer ~= nil, last = c.lastContract,
     discovery = helper.status() }
   if c.home then
-    out.atHome, out.used = home.near(c, p), home.count(c.employment and c.employment.personalGarage or c.garage)
+    local pg = c.employment and c.employment.personalGarage or c.garage
+    out.homeInfo = home.state(c, p, pg.debt or 0)
+    out.money = math.floor(c.money or 0)
+    out.atHome, out.used = home.near(c, p), home.count(pg)
     out.capacity = firm.capacity(c)
     out.homeKm = p and jobs.km(p.lat, p.lon, c.home.g[1], c.home.g[2]) or nil
   end
@@ -2899,6 +2905,10 @@ function M.placesDo(name, value)
       ok, why = home.claim(c, p, food.addresses(S.fidx, p.lat, p.lon, '')[1])
       if ok and not saveCareer() then c.home, ok, why = old, false, S.saveError end
     end
+  elseif name == 'upgradeHome' or name == 'buildRoom' then
+    local debt = (c.employment and c.employment.personalGarage or c.garage).debt or 0
+    if name == 'upgradeHome' then ok, why = home.upgrade(c, debt) else ok, why = home.build(c, value, debt) end
+    if ok and not saveCareer() then why = S.saveError end
   elseif name == 'homeGps' and c.home then
     if S.job or c.employment then why = 'Finish your current work before changing GPS.'
     else ok, why = earth.gps(c.home.g[1], c.home.g[2], c.home.name) end
@@ -4009,12 +4019,22 @@ local function fuelNear()
       station, km = { id = 'hq', g = hq.g, n = 'Your firm tank', kind = 'fuel', hq = true }, d
     end
   end
+  -- and the home's fuel tank (it charges electric cars too)
+  local h = S.career.home
+  if h and h.g and home.has(S.career, 'tank') then
+    local d = fuel.km(p.lat, p.lon, h.g[1], h.g[2])
+    if not km or d < km or d * 1000 <= home.RADIUS then
+      station, km = { id = 'home', g = h.g, n = st.kind == 'electric' and 'Your home charger' or 'Your home tank',
+        kind = fuel.stationKind(st.kind), home = true }, d
+    end
+  end
   S.fuelNear = station and { station = station, km = km, kind = st.kind,
     at = km * 1000 <= fuel.STATION_RADIUS and not p.camera and (p.speed or 0) <= M.STOP_SPEED } or { kind = st.kind }
   return S.fuelNear, st
 end
 
 local function fuelFactor(station)
+  if station.home then return home.roomById.tank.factor end
   return station.hq and fuel.HQ_DISCOUNT or fuel.stationFactor(station.id)
 end
 
@@ -4254,10 +4274,14 @@ function M.garageStart(model, name)
   return garageSay(ok, msg)
 end
 function M.garageSell(part) return garageSay(garage.sell(M.G, S.career.garage, S.career, part)) end
+-- The cheapest workshop where the car is: the firm's at the headquarters, the home's at home.
+function M.repairFactor(p)
+  return math.min(firm.repairFactor(S.career, p), home.factorHere(S.career, 'workshop', p) or 1)
+end
 function M.garageRepair()
   -- the firm's workshop does the work for less at the headquarters: the discount counts before the money check
   local g = S.career.garage
-  local full, factor = g.repair or 0, firm.repairFactor(S.career, earth.pose())
+  local full, factor = g.repair or 0, M.repairFactor(earth.pose())
   local ok, msg, cost = garage.repairCar(M.G, g, S.career, factor)
   if ok and factor < 1 then
     msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved)', cost, full - cost)
@@ -4284,11 +4308,6 @@ function M.garageBringCar(captured)
 end
 local function garageSwitchCar(id, captured)
   if S.job then return false, 'Finish your current orders before switching cars.' end
-  local here = earth.pose()
-  if S.career.home and not home.near(S.career, here) and not firm.atHq(S.career, here) then
-    return false, S.career.firm and S.career.firm.hq and 'Return to your home garage or headquarters to switch cars.'
-      or 'Return to your home garage to switch cars.'
-  end
   if not captured then
     local waiting, why = M.captureOutgoing(function() return garageSwitchCar(id, true) end)
     if waiting then return false, why end
@@ -4329,10 +4348,12 @@ local function garageRoadside()
   say(msg)
   return true, msg
 end
--- Where a service is possible now: at the headquarters (the workshop's share off) or at a fuel station.
+-- Where a service is possible now: at the headquarters or home (the workshop's share off) or at a fuel station.
 local function serviceSpot()
   local p = earth.status() == 'ok' and earth.pose() or nil
-  if firm.atHq(S.career, p) then return 'the headquarters', firm.value(S.career, 'workshop') or 1 end
+  if firm.atHq(S.career, p) then return 'the headquarters', math.min(firm.value(S.career, 'workshop') or 1, home.factorHere(S.career, 'workshop', p) or 1) end
+  local homeFactor = p and not p.camera and (p.speed or 0) <= M.STOP_SPEED and home.factorHere(S.career, 'workshop', p)
+  if homeFactor then return 'your home workshop', homeFactor end
   if not p or p.camera or (p.speed or 0) > M.STOP_SPEED then return nil end
   for _, kind in ipairs({ fuel.stationKind('gasoline'), fuel.stationKind('electric') }) do
     local station, km = fuel.nearest(S.fuelIdx, p.lat, p.lon, kind, 1)
@@ -4354,7 +4375,7 @@ local function garageService(id, item)
     if not car or car.loaner then return false, 'The loaner is serviced by its company.' end
     if not garage.inOwnCar(M.G, g) then return false, 'Sit in your car first.' end
     where, factor = serviceSpot()
-    if not where then return false, 'Drive to your headquarters or a fuel station for a service.' end
+    if not where then return false, 'Drive to a fuel station, your home workshop or your headquarters for a service.' end
   end
   return garageSay(upkeep.service(c, car, item and item ~= '' and { item } or nil, factor, where))
 end
@@ -4782,7 +4803,7 @@ function M.hqState()
   end
   out.parts.count, out.parts.kinds = parts, kinds
   if not c.employment then out.fuel = fuelState() end
-  out.repair = { cost = g.repair or 0, factor = firm.repairFactor(c, earth.pose()) }
+  out.repair = { cost = g.repair or 0, factor = M.repairFactor(earth.pose()) }
   out.debt, out.busy, out.company = g.debt or 0, S.job ~= nil, c.employment ~= nil
   return out
 end
@@ -5614,7 +5635,14 @@ function M.onUpdate(dtReal, dtSim)
   end
   if worldReady then
     if pose and camerasOn() and marker.drawCameras then marker.drawCameras(pose, cams.near, S.clock) end
-    -- where home and the headquarters count (switching cars, parking): a blue ring when close
+    -- Rested: a few minutes parked at a home with a Rest room
+    local parkedHome = pose and not pose.camera and (pose.speed or 0) <= M.STOP_SPEED and S.career.garage.started
+      and home.near(S.career, pose) and garage.inOwnCar(M.G, S.career.garage)
+    if S.career.home and home.restTick(S.career, parkedHome, activeDt) then
+      say(string.format('Rested: +%d %% pay for the next hour.', math.floor(home.RESTED_BONUS * 100 + 0.5)), 6)
+      saveCareer()
+    end
+    -- where home and the headquarters count (parking, the home's rooms): a blue ring when close
     if pose and not pose.camera and marker.drawArea then
       local myHome = S.career.home
       if myHome and myHome.g then marker.drawArea(pose, 'home', myHome.g, home.RADIUS, 'Home', S.clock) end
