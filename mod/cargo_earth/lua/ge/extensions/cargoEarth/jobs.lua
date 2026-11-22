@@ -228,7 +228,7 @@ function M.generate(idx, opts, lat, lon, rnd)
   rnd = rnd or math.random
   local o = merged(opts)
   local minRank = SIZE_RANK[o.minSize] or 1
-  local stats = { pickups = 0, pairs = 0, noDest = 0 }
+  local stats = { pickups = 0, pairs = 0, noDest = 0, noCargo = 0 }   -- noCargo: pickups shipping nothing these settings and containers take
   -- pickups in reach, nearest first
   local near = {}
   for _, d in ipairs(idx.depots) do
@@ -250,7 +250,9 @@ function M.generate(idx, opts, lat, lon, rnd)
       for _, c in ipairs(t.produces or {}) do
         if M.cargoOk(idx, c, o) then ships[#ships + 1] = c end
       end
-      if #ships > 0 then
+      if #ships == 0 then
+        if pass == 1 then stats.noCargo = stats.noCargo + 1 end
+      else
         local c = ships[rnd(#ships)]
         destinations[p.d] = destinations[p.d] or {}
         local cands = destinations[p.d][c]

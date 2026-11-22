@@ -62,12 +62,20 @@ function M.reason(i)
   -- 3. the search itself
   local s = i.stats
   if not i.generated or not s then return out('searching', 'Searching for ' .. (freight and 'freight' or 'orders') .. ' near you…') end
+  if s.parts then
+    return out('empty', 'No parts runs from a supplier to a workshop near you right now. Try a busier area.',
+      string.format('%d parts runs found', s.pairs or 0))
+  end
   if (s.pickups or 0) == 0 then
     local where = i.helperNeeded and ' The helper answered but found none in this area.' or ''
     return out('empty', string.format('No %s within %s of you.%s Drive somewhere busier or raise the pickup distance.',
       places, km(i.nearKm or s.reachKm), where),
       string.format('0 %s within %s (data from %s, helper %s)', places, km(i.nearKm or s.reachKm),
         i.helperNeeded and 'helper' or 'built-in pack', tostring(i.helper and i.helper.state)))
+  end
+  if freight and (s.pairs or 0) == 0 and (s.noCargo or 0) >= s.pickups then
+    return out('fit', string.format('%d %s nearby, but none ships cargo your containers can take.', s.pickups, places),
+      string.format('%d %s in reach, all ship cargo these containers or settings do not take', s.pickups, places))
   end
   if freight and (s.pairs or 0) == 0 then
     return out('filters', string.format('%d %s nearby, but none ships to a place %s–%s away. Change the distance settings.',

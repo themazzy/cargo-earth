@@ -1138,7 +1138,9 @@ function M.generate()
       end
       -- parts runs in an SUV or a pickup: from a parts supplier to a repair workshop
       if tier == 'suv' and rows then
-        for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'), M.jobOptions('parts'))) do offers[#offers + 1] = offer end
+        local parts = M.partsOffers(p, haul.capacity(rows, 'parcel'), M.jobOptions('parts'))
+        for _, offer in ipairs(parts) do offers[#offers + 1] = offer end
+        stats = { parts = true, pairs = #parts }   -- an SUV's search is the parts runs (cargoEarth/offerwhy)
       end
       -- parcel routes from the nearest depots to real addresses: vans only (box trucks do business shipping)
       if parcel.TIERS[tier] and rows and S.fidx then

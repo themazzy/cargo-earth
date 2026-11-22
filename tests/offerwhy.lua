@@ -31,6 +31,9 @@ assert(r.text:find('helper answered', 1, true) and r.log:find('data from helper'
 check({ mode = 'trucking', vehicle = van, data = true, generated = true, minKm = 50, maxKm = 80,
   stats = { pickups = 4, pairs = 0, noDest = 4 } }, 'filters', '50 km–80 km')
 check({ mode = 'trucking', vehicle = van, data = true, generated = true, stats = stats }, 'fit', 'free room')
+check({ mode = 'trucking', vehicle = van, data = true, generated = true, stats = { pickups = 3, pairs = 0, noDest = 0, noCargo = 3 } },
+  'fit', 'containers can take')
+check({ mode = 'trucking', vehicle = van, data = true, generated = true, stats = { parts = true, pairs = 0 } }, 'empty', 'parts runs')
 check({ mode = 'courier', foodRoom = 0, data = true }, 'room', 'boxes are full')
 check({ mode = 'courier', helperNeeded = true, helper = { state = 'off' }, helperText = 'stopped answering' }, 'helper')
 check({ mode = 'courier', data = true, generated = true, nearKm = 3, stats = { pickups = 0, reachKm = 3 } }, 'empty',
