@@ -322,6 +322,8 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage, o
         local k2 = math.min(removed - k1, full[part] or 0)
         full[part] = (full[part] or 0) - k2
         invest = invest - M.partPrice(detail.value) * k2
+        -- the car's own parts: their share of the purchase comes off too, so refitting them adds nothing new (Codex)
+        invest = invest - M.partPrice(detail.value) * (removed - k1 - k2) * factor
         if factor < 1 then addCheap(row, removed - k1 - k2, factor) end
       end
       if full[part] and full[part] <= 0 then full[part] = nil end
@@ -333,8 +335,8 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage, o
     end
   end
   table.sort(items, function(a, b) return a.name == b.name and a.part < b.part or a.name < b.name end)
-  -- invest: what the parts put on (bought or fitted from spares) less those taken off again are worth at their
-  -- price; it moves the car's resale cap (car.partsPaid, M.tradeInQuote)
+  -- invest: what the parts put on (bought or fitted from spares) less those taken off are worth at their price
+  -- (the car's own parts at the share they were bought at); it moves the car's resale cap (car.partsPaid)
   return { items = items, cost = total, invest = invest, inventory = spares, salvage = next(cheap) and cheap or nil, paid = next(full) and full or nil,
     fittedSalvage = next(onCar) and onCar or nil }
 end
@@ -636,7 +638,8 @@ function M.tradeInQuote(G, g)
   -- 1 000, sold for 3 000). What you paid for the car and its parts caps it.
   local paid = tonumber(g.car.paid)
   if paid then
-    local cap = math.floor((paid + (tonumber(g.car.partsPaid) or 0)) * M.RESALE / 5) * 5
+    -- partsPaid can be negative: the car's own parts taken off and kept as spares
+    local cap = math.max(0, math.floor((paid + (tonumber(g.car.partsPaid) or 0)) * M.RESALE / 5) * 5)
     floor, gross = math.min(floor, cap), math.min(gross, cap)
   end
   return math.max(floor, gross - (g.repair or 0)), gross
