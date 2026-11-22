@@ -164,7 +164,7 @@ angular.module('beamng.apps')
     '.cep-contracts .cep-keyval>strong:first-child{min-width:0;overflow-wrap:anywhere}' +
     '.cep-contracts .cep-keyval>strong:last-child{flex-shrink:0}.cep-contracts .cep-card{padding:10px 12px}' +
     '.cep-big{font-size:22px;font-weight:800;line-height:1.15}' +
-    '.cep-sub{font-size:13px;color:var(--muted);line-height:1.35}.cep-sub.cep-warn{color:var(--warn);font-weight:700}' +
+    '.cep-sub{font-size:13px;color:var(--muted);line-height:1.35}.cep-sub.cep-warn{color:var(--warn);font-weight:700}.cep-sub.cep-why{margin-top:6px;font-weight:600}' +
     '.cep-label{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}' +
     '.cep-btn{display:block;width:100%;border:0;border-radius:14px;padding:13px 10px;font:inherit;font-size:15px;font-weight:700;' +
     'cursor:pointer;background:var(--ink);color:#fff}' +
@@ -1354,14 +1354,16 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="s.trucking">{{ s.trucking.hint || ("Looking for " + s.trucking.carrier + " freight near you.") }}</div>' +
         '<div class="cep-sub" ng-if="s.taxi">{{ s.taxi.hint }}</div>' +
         '<div class="cep-sub" role="status" ng-if="s.taxi.eligible">{{ s.taxi.search }}</div>' +
-        '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && (!s.helper || s.helper.state === \'ready\')">The next order will ring here.</div>' +
-        '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && s.helper && !s.helper.outdated && (s.helper.state === \'loading\' || s.helper.state === \'searching\')">' +
+        // why nothing comes: the helper is down or still loading, nothing within reach, or the distance settings (core.offerWhy)
+        '<div class="cep-sub cep-why" role="status" ng-if="s.why">{{ s.why }}</div>' +
+        '<div class="cep-sub" ng-if="!s.why && !s.trucking && !s.taxi && (!s.helper || s.helper.state === \'ready\')">The next order will ring here.</div>' +
+        '<div class="cep-sub" ng-if="!s.why && !s.trucking && !s.taxi && s.helper && !s.helper.outdated && (s.helper.state === \'loading\' || s.helper.state === \'searching\')">' +
           '{{ s.helper.restaurants ? "Loading nearby pickup locations…" : "Loading nearby grocery stores…" }}</div>' +
-        '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && s.helper && s.helper.state === \'off\'">' +
+        '<div class="cep-sub" ng-if="!s.why && !s.trucking && !s.taxi && s.helper && s.helper.state === \'off\'">' +
           '{{ s.helper.restaurants ? "Start the Cargo Earth helper to load nearby pickup locations." : "Start the Cargo Earth helper to get local grocery runs." }}' +
           '<span ng-if="s.helper.msg"> ({{ s.helper.msg }})</span></div>' +
         // the helper answers, but could not build this area (no Python libraries, no internet...): not "start it"
-        '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && s.helper && s.helper.state === \'error\'">' +
+        '<div class="cep-sub" ng-if="!s.why && !s.trucking && !s.taxi && s.helper && s.helper.state === \'error\'">' +
           'The helper could not load this area{{ s.helper.msg ? ": " + s.helper.msg : "." }} ' +
           'A support report (Menu → Settings) helps us find out why.</div>' +
         '<div class="cep-sub" ng-if="!s.trucking && !s.taxi && s.helper.outdated && (s.helper.state === \'ready\' || s.helper.state === \'loading\')">' +

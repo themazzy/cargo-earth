@@ -1514,6 +1514,34 @@ test('pickup variety: two in a row from one place, then two from other places', 
   assert(not variety.resting('broken', 'A') and #variety.note('broken', job('A')) == 1, 'a damaged save starts over')
 end)
 
+test('the waiting phone says why no freight comes, and beamng.log gets the line once', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  core.setMode('trucking')
+  advance(core, 2)
+  local lines, oldLog = {}, log
+  log = function(_, _, text) lines[#lines + 1] = text end
+  local ok, err = pcall(function()
+    s.phone.online, s.phone.incoming = true, nil
+    s.offers, s.offeredAt, s.offerStats = {}, { lat = 50, lon = 14 }, { pickups = 0, pairs = 0, noDest = 0 }
+    s.offerSearch, s.offerWhyAt = { nearKm = 15 }, nil
+    local st = core.phoneState()
+    assert(st.screen == 'waiting' and st.why and st.why:find('No depots within 15 km', 1, true), tostring(st.why))
+    assert(#lines == 1 and lines[1]:find('no freight offers [empty]', 1, true) and lines[1]:find('class van', 1, true), lines[1])
+    s.offerWhyAt = nil
+    core.phoneState()
+    assert(#lines == 1, 'the same reason is not logged again within a minute')
+    s.offers = { { id = 'x' } }
+    s.offerWhyAt = nil
+    assert(core.phoneState().why == nil and lines[2]:find('offers found again', 1, true))
+  end)
+  log = oldLog
+  assert(ok, err)
+end)
+
 test('the phone skips a resting pickup unless nothing else is in reach', function()
   local core, s = fresh()
   local c = s.career

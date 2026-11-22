@@ -1084,6 +1084,7 @@ function M.generate()
     for k, v in pairs(S.opts) do options[k] = v end
     for k, v in pairs(M.jobOptions('courier')) do options[k] = v end
     S.offers, S.offerStats = food.generate(S.fidx, options, p.lat, p.lon, nil, plan and plan.maxFree or 1, roadKmFn(p))
+    S.offerSearch = { nearKm = options.nearKm, minKm = options.minKm, maxKm = options.maxKm }
   elseif S.mode == 'taxi' then
     S.offers, S.offerStats = {}, nil
     local state = M.taxiState()
@@ -1119,7 +1120,11 @@ function M.generate()
     if tier and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or rows) then
       -- an ordinary car or an SUV takes no company freight board: its own small work comes below
       local offers, stats = {}, nil
-      if not haul.SMALL[tier] then offers, stats = jobs.generate(S.idx, haul.options(tier, freightOptions(tier), rows), p.lat, p.lon) end
+      if not haul.SMALL[tier] then
+        local o = haul.options(tier, freightOptions(tier), rows)
+        offers, stats = jobs.generate(S.idx, o, p.lat, p.lon)
+        S.offerSearch = { nearKm = o.nearKm, minKm = o.minKm, maxKm = o.maxKm }
+      end
       -- Freight customers pay a carrier by its reputation.
       local factor = rating.freightPay(S.career)
       local ownTruck = S.career.garage.car and not S.career.garage.car.loaner
@@ -1178,14 +1183,6 @@ function M.generate()
         end
       end
       S.offerStats = stats
-      -- why no freight comes, in the game log (once a minute): the vehicle kind and the free room it reported
-      if #S.offers == 0 and log and S.clock >= (S.noFreightLogAt or 0) then
-        S.noFreightLogAt = S.clock + 60
-        local free = rows and string.format('parcel %d, fluid %d, dry bulk %d', haul.capacity(rows, 'parcel'),
-          haul.capacity(rows, 'fluid'), haul.capacity(rows, 'dryBulk')) or 'containers not read yet'
-        log('I', 'cargoEarth', string.format('no freight offers: %s (%s), %d containers, free %s, %d routes found',
-          tostring(tier), tostring(v and v.model), rows and #rows or 0, free, stats and stats.pairs or 0))
-      end
     end
     -- tow jobs: broken-down cars at real addresses, for a vehicle with a tow hitch or a tractor
     local class = v and tow.class(tier, tow.hasHitch(v))
@@ -1194,6 +1191,7 @@ function M.generate()
     end
   end
   S.offeredAt = { lat = p.lat, lon = p.lon }
+  if #S.offers == 0 then S.offerWhyAt = nil M.offerWhy() end   -- a fresh search: say why at once (and log it)
 end
 
 function M.setMode(m)
@@ -2517,6 +2515,28 @@ function M.nearContracts(p)
   return out
 end
 
+-- Why this vehicle gets no freight of its own (shown under "Looking for orders" and logged), nil when it can.
+function M.freightHint(v, tier, rows)
+  if not v or not tier then
+    return 'Take a contract: park at its yard and the company gives you its vehicle.'
+  elseif tier == 'car' then
+    local style = type(v.bodyStyle) == 'string' and v.bodyStyle ~= '' and (' (body style ' .. v.bodyStyle .. ')') or ''
+    return 'This vehicle counts as a car' .. style .. ': no freight board. Tow jobs with a tow hitch, or a company '
+      .. 'contract below. Choose Taxi for passenger rides.'
+  elseif tier == 'suv' and rows and haul.capacity(rows, 'parcel') < 4 then
+    return 'Fit cargo boxes in the bed or boot for parts runs, or take a contract.'
+  elseif not haul.allowed(S.career, tier) then
+    return 'This truck unlocks after completing the earlier stage.'
+  elseif tier ~= 'semi' and not rows then
+    return 'Checking fitted cargo containers…'
+  elseif tier == 'van' and haul.capacity(rows, 'parcel') < 8 then
+    return string.format('Fit parcel boxes with at least 8 free slots (%d free now).', haul.capacity(rows, 'parcel'))
+  elseif tier == 'rigid' and haul.capacity(rows, 'parcel') < 8 and haul.capacity(rows, 'fluid') < 100
+    and haul.capacity(rows, 'dryBulk') < 100 then
+    return 'Fit parcel boxes, a fluid tank, or aggregate storage for freight.'
+  end
+end
+
 local function truckingState()
   local out = haul.state(S.career)
   local g = S.career.garage
@@ -2529,24 +2549,7 @@ local function truckingState()
     -- no van or truck of your own: company contracts, the company's van is handed over at its yard
     out.contracts = not S.job and not g.preview and M.nearContracts(earth.pose()) or {}
   end
-  if not v or not tier then
-    out.hint = 'Take a contract: park at its yard and the company gives you its vehicle.'
-  elseif tier == 'car' then
-    out.hint = 'Tow jobs with a tow hitch, or a company contract below. Choose Taxi for passenger rides.'
-  elseif tier == 'suv' and rows and haul.capacity(rows, 'parcel') < 4 then
-    out.hint = 'Fit cargo boxes in the bed or boot for parts runs, or take a contract.'
-  elseif not haul.allowed(S.career, tier) then
-    out.hint = 'This truck unlocks after completing the earlier stage.'
-  elseif tier ~= 'semi' and not rows then
-    out.hint = 'Checking fitted cargo containers…'
-  elseif tier == 'van' and haul.capacity(rows, 'parcel') < 8 then
-    out.hint = 'Fit parcel boxes with at least 8 free slots.'
-  elseif tier == 'rigid' and haul.capacity(rows, 'parcel') < 8 and haul.capacity(rows, 'fluid') < 100
-    and haul.capacity(rows, 'dryBulk') < 100 then
-    out.hint = 'Fit parcel boxes, a fluid tank, or aggregate storage for freight.'
-  elseif S.offerStats and S.offerStats.pairs == 0 then
-    out.hint = 'No compatible routes nearby. Try a different depot area or widen the distance filters.'
-  end
+  out.hint = M.freightHint(v, tier, rows)
   local cm = S.contractMsg
   if cm and (S.clock or 0) - cm.at > M.CONTRACT_MSG_S then S.contractMsg, cm = nil, nil end
   out.error = S.freightSetupError or (cm and not S.career.employment and cm.text) or nil
@@ -3142,6 +3145,9 @@ function M.phoneState()
     return out
   end
   out.screen = 'waiting'
+  local why = M.offerWhy()
+  -- the vehicle's own reason is already the freight hint
+  out.why = why and why.code ~= 'vehicle' and why.text or nil
   return out
 end
 
@@ -3281,6 +3287,44 @@ M.HELPER_CHECK_S = 5
 
 local helperWanted, helperCheckAt, depotsHere, stationsWanted = false, 0, false, false
 
+-- Why no order or freight comes (cargoEarth/offerwhy): { code, text } for the phone's waiting screen, nil while offers
+-- are there. Worked out at most once a second; beamng.log gets a line when the reason changes and once a minute while it
+-- stays (cargoEarth: no freight offers [code]: ...).
+M.OFFER_WHY_LOG_S = 60
+function M.offerWhy()
+  if (S.mode ~= 'courier' and S.mode ~= 'trucking') or S.pendingCareer then return nil end
+  if S.offerWhyAt and S.clock >= S.offerWhyAt and S.clock - S.offerWhyAt < 1 then return S.offerWhyLast end
+  S.offerWhyAt = S.clock
+  local freight = S.mode == 'trucking'
+  local search = S.offerSearch or {}
+  local i = { mode = S.mode, offers = #S.offers, generated = S.offeredAt ~= nil, stats = S.offerStats,
+    data = (freight and S.idx or S.fidx) ~= nil, helperNeeded = freight and not depotsHere or (not freight and helperWanted),
+    helperOff = helper.enabled == false, helper = helper.status(), helperText = type(helper.describe) == 'function' and helper.describe(S.clock) or nil,
+    nearKm = search.nearKm, minKm = search.minKm, maxKm = search.maxKm }
+  if freight then
+    local v, tier = freightCarrier()
+    local g = S.career.garage
+    if g.car and g.car.loaner and not S.career.employment then v, tier = nil, nil end
+    local rows = S.storage and S.storage.rows
+    i.vehicle = { hint = M.freightHint(v, tier, rows), tier = tier, model = v and v.model, bodyStyle = v and v.bodyStyle,
+      containers = rows and #rows or 0, free = rows and { parcel = haul.capacity(rows, 'parcel'),
+        fluid = haul.capacity(rows, 'fluid'), dryBulk = haul.capacity(rows, 'dryBulk') } or nil }
+  else
+    local plan = storagePlan()
+    i.foodRoom = plan and plan.maxFree or nil
+  end
+  local why = require('cargoEarth/offerwhy').reason(i)
+  local last = S.offerWhyLast
+  if why and log and (not last or last.log ~= why.log or S.clock >= (S.offerWhyLogAt or 0)) then
+    S.offerWhyLogAt = S.clock + M.OFFER_WHY_LOG_S
+    log('I', 'cargoEarth', why.log)
+  elseif not why and last and log then
+    log('I', 'cargoEarth', 'offers found again (' .. #S.offers .. ')')
+  end
+  S.offerWhyLast = why
+  return why
+end
+
 local function packRestaurantsNear(lat, lon)
   local idx = S.fidx
   if not idx then return 0 end
@@ -3340,7 +3384,8 @@ local function onHelperArea(data)
     S.companyBoardDirty = true
   end
   stores = stores or 0
-  log('I', 'cargoEarth', string.format('helper area %s: %d restaurants, %d grocery stores', tostring(data.key), n - stores, stores))
+  log('I', 'cargoEarth', string.format('helper area %s: %d restaurants, %d grocery stores, %d workplaces%s', tostring(data.key),
+    n - stores, stores, workplaces, (lat and packDepotsNear(lat, lon)) and ' (built-in depots used here)' or ''))
   if (n > 0 or S.mode == 'taxi') and not S.job then S.offeredAt = nil end
 end
 M.onHelperArea = onHelperArea
