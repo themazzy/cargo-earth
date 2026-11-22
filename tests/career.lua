@@ -3043,6 +3043,21 @@ test('bus discovery uses nearby stops and only offers mapped directions', functi
   end
 end)
 
+test('bus lines keep up to MAX_STOPS stops', function()
+  assert(bus.MAX_STOPS == 80, 'the cap matches the helper (it sends at most 80 stops)')
+  local function line(n)
+    local stops = {}
+    for i = 1, n do stops[i] = { n = 'Stop ' .. i, g = { 50 + (i - 1) * 0.004, 14 } } end
+    return { id = 'long' .. n, ref = '9', name = '', stops = stops }
+  end
+  local depot = { g = { 50, 14 } }
+  local j60 = bus.job(line(60), depot)
+  assert(#j60.bus.stops == 60 and j60.cargoName == 'Line 9 to Stop 60', 'a 60-stop line is driven whole')
+  local j100 = bus.job(line(100), depot)
+  assert(#j100.bus.stops == bus.MAX_STOPS and j100.cargoName == 'Line 9 to Stop 80', 'a longer line ends at the cap')
+  assert(j100.pay > j60.pay and j100.minutes > j60.minutes, 'more stops, more time and pay')
+end)
+
 test('bus lines: offers at the depot, passengers on and off, fares', function()
   local idx = bus.index()
   bus.set(idx, busData())
