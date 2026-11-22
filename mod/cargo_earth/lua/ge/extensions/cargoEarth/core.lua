@@ -4534,7 +4534,8 @@ local function quoteParts()
     if not v then return nil, 'Waiting for BeamNG to apply the preview.' end
     return garage.partsQuote(M.G, S.career.garage.inventory, S.parts.before, v, S.career.garage.salvage,
       S.career.garage.car and S.career.garage.car.paidParts,
-      S.career.garage.car and S.career.garage.car.salvageParts)
+      S.career.garage.car and S.career.garage.car.salvageParts,
+      S.career.garage.car and garage.ownShare(S.career.garage.car))
   end)
   if not ok then
     if S.parts.quoteError ~= tostring(quote) then
@@ -4595,12 +4596,15 @@ local function buyParts(revision)
   if why then return false, why end
   local c, g = S.career, S.career.garage
   local money, spent, inventory, config, parts, salvage, paid, fitted = c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts
+  local partsPaid = g.car.partsPaid
   if not garage.remember(M.G, g, previewVehicle()) then return false, 'Could not capture the new configuration.' end
   c.money, g.spent, g.inventory, g.salvage = (money or 0) - quote.cost, (spent or 0) + quote.cost, quote.inventory, quote.salvage
   g.car.paidParts, g.car.salvageParts = quote.paid, quote.fittedSalvage
+  if (quote.invest or 0) ~= 0 then g.car.partsPaid = (partsPaid or 0) + quote.invest end
   economy.reconcile(c, 'parts', 'Parts fitted')
   if not saveCareer() then
     c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts = money, spent, inventory, config, parts, salvage, paid, fitted
+    g.car.partsPaid = partsPaid
     economy.reconcile(c, 'parts', 'Purchase not saved, refunded')
     return false, 'The purchase could not be saved. Try again.'
   end

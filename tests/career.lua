@@ -3930,6 +3930,66 @@ test('trade-in credit uses market mileage, deducts repairs and guarantees a quar
   end
 end)
 
+test('a car never sells for more than it cost (Jan, 2026-11-22: bought for 1 000, sold for 3 000)', function()
+  local garage = require('cargoEarth/garage')
+  local G = {vehicle = function() return {slotPartMap = {body = 'body'}} end,
+    part = function() return {information = {value = 10000 / garage.PRICE_PER_VALUE}} end,
+    spawn = function() end}
+  -- a cheap worn listing: the parts formula alone would give 5 000 (or the 2 500 floor)
+  local g, c = {car = {km = 0}, repair = 0}, {money = 1000}
+  assert(garage.buyCar(G, g, c, {model = 'etk', name = 'Cheap', price = 1000, km = 0}) and g.car.paid == 1000)
+  assert(garage.tradeInQuote(G, g) == 850, 'resale share of the price ' .. garage.tradeInQuote(G, g))
+  g.car.km = 300000
+  assert(garage.tradeInQuote(G, g) == 850, 'the floor is capped as well')
+  -- parts paid for raise the cap; repairs still come off
+  g.car.km, g.car.partsPaid = 0, 2000
+  assert(garage.tradeInQuote(G, g) == 2550)
+  g.repair = 500
+  assert(garage.tradeInQuote(G, g) == 2500, "the quarter floor still holds under the cap")
+  local ok, _, got = garage.sellCar(G, g, c)
+  assert(ok and got == 2500)
+  -- a fair-priced car is not affected, nor a car with no price on record (starter, older saves)
+  g = {car = {km = 0, paid = 9000}, repair = 0}
+  assert(garage.tradeInQuote(G, g) == 5000)
+  g = {car = {km = 0}, repair = 0}
+  assert(garage.tradeInQuote(G, g) == 5000)
+  -- the car's own parts stripped off sell at the share it was bought at
+  g = {car = {paid = 1000}}
+  garage.noteValue(G, g)
+  assert(g.car.boughtValue == 10000 and garage.ownShare(g.car) == 0.1)
+  local PG = { part = function(_, name) return { information = { name = name, value = 1000 } } end }
+  local car = { model = 'covet', slotPartMap = { b = 'engine' }, ioCtx = {} }
+  local bare = { model = 'covet', slotPartMap = { b = '' }, ioCtx = {} }
+  local q = garage.partsQuote(PG, {}, car.slotPartMap, bare, nil, nil, nil, garage.ownShare(g.car))
+  assert(q.salvage.engine.n == 1 and q.salvage.engine.f == 0.1)
+  q = garage.partsQuote(PG, {}, car.slotPartMap, bare)
+  assert(q.salvage == nil, 'unknown price: full share as before')
+  assert(garage.ownShare({}) == nil and garage.ownShare({paid = 9000, boughtValue = 5000}) == 1)
+  -- spares fitted from the inventory count toward the cap like bought parts (Codex); taking them off removes them
+  local price = garage.partPrice(1000)
+  q = garage.partsQuote(PG, {}, bare.slotPartMap, car)
+  assert(q.cost == price and q.invest == price)
+  q = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car)
+  assert(q.cost == 0 and q.invest == price and q.paid.engine == 1)
+  local off = garage.partsQuote(PG, q.inventory, car.slotPartMap, bare, q.salvage, q.paid)
+  assert(off.invest == -price)
+  q = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car, { engine = { n = 1, f = 0.5 } })
+  assert(q.invest == 1000 * garage.PRICE_PER_VALUE * 0.5, 'a salvage spare counts at its discount')
+  off = garage.partsQuote(PG, q.inventory, car.slotPartMap, bare, q.salvage, q.paid, q.fittedSalvage)
+  assert(off.invest == -1000 * garage.PRICE_PER_VALUE * 0.5)
+  -- the car's own part taken off and fitted again adds nothing to the cap (Codex)
+  off = garage.partsQuote(PG, {}, car.slotPartMap, bare, nil, nil, nil, 0.1)
+  assert(off.salvage.engine.f == 0.1 and off.invest == -1000 * garage.PRICE_PER_VALUE * 0.1)
+  q = garage.partsQuote(PG, off.inventory, bare.slotPartMap, car, off.salvage, off.paid)
+  assert(q.cost == 0 and off.invest + q.invest == 0)
+  -- a worthless original part (value 0) takes nothing off the basis, though the shop's minimum price applies to it
+  local ZG = { part = function(_, name) return { information = { name = name, value = 0 } } end }
+  off = garage.partsQuote(ZG, {}, car.slotPartMap, bare, nil, nil, nil, 0.1)
+  assert(off.invest == 0)
+  g = {car = {km = 0, paid = 1000, partsPaid = -2000}, repair = 0}
+  assert(garage.tradeInQuote(G, g) == 0, 'a stripped car is worth what is left')
+end)
+
 test('buying after a test drive uses the trade-in quote from the owned car', function()
   local garage = require('cargoEarth/garage')
   local owned = {model = 'pigeon', slotPartMap = {body = 'body'}}
