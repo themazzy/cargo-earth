@@ -84,3 +84,7 @@ margins are thinner than a clean run suggests. Pay and repair prices are unchang
 
 Car trailers (2,500 and 1,200), cars, SUVs and the home garage keep their prices. Market v6 reprices listings from v5
 once (new share / old share). A vehicle's worth (trade-in, sale, repair cap) follows the new shares too.
+
+Repairs are about 40 % cheaper too: `garage.REPAIR_SHARE` 0.18 -> 0.11 (about 0.026 CZK per point of the game's damage:
+a scrape about 50 CZK, a solid crash about 250), still at most half the vehicle's worth. A hired driver's incident costs
+40 % less as well (`fleet.INCIDENT_COST`). Repairs already owed keep their price.

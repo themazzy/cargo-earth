@@ -29,7 +29,8 @@ local WEAR_VERSION = 2
 -- Prices follow what deliveries pay. M.scale(income) sets every price from a courier's pay for an hour of play
 -- (M.courierIncome: cargoEarth/food's pay rules for a typical order); the targets are in hours of deliveries.
 M.VALUE_PER_HOUR = 2000      -- an hour of deliveries buys this much BeamNG value (a 10 000 car: 5 hours)
-M.REPAIR_SHARE = 0.18        -- a repair: this share of the value rate per unit of the game's damage
+M.REPAIR_SHARE = 0.11        -- a repair: this share of the value rate per unit of the game's damage (2026-11-22, Jan: was 0.18;
+                             -- Earth's road bugs make repairs a steady cost)
 M.START_HOURS = 1.5          -- money at the start of a career
 M.MIN_PART_HOURS = 0.02      -- the cheapest part (about a minute of deliveries)
 M.REPAIR_CAP = 0.5           -- a repair never costs more than this share of the car's parts value (a wreck is a write-off)
