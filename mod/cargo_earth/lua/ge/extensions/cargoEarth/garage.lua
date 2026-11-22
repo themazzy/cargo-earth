@@ -788,14 +788,13 @@ M.MARKET_LIFE_MIN = { 15, 30 } -- a listing is gone after this many minutes of p
 M.CHEAP_SHARE = 0.5            -- this share of random new listings comes from the cheapest third of its kind
 M.MIN_PER_KIND = 8             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
 M.MARKET_V = 6                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price,
-                               -- v6: dearer trucks (2026-11-22)
+                               -- v6: work vehicles a quarter cheaper (2026-11-22)
 -- Work vehicles cost this share of their BeamNG-value price (Jan, 2026-11-18: the first own truck took far too long to
 -- afford and to pay back). Applies to the market, the firm's new vehicles and a vehicle's worth (trade-in, sale,
 -- repair cap). Cars and SUVs keep their price: it follows food pay.
--- 2026-11-22 (Jan: buying the next vehicle should take long enough to feel earned, counting the frequent repairs Earth's
--- road bugs cause): van 0.5 -> 0.6, box truck 0.35 -> 0.5, tractor 0.35 -> 0.7. About 5-7 h of car work to a used van,
--- 6-9 h of van work to a box truck and 9-12 h of box truck work to a tractor.
-M.WORK_PRICE = { van = 0.6, rigid = 0.5, semi = 0.7 }
+-- 2026-11-22 (Jan: the climb is grindy enough, and Earth's road bugs make repairs a steady cost): a quarter cheaper,
+-- van 0.5 -> 0.375, box truck and tractor 0.35 -> 0.26.
+M.WORK_PRICE = { van = 0.375, rigid = 0.26, semi = 0.26 }
 local WORK_PRICE_V5 = { van = 0.5, rigid = 0.35, semi = 0.35 }   -- market v5 listings were priced with these
 function M.kindFactor(kind) return M.WORK_PRICE[kind] or 1 end
 

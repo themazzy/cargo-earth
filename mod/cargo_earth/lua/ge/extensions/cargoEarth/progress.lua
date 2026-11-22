@@ -13,7 +13,7 @@ local ranks = {
 }
 
 -- What each rank opens, for the Progress page (only the Professional rank unlocks anything: the firm).
-M.RANK_PERKS = { Professional = 'Lets you found your own firm (with 4.0 stars and 15,000 CZK).' }
+M.RANK_PERKS = { Professional = 'Lets you found your own firm (with 4.0 stars and 4,500 CZK).' }
 
 local milestones = {
   { id = 'family', name = 'Family meal',
@@ -125,7 +125,7 @@ M.WORK = {
     needs = '20 reputation with that company: about 2 clean contracts.' },
   { id = 'firm', name = 'Your firm',
     what = 'A headquarters at a real yard, with parking bays, a workshop, a fuel tank and a dispatch office to upgrade. It buys new vehicles and trailers.',
-    needs = 'Professional rank (30 deliveries), 4.0 stars over 5 ratings, no debt and 15,000 CZK.' },
+    needs = 'Professional rank (30 deliveries), 4.0 stars over 5 ratings, no debt and 4,500 CZK.' },
   { id = 'drivers', name = 'Hired drivers',
     what = 'Drivers work your parked vehicles while you play. After their wage they bring in about 100 CZK an hour in a car, 300 in a van, 500 in a box truck and 900 in a tractor.',
     needs = 'Your firm with a headquarters, 350 CZK per hire and a vehicle for each.' },

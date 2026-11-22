@@ -5221,17 +5221,17 @@ test('used-car market: every vehicle kind has eight listings at cheap, middle an
   garage.marketTick(G, old, 0, rnd)
   assert(old.market.list[1].price == 5, 'and only once')
   -- work vehicles cost a share of their value-based price; a new tractor for the firm too
-  assert(garage.kindFactor('car') == 1 and garage.kindFactor('suv') == 1 and garage.kindFactor('van') == 0.6)
-  assert(garage.kindFactor('rigid') == 0.5 and garage.kindFactor('semi') == 0.7)
-  assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.7 / 5 + 0.5) * 5)
-  -- a v5 market (old work prices) is repriced once to the dearer ones: a tractor x 0.7 / 0.35, a car unchanged
+  assert(garage.kindFactor('car') == 1 and garage.kindFactor('suv') == 1 and garage.kindFactor('van') == 0.375)
+  assert(garage.kindFactor('rigid') == 0.26 and garage.kindFactor('semi') == 0.26)
+  assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.26 / 5 + 0.5) * 5)
+  -- a v5 market (old work prices) is repriced once to the cheaper ones: a tractor x 0.26 / 0.35, a car unchanged
   local v5 = { market = { v = 5, t = 5, seq = 2, list = {
     { id = 1, model = 'us_semi', key = 'us_semi7', kind = 'semi', name = 't', km = 0, condition = 1, price = 1000, listedAt = 0, gone = 90 },
     { id = 2, model = 'covet', key = 'covet7', kind = 'car', name = 'c', km = 0, condition = 1, price = 1000, listedAt = 0, gone = 90 } } } }
   garage.marketTick(G, v5, 0, rnd)
-  assert(v5.market.v == garage.MARKET_V and garage.findListing(v5, 1).price == 2000 and garage.findListing(v5, 2).price == 1000)
+  assert(v5.market.v == garage.MARKET_V and garage.findListing(v5, 1).price == 745 and garage.findListing(v5, 2).price == 1000)
   garage.marketTick(G, v5, 0, rnd)
-  assert(garage.findListing(v5, 1).price == 2000, 'v5 listings are repriced only once')
+  assert(garage.findListing(v5, 1).price == 745, 'v5 listings are repriced only once')
   assert(garage.newPrice(G, 'covet', 'covet7') == math.floor(7000 * garage.PRICE_PER_VALUE / 5 + 0.5) * 5)
   -- parts stripped off a discounted truck sell at the truck's discount, so buy-and-strip can't beat the price
   local PG = { part = function(_, name) return { information = { name = name, value = 1000 } } end }
