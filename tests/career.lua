@@ -5432,3 +5432,26 @@ test('freight pays the distance rate for a full load and less for a light one', 
   assert(haul.prepare(light, 'van', rowsFor(48), idx))
   assert(light.loadFill == 0.5 and light.pay == math.floor(330 * 0.875 / 5 + 0.5) * 5 and light.loadBonus == light.pay - 330)
 end)
+
+test('Unstuck fixes the career car in place for free, standing still, once per five minutes', function()
+  local core, s = fresh()
+  local g = s.career.garage
+  local fixed = 0
+  core.G.repair = function() fixed = fixed + 1 end
+  g.repair, g.debt, s.career.money = 400, 0, 1000
+  pose.speed = 5
+  assert(not core.unstuckCar() and fixed == 0 and g.repair == 400, 'not while moving')
+  assert(core.phoneState().unstuck.why == 'Stop the car first')
+  pose.speed = 0
+  assert(core.phoneState().unstuck.can)
+  local st = core.phoneAction('unstuck')
+  assert(fixed == 1 and g.repair == 0 and s.career.money == 1000 and (g.debt or 0) == 0, 'free, and no debt for the repair')
+  assert(st.unstuck and not st.unstuck.can and st.unstuck.left > 0)
+  g.repair = 200
+  assert(not core.unstuckCar() and fixed == 1 and g.repair == 200, 'only once per UNSTUCK_S')
+  g.unstuckAt = os.time() - require('cargoEarth/garage').UNSTUCK_S - 1
+  assert(core.unstuckCar() and fixed == 2 and g.repair == 0)
+  g.car.loaner = true
+  assert(core.phoneState().unstuck == nil, 'no button in a company vehicle')
+  pose.speed = nil
+end)

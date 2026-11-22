@@ -2997,7 +2997,7 @@ function M.phoneState()
       companyVehicle = c.employment and employment.vehicleLabel(c.employment),
       currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
       fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
-      canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo() }
+      canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo(), unstuck = M.unstuckInfo() }
   if S.pendingCareer or (not S.career.garage.started and S.career.play ~= 'free' and not c.employment) then
     -- the careers to pick from, on the resume and first-run screens
     local saves = require('cargoEarth/saves')
@@ -3149,6 +3149,10 @@ end
 function M.phoneAction(a, orderId)
   if a == 'helperStart' or a == 'helperHide' then
     M.helperStartDo(a)
+    return M.phoneState()
+  end
+  if a == 'unstuck' then
+    if not S.pendingCareer then M.unstuckCar() end
     return M.phoneState()
   end
   if a == 'loadSave' or a == 'newCareer' or a == 'deleteSave' then
@@ -4311,6 +4315,19 @@ function M.garageRepair()
     msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved)', cost, full - cost)
   end
   return garageSay(ok, msg)
+end
+-- The phone header's Unstuck button: a free repair in place (garage.unstuck).
+function M.unstuckInfo()
+  local g = S.career and S.career.garage
+  if not g or not g.started or not g.car or g.car.loaner or S.career.employment then return nil end
+  local pose = earth.pose()
+  local why, left = garage.unstuckBlock(M.G, g, os.time(), pose and pose.speed)
+  return { can = why == nil, why = why, left = left }
+end
+function M.unstuckCar()
+  if S.career.employment then return false, 'Not in a company vehicle' end
+  local pose = earth.pose()
+  return garageSay(garage.unstuck(M.G, S.career.garage, os.time(), pose and pose.speed))
 end
 function M.garagePayDebt() return garageSay(garage.payDebt(S.career.garage, S.career)) end
 function M.garageBuy(offer)
