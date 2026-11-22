@@ -3927,14 +3927,18 @@ test('a car never sells for more than it cost (Jan, 2026-11-22: bought for 1 000
   local off = garage.partsQuote(PG, q.inventory, car.slotPartMap, bare, q.salvage, q.paid)
   assert(off.invest == -price)
   q = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car, { engine = { n = 1, f = 0.5 } })
-  assert(q.invest == price * 0.5, 'a salvage spare counts at its discount')
+  assert(q.invest == 1000 * garage.PRICE_PER_VALUE * 0.5, 'a salvage spare counts at its discount')
   off = garage.partsQuote(PG, q.inventory, car.slotPartMap, bare, q.salvage, q.paid, q.fittedSalvage)
-  assert(off.invest == -price * 0.5)
+  assert(off.invest == -1000 * garage.PRICE_PER_VALUE * 0.5)
   -- the car's own part taken off and fitted again adds nothing to the cap (Codex)
   off = garage.partsQuote(PG, {}, car.slotPartMap, bare, nil, nil, nil, 0.1)
-  assert(off.salvage.engine.f == 0.1 and off.invest == -price * 0.1)
+  assert(off.salvage.engine.f == 0.1 and off.invest == -1000 * garage.PRICE_PER_VALUE * 0.1)
   q = garage.partsQuote(PG, off.inventory, bare.slotPartMap, car, off.salvage, off.paid)
   assert(q.cost == 0 and off.invest + q.invest == 0)
+  -- a worthless original part (value 0) takes nothing off the basis, though the shop's minimum price applies to it
+  local ZG = { part = function(_, name) return { information = { name = name, value = 0 } } end }
+  off = garage.partsQuote(ZG, {}, car.slotPartMap, bare, nil, nil, nil, 0.1)
+  assert(off.invest == 0)
   g = {car = {km = 0, paid = 1000, partsPaid = -2000}, repair = 0}
   assert(garage.tradeInQuote(G, g) == 0, 'a stripped car is worth what is left')
 end)

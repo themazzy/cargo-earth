@@ -265,6 +265,10 @@ M.FREE_PART = 'cargo_earth_phone_auto' -- the phone on the dashboard (cargoEarth
 -- spares): taking them off again gives full-price spares, not salvage. onSalvage: { [part] = { n, f } } salvage spares
 -- fitted to this car: they keep their discount when taken off again.
 -- ownShare: M.ownShare of the car (its own parts taken off sell at that share as well).
+-- A part's value in CZK without the shop's rounding or minimum: the same measure as a car's value (valueOf), so
+-- the car's own parts taken off can never add up to more than it cost.
+local function rawPrice(value) return (tonumber(value) or 0) * M.PRICE_PER_VALUE end
+
 function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage, ownShare)
   if type(before) ~= 'table' or not vehicle or type(vehicle.slotPartMap) ~= 'table' then
     return nil, 'Waiting for the vehicle parts to load.'
@@ -309,21 +313,21 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage, o
         full[part] = (full[part] or 0) + added + fitFull
         invest = invest + M.partPrice(detail.value) * (added + fitFull)
         if fitCheap > 0 then
-          invest = invest + M.partPrice(detail.value) * fitCheap * (row.f or 1)
+          invest = invest + rawPrice(detail.value) * fitCheap * (row.f or 1)
           addCheap(fitted, fitCheap, row.f) row.n = row.n - fitCheap
         end
       elseif removed > 0 then
         -- taken off: salvage fitted earlier first, then parts paid in full, then the car's own parts
         local k1 = math.min(removed, fitted.n)
         if k1 > 0 then
-          invest = invest - M.partPrice(detail.value) * k1 * (fitted.f or 1)
+          invest = invest - rawPrice(detail.value) * k1 * (fitted.f or 1)
           fitted.n = fitted.n - k1 addCheap(row, k1, fitted.f)
         end
         local k2 = math.min(removed - k1, full[part] or 0)
         full[part] = (full[part] or 0) - k2
         invest = invest - M.partPrice(detail.value) * k2
         -- the car's own parts: their share of the purchase comes off too, so refitting them adds nothing new (Codex)
-        invest = invest - M.partPrice(detail.value) * (removed - k1 - k2) * factor
+        invest = invest - rawPrice(detail.value) * (removed - k1 - k2) * factor
         if factor < 1 then addCheap(row, removed - k1 - k2, factor) end
       end
       if full[part] and full[part] <= 0 then full[part] = nil end
