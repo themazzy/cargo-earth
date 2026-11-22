@@ -2298,7 +2298,7 @@ angular.module('beamng.apps')
       }
       // the full-screen home view (Menu > Home garage > Open home)
       scope.homeOpen = false
-      scope.homeSteps = ['Rented lock-up', 'Own garage', 'House with yard', 'Small depot']
+      scope.homeSteps = ['Small garage', 'Medium garage', 'Large garage', 'Extra large garage']
       scope.openHome = function () { scope.homeOpen = true; scope.homeAsk = false; loadPlaces() }
       scope.closeHome = function () { scope.homeOpen = false }
       scope.carSpots = function () {

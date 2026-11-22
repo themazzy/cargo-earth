@@ -111,7 +111,7 @@ test('an old home becomes the first step and grows by paid steps and rooms', fun
   local h = home.restore(c)
   assert(h.level == 1 and h.capacity == 3 and next(h.rooms) == nil)
   assert(home.build(c, 'workshop', 0))
-  assert(not home.build(c, 'tank', 0), 'the lock-up has one room')
+  assert(not home.build(c, 'tank', 0), 'the small garage has one room')
   assert(not home.upgrade(c, 50), 'debt first')
   assert(home.upgrade(c, 0) and c.home.level == 2 and c.home.capacity == 4 and c.money == 40000 - 1500 - 2500)
   assert(home.build(c, 'rest', 0) and home.has(c, 'rest'))
@@ -119,7 +119,7 @@ test('an old home becomes the first step and grows by paid steps and rooms', fun
   assert(home.upgrade(c, 0) and home.upgrade(c, 0) and c.home.capacity == 8)
   assert(not home.upgrade(c, 0), 'fully built')
   local st = home.state(c, { lat = 50, lon = 14 }, 0)
-  assert(st.here and st.levelName == 'Small depot' and st.slots == 4 and st.used == 2 and st.next == nil)
+  assert(st.here and st.levelName == 'Extra large garage' and st.slots == 4 and st.used == 2 and st.next == nil)
   -- moving keeps the step and rooms
   assert(home.claim(c, { lat = 50.3, lon = 14.5, speed = 0 }))
   assert(c.home.level == 4 and home.has(c, 'workshop') and c.home.capacity == 8 and c.home.g[1] == 50.3)
