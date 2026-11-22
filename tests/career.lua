@@ -3220,8 +3220,12 @@ test('bus signs: the line number, the destination in plain letters and the stops
   local data = busData()
   data.lines[1].stops[5][1] = 'Nedomice, Škola u Křížku a kostela'
   data.lines[1].colour = '#ff8800'
+  data.lines[1].textColour = '#000000'
   bus.set(idx, data)
-  local j = bus.board(idx, 50, 14)[1].jobs[1]
+  local offer = bus.board(idx, 50, 14)[1]
+  local j = offer.jobs[1]
+  -- the line's text colour reaches the phone's number badge
+  assert(offer.bus.textColour == '#000000' and j.bus.textColour == '#000000')
   local sg = bus.sign(j)
   assert(sg.routeID == '136' and sg.routeColor == '#ff8800')
   assert(sg.direction == ('Nedomice, Skola u Krizku a kostela'):sub(1, bus.SIGN_CHARS), sg.direction)
