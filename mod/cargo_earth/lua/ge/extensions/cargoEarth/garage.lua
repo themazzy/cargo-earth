@@ -409,16 +409,17 @@ end
 M.UNSTUCK_S = 300
 M.UNSTUCK_SPEED = 1.5   -- m/s
 -- nil when it can be used now, else why not and the seconds left (0 when time is not the reason).
-function M.unstuckBlock(G, g, now, speed)
+-- last: os.time() of the last use (core keeps it on the career: the garage is swapped for company work)
+function M.unstuckBlock(G, g, now, speed, last)
   if not g.started or not g.car then return 'No career car yet', 0 end
   if not M.inOwnCar(G, g) then return 'Get in your car first', 0 end
-  local left = math.ceil((g.unstuckAt or -math.huge) + M.UNSTUCK_S - (now or 0))
+  local left = math.ceil((last or g.unstuckAt or -math.huge) + M.UNSTUCK_S - (now or 0))
   if left > M.UNSTUCK_S then left = 0 end   -- the clock went back
   if left > 0 then return string.format('Unstuck again in %d min', math.ceil(left / 60)), left end
   if (speed or 0) > M.UNSTUCK_SPEED then return 'Stop the car first', 0 end
 end
-function M.unstuck(G, g, now, speed)
-  local why = M.unstuckBlock(G, g, now, speed)
+function M.unstuck(G, g, now, speed, last)
+  local why = M.unstuckBlock(G, g, now, speed, last)
   if why then return false, why end
   M.expectFix(g)
   local ok, err = pcall(G.repair)

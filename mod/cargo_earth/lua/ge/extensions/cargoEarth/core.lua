@@ -4321,14 +4321,20 @@ function M.unstuckInfo()
   local g = S.career and S.career.garage
   if not g or not g.started or not g.car then return nil end
   local pose = earth.pose()
-  local why, left = garage.unstuckBlock(M.G, g, os.time(), pose and pose.speed)
+  local why, left = garage.unstuckBlock(M.G, g, os.time(), pose and pose.speed, S.career.unstuckAt)
   return { can = why == nil, why = why, left = left }
 end
 function M.unstuckCar()
   local g, pose = S.career.garage, earth.pose()
-  local ok, msg, saved = garage.unstuck(M.G, g, os.time(), pose and pose.speed)
+  local ok, msg, saved = garage.unstuck(M.G, g, os.time(), pose and pose.speed, S.career.unstuckAt)
+  -- the cooldown is the career's, not the garage's: company work swaps the garage (Codex)
+  if ok then S.career.unstuckAt = g.unstuckAt end
   -- in a company vehicle the waived damage no longer counts against the contract (Jan: undo the reputation penalty)
   if ok and S.career.employment then employment.forgive(S.career, saved or 0) end
+  -- a bus's passengers get back the comfort the collision cost them
+  if ok and S.job and S.job.bus and require('cargoEarth/bus').forgive(S.job) > 0 then
+    msg = msg .. string.format('. Passenger comfort back to %d %%', require('cargoEarth/bus').comfort(S.job))
+  end
   return garageSay(ok, msg)
 end
 function M.garagePayDebt() return garageSay(garage.payDebt(S.career.garage, S.career)) end
