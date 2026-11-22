@@ -29,7 +29,8 @@ local WEAR_VERSION = 2
 -- Prices follow what deliveries pay. M.scale(income) sets every price from a courier's pay for an hour of play
 -- (M.courierIncome: cargoEarth/food's pay rules for a typical order); the targets are in hours of deliveries.
 M.VALUE_PER_HOUR = 2000      -- an hour of deliveries buys this much BeamNG value (a 10 000 car: 5 hours)
-M.REPAIR_SHARE = 0.18        -- a repair: this share of the value rate per unit of the game's damage
+M.REPAIR_SHARE = 0.11        -- a repair: this share of the value rate per unit of the game's damage (2026-11-22, Jan: was 0.18;
+                             -- Earth's road bugs make repairs a steady cost)
 M.START_HOURS = 1.5          -- money at the start of a career
 M.MIN_PART_HOURS = 0.02      -- the cheapest part (about a minute of deliveries)
 M.REPAIR_CAP = 0.5           -- a repair never costs more than this share of the car's parts value (a wreck is a write-off)
@@ -787,11 +788,15 @@ end
 M.MARKET_LIFE_MIN = { 15, 30 } -- a listing is gone after this many minutes of play
 M.CHEAP_SHARE = 0.5            -- this share of random new listings comes from the cheapest third of its kind
 M.MIN_PER_KIND = 8             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
-M.MARKET_V = 5                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price
+M.MARKET_V = 6                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price,
+                               -- v6: work vehicles a quarter cheaper (2026-11-22)
 -- Work vehicles cost this share of their BeamNG-value price (Jan, 2026-11-18: the first own truck took far too long to
 -- afford and to pay back). Applies to the market, the firm's new vehicles and a vehicle's worth (trade-in, sale,
 -- repair cap). Cars and SUVs keep their price: it follows food pay.
-M.WORK_PRICE = { van = 0.5, rigid = 0.35, semi = 0.35 }
+-- 2026-11-22 (Jan: the climb is grindy enough, and Earth's road bugs make repairs a steady cost): a quarter cheaper,
+-- van 0.5 -> 0.375, box truck and tractor 0.35 -> 0.26.
+M.WORK_PRICE = { van = 0.375, rigid = 0.26, semi = 0.26 }
+local WORK_PRICE_V5 = { van = 0.5, rigid = 0.35, semi = 0.35 }   -- market v5 listings were priced with these
 function M.kindFactor(kind) return M.WORK_PRICE[kind] or 1 end
 
 -- The configs for sale by kind, cheapest first ({ car = {...}, suv = {...}, ... }). Built once per config list.
@@ -910,16 +915,17 @@ end
 function M.marketTick(G, g, dtMin, rnd)
   rnd = rnd or math.random
   local m = g.market
-  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= 4 and m.v ~= M.MARKET_V) then
+  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= 4 and m.v ~= 5 and m.v ~= M.MARKET_V) then
     m = { v = M.MARKET_V, t = 0, seq = 0, list = {} }
     g.market = m
   end
   m.t = m.t + (dtMin or 0)
-  local reprice = m.v ~= M.MARKET_V   -- listings from before the work-vehicle prices
+  local reprice = m.v ~= M.MARKET_V   -- listings from before the current work-vehicle prices
+  local was = m.v == 5 and WORK_PRICE_V5 or {}
   for i = #m.list, 1, -1 do
     local l = m.list[i]
     l.kind = l.kind or kindOf(G, l.model, l.key)
-    if reprice and tonumber(l.price) then l.price = round5(l.price * M.kindFactor(l.kind)) end
+    if reprice and tonumber(l.price) then l.price = round5(l.price * M.kindFactor(l.kind) / (was[l.kind] or 1)) end
     if not l.band then
       local list = kindPools(G)[l.kind] or {}
       for n, c in ipairs(list) do
