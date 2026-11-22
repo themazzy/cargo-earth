@@ -3503,6 +3503,11 @@ local function onPlayer(gen)
     if data then radio.player = data
     elseif radio.player then radio.player = { playing = false, error = err == 'HTTP 404' and 'old' or 'helper' } end
     if radio.player then radio.helperOn = radio.player.playing == true end
+    local e = radio.player and radio.player.error
+    if e and radio.loggedGen ~= gen then -- once per station: beamng.log says why the helper's player is silent
+      radio.loggedGen = gen
+      log('W', 'cargoEarth', 'radio: the helper could not play it: ' .. tostring(e == 'helper' and 'the helper is not running' or e))
+    end
   end
 end
 
@@ -3712,6 +3717,8 @@ function M.radioDo(name, a, b, c)
       -- the game's UI has no AAC, and plays only through the helper's relay: otherwise the helper plays it
       w.alone = w.via ~= 'helper' and (not helper.enabled or st.codec:lower():match('^aac') ~= nil)
       if #st.id == 36 then helper.ask('/v1/radioclick?id=' .. st.id, nil) end
+      log('I', 'cargoEarth', string.format('radio: %s (%s), played by %s', st.name, st.codec,
+        (w.via == 'helper' or w.alone) and 'the helper' or 'the game'))
       radioSavePrefs()
     end
   elseif name == 'stop' then
@@ -3745,6 +3752,7 @@ function M.radioDo(name, a, b, c)
       if b == 'error' and w.on and radioMode() == 'page' then
         -- this station only: the helper plays it on the computer (the setting stays as the player set it)
         w.alone, w.why = true, 'the game could not play it' .. (type(c) == 'string' and c ~= '' and ' (' .. c:sub(1, 40) .. ')' or '')
+        log('W', 'cargoEarth', 'radio: ' .. w.why .. ', the helper plays it')
       end
     end
     radioSync()

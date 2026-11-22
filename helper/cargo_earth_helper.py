@@ -1779,7 +1779,7 @@ class Radio:
 # Two ways to hear a station. 1) The game plays it: the phone's <audio> asks this helper for /v1/stream, which passes
 # the station's stream through (the game's UI browser refuses web streams, but plays what comes from this computer;
 # MP3 and OGG only, it has no AAC). 2) The helper plays it on this computer. Windows: Windows Media Player's engine
-# through PowerShell (the WPF player as a fallback). Elsewhere: ffplay, mpv or VLC if installed. The mod sends a
+# through PowerShell (the WPF player as a fallback). Elsewhere: mpv, ffplay (ffmpeg) or VLC if installed. The mod sends a
 # heartbeat while the radio is on; without one for PLAYER_ALIVE_S the helper stops, so music never outlives the game.
 PLAYER_ALIVE_S = 20
 PLAYER_OPEN_S = 15        # a stream that has not started after this long is given up, with an error the phone shows
@@ -1788,6 +1788,22 @@ STREAM_RECONNECTS = 3     # times a dropped station is reconnected inside one st
 STREAM_LIVE_S = 10        # ... when its connection had been running at least this long
 STREAM_TYPES = ("audio/", "application/ogg", "application/octet-stream")
 STREAMS = threading.BoundedSemaphore(STREAM_MAX)
+PLAYERS = ("mpv", "ffplay", "cvlc")   # outside Windows, the first one found plays
+NO_PLAYER = "no media player on this computer: install mpv, ffmpeg (ffplay) or VLC, then restart the helper"
+RADIO_LOG = []            # the last radio events, for the status page (the console has them too)
+
+
+def radio_log(*a):
+    text = " ".join(str(x) for x in a)
+    log("radio:", text)
+    with NETWORK_LOCK:
+        RADIO_LOG.append(time.strftime("%H:%M:%S ") + text)
+        del RADIO_LOG[:-8]
+
+
+def _host(url):
+    """A station's server name, for the log (never the whole address with its keys)."""
+    return urllib.parse.urlsplit(url).hostname or "?"
 PS_PLAYER = r"""
 $ci = [Globalization.CultureInfo]::InvariantCulture
 $vol = [double]::Parse($env:CARGO_EARTH_VOL, $ci)
@@ -1857,7 +1873,7 @@ class Player:
         self.spawn = spawn or self._spawn
         self.clock = clock
         self.proc, self.url, self.vol, self.alive_at = None, None, 0.6, 0
-        self.started_at, self.pos, self.error, self.kind, self.sound = 0, 0, None, None, False
+        self.started_at, self.pos, self.error, self.kind, self.sound, self.why = 0, 0, None, None, False, None
         self.lock = threading.Lock()
         threading.Thread(target=self._watch, daemon=True).start()
 
@@ -1866,7 +1882,7 @@ class Player:
         import shutil
         if os.name == "nt":
             return "powershell"
-        for name in ("ffplay", "mpv", "cvlc"):
+        for name in PLAYERS:
             if shutil.which(name):
                 return name
         return None
@@ -1875,7 +1891,7 @@ class Player:
         import subprocess
         kind = self.available()
         if not kind:
-            raise OSError("no media player found on this computer")
+            raise OSError(NO_PLAYER)
         import base64
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         env = dict(os.environ, CARGO_EARTH_STREAM=url, CARGO_EARTH_VOL=f"{vol:.2f}")   # data, never code
@@ -1883,15 +1899,28 @@ class Player:
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
                    base64.b64encode(PS_PLAYER.encode("utf-16-le")).decode()]
         elif kind == "ffplay":
-            cmd = ["ffplay", "-nodisp", "-loglevel", "quiet", "-volume", str(int(vol * 100)), url]
+            cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", "-volume", str(int(vol * 100)), url]
         elif kind == "mpv":
-            cmd = ["mpv", "--no-video", "--really-quiet", f"--volume={int(vol * 100)}", url]
+            cmd = ["mpv", "--no-video", "--msg-level=all=error", f"--volume={int(vol * 100)}", url]
         else:
             cmd = ["cvlc", "--quiet", "--play-and-exit", f"--gain={vol:.2f}", url]
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                text=True, bufsize=1, creationflags=flags, env=env)
+        # the players outside Windows say why they failed on stderr (no device, a refused stream): kept for the phone
+        err = subprocess.DEVNULL if kind == "powershell" else subprocess.PIPE
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
+                                text=True, bufsize=1, creationflags=flags, env=env, errors="replace")
         proc.kind = kind
         return proc
+
+    def _read_err(self, proc):
+        for line in proc.stderr:
+            line = line.strip()
+            if not line:
+                continue
+            with self.lock:
+                if proc is not self.proc:
+                    return
+                self.why = line[:160]
+            radio_log(f"{proc.kind}: {line[:200]}")
 
     def _read(self, proc):
         for line in proc.stdout:
@@ -1904,6 +1933,7 @@ class Player:
                     self.sound = self.sound or parts[2] == "1"
                 elif parts and parts[0] == "fail":
                     self.error = ("Windows could not play it: " + " ".join(parts[1:]))[:160]
+                    radio_log(self.error)
 
     def _kill(self):
         proc, self.proc = self.proc, None
@@ -1932,15 +1962,19 @@ class Player:
         with self.lock:
             self._kill()
             self.url, self.vol, self.alive_at = url, max(0.0, min(1.0, vol)), self.clock()
-            self.started_at, self.pos, self.error, self.sound = self.clock(), 0, None, False
+            self.started_at, self.pos, self.error, self.sound, self.why = self.clock(), 0, None, False, None
             try:
                 self.proc = self.spawn(url, self.vol)
                 self.kind = getattr(self.proc, "kind", None)
             except Exception as e:  # noqa: BLE001 - reported to the phone
                 self.error = str(e)
+                radio_log("could not start a player:", e)
                 return self.status()
+            radio_log(f"playing with {self.kind}: {_host(url)}")
             if getattr(self.proc, "stdout", None):
                 threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
+            if getattr(self.proc, "stderr", None):
+                threading.Thread(target=self._read_err, args=(self.proc,), daemon=True).start()
             return self.status()
 
     def volume(self, vol):
@@ -1974,7 +2008,8 @@ class Player:
         proc = self.proc
         running = bool(proc) and proc.poll() is None
         if proc and not running and not self.error:
-            self.error = "the stream stopped or could not be opened"
+            self.error = f"{self.kind or 'the player'}: {self.why}" if self.why else "the stream stopped or could not be opened"
+            radio_log(f"{self.kind} stopped (exit {proc.poll()}): {self.error}")
         # Windows' player says when sound comes out ("sound"); the others are taken at their word
         sound = running and (self.sound or self.kind not in ("powershell", None))
         return {"playing": running, "sound": sound, "url": self.url if running else None, "vol": self.vol,
@@ -2131,7 +2166,7 @@ def missing_libraries():
     return [m for m in ("duckdb", "fsspec") if importlib.util.find_spec(m) is None]
 
 
-def status_page(areas, release, port, updates=None):
+def status_page(areas, release, port, updates=None, player=None):
     """The page a player sees at http://127.0.0.1:<port>/: whether the helper works, in plain words."""
     with areas.cv:
         states = dict(areas.state)
@@ -2140,6 +2175,7 @@ def status_page(areas, release, port, updates=None):
     errors = [s[8:] for s in states.values() if s.startswith("failed")]
     with NETWORK_LOCK:
         network = dict(NETWORK)
+        radio_events = list(RADIO_LOG)
     missing = missing_libraries()
     cache = getattr(areas.budget, "stats", {}) or {}
     rows = [("Version", VERSION), ("Port", str(port)), ("Overture release", release),
@@ -2149,6 +2185,12 @@ def status_page(areas, release, port, updates=None):
              "none asked for yet (drive in BeamNG with Cargo Earth)"),
             ("Downloads", f"{network.get('requests', 0)} requests, {network.get('bytes', 0) / 1048576:.1f} MiB"),
             ("Cache", f"{cache.get('bytes', 0) / 1048576:.0f} of {cache.get('limit', 0) / 1048576:.0f} MiB")]
+    no_player = False
+    if player:
+        kind = player.available()
+        no_player = not kind
+        rows.append(("Radio player", {"powershell": "Windows Media Player (through PowerShell)"}.get(kind, kind) if kind
+                     else "none found (the game's own player still works)"))
     up = updates.info() if updates else None
     if up and up["latest"]:
         rows.append(("Newest release", up["latest"] + (" (update available)" if up["helperOutdated"] else " (up to date)")))
@@ -2163,6 +2205,11 @@ def status_page(areas, release, port, updates=None):
     if up and up["helperOutdated"]:
         notes += (f"<p class=bad>Cargo Earth {html.escape(up['latest'])} is out: "
                   f"<a href=\"{html.escape(up['page'])}\">download it from the release page</a>.</p>")
+    if no_player:
+        notes += (f"<p class=bad>Radio: {html.escape(NO_PLAYER)}. Without one, a station the game can't play (AAC, "
+                  "or no sound from the game's browser) stays silent.</p>")
+    if radio_events:
+        notes += "<p>Radio, last events:</p><ul>" + "".join(f"<li>{html.escape(e)}</li>" for e in radio_events) + "</ul>"
     if errors:
         notes += "<p class=bad>Last errors:</p><ul>" + "".join(f"<li>{html.escape(e)}</li>" for e in errors[-5:]) + "</ul>"
     return f"""<!doctype html><html><head><meta charset=utf-8><meta http-equiv=refresh content=5>
@@ -2200,11 +2247,14 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                 try:
                     up = urllib.request.urlopen(req, timeout=15)
                 except Exception as e:  # noqa: BLE001 - the phone hears an error and tries the helper's player
+                    radio_log(f"the game's stream from {_host(url)} failed: {e}")
                     return self._send(502, {"error": f"station: {e}"})
                 with up:
                     ctype = (up.headers.get("Content-Type") or "audio/mpeg").split(";")[0].strip().lower()
                     if not ctype.startswith(STREAM_TYPES):
+                        radio_log(f"{_host(url)} sends {ctype}, not audio")
                         return self._send(415, {"error": f"not an audio stream ({ctype})"})
+                    radio_log(f"the game plays {_host(url)} ({ctype})")
                     self.send_response(200)
                     self.send_header("Content-Type", ctype)
                     self.send_header("Cache-Control", "no-store")
@@ -2248,7 +2298,7 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
             try:
                 if u.path in ("/", "/index.html"):
-                    return self._send(200, status_page(areas, release, port, updates), "text/html; charset=utf-8")
+                    return self._send(200, status_page(areas, release, port, updates, player), "text/html; charset=utf-8")
                 if u.path == "/v1/info":
                     with NETWORK_LOCK:
                         network = dict(NETWORK)

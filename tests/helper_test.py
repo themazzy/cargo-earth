@@ -827,6 +827,41 @@ class NetworkAndStorageTests(unittest.TestCase):
             handler.do_GET()
             self.assertEqual(result, [403])
 
+    def test_linux_player_says_why_it_stopped_and_the_status_page_shows_radio(self):
+        class Proc:
+            kind = "mpv"
+            def __init__(self):
+                self.code, self.stdin, self.stdout = None, io.StringIO(), None
+                self.stderr = ["", "[ao] Could not open/initialize audio device -> no sound.\n"]
+            def poll(self):
+                return self.code
+            def wait(self, timeout=None):
+                self.code = 0
+        proc = Proc()
+        player = helper.Player(spawn=lambda url, vol: proc)
+        helper.RADIO_LOG.clear()
+        self.assertTrue(player.play("http://station.example/live?key=secret", 0.5)["playing"])
+        for _ in range(100):
+            if player.why:
+                break
+            time.sleep(0.01)
+        proc.code = 2
+        out = player.status()
+        self.assertFalse(out["playing"])
+        self.assertIn("audio device", out["error"])
+        self.assertTrue(out["error"].startswith("mpv: "))
+        self.assertTrue(any("playing with mpv: station.example" in e for e in helper.RADIO_LOG))
+        self.assertFalse(any("secret" in e for e in helper.RADIO_LOG), "station keys stay out of the log")
+        areas = SimpleNamespace(cv=threading.Condition(), state={}, budget=SimpleNamespace(stats={}))
+        with patch.object(helper.Player, "available", staticmethod(lambda: None)):
+            page = helper.status_page(areas, "test", 47821, player=player).decode()
+        self.assertIn("Radio player", page)
+        self.assertIn("install mpv", page)
+        self.assertIn("audio device", page)
+        with patch.object(helper.Player, "available", staticmethod(lambda: "ffplay")):
+            page = helper.status_page(areas, "test", 47821, player=player).decode()
+        self.assertNotIn("install mpv", page)
+
     def test_root_is_a_status_page(self):
         captured = []
         def server(address, handler):
