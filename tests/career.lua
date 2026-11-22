@@ -5432,3 +5432,43 @@ test('freight pays the distance rate for a full load and less for a light one', 
   assert(haul.prepare(light, 'van', rowsFor(48), idx))
   assert(light.loadFill == 0.5 and light.pay == math.floor(330 * 0.875 / 5 + 0.5) * 5 and light.loadBonus == light.pay - 330)
 end)
+
+test('Unstuck fixes the car in place for free (company vehicles too), standing still, once per five minutes', function()
+  local core, s = fresh()
+  local g = s.career.garage
+  local fixed = 0
+  core.G.repair = function() fixed = fixed + 1 end
+  g.repair, g.debt, s.career.money = 400, 0, 1000
+  pose.speed = 5
+  assert(not core.unstuckCar() and fixed == 0 and g.repair == 400, 'not while moving')
+  assert(core.phoneState().unstuck.why == 'Stop the car first')
+  pose.speed = 0
+  assert(core.phoneState().unstuck.can)
+  local st = core.phoneAction('unstuck')
+  assert(fixed == 1 and g.repair == 0 and s.career.money == 1000 and (g.debt or 0) == 0, 'free, and no debt for the repair')
+  assert(st.unstuck and not st.unstuck.can and st.unstuck.left > 0)
+  g.repair = 200
+  assert(not core.unstuckCar() and fixed == 1 and g.repair == 200, 'only once per UNSTUCK_S')
+  s.career.unstuckAt = os.time() - require('cargoEarth/garage').UNSTUCK_S - 1
+  assert(core.unstuckCar() and fixed == 2 and g.repair == 0)
+  -- a company vehicle too: the waived damage no longer costs the contract's reputation (Jan)
+  g.car.loaner = true
+  s.career.employment = { phase = 'working', vehicleDamage = 900, jobs = {} }
+  g.repair, g.unstuckAt = 600, nil
+  assert(not core.phoneState().unstuck.can, 'the cooldown is the career\'s, not the garage\'s (company work swaps it)')
+  s.career.unstuckAt = nil
+  assert(core.phoneState().unstuck.can)
+  assert(core.unstuckCar() and fixed == 3 and g.repair == 0 and s.career.employment.vehicleDamage == 300)
+  s.career.employment, g.car.loaner = nil, nil
+  pose.speed = nil
+end)
+
+test('Unstuck gives a bus\'s passengers back the comfort a collision cost them, not harsh driving', function()
+  local bus = require('cargoEarth/bus')
+  local j = { bus = { onBoard = 10, comfort = 100 } }
+  bus.harsh(j)
+  local lost = bus.impact(j, nil, 20000, 10)
+  assert(lost > 0 and bus.comfort(j) == 100 - bus.HARSH_LOSS - lost)
+  assert(bus.forgive(j) == lost and bus.comfort(j) == 100 - bus.HARSH_LOSS, 'the crash is forgiven, the harsh moment is not')
+  assert(bus.forgive(j) == 0, 'only once')
+end)

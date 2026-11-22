@@ -88,3 +88,12 @@ once (new share / old share). A vehicle's worth (trade-in, sale, repair cap) fol
 Repairs are about 40 % cheaper too: `garage.REPAIR_SHARE` 0.18 -> 0.11 (about 0.026 CZK per point of the game's damage:
 a scrape about 50 CZK, a solid crash about 250), still at most half the vehicle's worth. A hired driver's incident costs
 40 % less as well (`fleet.INCIDENT_COST`). Repairs already owed keep their price.
+
+## Unstuck (2026-11-22)
+
+Earth's roads have bugs (bridge ends held at ground, steps between tiles) that wreck or trap a car through no fault of
+the driver. The phone header's **Unstuck** button repairs the car you drive in place for free and drops the repairs
+owed (`garage.unstuck`). In a company vehicle the waived damage is also taken off the contract (`employment.forgive`),
+so it no longer costs the company's reputation, and a bus's passengers get back the comfort bumps and crashes cost
+them (`bus.forgive`; harsh driving still counts). It works standing still (1.5 m/s at most), once every 5 minutes
+(`UNSTUCK_S`, real time, kept on the career so company work can't reset it), and a load damaged in the crash stays damaged.

@@ -401,6 +401,39 @@ function M.repairCar(G, g, career, factor)
   return true, string.format('Repaired (-%d CZK)', cost), cost
 end
 
+-- Unstuck (Jan, 2026-11-22): Earth's roads have bugs (bridge ends held at ground, steps between tiles) that wreck or
+-- trap a car through no fault of the driver. The phone's Unstuck button repairs the car in place for free (your own,
+-- or a company vehicle: core then takes the damage off the contract too): the repairs owed are dropped, but a load
+-- damaged in the crash stays damaged. At most once per UNSTUCK_S of play,
+-- and only standing still, so it is a way out, not free repairs while driving. now: os.time() (saved with the career).
+M.UNSTUCK_S = 300
+M.UNSTUCK_SPEED = 1.5   -- m/s
+-- nil when it can be used now, else why not and the seconds left (0 when time is not the reason).
+-- last: os.time() of the last use (core keeps it on the career: the garage is swapped for company work)
+function M.unstuckBlock(G, g, now, speed, last)
+  if not g.started or not g.car then return 'No career car yet', 0 end
+  if not M.inOwnCar(G, g) then return 'Get in your car first', 0 end
+  local left = math.ceil((last or g.unstuckAt or -math.huge) + M.UNSTUCK_S - (now or 0))
+  if left > M.UNSTUCK_S then left = 0 end   -- the clock went back
+  if left > 0 then return string.format('Unstuck again in %d min', math.ceil(left / 60)), left end
+  if (speed or 0) > M.UNSTUCK_SPEED then return 'Stop the car first', 0 end
+end
+function M.unstuck(G, g, now, speed, last)
+  local why = M.unstuckBlock(G, g, now, speed, last)
+  if why then return false, why end
+  M.expectFix(g)
+  local ok, err = pcall(G.repair)
+  if not ok then g.fixUntil = nil return false, 'Unstuck failed: ' .. tostring(err) end
+  local saved = g.repair or 0
+  require('cargoEarth/damage').clear(g.car)
+  g.damageBaseline, g.restoringDamage = nil, nil
+  g.repair, g.carriedRepair = 0, nil
+  g.unstuckAt = now or 0
+  local what = g.car.loaner and 'the company vehicle' or 'your car'
+  return true, saved > 0 and string.format('Unstuck: %s is fixed for free (%d CZK of repairs waived)', what, saved)
+    or string.format('Unstuck: %s is back in shape', what), saved
+end
+
 -- Pays as much of the debt as the money allows.
 function M.payDebt(g, career)
   local d = g.debt or 0

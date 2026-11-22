@@ -361,7 +361,19 @@ function M.impact(job, peak, damage, now)
   end
   local before = M.comfort(job)
   b.comfort = math.max(0, before - extra)
+  b.impactLost = (b.impactLost or 0) + (before - b.comfort)   -- Unstuck gives it back (M.forgive)
   return before - b.comfort
+end
+
+-- Unstuck (garage.unstuck, Jan 2026-11-22): a collision the road caused is forgiven, so the comfort the passengers lost
+-- to bumps and crashes comes back. Harsh driving still counts. Returns the comfort given back.
+function M.forgive(job)
+  local b = job and job.bus
+  local lost = b and tonumber(b.impactLost) or 0
+  if lost <= 0 then return 0 end
+  local before = M.comfort(job)
+  b.comfort, b.impactLost, b.impactAt, b.impactLoss, b.impactDamage = math.min(100, before + lost), 0, nil, nil, nil
+  return b.comfort - before
 end
 
 -- The bus's own signs (the citybus's destination sign and next-stop screen, vehicles/citybus/lua/controller/bus.lua,

@@ -136,6 +136,8 @@ angular.module('beamng.apps')
     'display:flex;flex-direction:column}' +
     '.cep-bar{display:flex;justify-content:space-between;align-items:center;min-height:34px;padding:2px 12px 2px 18px;font-size:12px;font-weight:600;border-bottom:1px solid var(--line)}' +
     '.cep-bar-l,.cep-bar-r{display:flex;align-items:center;gap:5px;white-space:nowrap}' +
+    '.cep-unstuck{border:1px solid var(--line);background:transparent;color:inherit;border-radius:10px;padding:2px 7px;font:inherit;font-size:11px;line-height:1.2;cursor:pointer}' +
+    '.cep-unstuck.wait{opacity:.5}.cep-unstuck small{font-size:10px;font-weight:500}' +
     '.cep-bar .cep-limit{width:24px;height:24px;border-width:3px;font-size:10px}' +
     '.cep-bal{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}' +
     '.cep-on{width:8px;height:8px;border-radius:50%;background:var(--ok)}' +
@@ -1184,7 +1186,11 @@ angular.module('beamng.apps')
       // the speed limit, the balance and online on the right (the tabs at the bottom say whether this is Work or Radio)
       '<div class="cep-bar"><span class="cep-bar-l">{{ s.clock }}' +
         '<button class="cep-settings-link" title="{{ s.mode === \'courier\' ? \'Food delivery\' : \'Freight\' }} settings" ' +
-          'aria-label="Job settings" ng-click="openJobsSettings()">⚙</button></span>' +
+          'aria-label="Job settings" ng-click="openJobsSettings()">⚙</button>' +
+        // Unstuck: a free repair in place when Earth's roads wreck or trap the car (cargoEarth/garage M.unstuck)
+        '<button class="cep-unstuck" ng-if="s.unstuck" ng-class="{wait: !s.unstuck.can}" ' +
+          'title="{{ s.unstuck.why || \'Stuck or damaged by the road? Fix the car here for free\' }}" ng-click="act(\'unstuck\')">' +
+          'Unstuck<small ng-if="s.unstuck.left > 0"> {{ unstuckMin() }}m</small></button></span>' +
         '<span class="cep-bar-r"><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}" title="Speed limit here">{{ s.limit.sign }}' +
           '<small ng-if="s.limit.unit === \'mph\'">mph</small></span>' +
         '<strong class="cep-bal">{{ fmt.money(s.money) }}</strong>' +
@@ -1757,6 +1763,7 @@ angular.module('beamng.apps')
         scope.delAsk = id
         setTimeout(function () { scope.$evalAsync(function () { if (scope.delAsk === id) scope.delAsk = null }) }, 4000)
       }
+      scope.unstuckMin = function () { return Math.ceil(((scope.s && scope.s.unstuck && scope.s.unstuck.left) || 0) / 60) }
       scope.act = function (name, value) {
         scope.cancelAsk = false
         var arg = value === undefined ? '' : ', ' + bngApi.serializeToLua(value)

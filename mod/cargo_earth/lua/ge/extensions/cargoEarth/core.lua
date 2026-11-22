@@ -2997,7 +2997,7 @@ function M.phoneState()
       companyVehicle = c.employment and employment.vehicleLabel(c.employment),
       currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
       fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
-      canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo() }
+      canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo(), unstuck = M.unstuckInfo() }
   if S.pendingCareer or (not S.career.garage.started and S.career.play ~= 'free' and not c.employment) then
     -- the careers to pick from, on the resume and first-run screens
     local saves = require('cargoEarth/saves')
@@ -3149,6 +3149,10 @@ end
 function M.phoneAction(a, orderId)
   if a == 'helperStart' or a == 'helperHide' then
     M.helperStartDo(a)
+    return M.phoneState()
+  end
+  if a == 'unstuck' then
+    if not S.pendingCareer then M.unstuckCar() end
     return M.phoneState()
   end
   if a == 'loadSave' or a == 'newCareer' or a == 'deleteSave' then
@@ -4309,6 +4313,27 @@ function M.garageRepair()
   local ok, msg, cost = garage.repairCar(M.G, g, S.career, factor)
   if ok and factor < 1 then
     msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved)', cost, full - cost)
+  end
+  return garageSay(ok, msg)
+end
+-- The phone header's Unstuck button: a free repair in place (garage.unstuck).
+function M.unstuckInfo()
+  local g = S.career and S.career.garage
+  if not g or not g.started or not g.car then return nil end
+  local pose = earth.pose()
+  local why, left = garage.unstuckBlock(M.G, g, os.time(), pose and pose.speed, S.career.unstuckAt)
+  return { can = why == nil, why = why, left = left }
+end
+function M.unstuckCar()
+  local g, pose = S.career.garage, earth.pose()
+  local ok, msg, saved = garage.unstuck(M.G, g, os.time(), pose and pose.speed, S.career.unstuckAt)
+  -- the cooldown is the career's, not the garage's: company work swaps the garage (Codex)
+  if ok then S.career.unstuckAt = g.unstuckAt end
+  -- in a company vehicle the waived damage no longer counts against the contract (Jan: undo the reputation penalty)
+  if ok and S.career.employment then employment.forgive(S.career, saved or 0) end
+  -- a bus's passengers get back the comfort the collision cost them
+  if ok and S.job and S.job.bus and require('cargoEarth/bus').forgive(S.job) > 0 then
+    msg = msg .. string.format('. Passenger comfort back to %d %%', require('cargoEarth/bus').comfort(S.job))
   end
   return garageSay(ok, msg)
 end
