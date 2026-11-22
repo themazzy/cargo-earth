@@ -1311,7 +1311,7 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="!s.taxi && (!s.trucking || !s.trucking.hint)">Go online to get orders from nearby {{ s.mode === "courier" ? "restaurants and shops" : "depots" }}.</div>' +
         '<div class="cep-sub" ng-if="s.taxi">{{ s.taxi.hint }}</div>' +
         '<div class="cep-sub" role="status" ng-if="s.taxi.eligible">{{ s.taxi.search }}</div>' +
-        '<div class="cep-sub" ng-if="s.trucking.carrier">{{ s.trucking.label }}</div>' +
+        '<div class="cep-sub" ng-if="s.trucking.carrier">{{ s.trucking.carrier }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.hint">{{ s.trucking.hint }}</div>' +
         '<div class="cep-sub" ng-if="s.trucking.error">{{ s.trucking.error }}</div>' +
       '</div>' +

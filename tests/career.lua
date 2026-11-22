@@ -4937,6 +4937,18 @@ test('a load the mod lost track of is emptied once nothing is on board', functio
   assert(boxes[1].currentVolume == 3, 'passenger seats are left alone')
 end)
 
+test('a load found in the boxes with nothing on board is emptied (a restored car state brings it back)', function()
+  local core, s = mealOnBoard()
+  core.cancel()
+  advance(core, 6)
+  assert(not s.job and boxes[1].currentVolume == 0)
+  -- the car state restored after loading a save puts back the load it was saved with; nobody asked for a sweep
+  boxes[1].currentVolume, boxes[1].targetVolume = 40, 40
+  s.storage, s.sweepWanted, s.sweepAt = nil, nil, 0
+  advance(core, 8)
+  assert(boxes[1].currentVolume == 0, 'the restored load is emptied: ' .. boxes[1].currentVolume)
+end)
+
 test('seat occupants: bus seats, a fixed scattered order, and seating the player', function()
   local occ = require('cargoEarth/occupants')
   local cfg = occ.fillBusSeats({ parts = { citybus_seats = 'citybus_seats', seat_occupant_1RA = 'occupant_generic' } })
