@@ -787,11 +787,16 @@ end
 M.MARKET_LIFE_MIN = { 15, 30 } -- a listing is gone after this many minutes of play
 M.CHEAP_SHARE = 0.5            -- this share of random new listings comes from the cheapest third of its kind
 M.MIN_PER_KIND = 8             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
-M.MARKET_V = 5                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price
+M.MARKET_V = 6                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price,
+                               -- v6: dearer trucks (2026-11-22)
 -- Work vehicles cost this share of their BeamNG-value price (Jan, 2026-11-18: the first own truck took far too long to
 -- afford and to pay back). Applies to the market, the firm's new vehicles and a vehicle's worth (trade-in, sale,
 -- repair cap). Cars and SUVs keep their price: it follows food pay.
-M.WORK_PRICE = { van = 0.5, rigid = 0.35, semi = 0.35 }
+-- 2026-11-22 (Jan: buying the next vehicle should take long enough to feel earned, counting the frequent repairs Earth's
+-- road bugs cause): van 0.5 -> 0.6, box truck 0.35 -> 0.5, tractor 0.35 -> 0.7. About 5-7 h of car work to a used van,
+-- 6-9 h of van work to a box truck and 9-12 h of box truck work to a tractor.
+M.WORK_PRICE = { van = 0.6, rigid = 0.5, semi = 0.7 }
+local WORK_PRICE_V5 = { van = 0.5, rigid = 0.35, semi = 0.35 }   -- market v5 listings were priced with these
 function M.kindFactor(kind) return M.WORK_PRICE[kind] or 1 end
 
 -- The configs for sale by kind, cheapest first ({ car = {...}, suv = {...}, ... }). Built once per config list.
@@ -910,16 +915,17 @@ end
 function M.marketTick(G, g, dtMin, rnd)
   rnd = rnd or math.random
   local m = g.market
-  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= 4 and m.v ~= M.MARKET_V) then
+  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= 4 and m.v ~= 5 and m.v ~= M.MARKET_V) then
     m = { v = M.MARKET_V, t = 0, seq = 0, list = {} }
     g.market = m
   end
   m.t = m.t + (dtMin or 0)
-  local reprice = m.v ~= M.MARKET_V   -- listings from before the work-vehicle prices
+  local reprice = m.v ~= M.MARKET_V   -- listings from before the current work-vehicle prices
+  local was = m.v == 5 and WORK_PRICE_V5 or {}
   for i = #m.list, 1, -1 do
     local l = m.list[i]
     l.kind = l.kind or kindOf(G, l.model, l.key)
-    if reprice and tonumber(l.price) then l.price = round5(l.price * M.kindFactor(l.kind)) end
+    if reprice and tonumber(l.price) then l.price = round5(l.price * M.kindFactor(l.kind) / (was[l.kind] or 1)) end
     if not l.band then
       local list = kindPools(G)[l.kind] or {}
       for n, c in ipairs(list) do

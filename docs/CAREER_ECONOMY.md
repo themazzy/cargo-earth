@@ -37,7 +37,7 @@ box truck and every company contract, and a company truck earned 80-90 % of your
 - Fuel cargo pay factor 1.55 -> 1.15 (tanker runs).
 - Unlocks: box trucks after 3 van hauls (was 5), tractors after 5 box truck hauls (was 10).
 
-- Work vehicles cost a share of their value-based price (`garage.WORK_PRICE`): vans 0.5, box trucks and tractors 0.35,
+- Work vehicles cost a share of their value-based price (`garage.WORK_PRICE`): vans 0.5, box trucks and tractors 0.35 (raised on 2026-11-22, see below),
   on the market, for the firm's new vehicles and in what a vehicle is worth (trade-in, sale, repair cap). Older
   market listings are repriced once (market v5). Cheapest used van about 1,800 CZK, tractor about 10,000.
 
@@ -68,3 +68,22 @@ Freight is still paid by distance ((base + rate × km) × cargo factor), times 0
 the share of the tier's weight limit or its space (van 96 slots, box truck 640, tractor 1,600 or the trailer's litres),
 whichever is higher. A job loads as much as the vehicle and its tier allow, so a full-size vehicle earns the full rate and
 a small van or light truck down to 75 % of it. The offer shows "Load X % full" when it pays less.
+
+## Dearer unlocks (2026-11-22)
+
+Jan: buying the next vehicle should take long enough to feel earned, and repairs are a steady cost on Earth's roads
+(bridge ends and tile steps), so the margins are thinner than a clean run suggests. Pay and repair prices are unchanged;
+what you unlock costs more:
+
+| | Before | Now |
+| --- | --- | --- |
+| Work vehicle share of the value price (`garage.WORK_PRICE`) | van 0.5, box truck 0.35, tractor 0.35 | van 0.6, box truck 0.5, tractor 0.7 |
+| Firm's new van / box truck / tractor (fallback prices) | 3,000 / 4,900 / 7,000 | 3,600 / 7,000 / 14,000 |
+| Founding the firm | 6,000 | 15,000 |
+| Firm upgrades: bays / workshop / fuel tank / dispatch office | 4k, 9k, 18k / 5k, 12k / 7k / 6k, 14k | 8k, 18k, 36k / 10k, 24k / 14k / 12k, 28k |
+| Box / tanker / flatbed trailer | 6,000 / 8,000 / 7,000 | 9,000 / 16,000 / 10,000 |
+
+Car trailers (2,500 and 1,200), cars, SUVs and the home garage keep their prices. Saving time from the work before it,
+after fuel, servicing and some repairs: a used van about 5-7 h of car work, a box truck 6-9 h of van work, a tractor
+9-12 h of box truck work, the tanker about 20 h of extra tanker pay, the firm a few sessions. Market v6 reprices
+listings from v5 once (new share / old share). A vehicle's worth (trade-in, sale, repair cap) follows the new shares too.

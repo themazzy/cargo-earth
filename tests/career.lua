@@ -2286,6 +2286,7 @@ end)
 test('headquarters, upgrades and what they change', function()
   local c = established()
   assert(firm.found(c, 'Kola'))
+  c.money = 60000
   assert(not firm.upgrade(c, 'bays', 0), 'no upgrades before a headquarters')
   local yard = {id = 'd1', n = 'Sklad Sever', town = 'Brno', g = {50.01, 14}}
   assert(not firm.setHq(c, yard, {lat = 50.01, lon = 14, speed = 10}), 'must be parked')
@@ -2296,7 +2297,7 @@ test('headquarters, upgrades and what they change', function()
   local before = c.money
   assert(firm.capacity(c) == 3 and firm.driverFactor(c) == 1 and firm.repairFactor(c, {lat = 50.0101, lon = 14.0001}) == 1)
   assert(not firm.upgrade(c, 'bays', 10), 'a debt blocks upgrades')
-  assert(firm.upgrade(c, 'bays', 0) and firm.capacity(c) == 5 and c.money == before - 4000)
+  assert(firm.upgrade(c, 'bays', 0) and firm.capacity(c) == 5 and c.money == before - firm.UPGRADES[1].levels[1].cost)
   assert(firm.upgrade(c, 'workshop', 0) and firm.repairFactor(c, {lat = 50.0101, lon = 14.0001}) == 0.85)
   assert(firm.repairFactor(c, {lat = 50.2, lon = 14}) == 1, 'the workshop only works at the headquarters')
   c.money = 100
@@ -2346,12 +2347,12 @@ test('the firm in the game: founded from the phone, headquarters at a real yard,
   local core, s = fresh()
   fuelAdapter(core)
   local c = s.career
-  c.garage.debt, c.money, c.delivered = 0, 30000, 30
+  c.garage.debt, c.money, c.delivered = 0, 60000, 30
   for _ = 1, 5 do rating.add(c, 'freight', 5) end
   local state = core.careerState().firm
   assert(not state.founded and state.ready and state.fee == firm.FEE)
   state = core.firmDo('found', 'Kola')
-  assert(state.founded and state.name == 'Kola' and not state.hq and c.money == 30000 - firm.FEE)
+  assert(state.founded and state.name == 'Kola' and not state.hq and c.money == 60000 - firm.FEE)
   local yard = idx.depots[1]
   pose.lat, pose.lon = yard.g[1] + 0.0003, yard.g[2]
   state = core.firmState()
@@ -2569,7 +2570,7 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   -- the trailer sells back for half
   money = c.money
   core.hqDo('sellTrailer', hq.trailers[1].id)
-  assert(c.money == money + 3000 and #firm.trailers(c) == 0)
+  assert(c.money == money + firm.TRAILERS[1].price / 2 and #firm.trailers(c) == 0)
   -- a tow trailer of the firm's is taken out here and goes on your hitch (Jan: how do I get my own trailer?)
   local tr = require('cargoEarth/trailers')
   local saved = { tr.takeOwn, tr.ownOut, tr.putAwayOwn }
@@ -5220,20 +5221,28 @@ test('used-car market: every vehicle kind has eight listings at cheap, middle an
   garage.marketTick(G, old, 0, rnd)
   assert(old.market.list[1].price == 5, 'and only once')
   -- work vehicles cost a share of their value-based price; a new tractor for the firm too
-  assert(garage.kindFactor('car') == 1 and garage.kindFactor('suv') == 1 and garage.kindFactor('van') == 0.5)
-  assert(garage.kindFactor('rigid') == 0.35 and garage.kindFactor('semi') == 0.35)
-  assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.35 / 5 + 0.5) * 5)
+  assert(garage.kindFactor('car') == 1 and garage.kindFactor('suv') == 1 and garage.kindFactor('van') == 0.6)
+  assert(garage.kindFactor('rigid') == 0.5 and garage.kindFactor('semi') == 0.7)
+  assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.7 / 5 + 0.5) * 5)
+  -- a v5 market (old work prices) is repriced once to the dearer ones: a tractor x 0.7 / 0.35, a car unchanged
+  local v5 = { market = { v = 5, t = 5, seq = 2, list = {
+    { id = 1, model = 'us_semi', key = 'us_semi7', kind = 'semi', name = 't', km = 0, condition = 1, price = 1000, listedAt = 0, gone = 90 },
+    { id = 2, model = 'covet', key = 'covet7', kind = 'car', name = 'c', km = 0, condition = 1, price = 1000, listedAt = 0, gone = 90 } } } }
+  garage.marketTick(G, v5, 0, rnd)
+  assert(v5.market.v == garage.MARKET_V and garage.findListing(v5, 1).price == 2000 and garage.findListing(v5, 2).price == 1000)
+  garage.marketTick(G, v5, 0, rnd)
+  assert(garage.findListing(v5, 1).price == 2000, 'v5 listings are repriced only once')
   assert(garage.newPrice(G, 'covet', 'covet7') == math.floor(7000 * garage.PRICE_PER_VALUE / 5 + 0.5) * 5)
   -- parts stripped off a discounted truck sell at the truck's discount, so buy-and-strip can't beat the price
   local PG = { part = function(_, name) return { information = { name = name, value = 1000 } } end }
   local truck = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = 'engine' }, ioCtx = {} }
   local stripped = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = '' }, ioCtx = {} }
   local q = garage.partsQuote(PG, {}, truck.slotPartMap, stripped)
-  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1 and q.salvage.engine.f == 0.35)
+  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1 and q.salvage.engine.f == garage.kindFactor('semi'))
   PG.vehicle = function() return stripped end
   local sg = { inventory = { engine = 2 }, salvage = q.salvage }
   local full = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART / 5 + 0.5) * 5
-  local cheap = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART * 0.35 / 5 + 0.5) * 5
+  local cheap = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART * garage.kindFactor('semi') / 5 + 0.5) * 5
   assert(garage.spares(PG, sg)[1].price == cheap)
   local _, _, got = garage.sell(PG, sg, { money = 0 }, 'engine')
   assert(got == cheap and sg.salvage == nil)
