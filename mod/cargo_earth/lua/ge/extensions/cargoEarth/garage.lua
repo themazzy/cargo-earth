@@ -21,6 +21,7 @@ local M = {}
 M.USED_CAR = 0.6             -- used cars cost this share of their value
 M.TRADE_IN = 0.5             -- the old car is taken for this share of its parts' value
 M.SELL_PART = 0.4            -- spare parts sell for this share
+M.RESALE = 0.85              -- a dealer never pays more than this share of what you paid for a car and its parts
 M.STARTER_MODEL = 'pigeon'   -- the cheapest config of this model is the starter car
 M.CAR_LIMIT = 3              -- owned cars you can keep before choosing a home (a home sets its own capacity)
 local STARTER_KM, STARTER_CONDITION = 170000, 0.27
@@ -166,7 +167,17 @@ function M.carValue(G) return valueOf(G, G.vehicle()) end
 function M.noteValue(G, g, vehicle)
   if not g.car then return end
   local value = valueOf(G, vehicle or G.vehicle())
-  if value > 0 then g.car.value = value end
+  if value > 0 then
+    g.car.value = value
+    if g.car.paid and not g.car.boughtValue then g.car.boughtValue = value end
+  end
+end
+
+-- Share of a part's price that the car's own parts were bought at (nil: not known, e.g. the starter or an older save).
+-- A cheap worn-out listing can't be stripped and its parts sold for more than the car cost.
+function M.ownShare(car)
+  local paid, worth = car and tonumber(car.paid), car and tonumber(car.boughtValue)
+  if paid and worth and worth > 0 then return math.min(1, paid / worth) end
 end
 
 -- The most a repair of the current car can cost, or nil while its value is not known.
@@ -253,13 +264,15 @@ M.FREE_PART = 'cargo_earth_phone_auto' -- the phone on the dashboard (cargoEarth
 -- paid: { [part] = count } parts on this car that were paid at the full price (bought here or fitted from full-price
 -- spares): taking them off again gives full-price spares, not salvage. onSalvage: { [part] = { n, f } } salvage spares
 -- fitted to this car: they keep their discount when taken off again.
-function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage)
+-- ownShare: M.ownShare of the car (its own parts taken off sell at that share as well).
+function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage, ownShare)
   if type(before) ~= 'table' or not vehicle or type(vehicle.slotPartMap) ~= 'table' then
     return nil, 'Waiting for the vehicle parts to load.'
   end
   local delta, spares, items, total = {}, {}, {}, 0
   for part, count in pairs(inventory or {}) do spares[part] = count end
   local cheap, factor = {}, M.kindFactor(haul.carrier(vehicle))
+  if tonumber(ownShare) then factor = factor * math.max(0, math.min(1, ownShare)) end
   for part, row in pairs(salvage or {}) do cheap[part] = { n = row.n, f = row.f } end
   local full, onCar = {}, {}
   for part, n in pairs(paid or {}) do full[part] = n end
@@ -608,6 +621,14 @@ function M.tradeInQuote(G, g)
   local fraction = math.min(1, math.max(0, g.car.km or 0) / 80000)
   local floor = math.ceil(value * 0.25 / 5) * 5
   local gross = math.max(floor, round5(value * (M.TRADE_IN - 0.25 * fraction)))
+  -- The listing price and the parts' worth come from different BeamNG numbers (a config's value, its parts' values)
+  -- and a worn listing is cheap, so the formula alone could pay more than the car cost (Jan, 2026-11-22: bought for
+  -- 1 000, sold for 3 000). What you paid for the car and its parts caps it.
+  local paid = tonumber(g.car.paid)
+  if paid then
+    local cap = math.floor((paid + (tonumber(g.car.partsPaid) or 0)) * M.RESALE / 5) * 5
+    floor, gross = math.min(floor, cap), math.min(gross, cap)
+  end
   return math.max(floor, gross - (g.repair or 0)), gross
 end
 
@@ -634,7 +655,8 @@ function M.buyForFirm(g, career, offer, limit)
   if M.ownedCount(g) >= limit then return false, 'Every bay is taken. Build more bays or sell a vehicle.' end
   if (career.money or 0) < offer.price then return false, string.format('Not enough money (%d CZK needed).', offer.price) end
   career.money = career.money - offer.price
-  park(g, { model = offer.model, key = offer.key, name = offer.name, km = 0, condition = 1, firm = true })
+  park(g, { model = offer.model, key = offer.key, name = offer.name, km = 0, condition = 1, firm = true,
+    paid = offer.price })
   return true, string.format('%s bought for %d CZK. It is parked at the headquarters.', offer.name, offer.price), offer.price
 end
 
@@ -793,7 +815,7 @@ function M.buyCar(G, g, career, offer, opts)
   local kept = opts.keepCar and g.car
   if kept then parkCurrent(g) end
   g.car = { model = offer.model, key = offer.key, name = offer.name, parts = nil, km = offer.km or 0,
-    condition = offer.condition or 1 }
+    condition = offer.condition or 1, paid = offer.price }
   g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.lastDamage, g.preview, g.carriedRepair = 0, 0, nil, nil
   return true, string.format('Bought %s for %d CZK%s', offer.name, offer.price,
