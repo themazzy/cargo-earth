@@ -831,8 +831,9 @@ class NetworkAndStorageTests(unittest.TestCase):
         class Proc:
             kind = "mpv"
             def __init__(self):
-                self.code, self.stdin, self.stdout = None, io.StringIO(), None
-                self.stderr = ["", "[ao] Could not open/initialize audio device -> no sound.\n"]
+                self.code, self.stdin = None, io.StringIO()
+                self.stdout = ["", "[ao] Could not open/initialize audio device -> no sound.\n",
+                               "Failed to open http://station.example/live?key=secret.\n"]
             def poll(self):
                 return self.code
             def wait(self, timeout=None):
@@ -842,14 +843,25 @@ class NetworkAndStorageTests(unittest.TestCase):
         helper.RADIO_LOG.clear()
         self.assertTrue(player.play("http://station.example/live?key=secret", 0.5)["playing"])
         for _ in range(100):
-            if player.why:
+            if player.why and "Failed" in player.why:
                 break
             time.sleep(0.01)
         proc.code = 2
         out = player.status()
         self.assertFalse(out["playing"])
-        self.assertIn("audio device", out["error"])
+        self.assertIn("station.example", out["error"])
         self.assertTrue(out["error"].startswith("mpv: "))
+        self.assertNotIn("secret", out["error"])
+        # a player that ended before its reason was read: the generic error gives way to the reason
+        player.generic, player.error, player.why = False, None, None
+        late = Proc()
+        late.stdout, late.code = iter(()), 1
+        player.proc = late
+        self.assertIn("could not be opened", player.status()["error"])
+        late.stdout = ["no audio device\n"]
+        player._read_err(late)
+        self.assertEqual(player.status()["error"], "mpv: no audio device")
+        player.proc = proc
         self.assertTrue(any("playing with mpv: station.example" in e for e in helper.RADIO_LOG))
         self.assertFalse(any("secret" in e for e in helper.RADIO_LOG), "station keys stay out of the log")
         areas = SimpleNamespace(cv=threading.Condition(), state={}, budget=SimpleNamespace(stats={}))

@@ -1803,7 +1803,15 @@ def radio_log(*a):
 
 def _host(url):
     """A station's server name, for the log (never the whole address with its keys)."""
-    return urllib.parse.urlsplit(url).hostname or "?"
+    try:
+        return urllib.parse.urlsplit(url).hostname or "?"
+    except ValueError:
+        return "?"
+
+
+def _redact(text):
+    """A player's message with every web address cut down to its server name (stations put keys in addresses)."""
+    return re.sub(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s'\"<>]+", lambda m: _host(m.group(0)), text)
 PS_PLAYER = r"""
 $ci = [Globalization.CultureInfo]::InvariantCulture
 $vol = [double]::Parse($env:CARGO_EARTH_VOL, $ci)
@@ -1874,6 +1882,7 @@ class Player:
         self.clock = clock
         self.proc, self.url, self.vol, self.alive_at = None, None, 0.6, 0
         self.started_at, self.pos, self.error, self.kind, self.sound, self.why = 0, 0, None, None, False, None
+        self.generic = False
         self.lock = threading.Lock()
         threading.Thread(target=self._watch, daemon=True).start()
 
@@ -1904,22 +1913,25 @@ class Player:
             cmd = ["mpv", "--no-video", "--msg-level=all=error", f"--volume={int(vol * 100)}", url]
         else:
             cmd = ["cvlc", "--quiet", "--play-and-exit", f"--gain={vol:.2f}", url]
-        # the players outside Windows say why they failed on stderr (no device, a refused stream): kept for the phone
-        err = subprocess.DEVNULL if kind == "powershell" else subprocess.PIPE
+        # the players outside Windows say why they failed (no device, a refused stream; mpv on stdout, the others on
+        # stderr): both read as one, kept for the phone
+        err = subprocess.DEVNULL if kind == "powershell" else subprocess.STDOUT
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
                                 text=True, bufsize=1, creationflags=flags, env=env, errors="replace")
         proc.kind = kind
         return proc
 
     def _read_err(self, proc):
-        for line in proc.stderr:
-            line = line.strip()
+        for line in proc.stdout:
+            line = _redact(line.strip())
             if not line:
                 continue
             with self.lock:
                 if proc is not self.proc:
                     return
                 self.why = line[:160]
+                if self.generic:       # it ended before saying why: the reason replaces the generic error
+                    self.error, self.generic = f"{proc.kind}: {self.why}", False
             radio_log(f"{proc.kind}: {line[:200]}")
 
     def _read(self, proc):
@@ -1963,6 +1975,7 @@ class Player:
             self._kill()
             self.url, self.vol, self.alive_at = url, max(0.0, min(1.0, vol)), self.clock()
             self.started_at, self.pos, self.error, self.sound, self.why = self.clock(), 0, None, False, None
+            self.generic = False
             try:
                 self.proc = self.spawn(url, self.vol)
                 self.kind = getattr(self.proc, "kind", None)
@@ -1972,9 +1985,8 @@ class Player:
                 return self.status()
             radio_log(f"playing with {self.kind}: {_host(url)}")
             if getattr(self.proc, "stdout", None):
-                threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
-            if getattr(self.proc, "stderr", None):
-                threading.Thread(target=self._read_err, args=(self.proc,), daemon=True).start()
+                reader = self._read if self.kind == "powershell" else self._read_err
+                threading.Thread(target=reader, args=(self.proc,), daemon=True).start()
             return self.status()
 
     def volume(self, vol):
@@ -2008,7 +2020,10 @@ class Player:
         proc = self.proc
         running = bool(proc) and proc.poll() is None
         if proc and not running and not self.error:
-            self.error = f"{self.kind or 'the player'}: {self.why}" if self.why else "the stream stopped or could not be opened"
+            if self.why:
+                self.error = f"{self.kind or 'the player'}: {self.why}"
+            else:   # its reader may not have had its turn yet: a reason arriving later replaces this
+                self.error, self.generic = "the stream stopped or could not be opened", True
             radio_log(f"{self.kind} stopped (exit {proc.poll()}): {self.error}")
         # Windows' player says when sound comes out ("sound"); the others are taken at their word
         sound = running and (self.sound or self.kind not in ("powershell", None))
