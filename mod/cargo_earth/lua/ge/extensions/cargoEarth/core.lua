@@ -4319,15 +4319,17 @@ end
 -- The phone header's Unstuck button: a free repair in place (garage.unstuck).
 function M.unstuckInfo()
   local g = S.career and S.career.garage
-  if not g or not g.started or not g.car or g.car.loaner or S.career.employment then return nil end
+  if not g or not g.started or not g.car then return nil end
   local pose = earth.pose()
   local why, left = garage.unstuckBlock(M.G, g, os.time(), pose and pose.speed)
   return { can = why == nil, why = why, left = left }
 end
 function M.unstuckCar()
-  if S.career.employment then return false, 'Not in a company vehicle' end
-  local pose = earth.pose()
-  return garageSay(garage.unstuck(M.G, S.career.garage, os.time(), pose and pose.speed))
+  local g, pose = S.career.garage, earth.pose()
+  local ok, msg, saved = garage.unstuck(M.G, g, os.time(), pose and pose.speed)
+  -- in a company vehicle the waived damage no longer counts against the contract (Jan: undo the reputation penalty)
+  if ok and S.career.employment then employment.forgive(S.career, saved or 0) end
+  return garageSay(ok, msg)
 end
 function M.garagePayDebt() return garageSay(garage.payDebt(S.career.garage, S.career)) end
 function M.garageBuy(offer)

@@ -402,15 +402,15 @@ function M.repairCar(G, g, career, factor)
 end
 
 -- Unstuck (Jan, 2026-11-22): Earth's roads have bugs (bridge ends held at ground, steps between tiles) that wreck or
--- trap a car through no fault of the driver. The phone's Unstuck button repairs the career car in place for free:
--- the repairs owed are dropped, but a load damaged in the crash stays damaged. At most once per UNSTUCK_S of play,
+-- trap a car through no fault of the driver. The phone's Unstuck button repairs the car in place for free (your own,
+-- or a company vehicle: core then takes the damage off the contract too): the repairs owed are dropped, but a load
+-- damaged in the crash stays damaged. At most once per UNSTUCK_S of play,
 -- and only standing still, so it is a way out, not free repairs while driving. now: os.time() (saved with the career).
 M.UNSTUCK_S = 300
 M.UNSTUCK_SPEED = 1.5   -- m/s
 -- nil when it can be used now, else why not and the seconds left (0 when time is not the reason).
 function M.unstuckBlock(G, g, now, speed)
   if not g.started or not g.car then return 'No career car yet', 0 end
-  if g.car.loaner then return 'Not in a company vehicle', 0 end
   if not M.inOwnCar(G, g) then return 'Get in your car first', 0 end
   local left = math.ceil((g.unstuckAt or -math.huge) + M.UNSTUCK_S - (now or 0))
   if left > M.UNSTUCK_S then left = 0 end   -- the clock went back
@@ -428,8 +428,9 @@ function M.unstuck(G, g, now, speed)
   g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.carriedRepair = 0, nil
   g.unstuckAt = now or 0
-  return true, saved > 0 and string.format('Unstuck: your car is fixed for free (%d CZK of repairs waived)', saved)
-    or 'Unstuck: your car is back in shape'
+  local what = g.car.loaner and 'the company vehicle' or 'your car'
+  return true, saved > 0 and string.format('Unstuck: %s is fixed for free (%d CZK of repairs waived)', what, saved)
+    or string.format('Unstuck: %s is back in shape', what), saved
 end
 
 -- Pays as much of the debt as the money allows.

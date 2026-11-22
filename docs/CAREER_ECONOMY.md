@@ -92,6 +92,7 @@ a scrape about 50 CZK, a solid crash about 250), still at most half the vehicle'
 ## Unstuck (2026-11-22)
 
 Earth's roads have bugs (bridge ends held at ground, steps between tiles) that wreck or trap a car through no fault of
-the driver. The phone header's **Unstuck** button repairs your own career car in place for free and drops the repairs
-owed (`garage.unstuck`). It works standing still (1.5 m/s at most), once every 5 minutes (`UNSTUCK_S`, real time,
-saved with the career), not in company vehicles, and a load damaged in the crash stays damaged.
+the driver. The phone header's **Unstuck** button repairs the car you drive in place for free and drops the repairs
+owed (`garage.unstuck`). In a company vehicle the waived damage is also taken off the contract (`employment.forgive`),
+so it no longer costs the company's reputation. It works standing still (1.5 m/s at most), once every 5 minutes
+(`UNSTUCK_S`, real time, saved with the career), and a load damaged in the crash stays damaged.

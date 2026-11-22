@@ -170,6 +170,13 @@ function M.damage(c, cost)
   s.vehicleDamage = (s.vehicleDamage or 0) + cost
 end
 
+-- Unstuck (garage.unstuck) waived this much of the vehicle's damage: it no longer costs the contract's reputation.
+function M.forgive(c, cost)
+  local s = c.employment
+  if not s or s.phase == 'settled' or type(cost) ~= 'number' or cost ~= cost or cost <= 0 then return end
+  s.vehicleDamage = math.max(0, (s.vehicleDamage or 0) - cost)
+end
+
 function M.reputation(s, aborted)
   local quoted = 0
   for _, j in ipairs(s.jobs) do quoted = quoted + j.pay end
