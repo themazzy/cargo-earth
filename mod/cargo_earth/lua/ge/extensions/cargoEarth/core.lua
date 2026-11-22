@@ -181,7 +181,19 @@ local function refreshStorage()
     storage.readAt = S.clock + 2
     if not G.readCargoBoxes(id, function(rows)
       -- A delayed reply from a different vehicle or configuration is stale.
-      if S.storage == storage then storage.rows, storage.boxes = rows, cargo.boxes(rows) end
+      if S.storage ~= storage then return end
+      storage.rows, storage.boxes = rows, cargo.boxes(rows)
+      -- nothing on board but a container still holds a load (a restored car state brings back the load it was saved
+      -- with): it would leave no room for freight, so it is emptied (M.sweepCargo, passenger seats aside)
+      if not S.job and #S.orders == 0 and type(rows) == 'table' then
+        for _, row in ipairs(rows) do
+          if type(row) == 'table' and ((tonumber(row.targetVolume) or 0) > 0.01 or (tonumber(row.currentVolume) or 0) > 0.01) then
+            local seats = type(row.cargoTypes) == 'table' and #row.cargoTypes > 0
+            for _, t in ipairs(type(row.cargoTypes) == 'table' and row.cargoTypes or {}) do if t ~= 'passenger' then seats = false end end
+            if not seats then S.sweepWanted = true break end
+          end
+        end
+      end
     end) then
       storage.boxes = {}
     end
@@ -1166,6 +1178,14 @@ function M.generate()
         end
       end
       S.offerStats = stats
+      -- why no freight comes, in the game log (once a minute): the vehicle kind and the free room it reported
+      if #S.offers == 0 and log and S.clock >= (S.noFreightLogAt or 0) then
+        S.noFreightLogAt = S.clock + 60
+        local free = rows and string.format('parcel %d, fluid %d, dry bulk %d', haul.capacity(rows, 'parcel'),
+          haul.capacity(rows, 'fluid'), haul.capacity(rows, 'dryBulk')) or 'containers not read yet'
+        log('I', 'cargoEarth', string.format('no freight offers: %s (%s), %d containers, free %s, %d routes found',
+          tostring(tier), tostring(v and v.model), rows and #rows or 0, free, stats and stats.pairs or 0))
+      end
     end
     -- tow jobs: broken-down cars at real addresses, for a vehicle with a tow hitch or a tractor
     local class = v and tow.class(tier, tow.hasHitch(v))
@@ -3825,6 +3845,10 @@ local function garageTick(dt)
     elseif not pending.ready or S.clock < pending.ready then return
     else
       g.restoringDamage = nil
+      -- the restored state may carry the load the car had when it was saved: read the containers again and empty
+      -- what nothing on board explains
+      S.storage = nil
+      if not S.job then S.sweepWanted, S.sweepAt = true, S.clock + 1 end
       if pending.ok then
         g.damageBaseline = {damage = M.G.damage() or 0, bill = pending.bill}
         g.lastDamage = g.damageBaseline.damage
