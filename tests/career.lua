@@ -3918,6 +3918,18 @@ test('a car never sells for more than it cost (Jan, 2026-11-22: bought for 1 000
   q = garage.partsQuote(PG, {}, car.slotPartMap, bare)
   assert(q.salvage == nil, 'unknown price: full share as before')
   assert(garage.ownShare({}) == nil and garage.ownShare({paid = 9000, boughtValue = 5000}) == 1)
+  -- spares fitted from the inventory count toward the cap like bought parts (Codex); taking them off removes them
+  local price = garage.partPrice(1000)
+  q = garage.partsQuote(PG, {}, bare.slotPartMap, car)
+  assert(q.cost == price and q.invest == price)
+  q = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car)
+  assert(q.cost == 0 and q.invest == price and q.paid.engine == 1)
+  local off = garage.partsQuote(PG, q.inventory, car.slotPartMap, bare, q.salvage, q.paid)
+  assert(off.invest == -price)
+  q = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car, { engine = { n = 1, f = 0.5 } })
+  assert(q.invest == price * 0.5, 'a salvage spare counts at its discount')
+  off = garage.partsQuote(PG, q.inventory, car.slotPartMap, bare, q.salvage, q.paid, q.fittedSalvage)
+  assert(off.invest == -price * 0.5)
 end)
 
 test('buying after a test drive uses the trade-in quote from the owned car', function()

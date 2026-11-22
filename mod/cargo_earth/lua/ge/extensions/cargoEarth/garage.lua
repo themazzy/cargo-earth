@@ -269,7 +269,7 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage, o
   if type(before) ~= 'table' or not vehicle or type(vehicle.slotPartMap) ~= 'table' then
     return nil, 'Waiting for the vehicle parts to load.'
   end
-  local delta, spares, items, total = {}, {}, {}, 0
+  local delta, spares, items, total, invest = {}, {}, {}, 0, 0
   for part, count in pairs(inventory or {}) do spares[part] = count end
   local cheap, factor = {}, M.kindFactor(haul.carrier(vehicle))
   if tonumber(ownShare) then factor = factor * math.max(0, math.min(1, ownShare)) end
@@ -307,13 +307,21 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage, o
         local fitFull = math.min(owned, math.max(0, pre - row.n))
         local fitCheap = owned - fitFull
         full[part] = (full[part] or 0) + added + fitFull
-        if fitCheap > 0 then addCheap(fitted, fitCheap, row.f) row.n = row.n - fitCheap end
+        invest = invest + M.partPrice(detail.value) * (added + fitFull)
+        if fitCheap > 0 then
+          invest = invest + M.partPrice(detail.value) * fitCheap * (row.f or 1)
+          addCheap(fitted, fitCheap, row.f) row.n = row.n - fitCheap
+        end
       elseif removed > 0 then
         -- taken off: salvage fitted earlier first, then parts paid in full, then the car's own parts
         local k1 = math.min(removed, fitted.n)
-        if k1 > 0 then fitted.n = fitted.n - k1 addCheap(row, k1, fitted.f) end
+        if k1 > 0 then
+          invest = invest - M.partPrice(detail.value) * k1 * (fitted.f or 1)
+          fitted.n = fitted.n - k1 addCheap(row, k1, fitted.f)
+        end
         local k2 = math.min(removed - k1, full[part] or 0)
         full[part] = (full[part] or 0) - k2
+        invest = invest - M.partPrice(detail.value) * k2
         if factor < 1 then addCheap(row, removed - k1 - k2, factor) end
       end
       if full[part] and full[part] <= 0 then full[part] = nil end
@@ -325,7 +333,9 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage, o
     end
   end
   table.sort(items, function(a, b) return a.name == b.name and a.part < b.part or a.name < b.name end)
-  return { items = items, cost = total, inventory = spares, salvage = next(cheap) and cheap or nil, paid = next(full) and full or nil,
+  -- invest: what the parts put on (bought or fitted from spares) less those taken off again are worth at their
+  -- price; it moves the car's resale cap (car.partsPaid, M.tradeInQuote)
+  return { items = items, cost = total, invest = invest, inventory = spares, salvage = next(cheap) and cheap or nil, paid = next(full) and full or nil,
     fittedSalvage = next(onCar) and onCar or nil }
 end
 
