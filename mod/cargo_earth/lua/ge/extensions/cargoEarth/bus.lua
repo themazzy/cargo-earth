@@ -32,7 +32,9 @@ M.IMPACT_GAP_S = 3
 M.DAMAGE_MIN, M.DAMAGE_FULL = 1000, 20000
 M.BUMP_G, M.BUMP_LOSS = { 3.5, 5.5 }, { 10, 40 }
 M.DWELL_S, M.PER_PERSON_S, M.MAX_DWELL_S = 3, 0.6, 15
-M.MAX_STOPS = 40         -- a longer line is cut here (its last stop is the end of this run)
+-- A longer line is cut here (its last stop is the end of this run). Raised 2026-11-22 (Jan) from 40 to the helper's own
+-- cap (cargo_earth_helper.py keeps the first 80 stops of a relation): pay, timetable and the bus's signs go per stop.
+M.MAX_STOPS = 80
 M.STOP_ARRIVE_M = 30     -- a stop counts as reached this close
 M.COLLECT_FEE = 150      -- CZK: ending a shift away from the depot, the company fetches the bus
 M.DEPOT_RADIUS, M.PARK_S, M.PARK_SPEED = 12, 2, 0.5  -- choose a line, then park in its marker to collect the bus
