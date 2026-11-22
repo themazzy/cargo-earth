@@ -6,10 +6,10 @@ local economy = require('cargoEarth/economy')
 local M = { RADIUS = 60, ADDRESS_RADIUS = 100, CAPACITY = 3 }
 
 M.LEVELS = {
-  { name = 'Rented lock-up', cars = 3, rooms = 1, cost = 0 },
-  { name = 'Own garage', cars = 4, rooms = 2, cost = 2500 },
-  { name = 'House with yard', cars = 6, rooms = 3, cost = 6000 },
-  { name = 'Small depot', cars = 8, rooms = 4, cost = 12000 },
+  { name = 'Small garage', cars = 3, rooms = 1, cost = 0 },
+  { name = 'Medium garage', cars = 4, rooms = 2, cost = 2500 },
+  { name = 'Large garage', cars = 6, rooms = 3, cost = 6000 },
+  { name = 'Extra large garage', cars = 8, rooms = 4, cost = 12000 },
 }
 M.ROOMS = {
   { id = 'workshop', name = 'Workshop', cost = 1500, factor = 0.7,
@@ -103,7 +103,7 @@ function M.upgrade(c, debt)
   pay(c, nextLevel.cost, nextLevel.name)
   h.level = h.level + 1
   h.capacity = math.max(h.capacity, nextLevel.cars)
-  return true, string.format('Your home is now a %s: room for %d cars and %d rooms.', nextLevel.name:lower(), nextLevel.cars, nextLevel.rooms)
+  return true, string.format('Upgraded to %s: room for %d cars and %d rooms.', nextLevel.name, nextLevel.cars, nextLevel.rooms)
 end
 
 function M.build(c, id, debt)
