@@ -104,6 +104,7 @@ function M.set(idx, data)
           from = type(l.from) == 'string' and l.from ~= '' and text(l.from) or stops[1].n,
           to = type(l.to) == 'string' and l.to ~= '' and text(l.to) or stops[#stops].n,
           operator = text(l.operator) or '', colour = type(l.colour) == 'string' and l.colour or nil,
+          textColour = type(l.textColour) == 'string' and l.textColour ~= '' and l.textColour or nil,
           stops = stops }
       end
     end
@@ -185,7 +186,7 @@ function M.job(line, depot)
     from = stopPlace(1), to = stopPlace(2), km = km, straightKm = lineKm(stops), pickupKm = depotKm,
     pay = math.floor(pay / 5 + 0.5) * 5,
     minutes = math.ceil(total),
-    bus = { line = line.id, ref = line.ref, name = name, colour = line.colour, stops = stops, at = 1,
+    bus = { line = line.id, ref = line.ref, name = name, colour = line.colour, textColour = line.textColour, stops = stops, at = 1,
       onBoard = 0, boarded = 0, legStart = 0, late = 0, coach = coach, km = coach and km or nil },
   }
 end
@@ -304,7 +305,7 @@ function M.board(idx, lat, lon)
       name = operator, yard = r.depot, jobs = { j }, jobCount = 1, gross = j.pay, km = j.km, pickupKm = jobs.km(lat, lon, r.depot.g[1], r.depot.g[2]),
       minutes = j.minutes, wages = j.pay, fares = math.floor(M.PER_PASSENGER * M.expectedRiders(#j.bus.stops) + 0.5), bus = { ref = r.line.ref, name = j.bus.name, from = j.from.n,
       to = j.bus.stops[#j.bus.stops].n, stops = #j.bus.stops, limited = #r.line.stops > #j.bus.stops,
-      singleDirection = not r.hasReturn, colour = r.line.colour } }
+      singleDirection = not r.hasReturn, colour = r.line.colour, textColour = r.line.textColour } }
   end
   idx.nearestKm = nearest
   return out
@@ -488,7 +489,7 @@ function M.state(job, dwell, nowS)
   local b, next = job.bus, {}
   local dueS, dueMin = M.due(job, nowS)
   for i = b.at, math.min(#b.stops, b.at + 3) do next[#next + 1] = { n = b.stops[i].n, current = i == b.at or nil } end
-  return { ref = b.ref, name = b.name, colour = b.colour, at = b.at, count = #b.stops, onBoard = b.onBoard,
+  return { ref = b.ref, name = b.name, colour = b.colour, textColour = b.textColour, at = b.at, count = #b.stops, onBoard = b.onBoard,
     boarded = b.boarded, skipped = b.skipped or 0, next = next, dueS = math.floor(dueS + 0.5), dueMin = dueMin,
     late = math.floor(M.lateMinutes(job) + 0.5), comfort = M.comfort(job), last = M.last(job), capacity = M.capacity(job),
     coach = b.coach,

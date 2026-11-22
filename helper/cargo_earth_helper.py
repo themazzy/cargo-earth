@@ -22,7 +22,7 @@ API (GET, JSON):
                               "cells": [...], "cameras": [[id, lat, lon, limit km/h (0 = unknown), road class], ...]}
   /v1/buslines?lat=..&lon=..  city bus lines around the point, from OpenStreetMap (route relations, one Overpass
                               request per 0.1 degree cell, kept for 14 days): {"state", "cells", "lines": [{"id",
-                              "ref", "name", "from", "to", "operator", "colour", "km", "stops": [[name, lat, lon], ...]}],
+                              "ref", "name", "from", "to", "operator", "colour", "textColour", "km", "stops": [[name, lat, lon], ...]}],
                               "depots": [{"id", "name", "kind": "station" | "depot", "lat", "lon"}]}
   /v1/radio?cc=CZ&lat=..&lon=..  internet radio stations of the country, from Radio Browser (one request per country a
                               day): {"state": "ready" | "loading" | "failed", "country", "top": [[id, name, stream url,
@@ -1493,7 +1493,8 @@ def bus_rows(data):
                         "from": str(tags.get("from", "")).strip()[:80] or clean[0][0],
                         "to": str(tags.get("to", "")).strip()[:80] or clean[-1][0],
                         "operator": str(tags.get("operator", "")).strip()[:80],
-                        "colour": str(tags.get("colour", "")).strip()[:16], "km": round(sum(gaps), 2),
+                        "colour": str(tags.get("colour", "")).strip()[:16],
+                        "textColour": str(tags.get("text_colour", "")).strip()[:16], "km": round(sum(gaps), 2),
                         "stops": clean[:80]})
     for e in elements:
         tags = e.get("tags") or {}

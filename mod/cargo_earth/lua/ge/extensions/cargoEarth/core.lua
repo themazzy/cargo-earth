@@ -1891,7 +1891,7 @@ function M.busState()
       singleDirection = o.bus.singleDirection, limited = o.bus.limited, stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.shareFor('bus', S.career) / 5 + 0.5) * 5,
       fares = math.floor((o.fares or 0) * employment.shareFor('bus', S.career) / 5 + 0.5) * 5, minutes = o.minutes, depot = o.yard.n,
       depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= bus.depotRadius(o) and not p.camera
-        and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour }
+        and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour, textColour = o.bus.textColour }
   end
   out.message = S.contractMsg and S.clock - S.contractMsg.at < 8 and S.contractMsg.text or nil
   return out

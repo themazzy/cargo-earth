@@ -12,6 +12,45 @@ var cargoEarthRadioPlayer = null
 // The Menu window, one per page: the app whose window is open. Opening one closes any other, so two never lie over
 // each other, however many copies of an app the page holds (a layout reload can leave an old one listening).
 var cargoEarthMenu = {open: null, last: null} // last: the section shown last, where the Menu button reopens
+// A bus line's number badge: the line's own colours from the map data (OSM colour / text_colour). Light lines (white,
+// yellow) need dark text, so a missing or unreadable text colour is replaced by black or white, whichever reads better.
+var cargoEarthBadge = (function () {
+  var NAMED = {white: '#ffffff', black: '#000000', red: '#ff0000', green: '#008000', blue: '#0000ff', yellow: '#ffff00',
+    orange: '#ffa500', purple: '#800080', pink: '#ffc0cb', brown: '#a52a2a', grey: '#808080', gray: '#808080',
+    silver: '#c0c0c0', gold: '#ffd700', cyan: '#00ffff', magenta: '#ff00ff', lime: '#00ff00', navy: '#000080',
+    maroon: '#800000', olive: '#808000', teal: '#008080', aqua: '#00ffff', fuchsia: '#ff00ff', beige: '#f5f5dc',
+    lightblue: '#add8e6', lightgreen: '#90ee90', darkblue: '#00008b', darkgreen: '#006400', darkred: '#8b0000', violet: '#ee82ee'}
+  var cache = {}
+  // '#abc', '#aabbcc', 'abc123' or a colour name -> [r, g, b] 0-255, or null when it is not a colour
+  function rgb(c) {
+    if (typeof c !== 'string') return null
+    c = c.split(';')[0].trim().toLowerCase().replace(/[\s_-]/g, '')
+    if (!c) return null
+    if (NAMED[c]) c = NAMED[c]
+    var m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/.exec(c)
+    if (!m) return null
+    var h = m[1].length === 3 ? m[1].replace(/./g, '$&$&') : m[1]
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+  }
+  function hex(v) { return '#' + v.map(function (n) { return (n < 16 ? '0' : '') + n.toString(16) }).join('') }
+  function lum(v) { // WCAG relative luminance
+    var l = v.map(function (n) { n /= 255; return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4) })
+    return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2]
+  }
+  function contrast(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) }
+  return function (colour, text) {
+    var key = colour + '|' + text
+    if (cache[key]) return cache[key]
+    var bg = rgb(colour)
+    if (!bg) return (cache[key] = {})
+    var fg = rgb(text)
+    if (!fg || contrast(bg, fg) < 3) fg = contrast(bg, [0, 0, 0]) >= contrast(bg, [255, 255, 255]) ? [17, 17, 17] : [255, 255, 255]
+    var style = {background: hex(bg), color: hex(fg)}
+    // a white badge on a white card would lose its edge
+    if (lum(bg) > 0.8) style['box-shadow'] = 'inset 0 0 0 1px rgba(0,0,0,.35)'
+    return (cache[key] = style)
+  }
+})()
 // How the phone looked last (folded, dark), kept by the page and its storage. The game rebuilds the UI apps when the
 // camera changes (cockpit and back): a rebuilt phone draws its first frame from this, not open and light until the
 // game answers. With nothing kept yet (the very first start) the phone stays invisible until the game's first answer.
@@ -175,7 +214,7 @@ angular.module('beamng.apps')
     '.cep-stop{display:grid;grid-template-columns:14px 1fr;gap:2px 10px;align-items:start}' +
     '.cep-coachtrip{margin-top:8px;padding:8px;border-radius:10px;background:var(--paper);box-shadow:inset 0 0 0 1px var(--line);display:flex;flex-direction:column;gap:4px}' +
     '.cep-coachtrip .cep-sm{margin-top:2px}' +
-    '.cep-busref{display:inline-block;min-width:22px;padding:0 5px;border-radius:4px;background:var(--ink);color:#fff;text-align:center;font-weight:700}' +
+    '.cep-busref{display:inline-block;min-width:22px;padding:0 5px;border-radius:4px;background:var(--ink);color:var(--card);text-align:center;font-weight:700}' +
     '.cep-dot{width:12px;height:12px;border-radius:50%;margin-top:3px;background:var(--tomato)}.cep-dot.to{background:var(--ink);border-radius:3px}' +
     '.cep-line{width:2px;height:16px;margin:2px 0 2px 5px;background:var(--line)}' +
     '.cep-name{font-size:14px;font-weight:700;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
@@ -1281,7 +1320,7 @@ angular.module('beamng.apps')
         '<div class="cep-sub" ng-if="!s.bus.shift && s.bus.kind !== \'coach\' && s.bus.error" style="color:var(--tomato);overflow-wrap:anywhere">{{ s.bus.error }}</div>' +
         '<div class="cep-sub" ng-if="s.bus.message" style="color:var(--tomato)">{{ s.bus.message }}</div>' +
         '<div class="cep-card" ng-repeat="l in s.bus.lines track by l.id">' +
-          '<div class="cep-keyval"><strong style="white-space:normal"><span class="cep-busref" ng-style="l.colour ? {background: l.colour} : {}">{{ l.ref || "Bus" }}</span> to {{ l.to }}</strong>' +
+          '<div class="cep-keyval"><strong style="white-space:normal"><span class="cep-busref" ng-style="badge(l.colour, l.textColour)">{{ l.ref || "Bus" }}</span> to {{ l.to }}</strong>' +
             '<strong style="white-space:nowrap">{{ fmt.money(l.pay) }}</strong></div>' +
           '<div class="cep-sub">From {{ l.from }}</div><div class="cep-pills"><span>{{ l.stops }} stops</span><span>{{ fmt.km(l.km) }}</span><span>About {{ l.minutes }} min</span><span ng-if="l.fares">+{{ fmt.money(l.fares) }} fares</span></div>' +
           '<div class="cep-sub" ng-if="l.singleDirection">Only this direction found in local map data.</div>' +
@@ -1506,7 +1545,7 @@ angular.module('beamng.apps')
               '<b>{{ st.done ? "✓" : st.slots + "×" }}</b>{{ st.name }}<small class="cep-badge" ng-if="!st.done">{{ fmt.kg(st.kg) }}</small></li></ul></div>' +
           '<div class="cep-sub" ng-if="s.active.freight && !s.active.route">{{ fmt.freight(s.active.freight) }}</div>' +
           '<div class="cep-sub" ng-if="s.active.freightStatus">{{ s.active.freightStatus }}</div>' +
-          '<div class="cep-card" ng-if="s.bus && s.bus.line"><div class="cep-label"><span class="cep-busref" ng-style="s.bus.line.colour ? {background: s.bus.line.colour} : {}">{{ s.bus.line.ref || (s.bus.line.coach ? "Coach" : "Bus") }}</span> ' +
+          '<div class="cep-card" ng-if="s.bus && s.bus.line"><div class="cep-label"><span class="cep-busref" ng-style="badge(s.bus.line.colour, s.bus.line.textColour)">{{ s.bus.line.ref || (s.bus.line.coach ? "Coach" : "Bus") }}</span> ' +
             '</div><div class="cep-pills"><span>Stop {{ s.bus.line.at }} of {{ s.bus.line.count }}</span><span>{{ s.bus.line.onBoard }} of {{ s.bus.line.capacity }} on board</span></div>' +
             '<ul class="cep-order-items"><li ng-repeat="st in s.bus.line.next track by $index" ng-style="{fontWeight: st.current ? 700 : 400}">' +
               '<b>{{ st.current ? "›" : "" }}</b>{{ st.n }}</li></ul>' +
@@ -1722,6 +1761,7 @@ angular.module('beamng.apps')
         busy = true
         bngApi.engineLua(STATE, function (r) { busy = false; apply(r) })
       }
+      scope.badge = cargoEarthBadge
       scope.coachStatus = function (c) {
         if (!c) return ''
         var st = c.status || {}

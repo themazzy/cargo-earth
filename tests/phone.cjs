@@ -513,3 +513,17 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   sc.restartGo()
   assert(sc.restart.open && sc.restart.error.includes('Nothing was deleted'))
 }
+// bus line badges: readable text on any line colour (light lines get dark text; a given text_colour is kept if it reads)
+{
+  const b = (c, t) => JSON.parse(JSON.stringify(scope.badge(c, t)))
+  assert.deepEqual(b('#ffffff', ''), {background: '#ffffff', color: '#111111', 'box-shadow': 'inset 0 0 0 1px rgba(0,0,0,.35)'})
+  assert.equal(b('white', undefined).color, '#111111')
+  assert.equal(b('#FFF', '#ffffff').color, '#111111', 'white on white is replaced')
+  assert.equal(b('#ffff00', '').color, '#111111')
+  assert.equal(b('#003399', '').color, '#ffffff')
+  assert.equal(b('#e30613', 'yellow').color, '#ffff00', 'own readable text colour kept')
+  assert.deepEqual(b(undefined, undefined), {})
+  assert.deepEqual(b('not a colour', ''), {})
+  assert(directive.template.includes('ng-style="badge(l.colour, l.textColour)"'))
+  assert(!/cep-busref" ng-style="[^"]*\{background/.test(directive.template), 'no badge sets only its background')
+}
