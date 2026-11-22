@@ -35,9 +35,9 @@ for _, u in ipairs(M.UPGRADES) do byId[u.id] = u end
 M.VEHICLES = {
   { id = 'van', model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', fallback = 3600,
     text = 'Parcels and van freight' },
-  { id = 'rigid', model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', fallback = 14000,
+  { id = 'rigid', model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', fallback = 7000,
     text = 'Box truck business shipping' },
-  { id = 'semi', model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', fallback = 7000,
+  { id = 'semi', model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', fallback = 14000,
     text = 'Articulated freight; a hired driver needs one of your trailers' },
 }
 -- The firm's own trailers: a hired tractor driver needs one, and your own articulated jobs pay TRAILER_BONUS more
