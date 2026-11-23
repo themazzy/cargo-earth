@@ -91,4 +91,9 @@ what, grow = garage.trackDamage(gg, 10000)
 ins.hit(gg.car, grow, { share = 1 })
 local w, toDebt, insPaid = garage.trackDamage(gg, 0)
 assert(w == 'debt' and insPaid == math.floor(grow * 0.9 + 0.5) and toDebt == grow - insPaid and gg.debt == toDebt, 'menu repair')
+-- a write-off fully fixed in the game menu is no longer a write-off
+gg.car.insWreck, gg.fixUntil = true, nil
+garage.trackDamage(gg, 10000)
+garage.trackDamage(gg, 0)
+assert(gg.car.insWreck == nil, 'menu repair clears the write-off')
 print('Insurance: leniency, limit drops, camera flash, premiums, claim-free weeks, claims, deductible and repairs passed')

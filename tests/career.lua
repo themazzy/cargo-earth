@@ -5759,4 +5759,7 @@ test('insurance: bought standing in your own car, a crash is covered, a write-of
   core.G.repair = function() damageValue = 0 end
   out = core.garageDo('repair')
   assert(out.msg:find('insurance paid', 1, true) and g.repair == 0 and g.insurance.claims == 1, out.msg)
+  -- a repair right after the tow is not undone by the tow's bill guard (Codex)
+  advance(core, 2)
+  assert(g.repair == 0 and (g.car.insCover or 0) == 0 and s.insTow == nil, 'repair stays paid')
 end)

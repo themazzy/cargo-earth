@@ -412,6 +412,7 @@ function M.trackDamage(g, damage)
       local insurance = require('cargoEarth/insurance')
       local paid = insurance.quote(g.car, before, freed)
       insurance.claim(g, g.car, freed / before, paid, nil, 'Car fixed in the game menu')
+      if g.car and (g.repair or 0) <= 0 then g.car.insWreck = nil end   -- fully fixed: no longer a write-off
       if freed - paid > 0 then
         M.addDebt(g, freed - paid, 'repair', 'Car fixed without paying (game menu repair, reset or respawn)'
           .. (paid > 0 and string.format(', insurance paid %d', paid) or ''))

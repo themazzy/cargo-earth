@@ -4390,7 +4390,7 @@ function M.garageRepair(insure)
     msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved%s)', cost, full - cost,
       (payout or 0) > 0 and string.format(', insurance paid %d CZK', payout) or '')
   end
-  if ok then S.phone.wreck = nil end
+  if ok then S.phone.wreck, S.insTow = nil, nil end   -- a paid repair ends the tow's bill guard (Codex)
   return garageSay(ok, msg)
 end
 
@@ -4558,7 +4558,7 @@ function M.unstuckCar()
   local g, pose = S.career.garage, earth.pose()
   local ok, msg, saved = garage.unstuck(M.G, g, os.time(), pose and pose.speed, S.career.unstuckAt)
   -- the cooldown is the career's, not the garage's: company work swaps the garage (Codex)
-  if ok then S.career.unstuckAt = g.unstuckAt end
+  if ok then S.career.unstuckAt, S.insTow = g.unstuckAt, nil end
   -- in a company vehicle the waived damage no longer counts against the contract (Jan: undo the reputation penalty)
   if ok and S.career.employment then employment.forgive(S.career, saved or 0) end
   -- a bus's passengers get back the comfort the collision cost them
