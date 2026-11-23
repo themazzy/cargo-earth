@@ -580,8 +580,10 @@ local function addConfig(out, c, model, key)
   if not typ and type(agg.Type) == 'table' then typ = next(agg.Type) end
   local style = c['Body Style']
   if type(style) ~= 'string' and type(agg['Body Style']) == 'table' then style = next(agg['Body Style']) end
+  local fuelType = c['Fuel Type']
+  if type(fuelType) ~= 'string' and type(agg['Fuel Type']) == 'table' then fuelType = next(agg['Fuel Type']) end
   out[#out + 1] = { model = model, key = key, name = name, brand = c.Brand, value = value, type = typ,
-    bodyStyle = type(style) == 'string' and style or nil }
+    bodyStyle = type(style) == 'string' and style or nil, fuel = type(fuelType) == 'string' and fuelType or nil }
 end
 
 function M.configs()
@@ -648,13 +650,87 @@ function M.repair()
   if v.resetBroken then v:resetBroken() else v:queueLuaCommand('recovery.startRecovering() recovery.stopRecovering()') end
 end
 
--- A used car's mileage and paint wear through BeamNG's part condition system.
-function M.applyCondition(km, condition)
+-- A used car's mileage and paint wear through BeamNG's part condition system; faults (cargoEarth/faults.native):
+-- { engine = integrity, gearbox = integrity, brakes = share } on the parts that hold those powertrain devices.
+-- The vehicle side's own condition state is cleared first, so this can run again (after a fault is repaired).
+-- FLOORS: the lowest integrity each device may get (from the game's powertrain code, BeamNG 0.40): a part holding
+-- several devices never goes below the highest floor among them, so a clutch fault never seizes the gearbox next to
+-- it. A device not listed keeps the part at full integrity.
+local FAULT_VLUA = [==[
+local want, odo, vis, brakes = %s, %d, %.2f, %s
+local FLOORS = { combustionEngine = 0.4, frictionClutch = 0.5, centrifugalClutch = 0.5, torqueConverter = 0.5,
+  dctGearbox = 0.5, manualGearbox = 0.88, automaticGearbox = 0.88, cvtGearbox = 0.88, sequentialGearbox = 0.88,
+  rangeBox = 0.88, differential = 0.85, splitShaft = 0.85, shaft = 0.95, supercharger = 0.6,
+  torsionReactor = 0, multiShaft = 0, viscousClutch = 0, genericTorqueProvider = 0, electricMotor = 0 }
+local FAULT = { combustionEngine = 'engine', frictionClutch = 'gearbox', centrifugalClutch = 'gearbox',
+  torqueConverter = 'gearbox', dctGearbox = 'gearbox', manualGearbox = 'gearbox', automaticGearbox = 'gearbox',
+  cvtGearbox = 'gearbox', sequentialGearbox = 'gearbox' }
+if not partCondition or not partCondition.initConditions then return end
+local parts
+if want and v and v.data and v.data.activeParts and v.data.activePartsData then
+  local found = {}
+  for partId, partName in pairs(v.data.activeParts) do
+    local data = v.data.activePartsData[partName]
+    local pt = type(data) == 'table' and data.powertrain
+    if type(pt) == 'table' and not data.energyStorage then
+      local owner = partId
+      for i = 2, #pt do
+        local row = pt[i]
+        if type(row) == 'table' and row.partPath then owner = row.partPath
+        elseif type(row) == 'table' and type(row[1]) == 'string' then
+          local f = found[owner] or { level = 1, floor = 0 }
+          found[owner] = f
+          local floor = FLOORS[row[1]] or 1
+          if floor > f.floor then f.floor = floor end
+          local lvl = FAULT[row[1]] and want[FAULT[row[1]]]
+          if lvl and lvl < f.level then f.level = lvl end
+        end
+      end
+    end
+  end
+  for partId, f in pairs(found) do
+    local lvl = math.max(f.level, f.floor)
+    if lvl < 1 then
+      parts = parts or {}
+      parts[partId] = { odometer = odo, integrityValue = lvl, visualValue = vis }
+    end
+  end
+end
+if partCondition.deleteConditionSnapshots then partCondition.deleteConditionSnapshots() end
+if partCondition.reset then partCondition.reset() end
+partCondition.initConditions(parts, odo, 1, vis)
+if wheels and wheels.wheels then   -- worn brakes, or as new again once serviced
+  for _, wd in pairs(wheels.wheels) do
+    if wd.initialBrakeTorque and wd.brakeTorque then wd.brakeTorque = wd.initialBrakeTorque * brakes end
+    if wd.initialParkingTorque and wd.parkingTorque then wd.parkingTorque = wd.initialParkingTorque * brakes end
+  end
+end
+]==]
+
+local function luaNum(x) return string.format('%.3f', tonumber(x) or 1) end
+
+function M.applyCondition(km, condition, faults)
   local v = playerVeh()
   if not v or not v.queueLuaCommand then return end
-  v:queueLuaCommand(string.format(
-    'if partCondition and partCondition.initConditions then partCondition.initConditions(nil, %d, 1, %.2f) end',
-    math.floor((km or 0) * 1000), math.max(0, math.min(1, condition or 1))))
+  local want = 'nil'
+  if type(faults) == 'table' and (faults.engine or faults.gearbox) then
+    want = string.format('{ engine = %s, gearbox = %s }', faults.engine and luaNum(faults.engine) or 'nil',
+      faults.gearbox and luaNum(faults.gearbox) or 'nil')
+  end
+  local brakes = luaNum(type(faults) == 'table' and faults.brakes or 1)
+  v:queueLuaCommand(string.format(FAULT_VLUA, want, math.floor((km or 0) * 1000),
+    math.max(0, math.min(1, condition or 1)), brakes))
+end
+
+-- Worn brakes again after a reset (the game puts the wheels' brake torque back to new on every reset; the engine and
+-- gearbox condition come back by themselves from the game's reset snapshot).
+function M.applyBrakes(share, id)
+  local v = id and getObjectByID(id) or playerVeh()
+  if not v or not v.queueLuaCommand or not tonumber(share) then return end
+  v:queueLuaCommand(string.format('if wheels and wheels.wheels then for _, wd in pairs(wheels.wheels) do '
+    .. 'if wd.initialBrakeTorque and wd.brakeTorque then wd.brakeTorque = wd.initialBrakeTorque * %s end '
+    .. 'if wd.initialParkingTorque and wd.parkingTorque then wd.parkingTorque = wd.initialParkingTorque * %s end end end',
+    luaNum(share), luaNum(share)))
 end
 
 -- The game's damage number for the player's car (it drops to 0 on reset / repair), or nil.

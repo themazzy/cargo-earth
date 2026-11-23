@@ -5579,3 +5579,150 @@ test('Unstuck gives a bus\'s passengers back the comfort a collision cost them, 
   assert(bus.forgive(j) == lost and bus.comfort(j) == 100 - bus.HARSH_LOSS, 'the crash is forgiven, the harsh moment is not')
   assert(bus.forgive(j) == 0, 'only once')
 end)
+
+test('used cars: some come with worn components that lower the price, need fixing and stay driveable', function()
+  local faults = require('cargoEarth/faults')
+  local garage = require('cargoEarth/garage')
+  local upkeep = require('cargoEarth/upkeep')
+  -- plans: a good car is mostly fine, a poor one has a few faults, an electric car has no engine, clutch or oil
+  local good, poor, poorCount = 0, 0, 0
+  for seed = 1, 400 do
+    local a = faults.plan(0.95, faults.seeded(seed))
+    if #a > 0 then good = good + 1 end
+    local b = faults.plan(0.3, faults.seeded(seed + 1000))
+    assert(#b <= faults.MAX)
+    if #b > 0 then poor = poor + 1 end
+    poorCount = poorCount + #b
+    for _, f in ipairs(faults.plan(0.2, faults.seeded(seed + 5000), true)) do
+      assert(f.id ~= 'engine' and f.id ~= 'gearbox' and f.id ~= 'oil', 'an electric car has no ' .. f.id)
+    end
+    for _, f in ipairs(b) do
+      local k = faults.byId[f.id]
+      if k.lo then assert(f.level >= k.lo and f.level <= k.hi, 'a level that keeps the car driveable') end
+    end
+  end
+  assert(good > 10 and good < 100, 'some good cars have one fault: ' .. good)
+  assert(poor > 300 and poorCount > 500, 'poor cars usually have faults: ' .. poor .. ' / ' .. poorCount)
+  assert(faults.electric('Electricity') and faults.electric('Battery') and not faults.electric('Gasoline'))
+
+  -- the price: cheaper by most of the repair, never below 40 %
+  local l = { model = 'covet', kind = 'car', faults = { { id = 'engine', level = 0.5 }, { id = 'tyres' } } }
+  local _, sum = faults.describe(l)
+  assert(sum == faults.cost(l, 'engine') + upkeep.cost(l, 'tyres') and sum > 0)
+  assert(faults.price(10000, l) == 10000 - math.floor(sum * faults.PRICE_SHARE / 5 + 0.5) * 5)
+  assert(faults.price(500, l) == 200, 'never below 40 %')
+  assert(faults.cost({ model = 'us_semi', kind = 'semi' }, 'engine') > faults.cost(l, 'engine'), 'a truck engine costs more')
+
+  -- the market: listings carry faults and the phone gets their names and costs
+  local configs = {}
+  for i = 1, 30 do
+    configs[#configs + 1] = { model = 'covet', key = 'c' .. i, name = 'Covet ' .. i, value = 2000 + i * 300, type = 'Car',
+      bodyStyle = 'Hatchback', fuel = i % 5 == 0 and 'Electric' or 'Gasoline' }
+  end
+  local G = { configs = function() return configs end, spawn = function() end }
+  local seed = 11
+  local rnd = function() seed = (seed * 16807) % 2147483647 return seed / 2147483647 end
+  local g = {}
+  garage.marketTick(G, g, 0, rnd)
+  local withFaults
+  for _, c in ipairs(garage.market(g)) do
+    if c.faults then
+      withFaults = c
+      for _, f in ipairs(c.faults) do assert(f.name and f.cost > 0) end
+    end
+  end
+  assert(withFaults, 'some listings have worn components')
+
+  -- buying: native faults stay on the car, service ones make that service due
+  local listing = garage.findListing(g, withFaults.id)
+  listing.faults = { { id = 'engine', level = 0.55 }, { id = 'brakes', level = 0.8 }, { id = 'tyres' } }
+  local career = { money = 1000000 }
+  assert(garage.buyListing(G, g, career, listing.id))
+  local car = g.car
+  assert(car.faults.engine == 0.55 and car.faults.brakes == 0.8 and car.faults.tyres == nil)
+  local s = upkeep.ensure(car)
+  assert(s.tyres >= upkeep.byId.tyres.every and s.brakes >= upkeep.byId.brakes.every, 'the worn ones are due')
+  local native = faults.native(car)
+  assert(native.engine == 0.55 and native.brakes == 0.8 and native.gearbox == nil)
+  car.faults.engine = 0.1
+  assert(faults.native(car).engine == faults.byId.engine.lo, 'never below the driveable floor')
+  car.faults.engine = 0.55
+  local list, owed = faults.state(car)
+  assert(#list == 2 and owed == faults.cost(car, 'engine'), 'brakes are fixed by their service, not a repair')
+  -- the dealer takes the engine repair off a trade-in
+  local carValue = garage.carValue
+  garage.carValue = function() return 20000 end
+  car.paid = 100000
+  local withEngine = garage.tradeInQuote(G, g)
+  car.faults.engine = nil
+  local fixed = garage.tradeInQuote(G, g)
+  assert(fixed - withEngine == owed, 'trade-in less the repair')
+  car.faults.engine = 0.55
+  garage.carValue = carValue
+
+  -- repairing the engine costs money; servicing the brakes fixes them too
+  local c = { money = 10 }
+  assert(not faults.repair(c, car, 'engine', 1), 'not enough money')
+  assert(not faults.repair(c, car, 'brakes', 1), 'brakes are serviced')
+  c.money = 100000
+  local ok, _, cost = faults.repair(c, car, 'engine', 0.8, 'the fuel station')
+  assert(ok and cost == faults.cost(car, 'engine', 0.8) and c.money == 100000 - cost and car.faults.engine == nil)
+  assert(upkeep.service(c, car, { 'brakes' }, 1))
+  assert(car.faults == nil, 'the brake service fixed the worn brakes')
+end)
+
+test('worn components go on the car through the game\'s own part condition, at driveable levels', function()
+  local gamecar = require('cargoEarth/gamecar')
+  local sent
+  local oldBe, oldGet = be, getObjectByID
+  be = { getPlayerVehicle = function() return { queueLuaCommand = function(_, cmd) sent = cmd end } end }
+  local ok, err = pcall(function()
+    gamecar.applyCondition(12000, 0.5, { engine = 0.5, gearbox = 0.6, brakes = 0.8 })
+    assert(sent, 'a command for the vehicle')
+    -- run it against a stub of the vehicle side
+    local inited, cleared
+    local env = setmetatable({
+      v = { data = {
+        activeParts = { ['/'] = 'car_body', ['/car_engine/'] = 'car_engine', ['/car_transmission/'] = 'car_trans',
+          ['/car_tank/'] = 'car_tank', ['/car_diff/'] = 'car_diff' },
+        activePartsData = {
+          car_body = {},
+          car_engine = { powertrain = { { 'type', 'name' }, { 'combustionEngine', 'mainEngine' }, { 'torsionReactor', 'tr' } } },
+          car_trans = { powertrain = { { 'type', 'name' }, { 'frictionClutch', 'clutch' }, { 'manualGearbox', 'gearbox' } } },
+          car_tank = { powertrain = { { 'type', 'name' }, { 'combustionEngine', 'x' } }, energyStorage = {} },
+          car_diff = { powertrain = { { 'type', 'name' }, { 'differential', 'rear' } } } } } },
+      partCondition = {
+        deleteConditionSnapshots = function() cleared = (cleared or 0) + 1 end,
+        reset = function() cleared = (cleared or 0) + 1 end,
+        initConditions = function(parts, odo, integ, vis) inited = { parts = parts, odo = odo, integ = integ, vis = vis } end },
+      wheels = { wheels = { [0] = { initialBrakeTorque = 1000, brakeTorque = 1000, initialParkingTorque = 500, parkingTorque = 500 } } },
+    }, { __index = _G })
+    local chunk = assert(load(sent, 'vlua', 't', env))
+    chunk()
+    assert(cleared == 2, 'the old condition state is cleared first, so it can run again')
+    assert(inited.odo == 12000000 and inited.integ == 1 and inited.vis == 0.5)
+    local p = inited.parts
+    assert(p['/car_engine/'].integrityValue == 0.5, 'the engine misfires')
+    assert(p['/car_transmission/'].integrityValue == 0.88, 'the gearbox next to the clutch stays at its floor')
+    assert(p['/car_tank/'] == nil, 'a part with a fuel tank is left alone')
+    assert(p['/car_diff/'] == nil and p['/'] == nil, 'other parts are as new')
+    assert(env.wheels.wheels[0].brakeTorque == 800 and env.wheels.wheels[0].parkingTorque == 400, 'worn brakes')
+    -- no faults: the plain condition, as before
+    gamecar.applyCondition(1000, 0.9)
+    inited = nil
+    env.wheels.wheels[0].brakeTorque = 1000
+    assert(load(sent, 'vlua', 't', env))()
+    assert(inited.parts == nil and env.wheels.wheels[0].brakeTorque == 1000)
+    -- serviced brakes are as new again without a reset
+    env.wheels.wheels[0].brakeTorque = 800
+    assert(load(sent, 'vlua', 't', env))()
+    assert(env.wheels.wheels[0].brakeTorque == 1000, 'brake torque restored')
+    -- after a reset the brakes are worn again
+    getObjectByID = function() return { queueLuaCommand = function(_, cmd) sent = cmd end } end
+    gamecar.applyBrakes(0.75, 5)
+    assert(load(sent, 'vlua', 't', env))()
+    assert(env.wheels.wheels[0].brakeTorque == 750)
+  end)
+  be, getObjectByID = oldBe, oldGet
+  assert(ok, err)
+end)

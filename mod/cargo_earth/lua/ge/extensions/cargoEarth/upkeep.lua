@@ -3,6 +3,7 @@
 -- breakdown more likely: the more overdue, the likelier per kilometre. Pure rules: no game calls here.
 local economy = require('cargoEarth/economy')
 local garage = require('cargoEarth/garage')
+local faults = require('cargoEarth/faults')
 local M = {}
 
 -- every: km between services (game distances: a long evening of driving is a few hundred km); cost in CZK for a car
@@ -124,7 +125,7 @@ function M.service(c, car, ids, factor, where)
   local label = string.format('%s: %s%s', car.name or 'Car', table.concat(names, ', '), where and (' at ' .. where) or '')
   if not economy.post(c, -cost, 'upkeep', economy.nextId(c, 'upkeep'), label) then return false, 'The payment failed.' end
   local s = M.ensure(car)
-  for _, id in ipairs(list) do s[id] = 0 end
+  for _, id in ipairs(list) do s[id] = 0 faults.serviced(car, id) end
   return true, string.format('Serviced %s (%s) for %d CZK.', car.name or 'the car', table.concat(names, ', '), cost), cost
 end
 
@@ -142,6 +143,7 @@ function M.roadside(c, g, car, failure)
   if paid > 0 then economy.post(c, -paid, 'upkeep', economy.nextId(c, 'upkeep'), 'Roadside help: ' .. byId[failure.id].name:lower()) end
   if paid < cost then garage.addDebt(g, cost - paid, 'roadside', 'Roadside help: ' .. byId[failure.id].name:lower()) end
   M.ensure(car)[failure.id] = 0
+  faults.serviced(car, failure.id)
   return paid, cost - paid
 end
 

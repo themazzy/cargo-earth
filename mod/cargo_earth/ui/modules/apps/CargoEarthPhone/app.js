@@ -948,6 +948,9 @@ angular.module('beamng.apps')
           '<div class="cep-sub" ng-if="g.preview.ready && !g.preview.missing.length">Nothing missing.</div>' +
           '<div class="cep-sub" ng-if="g.preview.missing.length" style="color:var(--ink)">{{ g.preview.missing.join(", ") }}</div>' +
           '<div class="cep-pills" ng-if="g.preview.paint"><span>Paint: {{ g.preview.paint }}</span></div>' +
+          '<div class="cep-label" ng-if="g.preview.faults.length">Worn components</div>' +
+          '<div class="cep-li" ng-repeat="f in g.preview.faults track by f.id"><div><div class="cep-name">{{ f.name }}</div>' +
+            '<small>{{ f.text }} Fixing it: about {{ fmt.money(f.cost) }}.</small></div></div>' +
           '<div class="cep-sub">Price {{ fmt.money(g.preview.price) }}<span ng-if="g.preview.tradeIn > 0">, your car is taken in for ' +
             '{{ fmt.money(g.preview.tradeIn) }}: you pay {{ fmt.money(g.preview.price - g.preview.tradeIn) }}</span>.</div>' +
           '<div class="cep-sub" ng-if="g.preview.keepCar">Your current car will be parked in My cars.</div>' +
@@ -1001,6 +1004,10 @@ angular.module('beamng.apps')
             '<div class="cep-pills"><span ng-repeat="it in g.upkeep.items track by it.id" ng-class="{late: it.due}">{{ it.name }}: {{ it.due ? "overdue" : fmt.int(it.kmLeft) + " km" }}</span></div>' +
             '<div><small ng-if="g.upkeep.due > 0 && !g.upkeep.where">Service at a fuel station or your headquarters. Overdue parts can break down.</small></div></div>' +
             '<button class="cep-sm go" ng-if="g.upkeep.due > 0" ng-disabled="!g.upkeep.where || g.money < g.upkeep.dueCost" ng-click="gdo(\'service\')">Service {{ fmt.money(g.upkeep.dueCost) }}</button></div>' +
+          '<div class="cep-li" ng-repeat="f in g.faults track by f.id" ng-if="g.own"><div><div class="cep-name">{{ f.name }}</div>' +
+            '<small>{{ f.text }}</small>' +
+            '<div><small ng-if="!f.service && !g.upkeep.where">Repair it at a fuel station, your home workshop or your headquarters.</small></div></div>' +
+            '<button class="cep-sm go" ng-if="!f.service" ng-disabled="!g.upkeep.where || g.money < f.cost" ng-click="gdo(\'fixFault\', f.id)">Repair {{ fmt.money(f.cost) }}</button></div>' +
           '<div class="cep-li" ng-if="g.debt > 0" style="box-shadow:inset 0 0 0 1.5px var(--tomato)"><div><div class="cep-name" style="color:var(--tomato)">Debt {{ fmt.money(g.debt) }}</div>' +
             '<small>{{ g.debtShare * 100 }} % of each delivery goes to it. No buying until it is paid.</small>' +
             '<div ng-repeat="src in g.debtInfo.sources track by src.kind"><small>{{ src.label }}: {{ fmt.money(src.amount) }}</small></div>' +
@@ -1098,7 +1105,8 @@ angular.module('beamng.apps')
               '<ul><li ng-repeat="j in kindOf(c).jobs">{{ j }}</li></ul>' +
               '<div class="cep-sub" ng-if="kindOf(c).locked">{{ kindOf(c).locked }}</div></div>' +
             '<div class="cep-pills"><span>{{ fmt.int(c.km) }} km</span><span>Condition {{ fmt.cond(c.condition) }}</span>' +
-              '<span ng-if="c.missing !== undefined && c.missing !== null" ng-class="{warn: c.missing > 0}">{{ c.missing }} parts missing</span></div>' +
+              '<span ng-if="c.missing !== undefined && c.missing !== null" ng-class="{warn: c.missing > 0}">{{ c.missing }} parts missing</span>' +
+              '<span ng-repeat="f in c.faults track by f.id" class="warn" title="{{ f.text }} Fixing it: about {{ fmt.money(f.cost) }}.">{{ f.name }}</span></div>' +
             '<div class="cep-sub cep-market-expiry">{{ c.held ? "Reserved during your test drive" : "Expires in " + carExpiry(c) + " of play" }}</div>' +
             '<div class="cep-time" style="height:4px;margin-top:5px" ng-class="{warn: c.condition < 0.6, late: c.condition < 0.35}"><i ng-style="{width: (c.condition * 100) + \'%\'}"></i></div></div>' +
             // while looking at a car, only that car can be bought (from the card above) and the deal is fixed

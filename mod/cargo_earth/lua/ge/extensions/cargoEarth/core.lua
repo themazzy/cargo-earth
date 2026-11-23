@@ -3884,7 +3884,9 @@ local function garageTick(dt)
   end
   if not S.parts and conditionAt and own and S.clock >= conditionAt then
     conditionAt = nil
-    if M.G.applyCondition then pcall(M.G.applyCondition, g.car.km or 0, g.car.condition or 1) end
+    if M.G.applyCondition then
+      pcall(M.G.applyCondition, g.car.km or 0, g.car.condition or 1, require('cargoEarth/faults').native(g.car))
+    end
     if g.car.physicalDamage then
       local car = g.car
       g.restoringDamage = {car = car, bill = g.repair or 0}
@@ -4481,7 +4483,28 @@ local function garageService(id, item)
     where, factor = serviceSpot()
     if not where then return false, 'Drive to a fuel station, your home workshop or your headquarters for a service.' end
   end
-  return garageSay(upkeep.service(c, car, item and item ~= '' and { item } or nil, factor, where))
+  local ok, msg = upkeep.service(c, car, item and item ~= '' and { item } or nil, factor, where)
+  if ok and car == g.car then M.reapplyFaults() end   -- serviced brakes stop as new again
+  return garageSay(ok, msg)
+end
+-- Repair a worn component of the car you drive (an engine that misfires, a worn clutch and gearbox), where it is
+-- serviced: a fuel station, your home workshop or your headquarters.
+function M.garageFixFault(item)
+  local g, c = S.career.garage, S.career
+  local car = g.car
+  if not car or car.loaner then return false, 'There is no car of yours to repair.' end
+  if not garage.inOwnCar(M.G, g) then return false, 'Sit in your car first.' end
+  local where, factor = serviceSpot()
+  if not where then return false, 'Drive to a fuel station, your home workshop or your headquarters for the repair.' end
+  local ok, msg = require('cargoEarth/faults').repair(c, car, item, factor, where)
+  if ok then M.reapplyFaults() end
+  return garageSay(ok, msg)
+end
+-- The car's condition and worn components again on the car you sit in (after a repair or a service).
+function M.reapplyFaults()
+  local g = S.career.garage
+  if not g.car or not M.G.applyCondition or not garage.inOwnCar(M.G, g) then return end
+  pcall(M.G.applyCondition, g.car.km or 0, g.car.condition or 1, require('cargoEarth/faults').native(g.car))
 end
 local function garageRepairParked(id)
   local c = S.career
@@ -4637,6 +4660,8 @@ function M.garageState()
     local where, factor = serviceSpot()
     out.upkeep = upkeep.state(g.car, factor)
     out.upkeep.where = where
+    local list = require('cargoEarth/faults').state(g.car, factor)
+    out.faults = #list > 0 and list or nil
   end
   local broken = g.car and g.car.breakdown
   if type(broken) == 'table' then out.breakdown = { text = broken.text, cost = broken.cost } end
@@ -4660,7 +4685,8 @@ function M.garageState()
       for i, m in ipairs(g.preview.ready and l.missing or {}) do names[i] = m.name end
       out.preview = { id = l.id, name = l.name, km = l.km, condition = l.condition, price = l.price,
         tradeIn = g.preview.tradeIn, keepCar = g.preview.keepCar, ready = g.preview.ready, error = g.preview.error,
-        paint = g.preview.ready and l.finish and l.finish.name or nil, missing = names }
+        paint = g.preview.ready and l.finish and l.finish.name or nil, missing = names,
+        faults = garage.listingFaults(l) }
     end
   end
   out.damage = g.lastDamage or 0
@@ -4779,7 +4805,7 @@ function M.garageDo(name, a, b)
   local fns = { start = M.garageStart, repair = M.garageRepair, paydebt = M.garagePayDebt, sellCar = M.garageSellCar,
     buyListing = M.garageBuyListing, preview = M.garagePreview, back = M.garagePreviewEnd, bring = M.garageBringCar,
     switchCar = garageSwitchCar, hireDriver = garageHireDriver, releaseDriver = garageReleaseDriver,
-    roadside = garageRoadside, service = garageService, repairParked = garageRepairParked,
+    roadside = garageRoadside, service = garageService, fixFault = M.garageFixFault, repairParked = garageRepairParked,
     refuel = garageRefuel, refuelTo = function(pct) return garageRefuel(nil, pct) end,
     fuelDelivery = garageFuelDelivery, fuelGps = garageFuelGps,
     sell = M.garageSell, openParts = openParts, buyParts = buyParts, cancelParts = cancelParts }
@@ -5937,6 +5963,22 @@ end
 -- A reset (R, recover, the game's repair) rebuilds the vehicle-side containers empty, so the load the mod set is
 -- forgotten there: read the boxes again and put the load back (a meal box at once, freight through workFreight).
 function M.onVehicleResetted(id)
+  -- worn brakes of a used car stay worn: the game's reset puts the brake torque back to new
+  -- (during a test drive, the listing's: the car you sit in is the one for sale)
+  local g = S.career and S.career.garage
+  local worn
+  if g and g.preview then
+    local l = garage.findListing(g, g.preview.id)
+    local native = l and garage.listingNative(l)
+    worn = native and native.brakes
+  else
+    local car = g and g.car
+    worn = type(car) == 'table' and type(car.faults) == 'table' and car.faults.brakes
+  end
+  if worn and M.G.applyBrakes and M.G.ownedVehicle then
+    local own = M.G.ownedVehicle()
+    if own and own.id == id then pcall(M.G.applyBrakes, worn, id) end
+  end
   if S.busDamageWatch and S.busDamageWatch.id == id then S.busDamageWatch = nil end
   if S.storage and S.storage.id == id then S.storage = nil end
   if S.freightLoad and S.freightLoad.id == id then S.freightLoad = nil end
