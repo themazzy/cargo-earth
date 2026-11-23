@@ -5793,13 +5793,13 @@ test('insurance: bought standing in your own car, a crash is covered, a write-of
   advance(core, 2)
   local out = core.garageDo('insure')
   assert(g.car.insured and out.insurance.car.insured, out.msg)
-  assert(s.career.money == 1000 - 30, 'first day charged: ' .. s.career.money)
+  assert(s.career.money == 1000 - 10, 'first hour charged: ' .. s.career.money)
   assert(core.phoneState().insured, 'insured mark on the phone footer')
   -- an hour of play later the next day is billed
-  s.career.activeSeconds = (s.career.activeSeconds or 0) + 3600
+  s.career.activeSeconds = (s.career.activeSeconds or 0) + require('cargoEarth/insurance').BILL_S
   s.insBillAt = nil
   advance(core, 1)
-  assert(s.career.money == 1000 - 60, 'second day: ' .. s.career.money)
+  assert(s.career.money == 1000 - 20, 'second hour: ' .. s.career.money)
   -- a crash big enough to write the car off
   damageValue = 1e6
   advance(core, 2)
