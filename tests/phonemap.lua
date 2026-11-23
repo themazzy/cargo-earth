@@ -57,4 +57,22 @@ pm.routeXY('v1', {{1, 2}, {3, 4}}, toXY)
 pm.routeXY('v1', {{1, 2}, {3, 4}}, toXY)
 assert(calls == 2)
 assert(pm.routeXY('v2', {{1, 2}}, toXY)[1][1] == 2 and calls == 3)
-print('Live map: roads by tile and kind, long edges, route clipping and caching checked')
+-- the route ahead: cut where the car is, out-and-back keeps the stretch the car was on, facing against it is "behind"
+pm._reset()
+local line = {{0, 0}, {0, 100}, {0, 200}, {0, 300}}
+local ahead, where = pm.ahead(line, 3, 150, 0, 'r1')
+assert(ahead[1][1] == 0 and ahead[1][2] == 150 and ahead[2][2] == 200 and #ahead == 3, 'starts at the car, the rest ahead')
+assert(where.off == 3 and not where.back)
+_, where = pm.ahead(line, 3, 150, 180, 'r1')
+assert(where.back, 'driving south on a route going north')
+-- out and back along the same street: the first half while the car came that way, then the way back
+local outBack = {{0, 0}, {0, 100}, {0, 200}, {1, 100}, {1, 0}}
+pm._reset()
+ahead = pm.ahead(outBack, 0.5, 50, 0, 'r2')
+assert(#ahead == 5, 'on the way out: the turn and the way back still ahead')
+pm.ahead(outBack, 0.5, 180, 0, 'r2')
+pm.ahead(outBack, 1, 190, 180, 'r2')
+ahead = pm.ahead(outBack, 0.6, 50, 180, 'r2')
+assert(#ahead == 2, 'on the way back: only the last piece')
+assert(#pm.ahead({}, 0, 0) == 0)
+print('Live map: roads by tile and kind, long edges, route clipping, caching and the route ahead of the car checked')

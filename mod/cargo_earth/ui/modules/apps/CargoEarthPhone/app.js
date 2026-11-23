@@ -362,6 +362,8 @@ angular.module('beamng.apps')
     '.cep-map-btn{width:40px;height:40px;padding:0;border:0;border-radius:10px;font:inherit;font-size:22px;font-weight:800;line-height:1;cursor:pointer;' +
       'background:var(--card);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-btn:disabled{opacity:.45;cursor:default}' +
     '.cep-map-note{position:absolute;left:12px;right:60px;bottom:12px;padding:7px 10px;border-radius:10px;background:var(--card);font-size:12px;color:var(--muted)}' +
+    '.cep-map-turn{position:absolute;left:44px;right:8px;top:8px;padding:7px 10px;border-radius:10px;background:var(--card);font-size:12px;font-weight:700;' +
+      'color:var(--tomato);box-shadow:0 1px 4px rgba(0,0,0,.25)}' +
     '.dark .cep-mapbox{background:#23201e}' +
     '.cep-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}' +
     '.cep-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}'
@@ -1713,6 +1715,7 @@ angular.module('beamng.apps')
       '<div class="cep-body cep-mapbody" ng-if="tab === \'map\'"><div class="cep-mapbox">' +
         '<canvas class="cep-livemap" role="img" aria-label="Map of the roads around your car, your route and your stops"></canvas>' +
         '<div class="cep-map-note" ng-if="lm.note">{{ lm.note }}</div>' +
+        '<div class="cep-map-turn" ng-if="lm.behind && !lm.note">The route is behind you. Turn around, or keep going and the GPS finds another way.</div>' +
         '<div class="cep-map-zoom"><button class="cep-map-btn" title="Zoom in" ng-disabled="lm.zoom === 0" ng-click="mapZoom(-1)">+</button>' +
           '<button class="cep-map-btn" title="Zoom out" ng-disabled="lm.zoom === 2" ng-click="mapZoom(1)">−</button></div>' +
       '</div></div>' +
@@ -2594,7 +2597,7 @@ angular.module('beamng.apps')
       }
       var ROAD_M = [3, 6, 9, 13], ROAD_PX = [1, 2, 3, 4]   // road width in metres, and never thinner than this in pixels
       var STOP_LOOK = {next: ['#e4572e', ''], pickup: ['#e4572e', 'P'], drop: ['#2e9e5b', 'D'], stop: ['#7a5cc7', ''], home: ['#2f7bf6', 'H'], hq: ['#4b5563', 'W']}
-      var lm = scope.lm = {note: '', zoom: 1}
+      var lm = scope.lm = {note: '', zoom: 1, behind: false}
       try { var z = localStorage.getItem('cargoEarthMapZoom'); if (z === '0' || z === '1' || z === '2') lm.zoom = Number(z) } catch (e) {}
       var mapData = {roadsKey: null, roads: [], route: null, routeGps: false, stops: [], car: null, from: null, at: 0}
       var mapBusy = false, mapAskedAt = -Infinity
@@ -2640,6 +2643,8 @@ angular.module('beamng.apps')
           mapData.route = r.route || null
           mapData.routeGps = !!r.routeGps
           mapData.stops = r.stops || []
+          mapData.offM = r.offM || 0
+          if (!!r.behind !== lm.behind) scope.$evalAsync(function () { lm.behind = !!r.behind })
           mapNote(mapData.roads.length ? '' : 'No roads here yet. They appear as BeamNG.Earth builds the world around you.')
         })
       }
@@ -2710,6 +2715,16 @@ angular.module('beamng.apps')
             ctx.stroke()
           }
           var rw = Math.max(4, 5 * scale)
+          // off the line (a side road, a car park): a dashed link from the car to where the route goes on
+          if (mapData.routeGps && mapData.offM > 20 && typeof route[0] === 'number') {
+            if (ctx.setLineDash) ctx.setLineDash([6, 6])
+            ctx.strokeStyle = col.route
+            ctx.lineWidth = 3
+            ctx.beginPath()
+            ctx.moveTo(ox, oy)
+            ctx.lineTo(sx(route[0], route[1]), sy(route[0], route[1]))
+            ctx.stroke()
+          }
           if (ctx.setLineDash) ctx.setLineDash(mapData.routeGps ? [] : [rw * 1.5, rw * 1.5])
           ctx.strokeStyle = col.casing
           ctx.lineWidth = rw + 3
