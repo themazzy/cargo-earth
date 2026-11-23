@@ -2309,9 +2309,25 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   -- BeamNG.Earth's planned route (1.6+): drawn as the GPS has it
   local earth = require('cargoEarth/earth')
   gpsRoute = {remaining = 500, routeVersion = 3}
-  earth.routeGeometry = function() return {version = 3, points = {{50, 14}, {50.001, 14}, {50.002, 14.001}}} end
+  local copies = 0
+  earth.routeGeometry = function() copies = copies + 1 return {version = 3, points = {{50, 14}, {50.001, 14}, {50.002, 14.001}}} end
   m = core.phoneMap(m.roadsKey)
   assert(m.routeGps and #m.route == 6 and m.route[4] == 111)
+  core.phoneMap(m.roadsKey)
+  assert(copies == 1, 'the same route version is not copied again')
+  gpsRoute.routeVersion = 4
+  core.phoneMap(m.roadsKey)
+  assert(copies == 2, 'a new plan is')
+  -- a parcel round on the way to the depot: every address is ahead
+  s.job.route = {at = 1, stops = {{g = {50.001, 14.001}, n = 'A'}, {g = {50.002, 14.002}, n = 'B'}}}
+  local numbered = 0
+  for _, st in ipairs(core.phoneMap(m.roadsKey).stops) do if st.k == 'stop' then numbered = numbered + 1 end end
+  assert(numbered == 2, 'both parcel stops while going to the depot')
+  s.phase = 'toDelivery'
+  numbered = 0
+  for _, st in ipairs(core.phoneMap(m.roadsKey).stops) do if st.k == 'stop' then numbered = numbered + 1 end end
+  assert(numbered == 1, 'then the current one is the next stop')
+  s.job.route, s.phase = nil, 'toPickup'
   earth.routeGeometry, gpsRoute = nil, nil
   pose.x, pose.y = 400, 0
   assert(core.phoneMap(m.roadsKey).roads, 'another tile: the roads again')

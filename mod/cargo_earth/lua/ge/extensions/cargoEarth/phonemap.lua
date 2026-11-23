@@ -153,6 +153,12 @@ function M.routeXY(key, latlon, toXY)
   return out
 end
 
+-- The converted route for this key, or nil when it has to be asked for again.
+function M.routeCached(key)
+  if key ~= nil and key == routeKey then return routeXY end
+  return nil
+end
+
 function M._reset() gridFor, gridAt, grid, routeKey, routeXY = nil, -math.huge, nil, nil, nil end
 
 -- distance in metres, for the tests

@@ -5474,12 +5474,14 @@ function M.phoneMap(have)
   -- the GPS route as BeamNG.Earth plans it (1.6+); else a straight line to the next stop
   local d = target()
   local rt = d and earth.route()
-  local geo = rt and rt.routeVersion and earth.routeGeometry and earth.routeGeometry()
-  if geo then
-    local pts = pm.routeXY(tostring(geo.version or rt.routeVersion) .. '@' .. frame, geo.points,
-      function(q) return earth.worldXY(p, q) end)
-    out.route, out.routeGps = pm.clip(pts, p.x, p.y), true
+  -- Earth hands out a copy of the whole route: asked only for a new route version or after the world moved
+  local routeKey = rt and rt.routeVersion and (tostring(rt.routeVersion) .. '@' .. frame)
+  local pts = routeKey and pm.routeCached(routeKey)
+  if routeKey and not pts then
+    local geo = earth.routeGeometry and earth.routeGeometry()
+    if geo then pts = pm.routeXY(routeKey, geo.points, function(q) return earth.worldXY(p, q) end) end
   end
+  if pts then out.route, out.routeGps = pm.clip(pts, p.x, p.y), true end
   local stops = {}
   local function add(g, k, n)
     local x, y = xy(g)
@@ -5499,7 +5501,9 @@ function M.phoneMap(have)
     end
     local r = S.job.route
     if r and type(r.stops) == 'table' then
-      for i = (r.at or 1) + 1, #r.stops do add(r.stops[i].g, 'stop', tostring(i)) end
+      -- on the way to the depot every address is still ahead; later the current one is the next stop
+      local first = S.phase == 'toPickup' and (r.at or 1) or (r.at or 1) + 1
+      for i = first, #r.stops do add(r.stops[i].g, 'stop', tostring(i)) end
     end
     if d then
       add(d.g, 'next', d.n)
