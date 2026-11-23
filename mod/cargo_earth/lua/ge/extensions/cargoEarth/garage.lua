@@ -38,6 +38,7 @@ M.REPAIR_CAP = 0.5           -- a repair never costs more than this share of the
 M.PRICE_V = 2                -- prices' version in saves (1: the first fixed prices)
 
 local haul = require('cargoEarth/haul')
+local faults = require('cargoEarth/faults')
 local function round5(x) return math.floor(x / 5 + 0.5) * 5 end
 
 -- CZK a courier makes in an hour: a typical order (3 km straight from the restaurant, 1.5 km ride to it), a tip for
@@ -646,7 +647,8 @@ function M.tradeInQuote(G, g)
     local cap = math.max(0, math.floor((paid + (tonumber(g.car.partsPaid) or 0)) * M.RESALE / 5) * 5)
     floor, gross = math.min(floor, cap), math.min(gross, cap)
   end
-  return math.max(floor, gross - (g.repair or 0)), gross
+  -- a misfiring engine or worn gearbox still to repair is taken off (the dealer would have to fix it)
+  return math.max(floor, gross - (g.repair or 0) - faults.repairCost(g.car)), gross
 end
 
 local function captureCurrent(G, g)
@@ -938,10 +940,14 @@ local function newListing(G, m, rnd, kind, band)
   local condition = math.max(0.15, math.min(1, 1 - km / 450000 - rnd() * 0.35))
   local price = round5(tonumber(c.value) * M.PRICE_PER_VALUE * M.kindFactor(kind) * (0.3 + 0.55 * condition) * (0.88 + 0.24 * rnd()))
   m.seq = (m.seq or 0) + 1
-  return { id = m.seq, model = c.model, key = c.key, name = (c.brand and (c.brand .. ' ') or '') .. (c.name or c.key),
+  local l = { id = m.seq, model = c.model, key = c.key, name = (c.brand and (c.brand .. ' ') or '') .. (c.name or c.key),
     kind = kind, band = bandOf(list, idx),
     km = km, condition = math.floor(condition * 100 + 0.5) / 100, price = price,
     listedAt = m.t, gone = m.t + M.MARKET_LIFE_MIN[1] + rnd() * (M.MARKET_LIFE_MIN[2] - M.MARKET_LIFE_MIN[1]) }
+  -- worn or faulty components (their own random numbers: the market's stay as they were), cheaper by their repair
+  l.faults = faults.plan(l.condition, faults.seeded(m.seq * 7919 + km + idx), faults.electric(c.fuel))
+  l.price = faults.price(price, l)
+  return l
 end
 
 -- Eight slots per available category, with price variety and a protected test-drive selection.
@@ -1021,12 +1027,26 @@ function M.market(g, filter)
     if not filter or l.name:lower():find(filter, 1, true) then
       out[#out + 1] = { id = l.id, model = l.model, key = l.key, name = l.name, km = l.km, condition = l.condition,
         missing = l.wearVersion == WEAR_VERSION and l.missing and #l.missing or nil, kind = l.kind,
+        faults = M.listingFaults(l),
         price = l.price, isNew = (m.t - l.listedAt) < 15, held = g.preview and g.preview.id == l.id or nil,
         leftS = math.max(0, math.ceil((l.gone - m.t) * 60)), leftMin = math.max(0, math.floor(l.gone - m.t + 0.5)) }
     end
   end
   table.sort(out, function(a, b) if a.price ~= b.price then return a.price < b.price end return a.id < b.id end)
   return out
+end
+
+-- A listing's worn components for the phone ({ id, name, text, cost }), nil when it has none.
+function M.listingFaults(l)
+  local list = faults.describe(l)
+  return #list > 0 and list or nil
+end
+
+-- What the game applies to a listing while you look at it (the same as once it is yours).
+function M.listingNative(l)
+  local car = {}
+  faults.onBuy(car, l.faults)
+  return faults.native(car)
 end
 
 local function findListing(g, id)
@@ -1056,6 +1076,7 @@ function M.buyListing(G, g, career, id, keepCar)
     table.remove(g.market.list, i)
     if g.market.v == M.MARKET_V then M.marketTick(G, g, 0) end
     g.preview = nil
+    faults.onBuy(g.car, l.faults)
     if here then
       g.car.wearVersion = l.wearVersion
     else
@@ -1302,7 +1323,7 @@ function M.previewReady(G, g, rnd)
   p.ready, p.error = ready, why
   if ready then
     l.missing, l.finish, l.wearVersion = p.missing, p.finish, p.wearVersion
-    if G.applyCondition then pcall(G.applyCondition, l.km, l.condition) end
+    if G.applyCondition then pcall(G.applyCondition, l.km, l.condition, M.listingNative(l)) end
   end
   return ready
 end
