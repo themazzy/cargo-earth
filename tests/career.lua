@@ -5726,3 +5726,37 @@ test('worn components go on the car through the game\'s own part condition, at d
   be, getObjectByID = oldBe, oldGet
   assert(ok, err)
 end)
+
+test('insurance: bought standing in your own car, a crash is covered, a write-off is towed home for free', function()
+  local garage = require('cargoEarth/garage')
+  local core, s = fresh()
+  local g = s.career.garage
+  g.debt, g.car.value = 0, 7000
+  advance(core, 2)
+  local out = core.garageDo('insure')
+  assert(g.car.insured and out.insurance.car.insured, out.msg)
+  assert(s.career.money == 1000 - 30, 'first day charged: ' .. s.career.money)
+  -- an hour of play later the next day is billed
+  s.career.activeSeconds = (s.career.activeSeconds or 0) + 3600
+  s.insBillAt = nil
+  advance(core, 1)
+  assert(s.career.money == 1000 - 60, 'second day: ' .. s.career.money)
+  -- a crash big enough to write the car off
+  damageValue = 1e6
+  advance(core, 2)
+  assert(g.repair == garage.repairCap(g) and g.car.insCover == g.repair, 'covered write-off')
+  local phone = core.phoneState()
+  assert(phone.wreck and phone.wreck.payout == math.floor(g.repair * 0.9 + 0.5) and not phone.wreck.home)
+  s.career.home = { name = 'Home', g = { 50.1, 14.1 } }
+  core.phoneAction('towHome')
+  assert(pose.lat == 50.1 and not core.phoneState().wreck, 'towed home')
+  -- the trip reset the car: the bill is kept and it is no free repair
+  local bill = g.repair
+  damageValue = 0
+  advance(core, 2)
+  assert(g.repair == bill and (g.debt or 0) == 0, 'tow keeps the bill: ' .. tostring(g.repair) .. ' debt ' .. tostring(g.debt))
+  s.career.money = 100000
+  core.G.repair = function() damageValue = 0 end
+  out = core.garageDo('repair')
+  assert(out.msg:find('insurance paid', 1, true) and g.repair == 0 and g.insurance.claims == 1, out.msg)
+end)

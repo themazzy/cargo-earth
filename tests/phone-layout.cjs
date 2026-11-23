@@ -62,6 +62,7 @@ module.exports = function auditPhoneLayout (directive) {
   pinned('menu close', click => click === 'closePanel()')
   pinned('headquarters close', click => click === 'closeHq()')
   pinned('claim home', click => click === 'claimHome()')
+  for (const command of ['towHome', 'towHq', 'wreckClose']) pinned('write-off ' + command, click => click === "act('" + command + "')")
   for (const command of ['homeGps', 'companyGps']) {
     pinned(command, click => click === "pdo('" + command + "')")
   }

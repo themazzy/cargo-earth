@@ -3038,6 +3038,8 @@ function M.phoneState()
     if p and not p.camera then out.camera = cameras.ahead(cams, p.lat, p.lon, (p.speed or 0) > M.STOP_SPEED and p.heading or nil) end
     if ph.flash and S.clock < ph.flash.untilT then out.flash = ph.flash else ph.flash = nil end
   end
+  if ph.insNote and S.clock < ph.insNote.untilT then out.insNote = ph.insNote.text else ph.insNote = nil end
+  out.wreck = M.wreckInfo()
   if S.mode == 'courier' and out.status == 'ok' then
     local plan = storagePlan()
     if plan then
@@ -3161,6 +3163,16 @@ function M.phoneAction(a, orderId)
   end
   if a == 'unstuck' then
     if not S.pendingCareer then M.unstuckCar() end
+    return M.phoneState()
+  end
+  -- the write-off window: a free tow home / to the headquarters, or stay
+  if a == 'towHome' or a == 'towHq' or a == 'wreckClose' then
+    if a == 'wreckClose' then S.phone.wreck = nil
+    elseif not S.pendingCareer then
+      local ok, msg = M.insuranceTow(a == 'towHq' and 'hq' or 'home')
+      if not ok and S.phone.wreck then S.phone.wreck.msg = msg end
+      say(msg, 8)
+    end
     return M.phoneState()
   end
   if a == 'loadSave' or a == 'newCareer' or a == 'deleteSave' then
@@ -3432,6 +3444,7 @@ local function cameraTick(p)
   for _, order in ipairs(S.orders) do if order.phase == 'toDelivery' then mark(order.job) end end
   if S.job and S.phase == 'toDelivery' then mark(S.job) end
   c.fines = { count = ((c.fines or {}).count or 0) + 1, paid = ((c.fines or {}).paid or 0) + flash.fine }
+  S.lastFlashAt = S.clock   -- a crash soon after counts as reckless for the insurance
   S.phone.flash = { speed = flash.speed, limit = flash.limit, fine = flash.fine, owed = flash.fine - paid, stars = rated,
     untilT = S.clock + 10 }
   phoneSound('cancelled')
@@ -3954,19 +3967,23 @@ local function garageTick(dt)
   end
   local damage = M.G.damage()
   M.busDamageTick(damage)
-  local what, amount = garage.trackDamage(g, damage)
+  local what, amount, insured = garage.trackDamage(g, damage)
   if shift and what == 'hit' then employment.damage(S.career, math.max(0, amount)) end
   if shift and not shift.ownerOperator then g.debt = 0 end
   if what == 'hit' then
     S.dirtyAt = S.dirtyAt or (S.clock + 5)
+    M.insuranceHit(g, amount)
   elseif what == 'debt' then
     if shift and not shift.ownerOperator then
       say('Company ' .. employment.vehicleLabel(shift) .. ' repaired. Recorded damage still affects employer reputation.', 8)
+    elseif (insured or 0) > 0 then
+      say(string.format('Your car was fixed in the game menu: insurance paid %d CZK, %d CZK added to your debt.', insured, amount), 8)
     else
       say(string.format('Your car was fixed without paying (menu repair, reset or respawn): %d CZK added to your debt.', amount), 8)
     end
     saveCareer()
   end
+  M.insuranceTick(p)
   if S.dirtyAt and S.clock >= S.dirtyAt then S.dirtyAt = nil saveCareer() end
   if not S.parts and S.clock >= carSeenAt then
     carSeenAt = S.clock + 10
@@ -4363,15 +4380,171 @@ function M.garageSell(part) return garageSay(garage.sell(M.G, S.career.garage, S
 function M.repairFactor(p)
   return math.min(firm.repairFactor(S.career, p), home.factorHere(S.career, 'workshop', p) or 1)
 end
-function M.garageRepair()
+-- insure: false pays the whole bill yourself (no claim, the premium stays as it is); otherwise the insurer pays its part
+function M.garageRepair(insure)
   -- the firm's workshop does the work for less at the headquarters: the discount counts before the money check
   local g = S.career.garage
   local full, factor = g.repair or 0, M.repairFactor(earth.pose())
-  local ok, msg, cost = garage.repairCar(M.G, g, S.career, factor)
+  local ok, msg, cost, payout = garage.repairCar(M.G, g, S.career, factor, insure ~= false, S.career.activeSeconds or 0)
   if ok and factor < 1 then
-    msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved)', cost, full - cost)
+    msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved%s)', cost, full - cost,
+      (payout or 0) > 0 and string.format(', insurance paid %d CZK', payout) or '')
   end
+  if ok then S.phone.wreck = nil end
   return garageSay(ok, msg)
+end
+
+------------------------------------------------------------------------------------------ insurance (cargoEarth/insurance)
+
+-- The player's own garage (company work swaps the career's garage for the company's).
+function M.insuranceGarage()
+  local shift = S.career.employment
+  return shift and shift.personalGarage or S.career.garage
+end
+function M.insuranceCars(g)
+  local cars = {}
+  if g.car then cars[1] = g.car end
+  for _, car in ipairs(g.parked or {}) do cars[#cars + 1] = car end
+  return cars
+end
+
+-- Every garage tick: speed and limit samples for judging a crash, a free tow's bill kept, the premiums due.
+function M.insuranceTick(p)
+  local insurance = require('cargoEarth/insurance')
+  S.insHist = S.insHist or {}
+  if p and not p.camera and p.speed then
+    local lim = limitHere(p)
+    insurance.sample(S.insHist, S.clock, p.speed * 3.6, lim and lim.kmh)
+  end
+  local trip = S.insTow
+  if trip then
+    local g = S.career.garage
+    if S.clock > trip.untilT or g.car ~= trip.car then S.insTow = nil
+    elseif (g.repair or 0) < trip.bill then
+      -- the trip reset the car: it is not repaired for free, the bill stays owed
+      local d = M.G.damage and M.G.damage() or 0
+      g.damageBaseline, g.lastDamage = { damage = d, bill = trip.bill }, d
+      g.carriedRepair = d == 0 and trip.bill or nil
+      g.repair, g.car.insCover = trip.bill, trip.cover
+    end
+  end
+end
+
+-- The premiums due (every insured car, also parked ones and during company work), every few seconds.
+function M.insuranceBill()
+  local insurance = require('cargoEarth/insurance')
+  if S.pendingCareer or S.clock < (S.insBillAt or 0) then return end
+  S.insBillAt = S.clock + 10
+  local c = S.career
+  local g = M.insuranceGarage()
+  if not g.started then return end
+  local due, detail = insurance.bill(g, M.insuranceCars(g), c.activeSeconds or 0)
+  if due > 0 then
+    local paid = math.max(0, math.min(due, math.floor(c.money or 0)))
+    if paid > 0 then economy.post(c, -paid, 'insurance', economy.nextId(c, 'insurance'), detail) end
+    if paid < due then garage.addDebt(g, due - paid, 'insurance', detail) end
+    S.dirtyAt = S.dirtyAt or (S.clock + 5)
+  end
+end
+
+-- A crash added `grow` CZK of repairs to the car you drive: an insured car's cover grows by what the verdict allows.
+function M.insuranceHit(g, grow)
+  local insurance = require('cargoEarth/insurance')
+  local car = g.car
+  if not insurance.insured(car) or not insurance.eligible(car) then return end
+  S.insSess = S.insSess or {}
+  local v, fresh = insurance.verdict(S.insSess, S.insHist or {}, S.clock, S.lastFlashAt)
+  insurance.hit(car, grow, v)
+  if fresh and v.why then
+    S.phone.insNote = { text = 'Insurance: ' .. v.why .. '.', untilT = S.clock + 12 }
+    say('Insurance: ' .. v.why .. '.', 8)
+  end
+  if not car.insWreck and insurance.wrecked(car, g.repair, garage.repairCap(g)) then
+    car.insWreck = true
+    S.phone.wreck = { car = car.name }
+    phoneSound('cancelled')
+  end
+end
+
+-- The write-off window on the phone (nil when none is open).
+function M.wreckInfo()
+  local w = S.phone.wreck
+  local c, g = S.career, S.career.garage
+  if not w or not (g.car and g.car.insWreck) then S.phone.wreck = nil return nil end
+  local payout, cost = garage.repairInsured(g, 1)
+  return { car = w.car, bill = cost, payout = payout, own = cost - payout, home = c.home and c.home.name or nil,
+    hq = c.firm and c.firm.hq and c.firm.hq.n or nil, msg = w.msg, company = c.employment ~= nil or nil }
+end
+
+-- The insurer's free tow of a write-off to the home garage or the headquarters (where: 'home' | 'hq').
+function M.insuranceTow(where)
+  local c, g = S.career, S.career.garage
+  local car = g.car
+  local insurance = require('cargoEarth/insurance')
+  if c.employment then return false, 'End the company work first.' end
+  if not (car and car.insWreck and insurance.insured(car)) then return false, 'Only an insured write-off is towed for free.' end
+  if not garage.inOwnCar(M.G, g) then return false, 'Get in your car first.' end
+  if trailers.id() then return false, 'Unhitch the trailer first: the tow takes only your car.' end
+  local spot = (where == 'hq' and c.firm and c.firm.hq) or (where == 'home' and c.home) or nil
+  if not spot or type(spot.g) ~= 'table' then
+    return false, where == 'hq' and 'You have no headquarters.' or 'You have no home garage.'
+  end
+  local name = spot.n or spot.name or (where == 'hq' and 'Headquarters' or 'Home')
+  -- the trip may reset the car in the game: the bill stays (M.insuranceTick), and the drop is not a free repair
+  S.insTow = { car = car, bill = g.repair or 0, cover = car.insCover or 0, untilT = S.clock + 30 }
+  g.fixUntil = garage.clock() + 30
+  local ok, why = earth.teleport(spot.g[1], spot.g[2], name)
+  if not ok then
+    S.insTow, g.fixUntil = nil, nil
+    return false, 'The tow could not start: ' .. tostring(why)
+  end
+  car.insWreck, S.phone.wreck = nil, nil
+  return true, 'Your car is being towed to ' .. name .. ' for free. Repair it there.'
+end
+
+-- Garage actions: insure / uninsure (id: a parked car's id, nil: the car you drive), tow.
+function M.insuranceDo(name, id, where)
+  local insurance = require('cargoEarth/insurance')
+  local c = S.career
+  local g = M.insuranceGarage()
+  if name == 'tow' then return M.insuranceTow(where or id) end
+  local car = id and garage.parkedCar(g, tonumber(id)) or g.car
+  if name == 'uninsure' then return insurance.cancel(g, car) end
+  if name ~= 'insure' then return false, 'Unknown action' end
+  if c.employment then return false, 'End the company work first.' end
+  if car and car == g.car and not car.value then garage.noteValue(M.G, g) end
+  local pose = earth.pose()
+  local ctx = { own = car == g.car and garage.inOwnCar(M.G, g), speed = pose and pose.speed or 0,
+    onJob = S.job ~= nil or #(S.orders or {}) > 0 }
+  local ok, msg, day = insurance.buy(g, c, car, ctx, c.activeSeconds or 0)
+  if ok and (day or 0) > 0 then
+    economy.post(c, -day, 'insurance', economy.nextId(c, 'insurance'), 'Insurance: first day for ' .. tostring(car.name))
+  end
+  if ok then saveCareer() end
+  return ok, msg
+end
+
+-- The Garage page's insurance card.
+function M.insuranceState()
+  local insurance = require('cargoEarth/insurance')
+  local g = M.insuranceGarage()
+  local own = not S.career.employment and g.car and not g.car.loaner
+  local out = insurance.state(g, own and g.car or nil, M.insuranceCars(g))
+  if out.car then
+    local pose = earth.pose()
+    out.car.why = not out.car.insured and insurance.buyBlock(g, g.car, { own = garage.inOwnCar(M.G, g),
+      speed = pose and pose.speed or 0, onJob = S.job ~= nil or #(S.orders or {}) > 0 }) or nil
+    out.car.wreck = g.car.insWreck or nil
+  end
+  local c = S.career
+  out.home, out.hq = c.home and c.home.name or nil, c.firm and c.firm.hq and c.firm.hq.n or nil
+  out.parked = {}
+  for _, car in ipairs(g.parked or {}) do
+    if insurance.insured(car) then
+      out.parked[#out.parked + 1] = { id = car.fleetId, name = car.name, week = insurance.weekPremium(g, car) }
+    end
+  end
+  return out
 end
 -- The phone header's Unstuck button: a free repair in place (garage.unstuck).
 function M.unstuckInfo()
@@ -4509,7 +4682,7 @@ end
 local function garageRepairParked(id)
   local c = S.career
   if not (c.firm and c.firm.hq) then return false, 'Parked vehicles are repaired at the headquarters.' end
-  return garageSay(garage.repairParked(S.career.garage, c, tonumber(id), firm.value(c, 'workshop') or 1))
+  return garageSay(garage.repairParked(S.career.garage, c, tonumber(id), firm.value(c, 'workshop') or 1, c.activeSeconds or 0))
 end
 local function garageReleaseDriver(id)
   return garageSay(fleet.release(S.career.garage, tonumber(id)))
@@ -4678,6 +4851,12 @@ function M.garageState()
   out.repairHours = garage.hours(out.repair)
   local cap = garage.repairCap(g)
   out.repairCapped = cap ~= nil and out.repair > 0 and out.repair >= cap or nil
+  if out.repair > 0 then
+    -- what the repair costs here (workshop discount) and the part the insurance would pay
+    local pays, cost = garage.repairInsured(g, M.repairFactor(earth.pose()))
+    out.repairCost, out.repairInsured = cost, pays > 0 and pays or nil
+  end
+  if not S.career.employment then out.insurance = M.insuranceState() end
   if g.preview then
     local l = garage.findListing(g, g.preview.id)
     if l then
@@ -4802,7 +4981,11 @@ function M.garageDo(name, a, b)
   end
   local partsAction = name == 'openParts' or name == 'buyParts' or name == 'cancelParts'
   if S.parts and not partsAction then return M.garageState() end
-  local fns = { start = M.garageStart, repair = M.garageRepair, paydebt = M.garagePayDebt, sellCar = M.garageSellCar,
+  local fns = { start = M.garageStart, repair = function() return M.garageRepair(true) end,
+    repairOwn = function() return M.garageRepair(false) end,
+    insure = function(id) return garageSay(M.insuranceDo('insure', id)) end,
+    uninsure = function(id) return garageSay(M.insuranceDo('uninsure', id)) end,
+    tow = function(where) return garageSay(M.insuranceDo('tow', nil, where)) end, paydebt = M.garagePayDebt, sellCar = M.garageSellCar,
     buyListing = M.garageBuyListing, preview = M.garagePreview, back = M.garagePreviewEnd, bring = M.garageBringCar,
     switchCar = garageSwitchCar, hireDriver = garageHireDriver, releaseDriver = garageReleaseDriver,
     roadside = garageRoadside, service = garageService, fixFault = M.garageFixFault, repairParked = garageRepairParked,
@@ -4872,7 +5055,8 @@ function M.hqState()
     local owed = not current and garage.parkedRepairCost(car) or 0
     out.bays[#out.bays + 1] = { id = car.fleetId, name = car.name, current = current or nil, loaner = car.loaner or nil,
       km = math.floor(car.km or 0), condition = car.condition, repair = owed > 0 and owed or nil,
-      repairCost = owed > 0 and math.floor(owed * workshop / 5 + 0.5) * 5 or nil,
+      repairCost = owed > 0 and math.floor(owed * workshop / 5 + 0.5) * 5 - garage.parkedInsured(car, workshop) or nil,
+      insured = require('cargoEarth/insurance').insured(car) or nil,
       broken = type(car.breakdown) == 'table' and car.breakdown.text or nil,
       tier = upkeep.tier(car), upkeep = upkeep.state(car, workshop),
       driver = fleet.driverState(car.driver, car, factor) }
@@ -4938,6 +5122,7 @@ function M.hqState()
   out.parts.count, out.parts.kinds = parts, kinds
   if not c.employment then out.fuel = fuelState() end
   out.repair = { cost = g.repair or 0, factor = M.repairFactor(earth.pose()) }
+  out.repair.insured = garage.repairInsured(g, out.repair.factor)
   out.debt, out.busy, out.company = g.debt or 0, S.job ~= nil, c.employment ~= nil
   return out
 end
@@ -5828,6 +6013,8 @@ function M.onUpdate(dtReal, dtSim)
     end
     local okG, errG = pcall(garageTick, dt)
     if not okG and not S.garageErr then S.garageErr = tostring(errG) problem('W', 'garage: ' .. S.garageErr) end
+    local okI, errI = pcall(M.insuranceBill)
+    if not okI and not S.insuranceErr then S.insuranceErr = tostring(errI) problem('W', 'insurance: ' .. S.insuranceErr) end
     local ready = worldReady
     if ready then refreshStorage() else releaseStorage() end
     if ready then

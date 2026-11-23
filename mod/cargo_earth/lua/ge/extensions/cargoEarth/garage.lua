@@ -408,27 +408,52 @@ function M.trackDamage(g, damage)
     g.fixUntil = nil
     local freed = before - g.repair
     if not ours and freed > 0 then
-      M.addDebt(g, freed, 'repair', 'Car fixed without paying (game menu repair, reset or respawn)')
-      return 'debt', freed
+      -- an insured crash: the insurer still pays its share, only the rest becomes debt
+      local insurance = require('cargoEarth/insurance')
+      local paid = insurance.quote(g.car, before, freed)
+      insurance.claim(g, g.car, freed / before, paid, nil, 'Car fixed in the game menu')
+      if freed - paid > 0 then
+        M.addDebt(g, freed - paid, 'repair', 'Car fixed without paying (game menu repair, reset or respawn)'
+          .. (paid > 0 and string.format(', insurance paid %d', paid) or ''))
+      end
+      return 'debt', freed - paid, paid
     end
   end
+  require('cargoEarth/insurance').clamp(g.car, g.repair)
   return nil
 end
 
 -- factor: share of the bill actually charged (a firm's workshop at the headquarters), 1 when omitted.
-function M.repairCar(G, g, career, factor)
+-- What the insurer would pay of the repair now (0 without cover). Same factor as repairCar.
+function M.repairInsured(g, factor)
+  local bill = g.repair or 0
+  local cost = round5(bill * math.max(0, math.min(1, tonumber(factor) or 1)))
+  return require('cargoEarth/insurance').quote(g.car, bill, cost), cost
+end
+
+-- insure: claim the covered part from the insurance (raises the premium); false pays it all yourself.
+-- now: play seconds (the claim-free week restarts). Returns ok, message, what you paid, what the insurer paid.
+function M.repairCar(G, g, career, factor, insure, now)
   if (g.repair or 0) <= 0 then return false, 'Nothing to repair' end
-  local cost = round5((g.repair or 0) * math.max(0, math.min(1, tonumber(factor) or 1)))
-  if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK)', cost) end
+  local payout, cost = M.repairInsured(g, factor)
+  if not insure then payout = 0 end
+  local own = cost - payout
+  if (career.money or 0) < own then return false, string.format('Not enough money (%d CZK)', own) end
   M.expectFix(g)
   local ok, err = pcall(G.repair)
   if not ok then g.fixUntil = nil return false, 'Repair failed: ' .. tostring(err) end
-  career.money = career.money - cost
+  career.money = career.money - own
+  local insurance = require('cargoEarth/insurance')
+  insurance.claim(g, g.car, 1, payout, now, 'Repair')
+  if g.car then g.car.insCover, g.car.insWreck = 0, nil end
   require('cargoEarth/damage').clear(g.car)
   g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.carriedRepair = 0, nil
-  g.spent = (g.spent or 0) + cost
-  return true, string.format('Repaired (-%d CZK)', cost), cost
+  g.spent = (g.spent or 0) + own
+  if payout > 0 then
+    return true, string.format('Repaired: insurance paid %d CZK, you paid %d CZK', payout, own), own, payout
+  end
+  return true, string.format('Repaired (-%d CZK)', own), own, 0
 end
 
 -- Unstuck (Jan, 2026-11-22): Earth's roads have bugs (bridge ends held at ground, steps between tiles) that wreck or
@@ -455,6 +480,7 @@ function M.unstuck(G, g, now, speed, last)
   local ok, err = pcall(G.repair)
   if not ok then g.fixUntil = nil return false, 'Unstuck failed: ' .. tostring(err) end
   local saved = g.repair or 0
+  g.car.insCover, g.car.insWreck = 0, nil
   require('cargoEarth/damage').clear(g.car)
   g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.carriedRepair = 0, nil
@@ -489,7 +515,7 @@ end
 --   g.debtLog:   what happened, newest first { kind, what, amount (+ added / - paid), left (debt after), at }
 -- Older saves, the debug editor and save fixes can change g.debt alone: debtSync makes the parts match it again.
 M.DEBT_KINDS = {
-  repair = 'Free repairs', fine = 'Speed camera fines', fuel = 'Fuel', roadside = 'Roadside help',
+  repair = 'Free repairs', fine = 'Speed camera fines', insurance = 'Insurance premiums', fuel = 'Fuel', roadside = 'Roadside help',
   earlier = 'Before charges were listed',
 }
 M.DEBT_LOG_MAX, M.DEBT_PARTS_MAX = 30, 40
@@ -695,13 +721,23 @@ function M.parkedRepairCost(car)
 end
 
 -- Repairs a parked vehicle picked up (an accident or a breakdown), at the headquarters.
-function M.repairParked(g, career, id, factor)
+-- What the insurer pays of a parked car's repair (crash damage you had insured; never a breakdown).
+function M.parkedInsured(car, factor)
+  local bill = car.parkedRepair or 0
+  return require('cargoEarth/insurance').quote(car, bill, round5(bill * (factor or 1)))
+end
+
+function M.repairParked(g, career, id, factor, now)
   local car = M.parkedCar(g, id)
   if not car then return false, 'That vehicle is not parked here.' end
   local cost = round5(M.parkedRepairCost(car) * (factor or 1))
   if cost <= 0 then return false, car.name .. ' needs no repair.' end
+  local payout = M.parkedInsured(car, factor)
+  cost = cost - payout
   if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK needed).', cost) end
   career.money = career.money - cost
+  require('cargoEarth/insurance').claim(g, car, 1, payout, now, 'Repair of ' .. tostring(car.name))
+  car.insCover, car.insWreck = 0, nil
   require('cargoEarth/damage').clear(car)
   car.parkedRepair = 0
   if type(car.breakdown) == 'table' then
@@ -709,6 +745,9 @@ function M.repairParked(g, career, id, factor)
     car.breakdown = nil
   end
   if car.driver then car.driver.waiting = nil end
+  if payout > 0 then
+    return true, string.format('%s repaired: insurance paid %d CZK, you paid %d CZK.', car.name, payout, cost), cost
+  end
   return true, string.format('%s repaired for %d CZK.', car.name, cost), cost
 end
 
