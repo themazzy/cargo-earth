@@ -699,7 +699,7 @@ end
 if partCondition.deleteConditionSnapshots then partCondition.deleteConditionSnapshots() end
 if partCondition.reset then partCondition.reset() end
 partCondition.initConditions(parts, odo, 1, vis)
-if brakes and wheels and wheels.wheels then
+if wheels and wheels.wheels then   -- worn brakes, or as new again once serviced
   for _, wd in pairs(wheels.wheels) do
     if wd.initialBrakeTorque and wd.brakeTorque then wd.brakeTorque = wd.initialBrakeTorque * brakes end
     if wd.initialParkingTorque and wd.parkingTorque then wd.parkingTorque = wd.initialParkingTorque * brakes end
@@ -717,7 +717,7 @@ function M.applyCondition(km, condition, faults)
     want = string.format('{ engine = %s, gearbox = %s }', faults.engine and luaNum(faults.engine) or 'nil',
       faults.gearbox and luaNum(faults.gearbox) or 'nil')
   end
-  local brakes = type(faults) == 'table' and faults.brakes and luaNum(faults.brakes) or 'nil'
+  local brakes = luaNum(type(faults) == 'table' and faults.brakes or 1)
   v:queueLuaCommand(string.format(FAULT_VLUA, want, math.floor((km or 0) * 1000),
     math.max(0, math.min(1, condition or 1)), brakes))
 end

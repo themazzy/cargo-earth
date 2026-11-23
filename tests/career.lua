@@ -5713,6 +5713,10 @@ test('worn components go on the car through the game\'s own part condition, at d
     env.wheels.wheels[0].brakeTorque = 1000
     assert(load(sent, 'vlua', 't', env))()
     assert(inited.parts == nil and env.wheels.wheels[0].brakeTorque == 1000)
+    -- serviced brakes are as new again without a reset
+    env.wheels.wheels[0].brakeTorque = 800
+    assert(load(sent, 'vlua', 't', env))()
+    assert(env.wheels.wheels[0].brakeTorque == 1000, 'brake torque restored')
     -- after a reset the brakes are worn again
     getObjectByID = function() return { queueLuaCommand = function(_, cmd) sent = cmd end } end
     gamecar.applyBrakes(0.75, 5)

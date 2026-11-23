@@ -5964,8 +5964,17 @@ end
 -- forgotten there: read the boxes again and put the load back (a meal box at once, freight through workFreight).
 function M.onVehicleResetted(id)
   -- worn brakes of a used car stay worn: the game's reset puts the brake torque back to new
-  local car = S.career and S.career.garage and S.career.garage.car
-  local worn = type(car) == 'table' and type(car.faults) == 'table' and car.faults.brakes
+  -- (during a test drive, the listing's: the car you sit in is the one for sale)
+  local g = S.career and S.career.garage
+  local worn
+  if g and g.preview then
+    local l = garage.findListing(g, g.preview.id)
+    local native = l and garage.listingNative(l)
+    worn = native and native.brakes
+  else
+    local car = g and g.car
+    worn = type(car) == 'table' and type(car.faults) == 'table' and car.faults.brakes
+  end
   if worn and M.G.applyBrakes and M.G.ownedVehicle then
     local own = M.G.ownedVehicle()
     if own and own.id == id then pcall(M.G.applyBrakes, worn, id) end
