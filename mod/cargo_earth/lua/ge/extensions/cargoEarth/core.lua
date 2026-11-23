@@ -5629,9 +5629,83 @@ function M.toggleWindow() S.window = not S.window end
 function M.togglePhone() S.phoneHidden = not S.phoneHidden end
 -- The phone's page (Work or Radio), the same on both phones: each one shows what the other chose last.
 function M.phoneTab(t)
-  if t == 'orders' or t == 'radio' then S.phoneTab = t end
+  if t == 'orders' or t == 'radio' or t == 'map' then S.phoneTab = t end
   return S.phoneTab or 'orders'
 end
+-- The phone's live map (Map tab), asked 4 times a second while it shows: the car, the GPS route and the job's stops
+-- in game metres (x east, y north), and the roads round the car when they changed. have: the roads key the phone
+-- already has (the roads are sent again only on another tile, another graph or after BeamNG.Earth moved the world).
+--   { car = { x, y, h (degrees clockwise from north), kmh }, roadsKey, roads = { x1, y1, x2, y2, kind, ... },
+--     route = { x, y, ..., false, ... }, routeGps, stops = { { x, y, k = 'next'|'pickup'|'drop'|'stop'|'home'|'hq', n } } }
+function M.phoneMap(have)
+  local pm = require('cargoEarth/phonemap')
+  local p = earth.pose()
+  if not (p and p.x and p.y) then return { status = earth.status() } end
+  local out = { status = 'ok', car = { x = r1(p.x), y = r1(p.y), h = r1(p.heading or 0), kmh = math.floor((p.speed or 0) * 3.6 + 0.5) } }
+  local frame = tostring(p.anchorLat or '') .. ',' .. tostring(p.anchorLon or '')
+  local graph = M.G.graph and M.G.graph()
+  if graph then
+    local tx, ty, cx, cy = pm.tile(p.x, p.y)
+    pm.grid(graph, S.clock)
+    local key = table.concat({ tx, ty, frame, pm.stamp or 0 }, ':')
+    out.roadsKey = key
+    if key ~= have then out.roads = pm.roads(graph, cx, cy, pm.RADIUS, S.clock) end
+  end
+  local function xy(g)
+    if type(g) ~= 'table' or not g[1] then return nil end
+    local x, y = earth.worldXY(p, g)
+    if x then return math.floor(x + 0.5), math.floor(y + 0.5) end
+  end
+  -- the GPS route as BeamNG.Earth plans it (1.6+); else a straight line to the next stop
+  local d = target()
+  local rt = d and earth.route()
+  -- Earth hands out a copy of the whole route: asked only for a new route version or after the world moved
+  local routeKey = rt and rt.routeVersion and (tostring(rt.routeVersion) .. '@' .. frame)
+  local pts = routeKey and pm.routeCached(routeKey)
+  if routeKey and not pts then
+    local geo = earth.routeGeometry and earth.routeGeometry()
+    if geo then pts = pm.routeXY(routeKey, geo.points, function(q) return earth.worldXY(p, q) end) end
+  end
+  if pts then out.route, out.routeGps = pm.clip(pts, p.x, p.y), true end
+  local stops = {}
+  local function add(g, k, n)
+    local x, y = xy(g)
+    if x then stops[#stops + 1] = { x = x, y = y, k = k, n = n } end
+  end
+  local c = S.career
+  if c.home and c.home.g then add(c.home.g, 'home', 'Home') end
+  local hq = c.firm and c.firm.hq
+  if hq and hq.g then add(hq.g, 'hq', hq.n or 'Headquarters') end
+  if S.job then
+    for _, o in ipairs(S.orders) do
+      local oj = o.job
+      if oj ~= S.job then
+        local dest = o.phase == 'toPickup' and oj.from or oj.to
+        if dest then add(dest.g, o.phase == 'toPickup' and 'pickup' or 'drop', dest.n) end
+      end
+    end
+    local r = S.job.route
+    if r and type(r.stops) == 'table' then
+      -- on the way to the depot every address is still ahead; later the current one is the next stop
+      local first = S.phase == 'toPickup' and (r.at or 1) or (r.at or 1) + 1
+      for i = first, #r.stops do add(r.stops[i].g, 'stop', tostring(i)) end
+    end
+    if d then
+      add(d.g, 'next', d.n)
+      local last = stops[#stops]
+      if last and last.k == 'next' then
+        last.pickup = S.phase == 'toPickup' or nil
+        if not out.route then
+          local cx, cy = math.floor(p.x + 0.5), math.floor(p.y + 0.5)
+          out.route = { cx, cy, last.x, last.y }
+        end
+      end
+    end
+  end
+  out.stops = stops
+  return out
+end
+
 -- The floating phone folded or open. The game rebuilds UI apps when the camera changes or the pause menu opens, so
 -- the phone asks here on its first answer. Folded keeps the screen it was folded on: a new ring still opens it.
 function M.phoneFold(on, screen)

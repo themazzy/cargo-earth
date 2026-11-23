@@ -354,6 +354,14 @@ angular.module('beamng.apps')
     '.cep-special{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;color:#fff;font-size:10px;font-weight:800;text-transform:uppercase}' +
     '.cep-special.fragile{background:#c2416b}.cep-special.chilled{background:#2b7bb9}.cep-special.oversize{background:#d9822b}' +
     '.cep-map{display:block;width:100%;border-radius:12px;background:#f1ebe3}' +
+    // the live map (Map tab): a canvas the size of the phone's body with zoom buttons (the job's own bar sits above it)
+    '.cep-mapbody{padding:0;gap:0}.cep-mapbox{position:relative;flex:1;min-height:0;overflow:hidden;background:#ece6dd}' +
+    '.cep-livemap{position:absolute;inset:0;width:100%;height:100%;display:block}' +
+    '.cep-map-zoom{position:absolute;right:8px;bottom:8px;display:flex;flex-direction:column;gap:6px}' +
+    '.cep-map-btn{width:40px;height:40px;padding:0;border:0;border-radius:10px;font:inherit;font-size:22px;font-weight:800;line-height:1;cursor:pointer;' +
+      'background:var(--card);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-btn:disabled{opacity:.45;cursor:default}' +
+    '.cep-map-note{position:absolute;left:12px;right:60px;bottom:12px;padding:7px 10px;border-radius:10px;background:var(--card);font-size:12px;color:var(--muted)}' +
+    '.dark .cep-mapbox{background:#23201e}' +
     '.cep-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}' +
     '.cep-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}'
 
@@ -1690,6 +1698,14 @@ angular.module('beamng.apps')
         '<div class="cep-sub" style="font-size:11px">Stations: radio-browser.info</div>' +
       '</div></div>' +
 
+      // live map: roads from BeamNG.Earth's road graph, the GPS route and the job's stops, the car pointing up
+      '<div class="cep-body cep-mapbody" ng-if="tab === \'map\'"><div class="cep-mapbox">' +
+        '<canvas class="cep-livemap" role="img" aria-label="Map of the roads around your car, your route and your stops"></canvas>' +
+        '<div class="cep-map-note" ng-if="lm.note">{{ lm.note }}</div>' +
+        '<div class="cep-map-zoom"><button class="cep-map-btn" title="Zoom in" ng-disabled="lm.zoom === 0" ng-click="mapZoom(-1)">+</button>' +
+          '<button class="cep-map-btn" title="Zoom out" ng-disabled="lm.zoom === 2" ng-click="mapZoom(1)">−</button></div>' +
+      '</div></div>' +
+
 
       '<div class="cep-update" ng-if="s.helperBehind"><span>BeamNG.Earth still runs helper {{ s.helperBehind }}: press Update on Cargo Earth helper in its Add-ons page</span></div>' +
       '<div class="cep-update" ng-if="s.update.available && !s.update.hidden && !s.helperBehind">' +
@@ -1735,6 +1751,8 @@ angular.module('beamng.apps')
       '<nav class="cep-tabs" aria-label="Phone sections">' +
         '<button ng-class="{on: tab === \'orders\' && !panel}" ng-attr-aria-current="{{ tab === \'orders\' && !panel ? \'page\' : undefined }}" ng-click="setTab(\'orders\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="15" rx="2"/><path d="M8 6V3h8v3M3 11h18M10 11v3h4v-3"/></svg>Work</button>' +
+        '<button ng-class="{on: tab === \'map\' && !panel}" ng-attr-aria-current="{{ tab === \'map\' && !panel ? \'page\' : undefined }}" ng-click="setTab(\'map\')">' +
+          '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z"/><circle cx="12" cy="10" r="2.3"/></svg>Map</button>' +
         '<button ng-class="{on: tab === \'radio\' && !panel}" ng-attr-aria-current="{{ tab === \'radio\' && !panel ? \'page\' : undefined }}" ng-click="setTab(\'radio\')">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M7 8l10-5"/><circle cx="15" cy="14.5" r="3"/><path d="M6 12h4M6 15h4M6 18h4"/></svg>Radio</button>' +
         '<button ng-class="{on: panel}" ng-attr-aria-expanded="{{ panel ? \'true\' : \'false\' }}" ng-click="togglePanel()">' +
@@ -1777,7 +1795,7 @@ angular.module('beamng.apps')
           scope.ready = true // any answer, even none (the game without the mod) shows the phone
           if (r) keepLook(scope.dash || scope.menuOnly ? null : scope.min, r.dark)
           // the other phone chose Work or Radio (a choice made here a moment ago wins while the game hears of it)
-          if (r && (r.tab === 'orders' || r.tab === 'radio') && r.tab !== scope.tab && !scope.menuOnly &&
+          if (r && (r.tab === 'orders' || r.tab === 'radio' || r.tab === 'map') && r.tab !== scope.tab && !scope.menuOnly &&
             Date.now() - tabAt > 1500) showTab(r.tab, true)
           if (!r || r.screen !== 'active') scope.cancelAsk = false
         })
@@ -2118,7 +2136,7 @@ angular.module('beamng.apps')
       }
       scope.setTab = function (t) {
         if (PANELS.indexOf(t) !== -1) { scope.openPanel(t); return }
-        if (t !== 'orders' && t !== 'radio') return
+        if (t !== 'orders' && t !== 'radio' && t !== 'map') return
         showTab(t)
         scope.panel = null
         resetAsks()
@@ -2553,6 +2571,210 @@ angular.module('beamng.apps')
         if (v === 'resume') { scope.fold(false); if (scope.panel !== 'settings') scope.panel = null; showTab('orders') }
         if (v === 'parts') { scope.fold(false); scope.setTab('garage') }
       })
+      // ---- live map (Map tab). The game sends the car, the GPS route and the stops 4 times a second, the roads round
+      // the car only when they changed (another tile, another road graph). The phone draws them on a canvas, the car
+      // pointing up, gliding between answers. Nothing runs while another tab shows or the phone is folded or hidden.
+      var MAP_VIEW = [250, 500, 1000]   // metres from the top of the map to its bottom, per zoom step
+      var MAP_COLORS = {
+        light: {bg: '#ece6dd', fill: ['#e2dad0', '#ffffff', '#ffe7a3', '#ffc98a'], edge: ['#e2dad0', '#cfc5b8', '#d6b35a', '#cf8a3e'], route: '#2f7bf6', casing: '#ffffff'},
+        dark: {bg: '#23201e', fill: ['#36312d', '#4d4741', '#7a6838', '#8c5a2c'], edge: ['#36312d', '#1b1917', '#1b1917', '#1b1917'], route: '#4a95ff', casing: '#10213d'}
+      }
+      var ROAD_M = [3, 6, 9, 13], ROAD_PX = [1, 2, 3, 4]   // road width in metres, and never thinner than this in pixels
+      var STOP_LOOK = {next: ['#e4572e', ''], pickup: ['#e4572e', 'P'], drop: ['#2e9e5b', 'D'], stop: ['#7a5cc7', ''], home: ['#2f7bf6', 'H'], hq: ['#4b5563', 'W']}
+      var lm = scope.lm = {note: '', zoom: 1}
+      try { var z = localStorage.getItem('cargoEarthMapZoom'); if (z === '0' || z === '1' || z === '2') lm.zoom = Number(z) } catch (e) {}
+      var mapData = {roadsKey: null, roads: [], route: null, routeGps: false, stops: [], car: null, from: null, at: 0}
+      var mapBusy = false, mapAskedAt = -Infinity
+      scope.mapZoom = function (d) {
+        lm.zoom = Math.max(0, Math.min(MAP_VIEW.length - 1, lm.zoom + d))
+        try { localStorage.setItem('cargoEarthMapZoom', String(lm.zoom)) } catch (e) {}
+      }
+      function mapOn() { return scope.tab === 'map' && !scope.panel && !scope.min && !scope.menuOnly && !(scope.s && scope.s.hidden) && !destroyed }
+      function mapNote(text) {
+        if (lm.note === text) return
+        scope.$evalAsync(function () { lm.note = text })
+      }
+      // where the car is drawn now: between the last two answers, so it glides instead of jumping
+      function carNow(now) {
+        var a = mapData.from, b = mapData.car
+        if (!b) return null
+        if (!a) return b
+        var t = Math.max(0, Math.min(1, (now - mapData.at) / 250))
+        var dh = ((b.h - a.h + 540) % 360) - 180
+        return {x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, h: a.h + dh * t}
+      }
+      function mapAsk() {
+        if (!mapOn() || mapBusy) return
+        var now = Date.now()
+        if (now - mapAskedAt < 250) return
+        mapAskedAt = now
+        mapBusy = true
+        bngApi.engineLua('cargoEarth_core and cargoEarth_core.phoneMap(' + bngApi.serializeToLua(mapData.roadsKey) + ') or nil', function (r) {
+          mapBusy = false
+          if (destroyed) return
+          if (!r || r.status !== 'ok' || !r.car) {
+            mapData.car = mapData.from = null
+            mapNote(r && r.status && r.status !== 'ok' ? r.status + '.' : 'The map shows once BeamNG.Earth has loaded the world.')
+            return
+          }
+          if (r.roadsKey !== undefined) {
+            if (r.roads) mapData.roads = r.roads
+            mapData.roadsKey = r.roadsKey
+          }
+          mapData.from = carNow(Date.now())
+          mapData.car = r.car
+          mapData.at = Date.now()
+          mapData.route = r.route || null
+          mapData.routeGps = !!r.routeGps
+          mapData.stops = r.stops || []
+          mapNote(mapData.roads.length ? '' : 'No roads here yet. They appear as BeamNG.Earth builds the world around you.')
+        })
+      }
+      function mapCanvas() {
+        var root = element && element[0]
+        return root && root.querySelector ? root.querySelector('.cep-livemap') : null
+      }
+      function mapDraw() {
+        var cv = mapCanvas()
+        if (!cv || !cv.getContext) return
+        var w = cv.clientWidth, h = cv.clientHeight
+        if (!w || !h) return
+        var ratio = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+        if (cv.width !== Math.round(w * ratio) || cv.height !== Math.round(h * ratio)) { cv.width = Math.round(w * ratio); cv.height = Math.round(h * ratio) }
+        var ctx = cv.getContext('2d')
+        var col = MAP_COLORS[scope.dark ? 'dark' : 'light']
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
+        ctx.fillStyle = col.bg
+        ctx.fillRect(0, 0, w, h)
+        var car = carNow(Date.now())
+        if (!car) return
+        var scale = h / MAP_VIEW[lm.zoom], ox = w / 2, oy = h * 0.68
+        var rad = car.h * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad)
+        // game metres (x east, y north) to the screen, the car's heading up
+        function sx(x, y) { return ox + ((x - car.x) * cs - (y - car.y) * sn) * scale }
+        function sy(x, y) { return oy - ((x - car.x) * sn + (y - car.y) * cs) * scale }
+        var pad = 40
+        function off(ax, ay, bx, by) {
+          return (ax < -pad && bx < -pad) || (ax > w + pad && bx > w + pad) || (ay < -pad && by < -pad) || (ay > h + pad && by > h + pad)
+        }
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        // roads: by kind, small ones first; a darker edge under each, then its fill
+        var roads = mapData.roads, k, i
+        var pts = []
+        for (i = 0; i + 4 < roads.length; i += 5) {
+          var ax = sx(roads[i], roads[i + 1]), ay = sy(roads[i], roads[i + 1])
+          var bx = sx(roads[i + 2], roads[i + 3]), by = sy(roads[i + 2], roads[i + 3])
+          if (!off(ax, ay, bx, by)) pts.push(ax, ay, bx, by, roads[i + 4])
+        }
+        for (var pass = 0; pass < 2; pass++) {
+          for (k = 0; k < 4; k++) {
+            var px = Math.max(ROAD_PX[k], ROAD_M[k] * scale)
+            if (pass === 0 && k === 0) continue
+            ctx.strokeStyle = pass === 0 ? col.edge[k] : col.fill[k]
+            ctx.lineWidth = pass === 0 ? px + 2 : px
+            ctx.beginPath()
+            for (i = 0; i < pts.length; i += 5) {
+              if (pts[i + 4] !== k) continue
+              ctx.moveTo(pts[i], pts[i + 1])
+              ctx.lineTo(pts[i + 2], pts[i + 3])
+            }
+            ctx.stroke()
+          }
+        }
+        // the route: the GPS's own line, or a dashed straight line to the next stop when the GPS has none
+        var route = mapData.route
+        if (route && route.length >= 4) {
+          var line = function () {
+            ctx.beginPath()
+            var pen = false
+            for (var j = 0; j + 1 < route.length; j += 2) {
+              if (route[j] === false) { pen = false; j -= 1; continue }
+              var x = sx(route[j], route[j + 1]), y = sy(route[j], route[j + 1])
+              if (pen) ctx.lineTo(x, y); else ctx.moveTo(x, y)
+              pen = true
+            }
+            ctx.stroke()
+          }
+          var rw = Math.max(4, 5 * scale)
+          if (ctx.setLineDash) ctx.setLineDash(mapData.routeGps ? [] : [rw * 1.5, rw * 1.5])
+          ctx.strokeStyle = col.casing
+          ctx.lineWidth = rw + 3
+          line()
+          ctx.strokeStyle = col.route
+          ctx.lineWidth = rw
+          line()
+          if (ctx.setLineDash) ctx.setLineDash([])
+        }
+        // stops: a dot with a letter; the next one bigger, and held at the edge with an arrow when it is off the map
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        var stops = mapData.stops || []
+        for (i = 0; i < stops.length; i++) {
+          var st = stops[i], look = STOP_LOOK[st.k] || STOP_LOOK.stop
+          var x = sx(st.x, st.y), y = sy(st.x, st.y), r = st.k === 'next' ? 11 : 8
+          var edge = x < r || x > w - r || y < r || y > h - r
+          if (edge && st.k !== 'next') continue
+          if (edge) {
+            var dx = x - ox, dy = y - oy, f = Math.min(Math.abs((w / 2 - 18) / (dx || 1e-6)), Math.abs((oy - 18) / (dy < 0 ? -dy : 1e-6)), Math.abs((h - oy - 18) / (dy > 0 ? dy : 1e-6)))
+            x = ox + dx * f
+            y = oy + dy * f
+            var ang = Math.atan2(dy, dx)
+            ctx.fillStyle = look[0]
+            ctx.beginPath()
+            ctx.moveTo(x + Math.cos(ang) * 18, y + Math.sin(ang) * 18)
+            ctx.lineTo(x + Math.cos(ang + 2.5) * 9, y + Math.sin(ang + 2.5) * 9)
+            ctx.lineTo(x + Math.cos(ang - 2.5) * 9, y + Math.sin(ang - 2.5) * 9)
+            ctx.fill()
+          }
+          ctx.beginPath()
+          ctx.arc(x, y, r, 0, Math.PI * 2)
+          ctx.fillStyle = look[0]
+          ctx.fill()
+          ctx.lineWidth = 2.5
+          ctx.strokeStyle = '#ffffff'
+          ctx.stroke()
+          var label = st.k === 'stop' ? st.n : (st.k === 'next' ? (st.pickup ? 'P' : 'D') : look[1])
+          if (label) {
+            ctx.fillStyle = '#ffffff'
+            ctx.font = '800 ' + (r + 1) + 'px sans-serif'
+            ctx.fillText(String(label).slice(0, 2), x, y + 0.5)
+          }
+        }
+        // the car: an arrow pointing up
+        ctx.beginPath()
+        ctx.moveTo(ox, oy - 13)
+        ctx.lineTo(ox + 9, oy + 9)
+        ctx.lineTo(ox, oy + 4)
+        ctx.lineTo(ox - 9, oy + 9)
+        ctx.closePath()
+        ctx.fillStyle = col.route
+        ctx.fill()
+        ctx.lineWidth = 2.5
+        ctx.strokeStyle = '#ffffff'
+        ctx.stroke()
+        // north: an N with a red tip on the dial's edge, turning with the map
+        ctx.beginPath()
+        ctx.arc(22, 22, 14, 0, Math.PI * 2)
+        ctx.fillStyle = scope.dark ? 'rgba(0,0,0,.55)' : 'rgba(255,255,255,.85)'
+        ctx.fill()
+        ctx.beginPath()
+        ctx.moveTo(22 - sn * 14, 22 - cs * 14)
+        ctx.lineTo(22 - sn * 8 + cs * 4, 22 - cs * 8 - sn * 4)
+        ctx.lineTo(22 - sn * 8 - cs * 4, 22 - cs * 8 + sn * 4)
+        ctx.fillStyle = '#e4572e'
+        ctx.fill()
+        ctx.fillStyle = scope.dark ? '#ffffff' : '#25201d'
+        ctx.font = '800 10px sans-serif'
+        ctx.fillText('N', 22, 23)
+      }
+      var mapTimer = setInterval(function () {
+        if (!mapOn()) return
+        mapAsk()
+        mapDraw()
+      }, 50)
+      scope.$on('$destroy', function () { clearInterval(mapTimer) })
+
       var slowTicks = 0
       var slow = setInterval(function () {
         if (scope.hqOpen) loadHq()

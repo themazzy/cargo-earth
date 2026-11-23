@@ -782,6 +782,13 @@ function M.road(x, y, z)
   return map.getMap(), a, b, tonumber(d) or math.huge
 end
 
+-- The game's whole road graph (the live map draws its roads), or nil.
+function M.graph()
+  if not (map and map.getMap) then return nil end
+  local ok, g = pcall(map.getMap)
+  return ok and type(g) == 'table' and g or nil
+end
+
 function M._reset() configsCache, jbeamIO, infoCache = nil, nil, {} end
 
 return M

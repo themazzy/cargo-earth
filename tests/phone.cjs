@@ -130,6 +130,37 @@ scope.togglePanel()
 assert.equal(scope.panel, 'settings')
 scope.closePanel()
 for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directive.template.includes(text), 'Template is missing: ' + text)
+// live map: asks the game only while the Map tab shows; the roads only when the phone has none for this tile
+{
+  const mapTimer = timers.find(t => t.interval === 50)
+  assert(mapTimer, 'the map has its own quick timer')
+  const before = commands.length
+  mapTimer.fn()
+  assert.equal(commands.length, before, 'no map questions on another tab')
+  const saved = answer
+  answer = {status: 'ok', car: {x: 0, y: 0, h: 0, kmh: 0}, roadsKey: 't1', roads: [0, 0, 10, 0, 1], stops: [], route: [0, 0, 5, 5]}
+  scope.setTab('map')
+  assert.equal(scope.tab, 'map')
+  assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("map")')), 'the other phone follows the Map tab')
+  mapTimer.fn()
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null)'), 'first ask: no roads yet')
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap("t1")'), 'then the roads key it has')
+  const asked = commands.length
+  mapTimer.fn()
+  assert.equal(commands.length, asked, 'at most 4 asks a second')
+  scope.mapZoom(-5)
+  assert.equal(scope.lm.zoom, 0)
+  scope.mapZoom(9)
+  assert.equal(scope.lm.zoom, 2)
+  answer = {status: 'Load the BeamNG.Earth level'}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.note, 'Load the BeamNG.Earth level.')
+  answer = saved
+  scope.setTab('orders')
+}
 // radio: one radio for both phones, kept by the game; the page's player makes the sound
 hold = false
 scope.setTab('orders')

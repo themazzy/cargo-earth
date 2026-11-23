@@ -2284,6 +2284,58 @@ test('the phone shows the limit under the car, red when too fast, and a camera w
   pose.x, pose.y, pose.z = nil, nil, nil
 end)
 
+test('the live map: roads once per tile, the GPS route, the next stop and home', function()
+  local core, s = fresh()
+  local road = straightRoad(function() return 13.89 end)
+  core.G.graph = function() return road end
+  pose.x, pose.y, pose.z, pose.heading, pose.speed = 0, 0, 0, 90, 10
+  local m = core.phoneMap(nil)
+  assert(m.status == 'ok' and m.car.h == 90 and m.car.kmh == 36)
+  assert(#m.roads == 20 * 5 and m.roads[5] == 1, 'every edge of the street, a street at 50 km/h')
+  assert(core.phoneMap(m.roadsKey).roads == nil, 'the phone keeps the roads it has')
+  assert(m.stops and #m.stops == 0 and m.route == nil, 'no job: no stops, no route')
+  s.job = {id = 'm1', from = {g = {50.002, 14}, n = 'Shop'}, to = {g = {50, 14.01}, n = 'Customer'}}
+  s.phase = 'toPickup'
+  local other = {id = 'm2', from = {g = {50.003, 14}, n = 'Bakery'}, to = {g = {50, 14.02}, n = 'Office'}}
+  s.orders = {{job = s.job, phase = 'toPickup'}, {job = other, phase = 'toDelivery'}}
+  s.career.home = {g = {50.001, 14}, n = 'Dlouha 1'}
+  m = core.phoneMap(m.roadsKey)
+  local kinds = {}
+  for _, st in ipairs(m.stops) do kinds[st.k] = st end
+  assert(kinds.home and math.abs(kinds.home.y - 111) <= 1, 'home 111 m north')
+  assert(kinds.next and kinds.next.pickup and kinds.next.n == 'Shop', 'the next stop is the pickup')
+  assert(kinds.drop and kinds.drop.n == 'Office', 'the other order goes to its customer')
+  assert(#m.route == 4 and not m.routeGps, 'no GPS line: straight to the next stop')
+  -- BeamNG.Earth's planned route (1.6+): drawn as the GPS has it
+  local earth = require('cargoEarth/earth')
+  gpsRoute = {remaining = 500, routeVersion = 3}
+  local copies = 0
+  earth.routeGeometry = function() copies = copies + 1 return {version = 3, points = {{50, 14}, {50.001, 14}, {50.002, 14.001}}} end
+  m = core.phoneMap(m.roadsKey)
+  assert(m.routeGps and #m.route == 6 and m.route[4] == 111)
+  core.phoneMap(m.roadsKey)
+  assert(copies == 1, 'the same route version is not copied again')
+  gpsRoute.routeVersion = 4
+  core.phoneMap(m.roadsKey)
+  assert(copies == 2, 'a new plan is')
+  -- a parcel round on the way to the depot: every address is ahead
+  s.job.route = {at = 1, stops = {{g = {50.001, 14.001}, n = 'A'}, {g = {50.002, 14.002}, n = 'B'}}}
+  local numbered = 0
+  for _, st in ipairs(core.phoneMap(m.roadsKey).stops) do if st.k == 'stop' then numbered = numbered + 1 end end
+  assert(numbered == 2, 'both parcel stops while going to the depot')
+  s.phase = 'toDelivery'
+  numbered = 0
+  for _, st in ipairs(core.phoneMap(m.roadsKey).stops) do if st.k == 'stop' then numbered = numbered + 1 end end
+  assert(numbered == 1, 'then the current one is the next stop')
+  s.job.route, s.phase = nil, 'toPickup'
+  earth.routeGeometry, gpsRoute = nil, nil
+  pose.x, pose.y = 400, 0
+  assert(core.phoneMap(m.roadsKey).roads, 'another tile: the roads again')
+  pose.x, pose.y, pose.z, pose.heading = nil, nil, nil, nil
+  assert(core.phoneMap(nil).car == nil, 'no position: nothing to draw')
+  s.job, s.orders, s.phase = nil, {}, nil
+end)
+
 local firm = require('cargoEarth/firm')
 local fleet = require('cargoEarth/fleet')
 
