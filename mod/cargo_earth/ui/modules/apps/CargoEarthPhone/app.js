@@ -606,7 +606,7 @@ angular.module('beamng.apps')
       '<div class="cehq-note" ng-if="up(\'workshop\').next">{{ up(\'workshop\').next }}</div>' +
             '<div class="cehq-sep"></div>' +
             '<div class="cehq-note" ng-if="hq.repair.cost <= 0">The car you drive needs no repair.</div>' +
-            '<button class="cehq-btn" ng-if="hq.repair.cost > 0" ng-disabled="!hq.hq.here || hq.company" ng-click="hdo(\'repair\')">Repair your car · {{ fmt.money(hq.repair.cost * hq.repair.factor) }}</button>' +
+            '<button class="cehq-btn" ng-if="hq.repair.cost > 0" ng-disabled="!hq.hq.here || hq.company" ng-click="hdo(\'repair\')">Repair your car · {{ fmt.money(hq.repair.cost * hq.repair.factor - (hq.repair.insured || 0)) }}{{ hq.repair.insured ? " (insurance pays " + fmt.money(hq.repair.insured) + ")" : "" }}</button>' +
             '<div class="cehq-note" ng-if="hq.repair.cost > 0 && !hq.hq.here">Bring the car here to use the workshop.</div></div>' +
           '<div class="cehq-room stores"><div class="cehq-label">Parts storage</div>' +
             '<div class="cehq-stat">{{ hq.parts.count }}<small>spare {{ hq.parts.count === 1 ? "part" : "parts" }}</small></div>' +
@@ -630,7 +630,7 @@ angular.module('beamng.apps')
                   'title="{{ it.name }}: {{ it.due ? \'overdue\' : it.kmLeft + \' km left\' }}"><span>{{ it.id }}</span><em><i ng-style="{width: Math.min(100, it.share * 100) + \'%\'}"></i></em></div></div>' +
                 '<button class="cehq-btn small" ng-if="b.upkeep.due > 0" ng-disabled="hq.company || (b.current && !hq.hq.here) || hq.money < b.upkeep.dueCost" ' +
                   'ng-click="hdo(\'service\', b.current ? \'current\' : b.id)" title="{{ b.current && !hq.hq.here ? \'Bring the car here\' : \'\' }}">Service · {{ fmt.money(b.upkeep.dueCost) }}</button>' +
-                '<button class="cehq-btn small build" ng-if="b.repairCost > 0" ng-disabled="hq.company || hq.money < b.repairCost" ng-click="hdo(\'repairParked\', b.id)">Repair · {{ fmt.money(b.repairCost) }}</button>' +
+                '<button class="cehq-btn small build" ng-if="b.repairCost > 0" ng-disabled="hq.company || hq.money < b.repairCost" ng-click="hdo(\'repairParked\', b.id)">Repair · {{ fmt.money(b.repairCost) }}{{ b.insured ? " (insured)" : "" }}</button>' +
                 '<div class="cehq-bay-actions" ng-if="!b.current">' +
                   '<button class="cehq-btn small" ng-if="!b.driver" ng-disabled="hq.busy || hq.company" ng-click="hdo(\'switchCar\', b.id)">Drive</button>' +
                   '<button class="cehq-btn small ghost" ng-if="!b.driver && hq.drivers.can && !b.loaner" ng-disabled="!pickedApplicant() || !pickedApplicant().can[b.tier] || b.repair > 0 || hq.debt > 0 || hq.money < hq.drivers.hireFee || hq.company" ' +
@@ -997,6 +997,23 @@ angular.module('beamng.apps')
           '<div class="cep-li" ng-if="g.own"><div><div class="cep-name">Damage</div>' +
             '<small>{{ g.repair > 0 ? "About " + fmt.hrs(g.repairHours) + " of deliveries" + (g.repairCapped ? " (capped at half the car\'s value)" : "") + ". The game\'s own repair adds it to your debt." : "None" }}</small></div>' +
           '</div>' +
+          // insurance (cargoEarth/insurance): your own cars only; a claim pays the repair minus the deductible
+          '<div class="cep-card" ng-if="g.insurance.car && g.own"><div class="cep-label">Insurance</div>' +
+            '<div class="cep-name" style="font-size:15px">{{ g.insurance.car.insured ? "Insured" : "Not insured" }} · {{ fmt.money(g.insurance.car.week) }} a week</div>' +
+            '<div class="cep-sub">{{ g.insurance.rate }} % of the car\'s value per week of {{ g.insurance.weekDays }} play hours, also while it stands. ' +
+              'A claim pays the repair minus {{ g.insurance.deductible * 100 | number:0 }} %. Up to {{ g.insurance.leniency }} km/h over the limit is fine; faster crashes are cut or refused. ' +
+              'A claim raises the rate, a week without one lowers it.</div>' +
+            '<div class="cep-sub" ng-if="g.insurance.car.cover > 0">Covered damage now: {{ fmt.money(g.insurance.car.cover) }}</div>' +
+            '<div class="cep-row" style="margin-top:6px">' +
+              '<button class="cep-sm go" ng-if="!g.insurance.car.insured" ng-disabled="g.insurance.car.why || g.money < g.insurance.car.day" ng-click="gdo(\'insure\')">Insure · {{ fmt.money(g.insurance.car.day) }} now</button>' +
+              '<button class="cep-sm" ng-if="g.insurance.car.wreck && g.insurance.home" ng-click="gdo(\'tow\', \'home\')">Free tow home</button>' +
+              '<button class="cep-sm" ng-if="g.insurance.car.wreck && g.insurance.hq" ng-click="gdo(\'tow\', \'hq\')">Free tow to HQ</button>' +
+              '<button class="cep-sm ghost" ng-if="g.insurance.car.insured" ng-click="gdo(\'uninsure\')">End insurance</button></div>' +
+            '<small ng-if="!g.insurance.car.insured && g.insurance.car.why">{{ g.insurance.car.why }}</small>' +
+            '<div class="cep-li" ng-repeat="pc in g.insurance.parked track by pc.id"><div><div class="cep-name">{{ pc.name }}</div><small>Parked, insured · {{ fmt.money(pc.week) }} a week</small></div>' +
+              '<button class="cep-sm ghost" ng-click="gdo(\'uninsure\', pc.id)">End</button></div>' +
+            '<div class="cep-sub" ng-if="g.insurance.claims > 0">Claims so far: {{ g.insurance.claims }} · insurance paid {{ fmt.money(g.insurance.received) }}, premiums {{ fmt.money(g.insurance.paid) }}</div>' +
+          '</div>' +
           '<div class="cep-card" ng-if="g.breakdown" role="alert" style="box-shadow:inset 0 0 0 1.5px var(--tomato)"><div class="cep-label" style="color:var(--tomato)">Breakdown</div>' +
             '<div class="cep-sub">{{ fmt.text(g.breakdown.text) }}</div>' +
           '</div>' +
@@ -1126,7 +1143,8 @@ angular.module('beamng.apps')
         '<div class="cep-actionbar" aria-label="Garage car actions" ng-if="g.started && gview === \'home\' && !g.preview && !g.parts">' +
           '<button class="cep-btn" ng-if="g.car && !g.own" ng-click="gdo(\'bring\')">Bring my car</button>' +
           '<div class="cep-row" ng-if="g.own"><button class="cep-btn" ng-if="!g.loaner" ng-click="gdo(\'openParts\')">Parts shop</button>' +
-            '<button class="cep-btn go" ng-disabled="!(g.repair > 0)" ng-click="gdo(\'repair\')">{{ g.repair > 0 ? "Repair: " + fmt.money(g.repair) : "No damage" }}</button></div>' +
+            '<button class="cep-btn go" ng-disabled="!(g.repair > 0)" ng-click="gdo(\'repair\')">{{ g.repair > 0 ? (g.repairInsured ? "Repair with insurance: " + fmt.money(g.repairCost - g.repairInsured) : "Repair: " + fmt.money(g.repair)) : "No damage" }}</button></div>' +
+          '<button class="cep-sm ghost" ng-if="g.own && g.repairInsured" style="width:100%;margin-top:6px" title="No claim: your insurance rate stays as it is" ng-click="gdo(\'repairOwn\')">Pay it all yourself · {{ fmt.money(g.repairCost) }}</button>' +
           '<div ng-if="g.breakdown">' +
             '<button class="cep-btn" style="margin-top:6px" ng-click="gdo(\'roadside\')">Call roadside help · {{ fmt.money(g.breakdown.cost) }}</button>' +
           '</div></div>' +
@@ -1687,7 +1705,18 @@ angular.module('beamng.apps')
         '<div class="cep-pump-row" ng-if="s.pump.options.length">' +
           '<button class="cep-sm" ng-repeat="o in s.pump.options track by o.pct" ng-disabled="!o.afford" ng-click="act(\'pumpFill\', o.pct)">' +
             '{{ o.pct === 100 ? "Full" : o.pct + " %" }}<small ng-if="!s.pump.free">{{ fmt.money(o.cost) }}</small></button></div></div>' +
+      // an insured car wrecked: the insurer's free tow (cargoEarth/core M.insuranceTow)
+      '<div class="cep-pump cep-wreck" role="alertdialog" aria-label="Car written off" ng-if="s.wreck">' +
+        '<div class="cep-pump-head"><span>Your {{ s.wreck.car || "car" }} is a write-off</span></div>' +
+        '<div class="cep-pump-msg">Repair {{ fmt.money(s.wreck.bill) }}: insurance pays {{ fmt.money(s.wreck.payout) }}, you pay {{ fmt.money(s.wreck.own) }}. The insurer can tow it for free.</div>' +
+        '<div class="cep-pump-msg" ng-if="s.wreck.msg">{{ s.wreck.msg }}</div>' +
+        '<div class="cep-pump-msg" ng-if="!s.wreck.home && !s.wreck.hq">You have no home garage or headquarters to tow it to.</div>' +
+        '<div class="cep-pump-row">' +
+          '<button class="cep-sm" ng-if="s.wreck.home" ng-click="act(\'towHome\')">Tow home</button>' +
+          '<button class="cep-sm" ng-if="s.wreck.hq" ng-click="act(\'towHq\')">Tow to HQ</button>' +
+          '<button class="cep-sm ghost" ng-click="act(\'wreckClose\')">Stay here</button></div></div>' +
       '<div class="cep-notices" aria-label="Job notifications">' +
+      '<div class="cep-msg" role="alert" ng-if="s.insNote">{{ s.insNote }}</div>' +
       '<div class="cep-msg" role="alert" ng-if="s.saveError">{{ s.saveError }}</div>' +
       '<div class="cep-msg" role="alert" ng-if="s.flash">Speed camera: {{ s.flash.speed }} km/h, limit {{ s.flash.limit }}. Fine {{ fmt.money(s.flash.fine) }}' +
         '<span ng-if="s.flash.owed > 0"> ({{ fmt.money(s.flash.owed) }} added to your debt)</span>' +
@@ -1942,7 +1971,7 @@ angular.module('beamng.apps')
         return scope.fmt.int(load.amount) + (load.kind === 'parcel' ? ' slots' : ' L') + ', ' + scope.fmt.int(load.kg) + ' kg'
       }
       var CATS = {delivery: 'Delivery', company_wages: 'Company wages', drivers: 'Drivers', garage: 'Garage', parts: 'Parts',
-        cancel_fee: 'Cancel fee', adjustment: 'Other', fuel: 'Fuel', fine: 'Speeding fine', firm: 'Firm', home: 'Home', upkeep: 'Upkeep'}
+        cancel_fee: 'Cancel fee', adjustment: 'Other', fuel: 'Fuel', fine: 'Speeding fine', insurance: 'Insurance', firm: 'Firm', home: 'Home', upkeep: 'Upkeep'}
       scope.fmt.stars = function (n) { return '★★★★★'.slice(0, Math.max(0, Math.min(5, Math.round(n || 0)))) }
       scope.fmt.noStars = function (n) { return '★★★★★'.slice(0, 5 - Math.max(0, Math.min(5, Math.round(n || 0)))) }
       scope.fmt.pct = function (share) { return Math.round((share || 0) * 100) + ' %' }
