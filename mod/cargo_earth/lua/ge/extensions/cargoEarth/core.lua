@@ -3169,8 +3169,14 @@ function M.phoneAction(a, orderId)
     return M.phoneState()
   end
   -- the write-off window: a free tow home / to the headquarters, or stay
-  if a == 'towHome' or a == 'towHq' or a == 'wreckClose' then
+  if a == 'towHome' or a == 'towHq' or a == 'wreckClose' or a == 'wreckRepair' then
     if a == 'wreckClose' then S.phone.wreck = nil
+    elseif a == 'wreckRepair' then
+      -- repaired on the spot with the claim (the tow is optional)
+      if not S.pendingCareer and not S.career.employment then
+        local _, msg = M.garageRepair(true)
+        if S.phone.wreck then S.phone.wreck.msg = msg end
+      end
     elseif not S.pendingCareer then
       local ok, msg = M.insuranceTow(a == 'towHq' and 'hq' or 'home')
       if not ok and S.phone.wreck then S.phone.wreck.msg = msg end

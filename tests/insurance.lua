@@ -29,7 +29,7 @@ assert(v.limit == 30 and v.share == ins.CUT, 'long after the sign: the new limit
 -- no known limit: no judgement; a camera flash moments before: cut
 assert(ins.judge(hist({ { 0, 150 } }), 0.1).share == 1, 'unknown limit is not reckless')
 v = ins.judge(hist({ { 0, 40, 50 } }), 0.1, -20)
-assert(v.share == ins.CUT and v.why:find('camera', 1, true), 'camera flash before the crash')
+assert(v.share == ins.CUT and v.why:find('reckless', 1, true), 'camera flash before the crash')
 assert(ins.judge(hist({ { 0, 40, 50 } }), 0.1, -100).share == 1, 'an old flash does not count')
 -- one crash = one verdict
 local sess = {}
@@ -45,25 +45,31 @@ assert(ins.buyBlock(g, g.car, { own = true, speed = 5 }):find('Stop'), 'standing
 assert(ins.buyBlock(g, { loaner = true, value = 1 }, { own = true }), 'no company vehicles')
 assert(ins.buyBlock(g, { driver = {}, value = 1 }, { own = true }), 'no hired drivers\' cars')
 local ok, _, day = ins.buy(g, c, g.car, { own = true, speed = 0 }, 100)
-assert(ok and day == ins.dayPremium(g, g.car) and day == 30, 'first day: 3 % of 7000 / 7 = 30, got ' .. tostring(day))
+assert(ok and day == ins.hourPremium(g, g.car) and day == 10, 'first hour: 3 % of 7000 / 21 = 10, got ' .. tostring(day))
 assert(ins.weekPremium(g, g.car) == 210)
 -- billing: a day per hour of play, parked cars too; a car a driver took over is dropped
 local parked = { name = 'Van', value = 3500, insured = { since = 100, paidUntil = 100 } }
-local due = ins.bill(g, { g.car, parked }, 100 + 3599)
-assert(due == 15, 'parked van day due at once: ' .. due)
-due = ins.bill(g, { g.car, parked }, 100 + 3600 * 3)
-assert(due == 30 * 3 + 15 * 3, 'three more days each: ' .. due)
+local due = ins.bill(g, { g.car, parked }, 100 + ins.BILL_S - 1)
+assert(due == 5, 'parked van hour due at once: ' .. due)
+due = ins.bill(g, { g.car, parked }, 100 + ins.BILL_S * 3)
+assert(due == 10 * 3 + 5 * 3, 'three more hours each: ' .. due)
 parked.driver = { name = 'Eva' }
-due = ins.bill(g, { g.car, parked }, 100 + 3600 * 4)
-assert(due == 30 and parked.insured == nil, 'a hired driver\'s car is not insured')
+due = ins.bill(g, { g.car, parked }, 100 + ins.BILL_S * 4)
+assert(due == 10 and parked.insured == nil, 'a hired driver\'s car is not insured')
 -- a claim-free week lowers the rate, a claim raises it and restarts the week
-ins.bill(g, { g.car }, 100 + 3600 * 7 + 1)
+ins.bill(g, { g.car }, 100 + 3600 * ins.WEEK_HOURS + 1)
 assert(g.insurance.rate == 2.75, 'clean week: ' .. g.insurance.rate)
 g.car.insCover = 1000
 assert(ins.quote(g.car, 1000, 1000) == 900, '10 % deductible')
 assert(ins.quote(g.car, 2000, 2000) == 900, 'only the covered part')
-ins.claim(g, g.car, 1, 900, 100 + 3600 * 8)
-assert(g.insurance.rate == 3.25 and g.car.insCover == 0 and g.insurance.claims == 1, 'claim raises the rate')
+local claimAt = 100 + 3600 * (ins.WEEK_HOURS + 1)
+ins.claim(g, g.car, 1, 900, claimAt)
+assert(ins.rate(g) == 3.25 and g.car.insCover == 0 and g.insurance.claims == 1, 'claim raises the rate')
+-- the claim surcharge lasts 3 hours of play, then the base rate is back
+ins.bill(g, { g.car }, claimAt + 3600 * 3 - 1)
+assert(ins.rate(g) == 3.25, 'surcharge still on')
+ins.bill(g, { g.car }, claimAt + 3600 * 3)
+assert(ins.rate(g) == 2.75 and g.insurance.rate == 2.75, 'surcharge over: ' .. ins.rate(g))
 assert(ins.wrecked(g.car, 3500, 3500) and not ins.wrecked(g.car, 100, 3500), 'write-off at the repair cap')
 
 -- the garage: a hit on an insured car adds its covered share; repair with or without the claim

@@ -1010,7 +1010,7 @@ angular.module('beamng.apps')
           // One line on what it does, the full rules folded under "How it works" (Jan: quick to read).
           '<div class="cep-card" ng-if="g.insurance.car && g.own"><div class="cep-label">Insurance</div>' +
             '<div class="cep-name" style="font-size:15px">{{ g.insurance.car.insured ? "🛡 Insured" : "Not insured" }}</div>' +
-            '<div class="cep-pills"><span>{{ fmt.money(g.insurance.car.week) }} a week</span><span>Rate {{ g.insurance.rate }} %</span>' +
+            '<div class="cep-pills"><span>{{ fmt.money(g.insurance.car.week) }} a week</span><span>Rate {{ g.insurance.rate }} %</span><span ng-if="g.insurance.surcharge" title="A recent claim: back to {{ g.insurance.baseRate }} % after {{ g.insurance.surchargeHours }} hours of play">Claim surcharge</span>' +
               '<span ng-if="g.insurance.car.cover > 0">Covered now {{ fmt.money(g.insurance.car.cover) }}</span></div>' +
             '<div class="cep-sub">Pays {{ 100 - g.insurance.deductible * 100 | number:0 }} % of your crash repairs and tows a wrecked car home for free.</div>' +
             '<div class="cep-row" style="margin-top:6px">' +
@@ -1024,12 +1024,11 @@ angular.module('beamng.apps')
             '<div class="cep-pills" ng-if="g.insurance.claims > 0"><span>Claims {{ g.insurance.claims }}</span><span>Insurance paid {{ fmt.money(g.insurance.received) }}</span><span>Premiums {{ fmt.money(g.insurance.paid) }}</span></div>' +
             '<button class="cep-sm ghost" style="width:100%;margin-top:6px;min-height:26px;padding:4px" ng-click="cf.insHelp = !cf.insHelp">{{ cf.insHelp ? "Hide how it works ▴" : "How it works ▾" }}</button>' +
             '<div class="cep-ins-help" ng-if="cf.insHelp">' +
-              '<div><b>Price.</b> {{ g.insurance.rate }} % of the car\'s value per week ({{ g.insurance.weekDays }} hours of play), charged hourly, also while the car is parked.</div>' +
+              '<div><b>Price.</b> {{ g.insurance.rate }} % of the car\'s value per week ({{ g.insurance.weekHours }} hours of play), charged hourly, also while the car is parked.</div>' +
               '<div><b>Buying.</b> In your own car, stopped, with no job running. It covers you at once.</div>' +
               '<div><b>Claims.</b> Repairing pays the real repair bill minus {{ g.insurance.deductible * 100 | number:0 }} %. "Pay it all yourself" makes no claim.</div>' +
-              '<div><b>Your rate.</b> Each claim adds {{ g.insurance.claimUp }} %, each week without one takes {{ g.insurance.cleanDown }} % off ({{ g.insurance.rateMin }}–{{ g.insurance.rateMax }} %).</div>' +
-              '<div><b>Speeding.</b> Up to {{ g.insurance.leniency }} km/h over the limit is fine. Faster: half paid; over {{ g.insurance.refuse }} km/h: refused. A limit that just dropped gives you time to brake. ' +
-                'A crash within {{ g.insurance.camera }} s of a speed camera flash: half paid.</div>' +
+              '<div><b>Your rate.</b> Each claim adds {{ g.insurance.claimUp }} % for {{ g.insurance.surchargeHours }} hours of play. Each week without a claim takes {{ g.insurance.cleanDown }} % off ({{ g.insurance.rateMin }}–{{ g.insurance.rateMax }} %).</div>' +
+              '<div><b>Speeding.</b> The insurer is lenient: up to {{ g.insurance.leniency }} km/h over the limit is fine. Crashes at higher speeds are cut or refused.</div>' +
               '<div><b>Write-off.</b> A free tow home or to your headquarters.</div>' +
               '<div><b>Not covered.</b> Wear, servicing, faults the car came with, breakdowns, fuel. Company and hired drivers\' vehicles have their own cover.</div>' +
             '</div>' +
@@ -1736,13 +1735,14 @@ angular.module('beamng.apps')
       // an insured car wrecked: the insurer's free tow (cargoEarth/core M.insuranceTow)
       '<div class="cep-pump cep-wreck" role="alertdialog" aria-label="Car written off" ng-if="s.wreck">' +
         '<div class="cep-pump-head"><span>Your {{ s.wreck.car || "car" }} is a write-off</span></div>' +
-        '<div class="cep-pump-msg">Repair {{ fmt.money(s.wreck.bill) }}: insurance pays {{ fmt.money(s.wreck.payout) }}, you pay {{ fmt.money(s.wreck.own) }}. The insurer can tow it for free.</div>' +
+        '<div class="cep-pump-msg">Repair {{ fmt.money(s.wreck.bill) }}: insurance pays {{ fmt.money(s.wreck.payout) }}, you pay {{ fmt.money(s.wreck.own) }}. Repair it here, or have it towed for free.</div>' +
         '<div class="cep-pump-msg" ng-if="s.wreck.msg">{{ s.wreck.msg }}</div>' +
         '<div class="cep-pump-msg" ng-if="!s.wreck.home && !s.wreck.hq">You have no home garage or headquarters to tow it to.</div>' +
         '<div class="cep-pump-row">' +
           '<button class="cep-sm" ng-if="s.wreck.home" ng-click="act(\'towHome\')">Tow home</button>' +
           '<button class="cep-sm" ng-if="s.wreck.hq" ng-click="act(\'towHq\')">Tow to HQ</button>' +
-          '<button class="cep-sm ghost" ng-click="act(\'wreckClose\')">Stay here</button></div></div>' +
+          '<button class="cep-sm" ng-click="act(\'wreckRepair\')">Repair here<small>{{ fmt.money(s.wreck.own) }}</small></button>' +
+          '<button class="cep-sm ghost" ng-click="act(\'wreckClose\')">Later</button></div></div>' +
       '<div class="cep-notices" aria-label="Job notifications">' +
       '<div class="cep-msg" role="alert" ng-if="s.insNote">{{ s.insNote }}</div>' +
       '<div class="cep-msg" role="alert" ng-if="s.saveError">{{ s.saveError }}</div>' +

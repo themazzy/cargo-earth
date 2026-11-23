@@ -1,10 +1,11 @@
 -- Vehicle insurance (Jan, 2026-11-23, issue #125). One kind of cover, for the player's own cars only (hired drivers'
 -- cars and company vehicles are insured by someone else):
---   * a premium per insured car, RATE % of its value per insurance week (WEEK_DAYS days of DAY_S play time each),
---     billed a day ahead and charged also while the car stands parked;
+--   * a premium per insured car, RATE % of its value per insurance week (WEEK_HOURS hours of play), billed an hour
+--     (BILL_S) ahead and charged also while the car stands parked;
 --   * bought only while not on a job and standing still, and it covers from that moment;
 --   * a claim pays the real repair bill (from the game's damage) minus a DEDUCTIBLE share;
---   * every claim raises the rate for a while (CLAIM_UP), every claim-free week lowers it (CLEAN_DOWN);
+--   * every claim raises the rate by CLAIM_UP for SURCHARGE_S of play; every claim-free week lowers the base rate
+--     (CLEAN_DOWN);
 --   * a crash at reckless speed is cut or refused: over the road's limit by more than LENIENCY_KMH, judged against
 --     the limit the driver could react to (a limit that just dropped still counts as the old one for a moment), or
 --     shortly after a speed camera flashed the car.
@@ -12,10 +13,11 @@
 -- each car: car.insured { since, paidUntil } and car.insCover (CZK of the current repair bill the insurer covers).
 local M = {}
 
-M.DAY_S = 3600            -- an insurance day: an hour of play
-M.WEEK_DAYS = 7
+M.BILL_S = 3600           -- premiums are billed an hour of play ahead
+M.WEEK_HOURS = 21         -- an insurance week: 21 hours of play (Jan, 2026-11-23: was 7)
 M.RATE_START, M.RATE_MIN, M.RATE_MAX = 3, 2, 4   -- % of the car's value per week
-M.CLAIM_UP = 0.5          -- each claim adds this to the rate
+M.CLAIM_UP = 0.5          -- each claim adds this to the rate ...
+M.SURCHARGE_S = 3 * 3600  -- ... for 3 hours of play (Jan, 2026-11-23)
 M.CLEAN_DOWN = 0.25       -- each claim-free week takes this off
 M.DEDUCTIBLE = 0.10       -- the driver pays this share of every claim
 M.LENIENCY_KMH = 15       -- this much over the limit is still a normal crash
@@ -38,8 +40,15 @@ function M.ensure(g)
   r.rate = math.max(M.RATE_MIN, math.min(M.RATE_MAX, tonumber(r.rate) or M.RATE_START))
   r.claims, r.paid, r.received = tonumber(r.claims) or 0, tonumber(r.paid) or 0, tonumber(r.received) or 0
   r.log = type(r.log) == 'table' and r.log or {}
+  r.surcharges = type(r.surcharges) == 'table' and r.surcharges or {}   -- { at = play seconds (nil: not billed yet) }
   g.insurance = r
   return r
+end
+
+-- The rate charged now: the base rate plus each claim's surcharge while it lasts (never above RATE_MAX).
+function M.rate(g)
+  local r = M.ensure(g)
+  return math.min(M.RATE_MAX, r.rate + M.CLAIM_UP * #r.surcharges)
 end
 
 local function note(r, what, amount)
@@ -56,12 +65,13 @@ function M.insured(car) return type(car) == 'table' and type(car.insured) == 'ta
 function M.value(car) return math.max(0, tonumber(car and car.value) or tonumber(car and car.paid) or 0) end
 
 function M.weekPremium(g, car)
-  return round(M.value(car) * M.ensure(g).rate / 100)
+  return round(M.value(car) * M.rate(g) / 100)
 end
-function M.dayPremium(g, car)
+-- One billed hour.
+function M.hourPremium(g, car)
   local v = M.value(car)
   if v <= 0 then return 0 end
-  return math.max(1, round(v * M.ensure(g).rate / 100 / M.WEEK_DAYS))
+  return math.max(1, round(v * M.rate(g) / 100 / M.WEEK_HOURS * M.BILL_S / 3600))
 end
 
 -- Why the car can't be insured now, or nil. ctx: { onJob, speed (m/s), own (the player sits in it) }.
@@ -80,14 +90,14 @@ function M.buy(g, career, car, ctx, now)
   local why = M.buyBlock(g, car, ctx)
   if why then return false, why end
   local r = M.ensure(g)
-  local day = M.dayPremium(g, car)
-  if (career.money or 0) < day then return false, string.format('Not enough money for the first day (%d CZK).', day) end
-  car.insured = { since = now or 0, paidUntil = (now or 0) + M.DAY_S }
+  local day = M.hourPremium(g, car)
+  if (career.money or 0) < day then return false, string.format('Not enough money for the first hour (%d CZK).', day) end
+  car.insured = { since = now or 0, paidUntil = (now or 0) + M.BILL_S }
   car.insCover = 0
   r.paid = r.paid + day
   if not r.cleanFrom then r.cleanFrom = now or 0 end
   note(r, 'Insured ' .. tostring(car.name or 'a car'), -day)
-  return true, string.format('%s is insured. %d CZK a week (%d CZK charged for the first day).',
+  return true, string.format('%s is insured. %d CZK a week (%d CZK charged for the first hour).',
     tostring(car.name or 'The car'), M.weekPremium(g, car), day), day
 end
 
@@ -98,11 +108,20 @@ function M.cancel(g, car)
   return true, string.format('Insurance on %s ended. Crashes already covered can still be claimed.', tostring(car.name or 'the car'))
 end
 
--- The days due since the last bill, for every insured car (cars: the one in use and the parked ones), and the
+-- The hours due since the last bill, for every insured car (cars: the one in use and the parked ones), and the
 -- claim-free weeks. Returns the CZK due now and a one-line detail; the caller takes it from the money (the rest is debt).
 -- A car a hired driver took over is no longer covered.
 function M.bill(g, cars, now)
   local r = M.ensure(g)
+  -- claim surcharges: a new one starts now, an old one ends after SURCHARGE_S
+  local kept = {}
+  for _, sc in ipairs(r.surcharges) do
+    local at = tonumber(sc.at)
+    if not at or at > now then sc.at = now kept[#kept + 1] = sc
+    elseif now - at < M.SURCHARGE_S then kept[#kept + 1] = sc end
+  end
+  if #kept < #r.surcharges then note(r, string.format('Claim surcharge ended: rate back to %g %%', math.min(M.RATE_MAX, r.rate + M.CLAIM_UP * #kept)), 0) end
+  r.surcharges = kept
   local due, any, names = 0, false, {}
   for _, car in ipairs(cars) do
     if M.insured(car) then
@@ -113,20 +132,20 @@ function M.bill(g, cars, now)
         any = true
         local days = 0
         local paidUntil = tonumber(car.insured.paidUntil) or now
-        if paidUntil > now + M.DAY_S then paidUntil = now end   -- the clock went back (another save)
+        if paidUntil > now + M.BILL_S then paidUntil = now end   -- the clock went back (another save)
         while paidUntil <= now and days < 48 do
-          paidUntil, days = paidUntil + M.DAY_S, days + 1
+          paidUntil, days = paidUntil + M.BILL_S, days + 1
         end
         car.insured.paidUntil = paidUntil
         if days > 0 then
-          due = due + M.dayPremium(g, car) * days
+          due = due + M.hourPremium(g, car) * days
           names[#names + 1] = tostring(car.name or 'car')
         end
       end
     end
   end
   -- claim-free weeks lower the rate, only while something is insured
-  local week = M.DAY_S * M.WEEK_DAYS
+  local week = M.WEEK_HOURS * 3600
   if not any or not r.cleanFrom or r.cleanFrom > now or r.cleanAgain then r.cleanFrom, r.cleanAgain = now, nil
   else
     while now - r.cleanFrom >= week do
@@ -190,7 +209,7 @@ function M.judge(hist, t, flashAt)
     end
   end
   if flashAt and t - flashAt >= 0 and t - flashAt <= M.CAMERA_S then
-    v.share, v.why = M.CUT, 'a speed camera flashed you just before: claim cut in half'
+    v.share, v.why = M.CUT, 'reckless driving just before the crash: claim cut in half'
   end
   return v
 end
@@ -236,9 +255,9 @@ function M.claim(g, car, share, payout, now, what)
   if (payout or 0) <= 0 then return 0 end
   local r = M.ensure(g)
   r.claims, r.received = r.claims + 1, r.received + payout
-  r.rate = math.min(M.RATE_MAX, r.rate + M.CLAIM_UP)
+  r.surcharges[#r.surcharges + 1] = { at = now }   -- (no clock: the next bill starts it)
   if now then r.cleanFrom = now else r.cleanAgain = true end   -- (no clock here: the next bill restarts the week)
-  note(r, (what or 'Claim') .. string.format(': insurance paid (rate now %g %%)', r.rate), payout)
+  note(r, (what or 'Claim') .. string.format(': insurance paid (rate %g %% for %d hours)', M.rate(g), M.SURCHARGE_S / 3600), payout)
   return payout
 end
 
@@ -250,12 +269,13 @@ end
 -- For the phone: the driver's record and the car's cover.
 function M.state(g, car, cars)
   local r = M.ensure(g)
-  local out = { rate = r.rate, claims = r.claims, paid = r.paid, received = r.received, deductible = M.DEDUCTIBLE,
-    leniency = M.LENIENCY_KMH, refuse = M.LENIENCY_KMH + M.REFUSE_KMH, camera = M.CAMERA_S, claimUp = M.CLAIM_UP,
-    cleanDown = M.CLEAN_DOWN, rateMin = M.RATE_MIN, rateMax = M.RATE_MAX, dayHours = M.DAY_S / 3600, weekDays = M.WEEK_DAYS, log = {} }
+  local out = { rate = M.rate(g), baseRate = r.rate, surcharge = #r.surcharges > 0 or nil,
+    surchargeHours = M.SURCHARGE_S / 3600, claims = r.claims, paid = r.paid, received = r.received, deductible = M.DEDUCTIBLE,
+    leniency = M.LENIENCY_KMH, claimUp = M.CLAIM_UP,
+    cleanDown = M.CLEAN_DOWN, rateMin = M.RATE_MIN, rateMax = M.RATE_MAX, weekHours = M.WEEK_HOURS, log = {} }
   for i = 1, math.min(6, #r.log) do out.log[i] = r.log[i] end
   if car and M.eligible(car) then
-    out.car = { name = car.name, insured = M.insured(car), week = M.weekPremium(g, car), day = M.dayPremium(g, car),
+    out.car = { name = car.name, insured = M.insured(car), week = M.weekPremium(g, car), day = M.hourPremium(g, car),
       cover = round(tonumber(car.insCover) or 0) }
   end
   out.cars, out.weekTotal = 0, 0
