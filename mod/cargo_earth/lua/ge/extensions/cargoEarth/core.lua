@@ -3040,6 +3040,9 @@ function M.phoneState()
   end
   if ph.insNote and S.clock < ph.insNote.untilT then out.insNote = ph.insNote.text else ph.insNote = nil end
   out.wreck = M.wreckInfo()
+  -- the footer's insured mark, on every screen (also during a job)
+  local ig = S.career.garage
+  if ig.started and not c.employment and require('cargoEarth/insurance').insured(ig.car) and not ig.car.loaner then out.insured = true end
   if S.mode == 'courier' and out.status == 'ok' then
     local plan = storagePlan()
     if plan then
@@ -3130,7 +3133,6 @@ function M.phoneState()
   if out.status ~= 'ok' then out.screen = 'error' out.error = out.status return out end
   local g = S.career.garage
   if g.started then out.repair, out.debt = g.repair or 0, g.debt or 0 end
-  if g.started and require('cargoEarth/insurance').insured(g.car) and not g.car.loaner then out.insured = true end
   if not g.started and c.play ~= 'free' then
     -- first run: free play (any car, nothing kept) or the career
     out.screen, out.choice = 'choose', M.careerChoice()
