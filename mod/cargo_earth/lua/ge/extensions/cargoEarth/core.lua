@@ -5660,8 +5660,9 @@ function M.phoneMap(have)
     if x then return math.floor(x + 0.5), math.floor(y + 0.5) end
   end
   -- the GPS route as BeamNG.Earth plans it (1.6+); else a straight line to the next stop
+  -- any GPS route counts (home, the workshop, a company yard too), not only the job's
   local d = target()
-  local rt = d and earth.route()
+  local rt = earth.route()
   -- Earth hands out a copy of the whole route: asked only for a new route version or after the world moved
   local routeKey = rt and rt.routeVersion and (tostring(rt.routeVersion) .. '@' .. frame)
   local pts = routeKey and pm.routeCached(routeKey)

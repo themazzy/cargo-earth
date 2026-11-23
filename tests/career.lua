@@ -2294,6 +2294,12 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   assert(#m.roads == 20 * 5 and m.roads[5] == 1, 'every edge of the street, a street at 50 km/h')
   assert(core.phoneMap(m.roadsKey).roads == nil, 'the phone keeps the roads it has')
   assert(m.stops and #m.stops == 0 and m.route == nil, 'no job: no stops, no route')
+  -- no job, but the GPS goes home: its route is drawn
+  local earthNoJob = require('cargoEarth/earth')
+  gpsRoute = {remaining = 300, routeVersion = 1}
+  earthNoJob.routeGeometry = function() return {version = 1, points = {{50, 14}, {50.001, 14}}} end
+  assert(core.phoneMap(m.roadsKey).routeGps, 'the GPS route without a job')
+  earthNoJob.routeGeometry, gpsRoute = nil, nil
   s.job = {id = 'm1', from = {g = {50.002, 14}, n = 'Shop'}, to = {g = {50, 14.01}, n = 'Customer'}}
   s.phase = 'toPickup'
   local other = {id = 'm2', from = {g = {50.003, 14}, n = 'Bakery'}, to = {g = {50, 14.02}, n = 'Office'}}
