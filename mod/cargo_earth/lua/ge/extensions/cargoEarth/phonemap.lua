@@ -154,8 +154,8 @@ function M.routeXY(key, latlon, toXY)
 end
 
 -- Where the car is on the route: the nearest point of it, so only the way still ahead is drawn. A route that passes
--- the same place twice (out and back) follows the car's progress: of the near enough pieces the first from the last
--- answer's piece on wins. Returns the route from that point on ({ x, y } list, starting at the point), and
+-- the same place twice (out and back) follows the car: of the near enough pieces, those running the way the car faces
+-- count first, and of them the first from the last answer's piece on wins. Returns the route from that point on ({ x, y } list, starting at the point), and
 -- { off = metres from the route, back = true when the car faces against the route's direction there }.
 M.SAME_M = 15         -- candidates this much farther than the nearest still count as "on it"
 M.BACK_DEG = 120      -- facing more than this against the route: it is behind you
@@ -179,14 +179,24 @@ function M.ahead(points, x, y, heading, key)
   end
   -- the first near piece from the last one on (the car moves along the route); none there (the car went back on
   -- purpose, or this is the first answer): simply the nearest
-  local pick, nearest
-  for _, c in ipairs(cands) do
-    if c[4] <= best + M.SAME_M then
-      if not nearest or c[4] < nearest[4] then nearest = c end
-      if lastIdx and c[1] >= lastIdx and (not pick or c[1] < pick[1]) then pick = c end
-    end
+  -- Pieces that run the way the car faces come first: on an out-and-back street both legs are near, and the one
+  -- the car drives along is the one it is on.
+  local function facing(c)
+    if not heading or (c[5] == 0 and c[6] == 0) then return true end
+    local dir = math.deg((math.atan2 or math.atan)(c[5], c[6]))
+    return math.abs((dir - heading + 540) % 360 - 180) <= 90
   end
-  pick = pick or nearest
+  local function choose(want)
+    local pick, nearest
+    for _, c in ipairs(cands) do
+      if c[4] <= best + M.SAME_M and (want == nil or facing(c) == want) then
+        if not nearest or c[4] < nearest[4] then nearest = c end
+        if lastIdx and c[1] >= lastIdx and (not pick or c[1] < pick[1]) then pick = c end
+      end
+    end
+    return pick or nearest
+  end
+  local pick = choose(true) or choose(nil)
   lastIdx = pick[1]
   local out = { { pick[2], pick[3] } }
   for i = pick[1] + 1, n do out[#out + 1] = points[i] end
