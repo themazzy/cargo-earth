@@ -2318,7 +2318,14 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   local copies = 0
   earth.routeGeometry = function() copies = copies + 1 return {version = 3, points = {{50, 14}, {50.001, 14}, {50.002, 14.001}}} end
   m = core.phoneMap(m.roadsKey)
-  assert(m.routeGps and #m.route == 6 and m.route[4] == 111)
+  assert(m.routeGps and #m.route == 6 and m.route[2] == 0 and m.route[4] == 111, 'from the car on, every point ahead')
+  assert(m.offM == 0 and not m.behind)
+  pose.heading, pose.speed = 180, 10
+  assert(core.phoneMap(m.roadsKey).behind, 'driving south on a route going north')
+  pose.y = 60
+  m = core.phoneMap(m.roadsKey)
+  assert(m.route[2] == 60 and #m.route == 6, 'the part behind the car is gone')
+  pose.y, pose.heading = 0, 90
   core.phoneMap(m.roadsKey)
   assert(copies == 1, 'the same route version is not copied again')
   gpsRoute.routeVersion = 4

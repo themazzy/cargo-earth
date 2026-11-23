@@ -5646,6 +5646,7 @@ end
 -- already has (the roads are sent again only on another tile, another graph or after BeamNG.Earth moved the world).
 --   { car = { x, y, h (degrees clockwise from north), kmh }, roadsKey, roads = { x1, y1, x2, y2, kind, ... },
 --     route = { x, y, ..., false, ... }, routeGps, stops = { { x, y, k = 'next'|'pickup'|'drop'|'stop'|'home'|'hq', n } } }
+M.MAP_ON_ROUTE_M = 40   -- the car this close to the GPS line is on it (farther: the GPS is about to plan again)
 function M.phoneMap(have)
   local pm = require('cargoEarth/phonemap')
   local p = earth.pose()
@@ -5676,7 +5677,15 @@ function M.phoneMap(have)
     local geo = earth.routeGeometry and earth.routeGeometry()
     if geo then pts = pm.routeXY(routeKey, geo.points, function(q) return earth.worldXY(p, q) end) end
   end
-  if pts then out.route, out.routeGps = pm.clip(pts, p.x, p.y), true end
+  if pts then
+    -- only the way still ahead of the car; facing against it while moving: the route is behind you
+    local ahead, where = pm.ahead(pts, p.x, p.y, p.heading, routeKey)
+    out.route, out.routeGps = pm.clip(ahead, p.x, p.y), true
+    if where then
+      out.offM = math.floor(where.off + 0.5)
+      out.behind = where.back and where.off <= M.MAP_ON_ROUTE_M and (p.speed or 0) > M.STOP_SPEED or nil
+    end
+  end
   local stops = {}
   local function add(g, k, n)
     local x, y = xy(g)

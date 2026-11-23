@@ -153,13 +153,68 @@ function M.routeXY(key, latlon, toXY)
   return out
 end
 
+-- Where the car is on the route: the nearest point of it, so only the way still ahead is drawn. A route that passes
+-- the same place twice (out and back) follows the car: of the near enough pieces, those running the way the car faces
+-- count first, and of them the first from the last answer's piece on wins. Returns the route from that point on ({ x, y } list, starting at the point), and
+-- { off = metres from the route, back = true when the car faces against the route's direction there }.
+M.SAME_M = 15         -- candidates this much farther than the nearest still count as "on it"
+M.BACK_DEG = 120      -- facing more than this against the route: it is behind you
+local lastFor, lastIdx = nil, nil
+function M.ahead(points, x, y, heading, key)
+  local n = type(points) == 'table' and #points or 0
+  if n < 2 or not x then return points or {}, nil end
+  if lastFor ~= key then lastFor, lastIdx = key, nil end
+  local best, cands = math.huge, {}
+  for i = 1, n - 1 do
+    local a, b = points[i], points[i + 1]
+    local dx, dy = b[1] - a[1], b[2] - a[2]
+    local l2 = dx * dx + dy * dy
+    local t = l2 > 0 and math.max(0, math.min(1, ((x - a[1]) * dx + (y - a[2]) * dy) / l2)) or 0
+    local px, py = a[1] + dx * t, a[2] + dy * t
+    local d = sqrt((x - px) ^ 2 + (y - py) ^ 2)
+    if d <= best + M.SAME_M then
+      cands[#cands + 1] = { i, px, py, d, dx, dy }
+      if d < best then best = d end
+    end
+  end
+  -- the first near piece from the last one on (the car moves along the route); none there (the car went back on
+  -- purpose, or this is the first answer): simply the nearest
+  -- Pieces that run the way the car faces come first: on an out-and-back street both legs are near, and the one
+  -- the car drives along is the one it is on.
+  local function facing(c)
+    if not heading or (c[5] == 0 and c[6] == 0) then return true end
+    local dir = math.deg((math.atan2 or math.atan)(c[5], c[6]))
+    return math.abs((dir - heading + 540) % 360 - 180) <= 90
+  end
+  local function choose(want)
+    local pick, nearest
+    for _, c in ipairs(cands) do
+      if c[4] <= best + M.SAME_M and (want == nil or facing(c) == want) then
+        if not nearest or c[4] < nearest[4] then nearest = c end
+        if lastIdx and c[1] >= lastIdx and (not pick or c[1] < pick[1]) then pick = c end
+      end
+    end
+    return pick or nearest
+  end
+  local pick = choose(true) or choose(nil)
+  lastIdx = pick[1]
+  local out = { { pick[2], pick[3] } }
+  for i = pick[1] + 1, n do out[#out + 1] = points[i] end
+  local info = { off = pick[4] }
+  if heading and (pick[5] ~= 0 or pick[6] ~= 0) then
+    local dir = math.deg((math.atan2 or math.atan)(pick[5], pick[6]))   -- clockwise from north, like the heading
+    info.back = math.abs((dir - heading + 540) % 360 - 180) > M.BACK_DEG
+  end
+  return out, info
+end
+
 -- The converted route for this key, or nil when it has to be asked for again.
 function M.routeCached(key)
   if key ~= nil and key == routeKey then return routeXY end
   return nil
 end
 
-function M._reset() gridFor, gridAt, grid, routeKey, routeXY = nil, -math.huge, nil, nil, nil end
+function M._reset() gridFor, gridAt, grid, routeKey, routeXY, lastFor, lastIdx = nil, -math.huge, nil, nil, nil, nil, nil end
 
 -- distance in metres, for the tests
 function M.len(ax, ay, bx, by) return sqrt((ax - bx) ^ 2 + (ay - by) ^ 2) end
