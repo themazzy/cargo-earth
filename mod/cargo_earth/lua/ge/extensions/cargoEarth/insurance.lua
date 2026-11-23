@@ -251,7 +251,8 @@ end
 function M.state(g, car, cars)
   local r = M.ensure(g)
   local out = { rate = r.rate, claims = r.claims, paid = r.paid, received = r.received, deductible = M.DEDUCTIBLE,
-    leniency = M.LENIENCY_KMH, dayHours = M.DAY_S / 3600, weekDays = M.WEEK_DAYS, log = {} }
+    leniency = M.LENIENCY_KMH, refuse = M.LENIENCY_KMH + M.REFUSE_KMH, camera = M.CAMERA_S, claimUp = M.CLAIM_UP,
+    cleanDown = M.CLEAN_DOWN, rateMin = M.RATE_MIN, rateMax = M.RATE_MAX, dayHours = M.DAY_S / 3600, weekDays = M.WEEK_DAYS, log = {} }
   for i = 1, math.min(6, #r.log) do out.log[i] = r.log[i] end
   if car and M.eligible(car) then
     out.car = { name = car.name, insured = M.insured(car), week = M.weekPremium(g, car), day = M.dayPremium(g, car),

@@ -3130,6 +3130,7 @@ function M.phoneState()
   if out.status ~= 'ok' then out.screen = 'error' out.error = out.status return out end
   local g = S.career.garage
   if g.started then out.repair, out.debt = g.repair or 0, g.debt or 0 end
+  if g.started and require('cargoEarth/insurance').insured(g.car) and not g.car.loaner then out.insured = true end
   if not g.started and c.play ~= 'free' then
     -- first run: free play (any car, nothing kept) or the career
     out.screen, out.choice = 'choose', M.careerChoice()
