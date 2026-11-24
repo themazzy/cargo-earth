@@ -2,7 +2,7 @@
 
 A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight, work company contracts and build a garage at an address you choose.
 
-**Early development · mod 0.10.4 · helper 0.10.4**
+**Early development · mod 0.11.0 · helper 0.11.0**
 
 [Download the mod and helper (latest release)](https://github.com/themazzy/cargo-earth/releases/latest) · [Landing page](website/index.html) · [Payout statistics](docs/research/payout-statistics-0.3.5/README.md)
 
@@ -49,6 +49,8 @@ Pick **Food delivery**, **Freight**, **Taxi** or **Bus** on the phone's offline 
   Your car is stored and replaced by a city bus. Open its doors at each stop using **O** or the phone; both displays
   show the same passenger timer. Each stop has its own timetable time, and harsh braking or bumps cost passenger comfort
   and pay. At the last stop, hand over the bus and return to your car. See [bus lines](docs/BUS_LINES.md).
+- **Intercity coaches:** the Bus page's Coaches list offers rides from a bus station near you to bus stations in far
+  towns, one way or with a return trip, in a lent highway coach.
 
 ### Career
 
@@ -56,6 +58,12 @@ Pick **Food delivery**, **Freight**, **Taxi** or **Bus** on the phone's offline 
 - Buy used cars with real wear (each with the game's own picture and a Details card: power, torque, weight, top speed,
   0-100, drive, gearbox and fuel; filter by kind, see cargo space and the jobs each can do), trade in, and buy real BeamNG parts. Repairs cost money; repairing for free through the
   game's menu puts the bill on your debt, and Finances shows where every charge came from.
+- Used cars can come with worn parts (misfiring engine, worn clutch and gearbox, brakes or tyres, overdue oil change).
+  The listing shows them and the price is lower; fix them after buying.
+- Insure your own cars: a weekly premium from the car's value, claims pay the repair minus 10 %, reckless crashes are
+  covered half or refused, and a write-off gets a free tow home. See [insurance](docs/INSURANCE.md).
+- Stuck or wrecked by a map bug? The phone's **Unstuck** button repairs the car in place for free (once every 5 min).
+- The phone's **Map** tab shows a live heading-up map with the GPS route and your stops. See [live map](docs/LIVE_MAP.md).
 - Set a home garage where you park, grow it from a small to an extra large garage and build rooms (workshop, fuel tank, rest room) for bonuses at home. A home is never required.
 - If a car you own came from a vehicle mod you have since removed, the career still loads: another of your cars (or a
   stand-in Pigeon) takes its place until the mod is back.
@@ -137,7 +145,7 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | Option | What it does |
 | --- | --- |
 | `-user-folder "D:\BeamNG\user"` | Use this BeamNG user folder when it is not found automatically |
-| `-version 0.10.4` | Install a specific release instead of the latest |
+| `-version 0.11.0` | Install a specific release instead of the latest |
 | `-mod-only`, `-helper-only` | Install only one part |
 | `-skip-python` | Don't install the helper's Python libraries |
 | `-zip <file>`, `-helper <file>` | Use files you already downloaded |
@@ -218,9 +226,9 @@ node tools/payout-stats.cjs
 
 Both installers share the Go program in `installer/`. From that folder, build with `GOOS=windows GOARCH=amd64 go build -o CargoEarthSetup.exe .` or `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o CargoEarthSetup-linux-x86_64 .`. Run installer checks with `go test ./...` and `go vet ./...`.
 
-To publish a release, create a GitHub release with a tag such as `v0.10.4` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
+To publish a release, create a GitHub release with a tag such as `v0.11.0` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.10.4 notes](docs/CAREER_0.10.4.md), [0.10.3 notes](docs/CAREER_0.10.3.md), [0.10.2 notes](docs/CAREER_0.10.2.md), [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.11.0 notes](docs/CAREER_0.11.0.md), [0.10.4 notes](docs/CAREER_0.10.4.md), [0.10.3 notes](docs/CAREER_0.10.3.md), [0.10.2 notes](docs/CAREER_0.10.2.md), [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
