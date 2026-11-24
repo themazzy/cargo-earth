@@ -920,17 +920,23 @@ class NetworkAndStorageTests(unittest.TestCase):
         player.shutdown()
         self.assertTrue(gone(second.child), "a closing helper takes its player with it")
         # a player left by a helper that was killed outright: found by its stream variable and ended at start
-        orphan = subprocess.Popen(["sleep", "60"], env=dict(os.environ, CARGO_EARTH_STREAM="http://s/3"))
+        # (its owner, a pid no process has, is gone)
+        orphan = subprocess.Popen(["sleep", "60"], env=dict(os.environ, CARGO_EARTH_STREAM="http://s/3",
+                                                             CARGO_EARTH_HELPER_PID=str(2 ** 22 + 7)))
         other = subprocess.Popen(["sleep", "60"])
+        # another helper's player while that helper (this Python process) runs: left alone
+        owned = subprocess.Popen(["sleep", "60"], env=dict(os.environ, CARGO_EARTH_STREAM="http://s/4",
+                                                            CARGO_EARTH_HELPER_PID=str(os.getpid())))
         try:
-            ended = helper.Player.end_leftovers()
+            ended = helper.Player.end_leftovers(me=-1)
             self.assertIn(orphan.pid, ended)
             self.assertNotIn(other.pid, ended)
+            self.assertNotIn(owned.pid, ended, "a running helper's player is not touched")
             orphan.wait(timeout=5)
         finally:
-            other.kill()
-            other.wait()
-            orphan.kill()
+            for p in (other, owned, orphan):
+                p.kill()
+                p.wait()
 
     def test_root_is_a_status_page(self):
         captured = []

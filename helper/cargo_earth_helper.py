@@ -1921,7 +1921,8 @@ class Player:
         import base64
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         env = player_env(os.environ, kind)
-        env.update(CARGO_EARTH_STREAM=url, CARGO_EARTH_VOL=f"{vol:.2f}")   # data, never code
+        env.update(CARGO_EARTH_STREAM=url, CARGO_EARTH_VOL=f"{vol:.2f}",   # data, never code
+                   CARGO_EARTH_HELPER_PID=str(os.getpid()))     # whose player it is (end_leftovers)
         if kind == "powershell":
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
                    base64.b64encode(PS_PLAYER.encode("utf-16-le")).decode()]
@@ -2017,9 +2018,20 @@ class Player:
             self._signal(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
 
     @staticmethod
+    def _is_helper(proc_dir, pid):
+        """Whether pid is a running Cargo Earth helper (a Python process): its players are its own business."""
+        try:
+            with open(os.path.join(proc_dir, str(pid), "cmdline"), "rb") as f:
+                cmd = f.read().lower()
+        except OSError:
+            return False
+        return b"cargo_earth_helper" in cmd or b"python" in cmd
+
+    @staticmethod
     def end_leftovers(proc_dir="/proc", me=None):
         """Players a helper started before it was closed the hard way (killed, crashed) still play: ended at start.
-        They are known by the stream variable only this helper sets. Linux only; elsewhere there is no /proc."""
+        They are known by the stream variable only this helper sets; one whose helper still runs (a second helper on
+        another port) is left alone. Linux only; elsewhere there is no /proc."""
         me = me if me is not None else os.getpid()
         ended = []
         try:
@@ -2031,8 +2043,15 @@ class Player:
                 continue
             try:
                 with open(os.path.join(proc_dir, str(pid), "environ"), "rb") as f:
-                    if b"\0CARGO_EARTH_STREAM=" not in b"\0" + f.read():
-                        continue
+                    env = dict(x.split(b"=", 1) for x in f.read().split(b"\0") if b"=" in x)
+                if b"CARGO_EARTH_STREAM" not in env:
+                    continue
+                owner = env.get(b"CARGO_EARTH_HELPER_PID", b"")
+                if not owner.isdigit():      # from a helper before this one said: its parent
+                    with open(os.path.join(proc_dir, str(pid), "stat"), "rb") as f:
+                        owner = f.read().rsplit(b")", 1)[-1].split()[1]
+                if Player._is_helper(proc_dir, int(owner)):
+                    continue
                 os.kill(pid, signal.SIGTERM)
                 ended.append(pid)
             except OSError:      # gone, or another user's
