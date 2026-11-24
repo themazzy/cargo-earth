@@ -6,7 +6,7 @@ local economy = require('cargoEarth/economy')
 local jobs = require('cargoEarth/jobs')
 local M = {}
 
-M.FEE = 6000                           -- founding the firm
+M.FEE = 4500                           -- founding the firm (2026-11-22: was 6,000; upgrades and truck trailers a quarter cheaper too)
 M.MIN_DELIVERIES = progress.DRIVER_AT  -- the Professional rank
 M.MIN_SCORE, M.MIN_RATINGS = 4.0, 5    -- on either reputation
 M.HQ_RADIUS = 80                       -- metres: "at the headquarters"
@@ -18,13 +18,13 @@ M.NAME_MAX = 28
 -- value: bays = extra cars, workshop = share of a repair paid at the headquarters, tank = share of the fuel price
 -- there, office = what hired drivers bring in.
 M.UPGRADES = {
-  { id = 'bays', name = 'Parking bays', levels = { { cost = 4000, value = 2 }, { cost = 9000, value = 4 }, { cost = 18000, value = 6 } },
+  { id = 'bays', name = 'Parking bays', levels = { { cost = 3000, value = 2 }, { cost = 6750, value = 4 }, { cost = 13500, value = 6 } },
     text = function(v) return string.format('Room for %d more vehicles', v) end },
-  { id = 'workshop', name = 'Workshop', levels = { { cost = 5000, value = 0.85 }, { cost = 12000, value = 0.7 } },
+  { id = 'workshop', name = 'Workshop', levels = { { cost = 3750, value = 0.85 }, { cost = 9000, value = 0.7 } },
     text = function(v) return string.format('Repairs at the headquarters cost %d %% less', math.floor((1 - v) * 100 + 0.5)) end },
-  { id = 'tank', name = 'Fuel tank', levels = { { cost = 7000, value = 0.85 } },
+  { id = 'tank', name = 'Fuel tank', levels = { { cost = 5250, value = 0.85 } },
     text = function(v) return string.format('Petrol and diesel at the headquarters for %d %% less', math.floor((1 - v) * 100 + 0.5)) end },
-  { id = 'office', name = 'Dispatch office', levels = { { cost = 6000, value = 1.15 }, { cost = 14000, value = 1.3 } },
+  { id = 'office', name = 'Dispatch office', levels = { { cost = 4500, value = 1.15 }, { cost = 10500, value = 1.3 } },
     text = function(v) return string.format('Hired drivers bring in %d %% more', math.floor((v - 1) * 100 + 0.5)) end },
 }
 local byId = {}
@@ -33,19 +33,19 @@ for _, u in ipairs(M.UPGRADES) do byId[u.id] = u end
 -- New vehicles the firm buys from the factory: BeamNG's stock configs, priced by their value like every car (no
 -- used discount). They are delivered to a free bay at the headquarters. fallback: the price when the game has none.
 M.VEHICLES = {
-  { id = 'van', model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', fallback = 3000,
+  { id = 'van', model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', fallback = 2250,
     text = 'Parcels and van freight' },
-  { id = 'rigid', model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', fallback = 4900,
+  { id = 'rigid', model = 'md_series', key = 'md_career_shuffleboard_cargobox', name = 'MD-Series box truck', fallback = 3700,
     text = 'Box truck business shipping' },
-  { id = 'semi', model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', fallback = 7000,
+  { id = 'semi', model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', fallback = 5250,
     text = 'Articulated freight; a hired driver needs one of your trailers' },
 }
 -- The firm's own trailers: a hired tractor driver needs one, and your own articulated jobs pay TRAILER_BONUS more
 -- when the freight fits one of them (no trailer hire).
 M.TRAILERS = {
-  { id = 'dryvan', name = 'Box trailer', price = 6000, text = 'Parcels, pallets and dry bulk' },
-  { id = 'tanker', name = 'Tanker trailer', price = 8000, text = 'Milk, fuel and chemicals' },
-  { id = 'flatbed', name = 'Flatbed trailer', price = 7000, text = 'Tow jobs behind a tractor: two cars at a time. Take it out here' },
+  { id = 'dryvan', name = 'Box trailer', price = 4500, text = 'Parcels, pallets and dry bulk' },
+  { id = 'tanker', name = 'Tanker trailer', price = 6000, text = 'Milk, fuel and chemicals' },
+  { id = 'flatbed', name = 'Flatbed trailer', price = 5250, text = 'Tow jobs behind a tractor: two cars at a time. Take it out here' },
   { id = 'cartrailer', name = 'Car trailer', price = 2500, text = 'Tow jobs behind a car with a tow hitch. Take it out here, so you need not borrow one' },
   { id = 'smalltrailer', name = 'Small car trailer', price = 1200, text = 'Light tow jobs for small cars only. Take it out here, so you need not borrow one' },
 }

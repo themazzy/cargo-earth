@@ -1,10 +1,10 @@
 -- Real nonblocking client with deterministic socket/HTTP fixtures; no network access required.
 local client = require('cargoEarth/helper')
 local passed, requests, replies, dataset, callbacks = 0, {}, {}, 'A', 0
-local badArea, bigBody = false, false
+local badArea, bigBody, refuse, httpErr = false, false, false, false
 local function test(name, fn)
   client._reset()
-  requests, replies, dataset, callbacks, badArea, bigBody = {}, {}, 'A', 0, false, false
+  requests, replies, dataset, callbacks, badArea, bigBody, refuse, httpErr = {}, {}, 'A', 0, false, false, false, false
   local ok, why = pcall(fn)
   assert(ok, name .. ': ' .. tostring(why))
   passed = passed + 1
@@ -27,6 +27,7 @@ local function response(path)
   local body = 'response' .. (#replies + 1)
   replies[#replies + 1] = data
   if bigBody then body = string.rep('x', 70000) end
+  if httpErr then return 'HTTP/1.0 500 Internal Server Error\r\n\r\n' end
   return 'HTTP/1.0 200 OK\r\nContent-Length: ' .. #body .. '\r\n\r\n' .. body
 end
 jsonDecode = function(body)
@@ -37,7 +38,7 @@ end
 socket = {tcp = function()
   local s = {}
   function s:settimeout() end
-  function s:connect(_, port) connectedPort = port return true end
+  function s:connect(_, port) connectedPort = port if refuse then return nil, 'connection refused' end return true end
   function s:send(out)
     local path = out:match('^GET ([^ ]+)')
     requests[#requests + 1] = path
@@ -165,6 +166,32 @@ test('radio presses go through their own lane in one frame, even while an area d
   client.configure({helper = false})
   client.pump(0.02)
   assert(why == 'helper turned off' and not client.commanding())
+end)
+
+test('describe tells a helper that never ran from one that stopped, a timeout and an HTTP error', function()
+  assert(client.describe(0) == nil, 'nothing asked yet: nothing to say')
+  refuse = true
+  tick(0)
+  local st = client.status()
+  assert(st.state == 'off' and st.errKind == 'down', tostring(st.errKind))
+  assert(client.describe(0):find('not running', 1, true), client.describe(0))
+  client._reset()
+  refuse = false
+  tick(0) tick(0.5) tick(1)                        -- answers once (areas found)...
+  assert(client.status().okAt == 1 and client.describe(1) == nil, tostring(client.status().okAt))
+  refuse = true
+  for t = 1, 400 do tick(t) end                    -- ...then nothing listens any more
+  assert(client.status().state == 'off')
+  local text = client.describe(400)
+  assert(text:find('stopped answering 6 min ago', 1, true) and text:find('crashed', 1, true), text)
+  client._reset()
+  refuse, httpErr = false, true
+  tick(0) tick(0.5) tick(1)
+  assert(client.status().errKind == 'http' and client.describe(1):find('HTTP 500', 1, true), tostring(client.describe(1)))
+  assert(client.errorKind('timeout') == 'timeout' and client.errorKind('bad JSON') == 'bad'
+    and client.errorKind('Connection refused') == 'down')
+  client.configure({helper = false})
+  assert(client.describe(0):find('turned off', 1, true))
 end)
 
 client._reset()

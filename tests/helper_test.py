@@ -301,6 +301,42 @@ class NetworkAndStorageTests(unittest.TestCase):
                 sites.get(40 + i * 0.1, 10)
             self.assertLessEqual(len(sites.queue), helper.SITE_QUEUE)
 
+    def test_coach_stations_queue_build_rank_and_serve(self):
+        hier = "travel_and_transportation public_transit_facility_or_service bus_station"
+        rows = [("a1", "Autobusové nádraží Písek", "public_transit_facility_or_service", "bus_station", hier, 49.30, 14.15, "Písek"),
+                ("a2", "Steel Fish", "public_transit_facility_or_service", "bus_station", hier, 49.31, 14.15, "Písek"),
+                ("a3", "Železniční stanice Písek", "train_station", "train_station", "travel train_station", 49.29, 14.16, "Písek"),
+                ("a4", "Cafe", "cafe", "cafe", "cafe", 49.30, 14.15, "Písek"),
+                ("a5", "Far Station", "bus_station", "bus_station", hier, 51.0, 14.15, "")]
+        conn = Connection(rows)
+        builder = helper.Builder(SimpleNamespace(release="test"), "")
+        builder._con = lambda key, box: (conn, ["x"])
+        with cache_dir() as cache:
+            stations = helper.Stations(builder, cache, start=False)
+            first = stations.get(49.30, 14.15)
+            self.assertEqual(first, {"state": "loading", "key": first["key"], "stations": []})
+            data = stations.build(stations.queue.pop())
+            self.assertTrue(helper.valid_stations(data, first["key"], "test"))
+            self.assertFalse(helper.valid_sites(data, first["key"], "test"))
+            got = {r["n"]: (r["k"], r["s"]) for r in data["stations"]}
+            self.assertEqual(got, {"Autobusové nádraží Písek": ("bus", 2), "Steel Fish": ("bus", 0),
+                                   "Železniční stanice Písek": ("rail", 1)})
+            self.assertIn("bus_station", conn.query)
+            Path(stations.path(first["key"])).write_text(json.dumps(data), encoding="utf-8")
+            ready = stations.get(49.3001, 14.1501)
+            self.assertEqual(ready["state"], "ready")
+            self.assertEqual(len(ready["stations"]), 3)
+            self.assertIn(os.path.join("stations", "test", helper.STATIONS_CACHE_VERSION), stations.dir)
+            bad = dict(data, stations=[{"id": "x", "n": "X", "g": [99, 14], "k": "bus"}])
+            self.assertFalse(helper.valid_stations(bad, first["key"], "test"))
+
+    def test_station_names_say_how_sure_a_row_is(self):
+        for name, score in (("Prague Bus Station", 2), ("ÚAN Florenc", 2), ("AN Holešovice", 2), ("ZOB Hamburg", 2),
+                            ("Gare routière de Perrache", 2), ("Автовокзал Казань", 2), ("Flixbus Stop", 2),
+                            ("Na Knížecí (tram, bus)", 1), ("Gare de Lyon Part-Dieu", 1), ("An der Kirche", 0),
+                            ("Bigben Travel", 0), ("JYSK", 0)):
+            self.assertEqual(helper.station_score(name), score, name)
+
     def test_area_validation_rejects_bad_nested_coordinates_and_tile_rows(self):
         data = {"key": "1_1", "release": "test", "restaurants": [], "grocers": [], "depots": [], "fuel": [], "tiles": {"1_1": [[50, 14, 50, 14, "Street 12"]]}}
         self.assertTrue(helper.valid_area(data, "1_1", "test"))
@@ -523,7 +559,7 @@ class NetworkAndStorageTests(unittest.TestCase):
                 return json.dumps({"elements": []}).encode()
             with patch.object(helper, "http_get", side_effect=fetch):
                 try:
-                    with helper.overpass_slot():
+                    with helper.overpass_slot(), helper.overpass_slot():   # every slot taken
                         queued = lines.near(50.02, 14.02)
                         self.assertEqual((queued["loading"], queued["queued"]), (1, 1))
                         again = lines.near(50.02, 14.02, retry=True)
@@ -539,6 +575,59 @@ class NetworkAndStorageTests(unittest.TestCase):
                         break
                     time.sleep(0.01)
 
+    def test_overpass_fails_over_through_every_server_with_readable_reasons(self):
+        import urllib.error
+        helper.OVERPASS_HEALTH.clear()
+        asked = []
+        def fetch(url, **kw):
+            asked.append(url.split("?")[0])
+            if len(asked) == 1:
+                raise urllib.error.HTTPError(url, 502, "Bad Gateway", {}, None)
+            if len(asked) == 2:
+                raise TimeoutError("The read operation timed out")
+            if len(asked) == 3:
+                raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+            return json.dumps({"elements": []}).encode()
+        with cache_dir() as cache, patch.object(helper, "http_get", side_effect=fetch):
+            data = helper.BusLines(str(cache))._overpass((50, 14, 50.04, 14.04))
+        self.assertEqual(data, {"elements": []})
+        self.assertEqual(asked, helper.OVERPASS)
+        # the server that answered is asked first next time, the ones that just failed last
+        self.assertEqual(helper.overpass_order()[0], helper.OVERPASS[3])
+        with cache_dir() as cache, patch.object(helper, "http_get", side_effect=[
+                urllib.error.HTTPError("u", 502, "Bad Gateway", {}, None), TimeoutError("timed out")] * 2):
+            with self.assertRaises(RuntimeError) as err:
+                helper.BusLines(str(cache))._overpass((50, 14, 50.04, 14.04))
+        self.assertIn("busy (HTTP 502)", str(err.exception))
+        self.assertIn(f"no answer in {helper.OVERPASS_TIMEOUT_S} s", str(err.exception))
+        helper.OVERPASS_HEALTH.clear()
+
+    def test_failed_bus_area_is_retried_sooner_first_then_backs_off(self):
+        with cache_dir() as cache:
+            lines = helper.BusLines(str(cache), lambda box: {"elements": [], "remark": "Query timed out"})
+            lines._work("1250_350")
+            first = lines.near(50.02, 14.02)["retryAfter"]
+            self.assertTrue(0 < first <= helper.OVERPASS_RETRY_S[0])
+            lines._work("1250_350")
+            lines._work("1250_350")
+            lines._work("1250_350")
+            self.assertGreater(lines.near(50.02, 14.02)["retryAfter"], helper.OVERPASS_RETRY_S[1])
+
+    def test_two_requests_run_at_once_on_different_servers(self):
+        helper.OVERPASS_HEALTH.clear()
+        with helper.overpass_slot() as a, helper.overpass_slot() as b:
+            self.assertNotEqual(a, b)
+            got = []
+            t = threading.Thread(target=lambda: got.append(helper.overpass_slot(0).__enter__()))
+            t.start()
+            t.join(0.2)
+            self.assertEqual(got, [], "a third request waits")
+        t.join(2)
+        self.assertEqual(len(got), 1)
+        with helper.OVERPASS_ONE:
+            helper.OVERPASS_BUSY.clear()
+            helper.OVERPASS_ONE.notify_all()
+
     def test_bus_query_includes_public_transport_stops_without_bus_yes(self):
         with cache_dir() as cache:
             q = helper.BusLines(str(cache)).query((50, 14, 50.04, 14.04))
@@ -551,7 +640,7 @@ class NetworkAndStorageTests(unittest.TestCase):
             with helper.overpass_slot(priority):
                 order.append(name)
         threads = []
-        with helper.overpass_slot():
+        with helper.overpass_slot(), helper.overpass_slot():
             for name, priority in (("camera", 1), ("bus", 0)):
                 t = threading.Thread(target=request, args=(name, priority))
                 threads.append(t)
@@ -737,6 +826,53 @@ class NetworkAndStorageTests(unittest.TestCase):
             handler._send = lambda code, *args: result.append(code)
             handler.do_GET()
             self.assertEqual(result, [403])
+
+    def test_linux_player_says_why_it_stopped_and_the_status_page_shows_radio(self):
+        class Proc:
+            kind = "mpv"
+            def __init__(self):
+                self.code, self.stdin = None, io.StringIO()
+                self.stdout = ["", "[ao] Could not open/initialize audio device -> no sound.\n",
+                               "Failed to open http://station.example/live?key=secret.\n"]
+            def poll(self):
+                return self.code
+            def wait(self, timeout=None):
+                self.code = 0
+        proc = Proc()
+        player = helper.Player(spawn=lambda url, vol: proc)
+        helper.RADIO_LOG.clear()
+        self.assertTrue(player.play("http://station.example/live?key=secret", 0.5)["playing"])
+        for _ in range(100):
+            if player.why and "Failed" in player.why:
+                break
+            time.sleep(0.01)
+        proc.code = 2
+        out = player.status()
+        self.assertFalse(out["playing"])
+        self.assertIn("station.example", out["error"])
+        self.assertTrue(out["error"].startswith("mpv: "))
+        self.assertNotIn("secret", out["error"])
+        # a player that ended before its reason was read: the generic error gives way to the reason
+        player.generic, player.error, player.why = False, None, None
+        late = Proc()
+        late.stdout, late.code = iter(()), 1
+        player.proc = late
+        self.assertIn("could not be opened", player.status()["error"])
+        late.stdout = ["no audio device\n"]
+        player._read_err(late)
+        self.assertEqual(player.status()["error"], "mpv: no audio device")
+        player.proc = proc
+        self.assertTrue(any("playing with mpv: station.example" in e for e in helper.RADIO_LOG))
+        self.assertFalse(any("secret" in e for e in helper.RADIO_LOG), "station keys stay out of the log")
+        areas = SimpleNamespace(cv=threading.Condition(), state={}, budget=SimpleNamespace(stats={}))
+        with patch.object(helper.Player, "available", staticmethod(lambda: None)):
+            page = helper.status_page(areas, "test", 47821, player=player).decode()
+        self.assertIn("Radio player", page)
+        self.assertIn("install mpv", page)
+        self.assertIn("audio device", page)
+        with patch.object(helper.Player, "available", staticmethod(lambda: "ffplay")):
+            page = helper.status_page(areas, "test", 47821, player=player).decode()
+        self.assertNotIn("install mpv", page)
 
     def test_root_is_a_status_page(self):
         captured = []

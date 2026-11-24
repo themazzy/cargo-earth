@@ -92,15 +92,54 @@ test('settlement identities survive display-history pruning', function()
   assert(not economy.post(c, 0/0, 'bad', 'bad'))
 end)
 
-test('home address requires actual parked proximity and stores an independent point', function()
-  local c, address = {}, { id = 'a', n = 'Test Street 12', town = 'Town', g = { 50, 14 } }
-  assert(not home.claim(c, address, {lat = 51, lon = 14, speed = 0}))
-  assert(not home.claim(c, address, {lat = 50, lon = 14, speed = 10}))
-  assert(not home.claim(c, address, {lat = 50, lon = 14, camera = true}))
-  assert(home.claim(c, address, {lat = 50.0001, lon = 14, speed = 0}))
-  address.g[1] = 70
+test('home is set where the car is parked and named from the nearest address', function()
+  local c = {}
+  assert(not home.claim(c, {lat = 50, lon = 14, speed = 10}))
+  assert(not home.claim(c, {lat = 50, lon = 14, camera = true}))
+  assert(not home.claim(c, nil) and c.home == nil)
+  assert(home.claim(c, {lat = 50.0001, lon = 14, speed = 0}, {n = 'Test Street 12', town = 'Town', km = 0.05}))
+  assert(c.home.name == 'Test Street 12' and c.home.town == 'Town' and c.home.g[1] == 50.0001 and c.home.capacity == 3)
   assert(home.near(c, {lat = 50.0001, lon = 14}))
-  assert(c.home.capacity == 3 and c.home.address[1] == 50)
+  assert(home.claim(c, {lat = 50.2, lon = 14, speed = 0}, {n = 'Far 1', town = 'Village', km = 0.8}))
+  assert(c.home.name == 'Near Village' and c.home.town == 'Village')
+  assert(home.claim(c, {lat = 50.3, lon = 14.5, speed = 0}))
+  assert(c.home.name == '50.30000, 14.50000' and c.home.town == nil and home.near(c, {lat = 50.3, lon = 14.5}))
+end)
+
+test('an old home becomes the first step and grows by paid steps and rooms', function()
+  local c = { money = 40000, home = { id = 'a', name = 'Old Street 1', g = { 50, 14 }, capacity = 3 } }
+  local h = home.restore(c)
+  assert(h.level == 1 and h.capacity == 3 and next(h.rooms) == nil)
+  assert(home.build(c, 'workshop', 0))
+  assert(not home.build(c, 'tank', 0), 'the small garage has one room')
+  assert(not home.upgrade(c, 50), 'debt first')
+  assert(home.upgrade(c, 0) and c.home.level == 2 and c.home.capacity == 4 and c.money == 40000 - 1500 - 2500)
+  assert(home.build(c, 'rest', 0) and home.has(c, 'rest'))
+  assert(not home.build(c, 'rest', 0))
+  assert(home.upgrade(c, 0) and home.upgrade(c, 0) and c.home.capacity == 8)
+  assert(not home.upgrade(c, 0), 'fully built')
+  local st = home.state(c, { lat = 50, lon = 14 }, 0)
+  assert(st.here and st.levelName == 'Extra large garage' and st.slots == 4 and st.used == 2 and st.next == nil)
+  -- moving keeps the step and rooms
+  assert(home.claim(c, { lat = 50.3, lon = 14.5, speed = 0 }))
+  assert(c.home.level == 4 and home.has(c, 'workshop') and c.home.capacity == 8 and c.home.g[1] == 50.3)
+  assert(home.factorHere(c, 'workshop', { lat = 50.3, lon = 14.5 }) == 0.7)
+  assert(home.factorHere(c, 'workshop', { lat = 50, lon = 14 }) == nil, 'only at home')
+  assert(home.factorHere(c, 'tank', { lat = 50.3, lon = 14.5 }) == nil, 'not built')
+end)
+
+test('Rested: three minutes parked at a home with a rest room adds 10 % pay for an hour of play', function()
+  local c = { money = 0, home = { g = { 50, 14 }, capacity = 3, rooms = {} } }
+  assert(not home.restTick(c, true, 400) and not home.rested(c), 'needs the rest room')
+  c.home.rooms.rest = true
+  assert(not home.restTick(c, true, 100))
+  assert(not home.restTick(c, false, 10) and c.restingT == nil, 'leaving restarts the count')
+  assert(not home.restTick(c, true, 170))
+  assert(home.restTick(c, true, 15) and home.rested(c))
+  local paid, extra = home.restedPay(c, 200)
+  assert(paid == 220 and extra == 20)
+  home.restTick(c, false, home.RESTED_S)
+  assert(not home.rested(c) and home.restedPay(c, 200) == 200)
 end)
 
 test('address search combines local tiles, literal punctuation and stable IDs', function()
@@ -582,16 +621,32 @@ test('without a home the owned-car limit still applies', function()
   assert(not ok and why:find('full') and career.money == 100000 and #g.parked == 3)
 end)
 
-test('home claim persists the selected address through the real phone action', function()
+test('home is set where the career car is parked through the real phone action', function()
   local core, s = fresh()
   s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.01}, function()
-    return {{50, 14, 50, 14, 'Test Street 12', 'Town'}}
+    return {{50.0003, 14, 50.0003, 14, 'Test Street 12', 'Town'}, {50.02, 14, 50.02, 14, 'Other 1', 'Town'}}
   end)
-  local places = core.placesDo('search', 'Test')
-  core.placesDo('select', places.addresses[1].id)
-  core.placesDo('claimHome')
-  assert(s.career.home.name == 'Test Street 12')
+  local places = core.placesDo('claimHome')
+  assert(s.career.home.name == 'Test Street 12' and s.career.home.g[1] == 50, places.msg)
+  assert(places.home.name == 'Test Street 12' and places.addresses == nil)
   assert(disk['/settings/cargoEarth/career.json'].home.name == 'Test Street 12')
+  pose.speed = 5
+  core.placesDo('claimHome')
+  assert(s.career.home.g[1] == 50, 'a moving car cannot set a home')
+end)
+
+test('home rooms are bought through the real phone action and saved', function()
+  local core, s = fresh()
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.01}, function() return {} end)
+  s.career.money, s.career.garage.debt = 5000, 0
+  local places = core.placesDo('claimHome')
+  assert(places.homeInfo and places.homeInfo.level == 1 and s.career.home.name == '50.00000, 14.00000')
+  places = core.placesDo('buildRoom', 'tank')
+  assert(places.homeInfo.rooms[2].built and s.career.money == 4000, places.msg)
+  places = core.placesDo('upgradeHome')
+  assert(places.homeInfo.level == 2 and s.career.money == 1500, places.msg)
+  assert(disk['/settings/cargoEarth/career.json'].home.rooms.tank == true)
+  assert(disk['/settings/cargoEarth/career.json'].home.level == 2)
 end)
 
 test('independent contracts require reputation and a real owned cargo van', function()
@@ -1459,6 +1514,34 @@ test('pickup variety: two in a row from one place, then two from other places', 
   assert(not variety.resting('broken', 'A') and #variety.note('broken', job('A')) == 1, 'a damaged save starts over')
 end)
 
+test('the waiting phone says why no freight comes, and beamng.log gets the line once', function()
+  local core, s = fresh()
+  local c = s.career
+  c.garage.debt = 0
+  core.G.spawn('van')
+  c.garage.car.model = 'van'
+  core.setMode('trucking')
+  advance(core, 2)
+  local lines, oldLog = {}, log
+  log = function(_, _, text) lines[#lines + 1] = text end
+  local ok, err = pcall(function()
+    s.phone.online, s.phone.incoming = true, nil
+    s.offers, s.offeredAt, s.offerStats = {}, { lat = 50, lon = 14 }, { pickups = 0, pairs = 0, noDest = 0 }
+    s.offerSearch, s.offerWhyAt = { nearKm = 15 }, nil
+    local st = core.phoneState()
+    assert(st.screen == 'waiting' and st.why and st.why:find('No depots within 15 km', 1, true), tostring(st.why))
+    assert(#lines == 1 and lines[1]:find('no freight offers [empty]', 1, true) and lines[1]:find('class van', 1, true), lines[1])
+    s.offerWhyAt = nil
+    core.phoneState()
+    assert(#lines == 1, 'the same reason is not logged again within a minute')
+    s.offers = { { id = 'x' } }
+    s.offerWhyAt = nil
+    assert(core.phoneState().why == nil and lines[2]:find('offers found again', 1, true))
+  end)
+  log = oldLog
+  assert(ok, err)
+end)
+
 test('the phone skips a resting pickup unless nothing else is in reach', function()
   local core, s = fresh()
   local c = s.career
@@ -2201,6 +2284,71 @@ test('the phone shows the limit under the car, red when too fast, and a camera w
   pose.x, pose.y, pose.z = nil, nil, nil
 end)
 
+test('the live map: roads once per tile, the GPS route, the next stop and home', function()
+  local core, s = fresh()
+  local road = straightRoad(function() return 13.89 end)
+  core.G.graph = function() return road end
+  pose.x, pose.y, pose.z, pose.heading, pose.speed = 0, 0, 0, 90, 10
+  local m = core.phoneMap(nil)
+  assert(m.status == 'ok' and m.car.h == 90 and m.car.kmh == 36)
+  assert(#m.roads == 20 * 5 and m.roads[5] == 1, 'every edge of the street, a street at 50 km/h')
+  assert(core.phoneMap(m.roadsKey).roads == nil, 'the phone keeps the roads it has')
+  assert(m.stops and #m.stops == 0 and m.route == nil, 'no job: no stops, no route')
+  -- no job, but the GPS goes home: its route is drawn
+  local earthNoJob = require('cargoEarth/earth')
+  gpsRoute = {remaining = 300, routeVersion = 1}
+  earthNoJob.routeGeometry = function() return {version = 1, points = {{50, 14}, {50.001, 14}}} end
+  assert(core.phoneMap(m.roadsKey).routeGps, 'the GPS route without a job')
+  earthNoJob.routeGeometry, gpsRoute = nil, nil
+  s.job = {id = 'm1', from = {g = {50.002, 14}, n = 'Shop'}, to = {g = {50, 14.01}, n = 'Customer'}}
+  s.phase = 'toPickup'
+  local other = {id = 'm2', from = {g = {50.003, 14}, n = 'Bakery'}, to = {g = {50, 14.02}, n = 'Office'}}
+  s.orders = {{job = s.job, phase = 'toPickup'}, {job = other, phase = 'toDelivery'}}
+  s.career.home = {g = {50.001, 14}, n = 'Dlouha 1'}
+  m = core.phoneMap(m.roadsKey)
+  local kinds = {}
+  for _, st in ipairs(m.stops) do kinds[st.k] = st end
+  assert(kinds.home and math.abs(kinds.home.y - 111) <= 1, 'home 111 m north')
+  assert(kinds.next and kinds.next.pickup and kinds.next.n == 'Shop', 'the next stop is the pickup')
+  assert(kinds.drop and kinds.drop.n == 'Office', 'the other order goes to its customer')
+  assert(#m.route == 4 and not m.routeGps, 'no GPS line: straight to the next stop')
+  -- BeamNG.Earth's planned route (1.6+): drawn as the GPS has it
+  local earth = require('cargoEarth/earth')
+  gpsRoute = {remaining = 500, routeVersion = 3}
+  local copies = 0
+  earth.routeGeometry = function() copies = copies + 1 return {version = 3, points = {{50, 14}, {50.001, 14}, {50.002, 14.001}}} end
+  m = core.phoneMap(m.roadsKey)
+  assert(m.routeGps and #m.route == 6 and m.route[2] == 0 and m.route[4] == 111, 'from the car on, every point ahead')
+  assert(m.offM == 0 and not m.behind)
+  pose.heading, pose.speed = 180, 10
+  assert(core.phoneMap(m.roadsKey).behind, 'driving south on a route going north')
+  pose.y = 60
+  m = core.phoneMap(m.roadsKey)
+  assert(m.route[2] == 60 and #m.route == 6, 'the part behind the car is gone')
+  pose.y, pose.heading = 0, 90
+  core.phoneMap(m.roadsKey)
+  assert(copies == 1, 'the same route version is not copied again')
+  gpsRoute.routeVersion = 4
+  core.phoneMap(m.roadsKey)
+  assert(copies == 2, 'a new plan is')
+  -- a parcel round on the way to the depot: every address is ahead
+  s.job.route = {at = 1, stops = {{g = {50.001, 14.001}, n = 'A'}, {g = {50.002, 14.002}, n = 'B'}}}
+  local numbered = 0
+  for _, st in ipairs(core.phoneMap(m.roadsKey).stops) do if st.k == 'stop' then numbered = numbered + 1 end end
+  assert(numbered == 2, 'both parcel stops while going to the depot')
+  s.phase = 'toDelivery'
+  numbered = 0
+  for _, st in ipairs(core.phoneMap(m.roadsKey).stops) do if st.k == 'stop' then numbered = numbered + 1 end end
+  assert(numbered == 1, 'then the current one is the next stop')
+  s.job.route, s.phase = nil, 'toPickup'
+  earth.routeGeometry, gpsRoute = nil, nil
+  pose.x, pose.y = 400, 0
+  assert(core.phoneMap(m.roadsKey).roads, 'another tile: the roads again')
+  pose.x, pose.y, pose.z, pose.heading = nil, nil, nil, nil
+  assert(core.phoneMap(nil).car == nil, 'no position: nothing to draw')
+  s.job, s.orders, s.phase = nil, {}, nil
+end)
+
 local firm = require('cargoEarth/firm')
 local fleet = require('cargoEarth/fleet')
 
@@ -2231,6 +2379,7 @@ end)
 test('headquarters, upgrades and what they change', function()
   local c = established()
   assert(firm.found(c, 'Kola'))
+  c.money = 60000
   assert(not firm.upgrade(c, 'bays', 0), 'no upgrades before a headquarters')
   local yard = {id = 'd1', n = 'Sklad Sever', town = 'Brno', g = {50.01, 14}}
   assert(not firm.setHq(c, yard, {lat = 50.01, lon = 14, speed = 10}), 'must be parked')
@@ -2241,7 +2390,7 @@ test('headquarters, upgrades and what they change', function()
   local before = c.money
   assert(firm.capacity(c) == 3 and firm.driverFactor(c) == 1 and firm.repairFactor(c, {lat = 50.0101, lon = 14.0001}) == 1)
   assert(not firm.upgrade(c, 'bays', 10), 'a debt blocks upgrades')
-  assert(firm.upgrade(c, 'bays', 0) and firm.capacity(c) == 5 and c.money == before - 4000)
+  assert(firm.upgrade(c, 'bays', 0) and firm.capacity(c) == 5 and c.money == before - firm.UPGRADES[1].levels[1].cost)
   assert(firm.upgrade(c, 'workshop', 0) and firm.repairFactor(c, {lat = 50.0101, lon = 14.0001}) == 0.85)
   assert(firm.repairFactor(c, {lat = 50.2, lon = 14}) == 1, 'the workshop only works at the headquarters')
   c.money = 100
@@ -2291,12 +2440,12 @@ test('the firm in the game: founded from the phone, headquarters at a real yard,
   local core, s = fresh()
   fuelAdapter(core)
   local c = s.career
-  c.garage.debt, c.money, c.delivered = 0, 30000, 30
+  c.garage.debt, c.money, c.delivered = 0, 60000, 30
   for _ = 1, 5 do rating.add(c, 'freight', 5) end
   local state = core.careerState().firm
   assert(not state.founded and state.ready and state.fee == firm.FEE)
   state = core.firmDo('found', 'Kola')
-  assert(state.founded and state.name == 'Kola' and not state.hq and c.money == 30000 - firm.FEE)
+  assert(state.founded and state.name == 'Kola' and not state.hq and c.money == 60000 - firm.FEE)
   local yard = idx.depots[1]
   pose.lat, pose.lon = yard.g[1] + 0.0003, yard.g[2]
   state = core.firmState()
@@ -2514,7 +2663,7 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   -- the trailer sells back for half
   money = c.money
   core.hqDo('sellTrailer', hq.trailers[1].id)
-  assert(c.money == money + 3000 and #firm.trailers(c) == 0)
+  assert(c.money == money + firm.TRAILERS[1].price / 2 and #firm.trailers(c) == 0)
   -- a tow trailer of the firm's is taken out here and goes on your hitch (Jan: how do I get my own trailer?)
   local tr = require('cargoEarth/trailers')
   local saved = { tr.takeOwn, tr.ownOut, tr.putAwayOwn }
@@ -2987,6 +3136,21 @@ test('bus discovery uses nearby stops and only offers mapped directions', functi
   end
 end)
 
+test('bus lines keep up to MAX_STOPS stops', function()
+  assert(bus.MAX_STOPS == 80, 'the cap matches the helper (it sends at most 80 stops)')
+  local function line(n)
+    local stops = {}
+    for i = 1, n do stops[i] = { n = 'Stop ' .. i, g = { 50 + (i - 1) * 0.004, 14 } } end
+    return { id = 'long' .. n, ref = '9', name = '', stops = stops }
+  end
+  local depot = { g = { 50, 14 } }
+  local j60 = bus.job(line(60), depot)
+  assert(#j60.bus.stops == 60 and j60.cargoName == 'Line 9 to Stop 60', 'a 60-stop line is driven whole')
+  local j100 = bus.job(line(100), depot)
+  assert(#j100.bus.stops == bus.MAX_STOPS and j100.cargoName == 'Line 9 to Stop 80', 'a longer line ends at the cap')
+  assert(j100.pay > j60.pay and j100.minutes > j60.minutes, 'more stops, more time and pay')
+end)
+
 test('bus lines: offers at the depot, passengers on and off, fares', function()
   local idx = bus.index()
   bus.set(idx, busData())
@@ -3149,8 +3313,12 @@ test('bus signs: the line number, the destination in plain letters and the stops
   local data = busData()
   data.lines[1].stops[5][1] = 'Nedomice, Škola u Křížku a kostela'
   data.lines[1].colour = '#ff8800'
+  data.lines[1].textColour = '#000000'
   bus.set(idx, data)
-  local j = bus.board(idx, 50, 14)[1].jobs[1]
+  local offer = bus.board(idx, 50, 14)[1]
+  local j = offer.jobs[1]
+  -- the line's text colour reaches the phone's number badge
+  assert(offer.bus.textColour == '#000000' and j.bus.textColour == '#000000')
   local sg = bus.sign(j)
   assert(sg.routeID == '136' and sg.routeColor == '#ff8800')
   assert(sg.direction == ('Nedomice, Skola u Krizku a kostela'):sub(1, bus.SIGN_CHARS), sg.direction)
@@ -3825,6 +3993,66 @@ test('trade-in credit uses market mileage, deducts repairs and guarantees a quar
     assert(not g.car and g.repair == 0)
 
   end
+end)
+
+test('a car never sells for more than it cost (Jan, 2026-11-22: bought for 1 000, sold for 3 000)', function()
+  local garage = require('cargoEarth/garage')
+  local G = {vehicle = function() return {slotPartMap = {body = 'body'}} end,
+    part = function() return {information = {value = 10000 / garage.PRICE_PER_VALUE}} end,
+    spawn = function() end}
+  -- a cheap worn listing: the parts formula alone would give 5 000 (or the 2 500 floor)
+  local g, c = {car = {km = 0}, repair = 0}, {money = 1000}
+  assert(garage.buyCar(G, g, c, {model = 'etk', name = 'Cheap', price = 1000, km = 0}) and g.car.paid == 1000)
+  assert(garage.tradeInQuote(G, g) == 850, 'resale share of the price ' .. garage.tradeInQuote(G, g))
+  g.car.km = 300000
+  assert(garage.tradeInQuote(G, g) == 850, 'the floor is capped as well')
+  -- parts paid for raise the cap; repairs still come off
+  g.car.km, g.car.partsPaid = 0, 2000
+  assert(garage.tradeInQuote(G, g) == 2550)
+  g.repair = 500
+  assert(garage.tradeInQuote(G, g) == 2500, "the quarter floor still holds under the cap")
+  local ok, _, got = garage.sellCar(G, g, c)
+  assert(ok and got == 2500)
+  -- a fair-priced car is not affected, nor a car with no price on record (starter, older saves)
+  g = {car = {km = 0, paid = 9000}, repair = 0}
+  assert(garage.tradeInQuote(G, g) == 5000)
+  g = {car = {km = 0}, repair = 0}
+  assert(garage.tradeInQuote(G, g) == 5000)
+  -- the car's own parts stripped off sell at the share it was bought at
+  g = {car = {paid = 1000}}
+  garage.noteValue(G, g)
+  assert(g.car.boughtValue == 10000 and garage.ownShare(g.car) == 0.1)
+  local PG = { part = function(_, name) return { information = { name = name, value = 1000 } } end }
+  local car = { model = 'covet', slotPartMap = { b = 'engine' }, ioCtx = {} }
+  local bare = { model = 'covet', slotPartMap = { b = '' }, ioCtx = {} }
+  local q = garage.partsQuote(PG, {}, car.slotPartMap, bare, nil, nil, nil, garage.ownShare(g.car))
+  assert(q.salvage.engine.n == 1 and q.salvage.engine.f == 0.1)
+  q = garage.partsQuote(PG, {}, car.slotPartMap, bare)
+  assert(q.salvage == nil, 'unknown price: full share as before')
+  assert(garage.ownShare({}) == nil and garage.ownShare({paid = 9000, boughtValue = 5000}) == 1)
+  -- spares fitted from the inventory count toward the cap like bought parts (Codex); taking them off removes them
+  local price = garage.partPrice(1000)
+  q = garage.partsQuote(PG, {}, bare.slotPartMap, car)
+  assert(q.cost == price and q.invest == price)
+  q = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car)
+  assert(q.cost == 0 and q.invest == price and q.paid.engine == 1)
+  local off = garage.partsQuote(PG, q.inventory, car.slotPartMap, bare, q.salvage, q.paid)
+  assert(off.invest == -price)
+  q = garage.partsQuote(PG, { engine = 1 }, bare.slotPartMap, car, { engine = { n = 1, f = 0.5 } })
+  assert(q.invest == 1000 * garage.PRICE_PER_VALUE * 0.5, 'a salvage spare counts at its discount')
+  off = garage.partsQuote(PG, q.inventory, car.slotPartMap, bare, q.salvage, q.paid, q.fittedSalvage)
+  assert(off.invest == -1000 * garage.PRICE_PER_VALUE * 0.5)
+  -- the car's own part taken off and fitted again adds nothing to the cap (Codex)
+  off = garage.partsQuote(PG, {}, car.slotPartMap, bare, nil, nil, nil, 0.1)
+  assert(off.salvage.engine.f == 0.1 and off.invest == -1000 * garage.PRICE_PER_VALUE * 0.1)
+  q = garage.partsQuote(PG, off.inventory, bare.slotPartMap, car, off.salvage, off.paid)
+  assert(q.cost == 0 and off.invest + q.invest == 0)
+  -- a worthless original part (value 0) takes nothing off the basis, though the shop's minimum price applies to it
+  local ZG = { part = function(_, name) return { information = { name = name, value = 0 } } end }
+  off = garage.partsQuote(ZG, {}, car.slotPartMap, bare, nil, nil, nil, 0.1)
+  assert(off.invest == 0)
+  g = {car = {km = 0, paid = 1000, partsPaid = -2000}, repair = 0}
+  assert(garage.tradeInQuote(G, g) == 0, 'a stripped car is worth what is left')
 end)
 
 test('buying after a test drive uses the trade-in quote from the owned car', function()
@@ -4882,6 +5110,18 @@ test('a load the mod lost track of is emptied once nothing is on board', functio
   assert(boxes[1].currentVolume == 3, 'passenger seats are left alone')
 end)
 
+test('a load found in the boxes with nothing on board is emptied (a restored car state brings it back)', function()
+  local core, s = mealOnBoard()
+  core.cancel()
+  advance(core, 6)
+  assert(not s.job and boxes[1].currentVolume == 0)
+  -- the car state restored after loading a save puts back the load it was saved with; nobody asked for a sweep
+  boxes[1].currentVolume, boxes[1].targetVolume = 40, 40
+  s.storage, s.sweepWanted, s.sweepAt = nil, nil, 0
+  advance(core, 8)
+  assert(boxes[1].currentVolume == 0, 'the restored load is emptied: ' .. boxes[1].currentVolume)
+end)
+
 test('seat occupants: bus seats, a fixed scattered order, and seating the player', function()
   local occ = require('cargoEarth/occupants')
   local cfg = occ.fillBusSeats({ parts = { citybus_seats = 'citybus_seats', seat_occupant_1RA = 'occupant_generic' } })
@@ -5165,20 +5405,28 @@ test('used-car market: every vehicle kind has eight listings at cheap, middle an
   garage.marketTick(G, old, 0, rnd)
   assert(old.market.list[1].price == 5, 'and only once')
   -- work vehicles cost a share of their value-based price; a new tractor for the firm too
-  assert(garage.kindFactor('car') == 1 and garage.kindFactor('suv') == 1 and garage.kindFactor('van') == 0.5)
-  assert(garage.kindFactor('rigid') == 0.35 and garage.kindFactor('semi') == 0.35)
-  assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.35 / 5 + 0.5) * 5)
+  assert(garage.kindFactor('car') == 1 and garage.kindFactor('suv') == 1 and garage.kindFactor('van') == 0.375)
+  assert(garage.kindFactor('rigid') == 0.26 and garage.kindFactor('semi') == 0.26)
+  assert(garage.newPrice(G, 'us_semi', 'us_semi7') == math.floor(7000 * garage.PRICE_PER_VALUE * 0.26 / 5 + 0.5) * 5)
+  -- a v5 market (old work prices) is repriced once to the cheaper ones: a tractor x 0.26 / 0.35, a car unchanged
+  local v5 = { market = { v = 5, t = 5, seq = 2, list = {
+    { id = 1, model = 'us_semi', key = 'us_semi7', kind = 'semi', name = 't', km = 0, condition = 1, price = 1000, listedAt = 0, gone = 90 },
+    { id = 2, model = 'covet', key = 'covet7', kind = 'car', name = 'c', km = 0, condition = 1, price = 1000, listedAt = 0, gone = 90 } } } }
+  garage.marketTick(G, v5, 0, rnd)
+  assert(v5.market.v == garage.MARKET_V and garage.findListing(v5, 1).price == 745 and garage.findListing(v5, 2).price == 1000)
+  garage.marketTick(G, v5, 0, rnd)
+  assert(garage.findListing(v5, 1).price == 745, 'v5 listings are repriced only once')
   assert(garage.newPrice(G, 'covet', 'covet7') == math.floor(7000 * garage.PRICE_PER_VALUE / 5 + 0.5) * 5)
   -- parts stripped off a discounted truck sell at the truck's discount, so buy-and-strip can't beat the price
   local PG = { part = function(_, name) return { information = { name = name, value = 1000 } } end }
   local truck = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = 'engine' }, ioCtx = {} }
   local stripped = { model = 'us_semi', slotPartMap = { a = 'fifthwheel_top', b = '' }, ioCtx = {} }
   local q = garage.partsQuote(PG, {}, truck.slotPartMap, stripped)
-  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1 and q.salvage.engine.f == 0.35)
+  assert(q.inventory.engine == 1 and q.salvage.engine.n == 1 and q.salvage.engine.f == garage.kindFactor('semi'))
   PG.vehicle = function() return stripped end
   local sg = { inventory = { engine = 2 }, salvage = q.salvage }
   local full = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART / 5 + 0.5) * 5
-  local cheap = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART * 0.35 / 5 + 0.5) * 5
+  local cheap = math.floor(1000 * garage.PRICE_PER_VALUE * garage.SELL_PART * garage.kindFactor('semi') / 5 + 0.5) * 5
   assert(garage.spares(PG, sg)[1].price == cheap)
   local _, _, got = garage.sell(PG, sg, { money = 0 }, 'engine')
   assert(got == cheap and sg.salvage == nil)
@@ -5355,4 +5603,229 @@ test('freight pays the distance rate for a full load and less for a light one', 
   local light = { cargo = 'pallets_general', km = 10, pickupKm = 1 }
   assert(haul.prepare(light, 'van', rowsFor(48), idx))
   assert(light.loadFill == 0.5 and light.pay == math.floor(330 * 0.875 / 5 + 0.5) * 5 and light.loadBonus == light.pay - 330)
+end)
+
+test('Unstuck fixes the car in place for free (company vehicles too), standing still, once per five minutes', function()
+  local core, s = fresh()
+  local g = s.career.garage
+  local fixed = 0
+  core.G.repair = function() fixed = fixed + 1 end
+  g.repair, g.debt, s.career.money = 400, 0, 1000
+  pose.speed = 5
+  assert(not core.unstuckCar() and fixed == 0 and g.repair == 400, 'not while moving')
+  assert(core.phoneState().unstuck.why == 'Stop the car first')
+  pose.speed = 0
+  assert(core.phoneState().unstuck.can)
+  local st = core.phoneAction('unstuck')
+  assert(fixed == 1 and g.repair == 0 and s.career.money == 1000 and (g.debt or 0) == 0, 'free, and no debt for the repair')
+  assert(st.unstuck and not st.unstuck.can and st.unstuck.left > 0)
+  g.repair = 200
+  assert(not core.unstuckCar() and fixed == 1 and g.repair == 200, 'only once per UNSTUCK_S')
+  s.career.unstuckAt = os.time() - require('cargoEarth/garage').UNSTUCK_S - 1
+  assert(core.unstuckCar() and fixed == 2 and g.repair == 0)
+  -- a company vehicle too: the waived damage no longer costs the contract's reputation (Jan)
+  g.car.loaner = true
+  s.career.employment = { phase = 'working', vehicleDamage = 900, jobs = {} }
+  g.repair, g.unstuckAt = 600, nil
+  assert(not core.phoneState().unstuck.can, 'the cooldown is the career\'s, not the garage\'s (company work swaps it)')
+  s.career.unstuckAt = nil
+  assert(core.phoneState().unstuck.can)
+  assert(core.unstuckCar() and fixed == 3 and g.repair == 0 and s.career.employment.vehicleDamage == 300)
+  s.career.employment, g.car.loaner = nil, nil
+  pose.speed = nil
+end)
+
+test('Unstuck gives a bus\'s passengers back the comfort a collision cost them, not harsh driving', function()
+  local bus = require('cargoEarth/bus')
+  local j = { bus = { onBoard = 10, comfort = 100 } }
+  bus.harsh(j)
+  local lost = bus.impact(j, nil, 20000, 10)
+  assert(lost > 0 and bus.comfort(j) == 100 - bus.HARSH_LOSS - lost)
+  assert(bus.forgive(j) == lost and bus.comfort(j) == 100 - bus.HARSH_LOSS, 'the crash is forgiven, the harsh moment is not')
+  assert(bus.forgive(j) == 0, 'only once')
+end)
+
+test('used cars: some come with worn components that lower the price, need fixing and stay driveable', function()
+  local faults = require('cargoEarth/faults')
+  local garage = require('cargoEarth/garage')
+  local upkeep = require('cargoEarth/upkeep')
+  -- plans: a good car is mostly fine, a poor one has a few faults, an electric car has no engine, clutch or oil
+  local good, poor, poorCount = 0, 0, 0
+  for seed = 1, 400 do
+    local a = faults.plan(0.95, faults.seeded(seed))
+    if #a > 0 then good = good + 1 end
+    local b = faults.plan(0.3, faults.seeded(seed + 1000))
+    assert(#b <= faults.MAX)
+    if #b > 0 then poor = poor + 1 end
+    poorCount = poorCount + #b
+    for _, f in ipairs(faults.plan(0.2, faults.seeded(seed + 5000), true)) do
+      assert(f.id ~= 'engine' and f.id ~= 'gearbox' and f.id ~= 'oil', 'an electric car has no ' .. f.id)
+    end
+    for _, f in ipairs(b) do
+      local k = faults.byId[f.id]
+      if k.lo then assert(f.level >= k.lo and f.level <= k.hi, 'a level that keeps the car driveable') end
+    end
+  end
+  assert(good > 10 and good < 100, 'some good cars have one fault: ' .. good)
+  assert(poor > 300 and poorCount > 500, 'poor cars usually have faults: ' .. poor .. ' / ' .. poorCount)
+  assert(faults.electric('Electricity') and faults.electric('Battery') and not faults.electric('Gasoline'))
+
+  -- the price: cheaper by most of the repair, never below 40 %
+  local l = { model = 'covet', kind = 'car', faults = { { id = 'engine', level = 0.5 }, { id = 'tyres' } } }
+  local _, sum = faults.describe(l)
+  assert(sum == faults.cost(l, 'engine') + upkeep.cost(l, 'tyres') and sum > 0)
+  assert(faults.price(10000, l) == 10000 - math.floor(sum * faults.PRICE_SHARE / 5 + 0.5) * 5)
+  assert(faults.price(500, l) == 200, 'never below 40 %')
+  assert(faults.cost({ model = 'us_semi', kind = 'semi' }, 'engine') > faults.cost(l, 'engine'), 'a truck engine costs more')
+
+  -- the market: listings carry faults and the phone gets their names and costs
+  local configs = {}
+  for i = 1, 30 do
+    configs[#configs + 1] = { model = 'covet', key = 'c' .. i, name = 'Covet ' .. i, value = 2000 + i * 300, type = 'Car',
+      bodyStyle = 'Hatchback', fuel = i % 5 == 0 and 'Electric' or 'Gasoline' }
+  end
+  local G = { configs = function() return configs end, spawn = function() end }
+  local seed = 11
+  local rnd = function() seed = (seed * 16807) % 2147483647 return seed / 2147483647 end
+  local g = {}
+  garage.marketTick(G, g, 0, rnd)
+  local withFaults
+  for _, c in ipairs(garage.market(g)) do
+    if c.faults then
+      withFaults = c
+      for _, f in ipairs(c.faults) do assert(f.name and f.cost > 0) end
+    end
+  end
+  assert(withFaults, 'some listings have worn components')
+
+  -- buying: native faults stay on the car, service ones make that service due
+  local listing = garage.findListing(g, withFaults.id)
+  listing.faults = { { id = 'engine', level = 0.55 }, { id = 'brakes', level = 0.8 }, { id = 'tyres' } }
+  local career = { money = 1000000 }
+  assert(garage.buyListing(G, g, career, listing.id))
+  local car = g.car
+  assert(car.faults.engine == 0.55 and car.faults.brakes == 0.8 and car.faults.tyres == nil)
+  local s = upkeep.ensure(car)
+  assert(s.tyres >= upkeep.byId.tyres.every and s.brakes >= upkeep.byId.brakes.every, 'the worn ones are due')
+  local native = faults.native(car)
+  assert(native.engine == 0.55 and native.brakes == 0.8 and native.gearbox == nil)
+  car.faults.engine = 0.1
+  assert(faults.native(car).engine == faults.byId.engine.lo, 'never below the driveable floor')
+  car.faults.engine = 0.55
+  local list, owed = faults.state(car)
+  assert(#list == 2 and owed == faults.cost(car, 'engine'), 'brakes are fixed by their service, not a repair')
+  -- the dealer takes the engine repair off a trade-in
+  local carValue = garage.carValue
+  garage.carValue = function() return 20000 end
+  car.paid = 100000
+  local withEngine = garage.tradeInQuote(G, g)
+  car.faults.engine = nil
+  local fixed = garage.tradeInQuote(G, g)
+  assert(fixed - withEngine == owed, 'trade-in less the repair')
+  car.faults.engine = 0.55
+  garage.carValue = carValue
+
+  -- repairing the engine costs money; servicing the brakes fixes them too
+  local c = { money = 10 }
+  assert(not faults.repair(c, car, 'engine', 1), 'not enough money')
+  assert(not faults.repair(c, car, 'brakes', 1), 'brakes are serviced')
+  c.money = 100000
+  local ok, _, cost = faults.repair(c, car, 'engine', 0.8, 'the fuel station')
+  assert(ok and cost == faults.cost(car, 'engine', 0.8) and c.money == 100000 - cost and car.faults.engine == nil)
+  assert(upkeep.service(c, car, { 'brakes' }, 1))
+  assert(car.faults == nil, 'the brake service fixed the worn brakes')
+end)
+
+test('worn components go on the car through the game\'s own part condition, at driveable levels', function()
+  local gamecar = require('cargoEarth/gamecar')
+  local sent
+  local oldBe, oldGet = be, getObjectByID
+  be = { getPlayerVehicle = function() return { queueLuaCommand = function(_, cmd) sent = cmd end } end }
+  local ok, err = pcall(function()
+    gamecar.applyCondition(12000, 0.5, { engine = 0.5, gearbox = 0.6, brakes = 0.8 })
+    assert(sent, 'a command for the vehicle')
+    -- run it against a stub of the vehicle side
+    local inited, cleared
+    local env = setmetatable({
+      v = { data = {
+        activeParts = { ['/'] = 'car_body', ['/car_engine/'] = 'car_engine', ['/car_transmission/'] = 'car_trans',
+          ['/car_tank/'] = 'car_tank', ['/car_diff/'] = 'car_diff' },
+        activePartsData = {
+          car_body = {},
+          car_engine = { powertrain = { { 'type', 'name' }, { 'combustionEngine', 'mainEngine' }, { 'torsionReactor', 'tr' } } },
+          car_trans = { powertrain = { { 'type', 'name' }, { 'frictionClutch', 'clutch' }, { 'manualGearbox', 'gearbox' } } },
+          car_tank = { powertrain = { { 'type', 'name' }, { 'combustionEngine', 'x' } }, energyStorage = {} },
+          car_diff = { powertrain = { { 'type', 'name' }, { 'differential', 'rear' } } } } } },
+      partCondition = {
+        deleteConditionSnapshots = function() cleared = (cleared or 0) + 1 end,
+        reset = function() cleared = (cleared or 0) + 1 end,
+        initConditions = function(parts, odo, integ, vis) inited = { parts = parts, odo = odo, integ = integ, vis = vis } end },
+      wheels = { wheels = { [0] = { initialBrakeTorque = 1000, brakeTorque = 1000, initialParkingTorque = 500, parkingTorque = 500 } } },
+    }, { __index = _G })
+    local chunk = assert(load(sent, 'vlua', 't', env))
+    chunk()
+    assert(cleared == 2, 'the old condition state is cleared first, so it can run again')
+    assert(inited.odo == 12000000 and inited.integ == 1 and inited.vis == 0.5)
+    local p = inited.parts
+    assert(p['/car_engine/'].integrityValue == 0.5, 'the engine misfires')
+    assert(p['/car_transmission/'].integrityValue == 0.88, 'the gearbox next to the clutch stays at its floor')
+    assert(p['/car_tank/'] == nil, 'a part with a fuel tank is left alone')
+    assert(p['/car_diff/'] == nil and p['/'] == nil, 'other parts are as new')
+    assert(env.wheels.wheels[0].brakeTorque == 800 and env.wheels.wheels[0].parkingTorque == 400, 'worn brakes')
+    -- no faults: the plain condition, as before
+    gamecar.applyCondition(1000, 0.9)
+    inited = nil
+    env.wheels.wheels[0].brakeTorque = 1000
+    assert(load(sent, 'vlua', 't', env))()
+    assert(inited.parts == nil and env.wheels.wheels[0].brakeTorque == 1000)
+    -- serviced brakes are as new again without a reset
+    env.wheels.wheels[0].brakeTorque = 800
+    assert(load(sent, 'vlua', 't', env))()
+    assert(env.wheels.wheels[0].brakeTorque == 1000, 'brake torque restored')
+    -- after a reset the brakes are worn again
+    getObjectByID = function() return { queueLuaCommand = function(_, cmd) sent = cmd end } end
+    gamecar.applyBrakes(0.75, 5)
+    assert(load(sent, 'vlua', 't', env))()
+    assert(env.wheels.wheels[0].brakeTorque == 750)
+  end)
+  be, getObjectByID = oldBe, oldGet
+  assert(ok, err)
+end)
+
+test('insurance: bought standing in your own car, a crash is covered, a write-off is towed home for free', function()
+  local garage = require('cargoEarth/garage')
+  local core, s = fresh()
+  local g = s.career.garage
+  g.debt, g.car.value = 0, 7000
+  advance(core, 2)
+  local out = core.garageDo('insure')
+  assert(g.car.insured and out.insurance.car.insured, out.msg)
+  assert(s.career.money == 1000 - 10, 'first hour charged: ' .. s.career.money)
+  assert(core.phoneState().insured, 'insured mark on the phone footer')
+  -- an hour of play later the next day is billed
+  s.career.activeSeconds = (s.career.activeSeconds or 0) + require('cargoEarth/insurance').BILL_S
+  s.insBillAt = nil
+  advance(core, 1)
+  assert(s.career.money == 1000 - 20, 'second hour: ' .. s.career.money)
+  -- a crash big enough to write the car off
+  damageValue = 1e6
+  advance(core, 2)
+  assert(g.repair == garage.repairCap(g) and g.car.insCover == g.repair, 'covered write-off')
+  local phone = core.phoneState()
+  assert(phone.wreck and phone.wreck.payout == math.floor(g.repair * 0.9 + 0.5) and not phone.wreck.home)
+  s.career.home = { name = 'Home', g = { 50.1, 14.1 } }
+  core.phoneAction('towHome')
+  assert(pose.lat == 50.1 and not core.phoneState().wreck, 'towed home')
+  -- the trip reset the car: the bill is kept and it is no free repair
+  local bill = g.repair
+  damageValue = 0
+  advance(core, 2)
+  assert(g.repair == bill and (g.debt or 0) == 0, 'tow keeps the bill: ' .. tostring(g.repair) .. ' debt ' .. tostring(g.debt))
+  s.career.money = 100000
+  core.G.repair = function() damageValue = 0 end
+  out = core.garageDo('repair')
+  assert(out.msg:find('insurance paid', 1, true) and g.repair == 0 and g.insurance.claims == 1, out.msg)
+  -- a repair right after the tow is not undone by the tow's bill guard (Codex)
+  advance(core, 2)
+  assert(g.repair == 0 and (g.car.insCover or 0) == 0 and s.insTow == nil, 'repair stays paid')
 end)

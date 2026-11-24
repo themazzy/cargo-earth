@@ -127,6 +127,16 @@ function M.route()
   return r
 end
 
+-- The planned GPS route as the map draws it (modding API 1.6): { version, points = { { lat, lon }, ... } }, or nil.
+-- Earth hands out a copy: ask only when gps().routeVersion changes.
+function M.routeGeometry()
+  local a = api()
+  if not has(a, 'routeGeometry') or type(a.gpsRoute) ~= 'function' then return nil end
+  local ok, r = pcall(a.gpsRoute)
+  if ok and type(r) == 'table' and type(r.points) == 'table' then return r end
+  return nil
+end
+
 function M.teleport(lat, lon, name)
   local a = api()
   if not a then return false, 'BeamNG.Earth not installed' end

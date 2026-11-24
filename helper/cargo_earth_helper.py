@@ -22,7 +22,7 @@ API (GET, JSON):
                               "cells": [...], "cameras": [[id, lat, lon, limit km/h (0 = unknown), road class], ...]}
   /v1/buslines?lat=..&lon=..  city bus lines around the point, from OpenStreetMap (route relations, one Overpass
                               request per 0.1 degree cell, kept for 14 days): {"state", "cells", "lines": [{"id",
-                              "ref", "name", "from", "to", "operator", "colour", "km", "stops": [[name, lat, lon], ...]}],
+                              "ref", "name", "from", "to", "operator", "colour", "textColour", "km", "stops": [[name, lat, lon], ...]}],
                               "depots": [{"id", "name", "kind": "station" | "depot", "lat", "lon"}]}
   /v1/radio?cc=CZ&lat=..&lon=..  internet radio stations of the country, from Radio Browser (one request per country a
                               day): {"state": "ready" | "loading" | "failed", "country", "top": [[id, name, stream url,
@@ -38,6 +38,9 @@ API (GET, JSON):
   /v1/sites?lat=..&lon=..     workplaces only (warehouses, yards, shops, fuel depots) in a box SITE_HALF degrees
                               around a far town, for long-distance freight destinations; built in the background and
                               kept on disk: {"state": "ready" | "loading" | "failed", "key", "depots": [as /v1/area's]}
+  /v1/stations?lat=..&lon=..  coach stations (bus stations, else railway stations) in the same box as /v1/sites, for
+                              intercity coach rides: {"state", "key", "stations": [{"id", "n", "g": [lat, lon],
+                              "k": "bus" | "rail", "s": 0-2 (how much the name reads as a station), "town"}, ...]}
   /v1/area?key=r_c            one ready area: {"key", "restaurants": [[id, lat, lon, curbLat, curbLon, name, cat, town],
                               ...], "grocers": [rows in the same format],
                               "fuel": [[id, lat, lon, name, "f" (fuel) | "e" (charger), town], ...],
@@ -70,10 +73,11 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from contextlib import contextmanager
 
-VERSION = "0.10.4"
+VERSION = "0.11.0"
 SITES_CACHE_VERSION = "2"  # /v1/sites: far workplaces for long-distance freight (2: catalogue types "k")
 SITE_GRID = 0.05           # a far town's point is snapped to this grid (one cached box per grid point)
 SITE_HALF = 0.12           # half the size of that box, degrees (about 27 x 17 km in central Europe)
+STATIONS_CACHE_VERSION = "1"  # /v1/stations: coach stations around a town (intercity coach rides)
 SITE_QUEUE = 24            # far boxes waiting at most; older requests drop first
 AREA_CACHE_VERSION = "8"  # 8: workplaces carry their freight catalogue type "k"; retain existing downloaded Parquet blocks
 RELEASE = "2026-10-21.0"
@@ -124,6 +128,42 @@ AUTO_RULES = [
           r"|convention_center|exhibition_center"),
 ]
 AUTO_RX = [(kind, re.compile(pattern)) for kind, pattern in AUTO_RULES]
+# Coach stations for intercity rides: "bus" (bus or coach stations), else "rail" (coaches often stop at the railway
+# station where a town has no bus station in Overture). By the place's Overture category, worldwide.
+STATION_RULES = [
+    ("bus", r"bus_station|coach_station|bus_terminal|coach_terminal|intercity_bus"),
+    ("rail", r"train_station|railway_station"),
+]
+STATION_RX = [(kind, re.compile(pattern)) for kind, pattern in STATION_RULES]
+STATION_SQL_RX = "|".join(pattern for _, pattern in STATION_RULES)
+# Overture files many shops and travel agencies under bus_station, so the name says how sure a row is: "s" 2 = it
+# reads as a coach/bus station or terminal (many languages), 1 = it names a bus, a station or a terminal, 0 = neither.
+STATION_NAME_RX = [
+    (2, re.compile(r"bus ?station|coach ?station|bus ?terminal|coach ?terminal|busbahnhof|zob\b|autobusov|"
+                   r"omnibus|gare routi|estaci[oó]n de autobuses|terminal de (autobuses|[oô]nibus)|rodovi[aá]ri|autostazione|"
+                   r"stazione (degli )?autobus|dworzec autobusowy|autobusni kolodvor|autobusna|busstation|"
+                   r"autobusové|autobusová|otogar|otob[uü]s terminal|flixbus|megabus|greyhound|national express|regiojet|"
+                   r"автовокзал|автостанц|автогара|автобуска|автобусна|κτελ|バスターミナル|汽车站|客运站|버스터미널|"
+                   r"محطة (الحافلات|الباصات)", re.I)),
+    (2, re.compile(r"(^|\s)[UÚ]?AN(\s|$)")),   # Czech/Slovak "AN Holešovice", "ÚAN Florenc" (capitals only)
+    (1, re.compile(r"\bbus\b|autobus|terminal|terminus|station|nádraží|nadrazi|bahnhof|\bgare\b|estaci|dworzec|"
+                   r"kolodvor|stanice|vokzal|вокзал|станц", re.I)),
+]
+
+
+def station_score(name):
+    for score, pattern in STATION_NAME_RX:
+        if pattern.search(name or ""):
+            return score
+    return 0
+
+
+def station_kind(primary, hierarchy, basic):
+    taxonomy = " ".join(str(value or "") for value in (primary, hierarchy, basic)).lower()
+    for kind, pattern in STATION_RX:
+        if pattern.search(taxonomy):
+            return kind
+    return None
 AUTO_SQL_RX = "|".join(pattern for _, pattern in AUTO_RULES)
 
 
@@ -322,7 +362,7 @@ class CacheBudget:
             self.last = time.monotonic()
             pinned = {os.path.normcase(os.path.realpath(p)) for p in pinned}
             files = []
-            for sub, extension in (("blocks", ".blk"), ("areas", ".json"), ("sites", ".json")):
+            for sub, extension in (("blocks", ".blk"), ("areas", ".json"), ("sites", ".json"), ("stations", ".json")):
                 for directory, _, names in os.walk(os.path.join(self.root, sub), followlinks=False):
                     for name in names:
                         if not name.endswith(extension):
@@ -632,6 +672,31 @@ class Builder:
                             "source": "Overture", "access": "candidate"})
         return out
 
+    def stations(self, box):
+        """Coach stations (bus stations, railway stations) in a box: a cheap places-only query."""
+        con, paths = self._con("places/place", box)
+        if not paths:
+            con.close()
+            return []
+        rx = ("regexp_matches(lower(concat_ws(' ', basic_category, taxonomy.primary, "
+              f"array_to_string(taxonomy.hierarchy, ' '))), '{STATION_SQL_RX}')")
+        q = f"""SELECT id, names.primary, basic_category, taxonomy.primary, array_to_string(taxonomy.hierarchy, ' '),
+                       (bbox.ymin + bbox.ymax) / 2, (bbox.xmin + bbox.xmax) / 2, addresses[1].locality
+                FROM read_parquet({paths!r}, union_by_name = true)
+                WHERE {self._where(box)} AND coalesce(operating_status, 'open') = 'open'
+                  AND {rx} AND confidence >= {FUEL_MIN_CONF} AND names.primary IS NOT NULL"""
+        try:
+            rows = con.execute(q).fetchall()
+        finally:
+            con.close()
+        out = []
+        for pid, name, basic, prim, hier, lat, lon, town in rows:
+            name, kind = (name or "").strip(), station_kind(prim, hier, basic)
+            if name and kind and box[1] <= lat < box[3] and box[0] <= lon < box[2]:
+                out.append({"id": "overture:" + str(pid), "n": name, "g": [round(lat, 6), round(lon, 6)], "k": kind,
+                            "s": station_score(name), "town": (town or "").strip()})
+        return out
+
     def addresses(self, box):
         con, paths = self._con("addresses/address", box)
         if not paths:
@@ -936,18 +1001,35 @@ def valid_sites(data, key, release):
                        "depots": rows}, key, release)
 
 
+def valid_stations(data, key, release):
+    if not isinstance(data, dict) or data.get("key") != key or data.get("release") != release:
+        return False
+    rows = data.get("stations")
+    if not isinstance(rows, list):
+        return False
+    for row in rows:
+        g = row.get("g") if isinstance(row, dict) else None
+        if not (isinstance(row, dict) and isinstance(row.get("id"), str) and isinstance(row.get("n"), str)
+                and row.get("k") in ("bus", "rail") and isinstance(g, list) and len(g) == 2
+                and all(type(n) in (int, float) and math.isfinite(n) for n in g) and abs(g[0]) <= 90 and abs(g[1]) <= 180):
+            return False
+    return True
+
+
 class Sites:
     """Workplaces around far towns (long-distance freight destinations): one box per town, built one at a time in the
-    background (a cheap places-only query) and kept on disk like the areas."""
+    background (a cheap places-only query) and kept on disk like the areas. Subclasses serve other places the same
+    way (NAME: cache folder and log name, FIELD: the list in the answer)."""
+    NAME, FIELD, VERSION = "sites", "depots", SITES_CACHE_VERSION
 
     def __init__(self, builder, cache_dir, start=True):
         self.builder = builder
-        self.dir = os.path.join(cache_dir, "sites", builder.index.release, SITES_CACHE_VERSION)
+        self.dir = os.path.join(cache_dir, self.NAME, builder.index.release, self.VERSION)
         os.makedirs(self.dir, exist_ok=True)
         self.state, self.queue, self._fail_at = {}, [], {}
         self.cv = threading.Condition()
         if start:
-            threading.Thread(target=self._work, daemon=True, name="cargo-earth-sites").start()
+            threading.Thread(target=self._work, daemon=True, name="cargo-earth-" + self.NAME).start()
 
     def path(self, key):
         return os.path.join(self.dir, key + ".json")
@@ -955,8 +1037,8 @@ class Sites:
     def _cached(self, key):
         with open(self.path(key), encoding="utf-8") as f:
             data = json.load(f)
-        if not valid_sites(data, key, self.builder.index.release):
-            raise ValueError("invalid cached sites")
+        if not self.valid(data, key):
+            raise ValueError("invalid cached " + self.NAME)
         touch_cache(self.path(key))
         return data
 
@@ -964,19 +1046,22 @@ class Sites:
         key = site_key(lat, lon)
         try:
             data = self._cached(key)
-            return {"state": "ready", "key": key, "depots": data["depots"]}
+            return {"state": "ready", "key": key, self.FIELD: data[self.FIELD]}
         except (OSError, ValueError, TypeError):
             pass
         with self.cv:
             s = self.state.get(key)
             if s and s.startswith("failed") and time.time() < self._fail_at.get(key, 0) + 300:
-                return {"state": "failed", "key": key, "error": s[8:], "depots": []}
+                return {"state": "failed", "key": key, "error": s[8:], self.FIELD: []}
             if s != "loading" and key not in self.queue:
                 self.queue.append(key)
                 del self.queue[:-SITE_QUEUE]
                 self.state[key] = "queued"
                 self.cv.notify()
-        return {"state": "loading", "key": key, "depots": []}
+        return {"state": "loading", "key": key, self.FIELD: []}
+
+    def valid(self, data, key):
+        return valid_sites(data, key, self.builder.index.release)
 
     def build(self, key):
         r, c = map(int, key.split("_"))
@@ -996,8 +1081,8 @@ class Sites:
                 self.state[key] = "loading"
             try:
                 data = self.build(key)
-                if not valid_sites(data, key, self.builder.index.release):
-                    raise ValueError("invalid sites; not published")
+                if not self.valid(data, key):
+                    raise ValueError(f"invalid {self.NAME}; not published")
                 tmp = self.path(key) + f".{threading.get_ident()}.tmp"
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
@@ -1005,38 +1090,101 @@ class Sites:
                 with self.cv:
                     self.state.pop(key, None)
             except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
-                log(f"far sites {key} failed:", repr(e))
+                log(f"far {self.NAME} {key} failed:", repr(e))
                 with self.cv:
                     self._fail_at[key] = time.time()
                     self.state[key] = "failed: " + str(e)[:200]
 
 
+class Stations(Sites):
+    """Coach stations around a town (intercity coach rides): the player's own town and far ones, one box each."""
+    NAME, FIELD, VERSION = "stations", "stations", STATIONS_CACHE_VERSION
+
+    def valid(self, data, key):
+        return valid_stations(data, key, self.builder.index.release)
+
+    def build(self, key):
+        r, c = map(int, key.split("_"))
+        lat, lon = r * SITE_GRID, c * SITE_GRID
+        box = (lon - SITE_HALF, lat - SITE_HALF, lon + SITE_HALF, lat + SITE_HALF)
+        t0 = time.time()
+        rows = self.builder.stations(box)
+        log(f"stations {key}: {len(rows)} in {time.time() - t0:.1f} s")
+        return {"key": key, "release": self.builder.index.release, "stations": rows}
+
+
 ######################################################################################## speed cameras (OpenStreetMap)
 
-OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"]
+# Public Overpass servers (wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances). Any of them can
+# be busy (HTTP 502/504, 429) or slow at a given moment, so a request fails over to the next one.
+OVERPASS = ["https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+            "https://overpass.kumi.systems/api/interpreter"]
 OVERPASS_TIMEOUT_S = 40       # fail over without blocking the queue for minutes per mirror
+OVERPASS_PARALLEL = 2         # requests at once, never two on the same server
+OVERPASS_REST_S = 600         # a server that just failed is asked last for this long
+OVERPASS_RETRY_S = (60, 120, 300)   # an area that failed is asked again after this long (1st, 2nd, later failures)
 OVERPASS_ONE = threading.Condition()
 OVERPASS_WAITING = []
-OVERPASS_ACTIVE = False
+OVERPASS_BUSY = set()
+OVERPASS_HEALTH = {}          # server -> {"ok": time of last answer, "bad": time of last failure}
+
+
+def overpass_order():
+    """Servers best first: the one that answered last, then the others in list order; recently failed ones last."""
+    now = time.time()
+    def rank(item):
+        i, base = item
+        h = OVERPASS_HEALTH.get(base, {})
+        resting = now - h.get("bad", -1e12) < OVERPASS_REST_S and h.get("bad", 0) > h.get("ok", 0)
+        return (resting, -h.get("ok", 0), i)
+    return [base for _, base in sorted(enumerate(OVERPASS), key=rank)]
+
+
+def overpass_mark(base, ok):
+    with OVERPASS_ONE:
+        OVERPASS_HEALTH.setdefault(base, {})["ok" if ok else "bad"] = time.time()
+
+
+def overpass_reason(e):
+    """A short reason a player can read: 'busy (HTTP 502)', 'no answer in 40 s', ..."""
+    if isinstance(e, urllib.error.HTTPError):
+        return {429: "too many requests (HTTP 429)"}.get(e.code, f"busy (HTTP {e.code})" if e.code >= 500 else f"HTTP {e.code}")
+    text = str(e)
+    if isinstance(e, TimeoutError) or "timed out" in text.lower() and "runtime" not in text.lower():
+        return f"no answer in {OVERPASS_TIMEOUT_S} s"
+    return text[:110] or type(e).__name__
 
 
 @contextmanager
-def overpass_slot(priority=1):
-    """One request at a time; the player's bus search goes ahead of background camera downloads."""
-    global OVERPASS_ACTIVE
-    ticket = (priority, time.monotonic(), object())
+def overpass_slot(priority=1, tried=()):
+    """A free server for one request (yields its URL). At most OVERPASS_PARALLEL requests run, one per server; the
+    player's bus search goes ahead of background camera downloads. tried: servers this request already asked."""
+    ticket = (priority, time.monotonic(), object(), frozenset(tried))
+    def free(t):
+        if len(OVERPASS_BUSY) >= OVERPASS_PARALLEL:
+            return []
+        return [b for b in overpass_order() if b not in OVERPASS_BUSY and b not in t[3]]
     with OVERPASS_ONE:
         OVERPASS_WAITING.append(ticket)
-        while OVERPASS_ACTIVE or min(OVERPASS_WAITING, key=lambda t: t[:2]) is not ticket:
-            OVERPASS_ONE.wait()
+        while True:
+            ready = [t for t in OVERPASS_WAITING if free(t)]
+            if ready and min(ready, key=lambda t: t[:2]) is ticket:
+                break
+            OVERPASS_ONE.wait(1)    # also wakes when a resting server's time is up
+        base = free(ticket)[0]
         OVERPASS_WAITING.remove(ticket)
-        OVERPASS_ACTIVE = True
+        OVERPASS_BUSY.add(base)
+        OVERPASS_ONE.notify_all()   # the next waiter may still fit on another server
     try:
-        yield
+        yield base
     finally:
         with OVERPASS_ONE:
-            OVERPASS_ACTIVE = False
+            OVERPASS_BUSY.discard(base)
             OVERPASS_ONE.notify_all()
+
+
 CAMERA_CELL = 0.5          # one Overpass request covers this many degrees
 CAMERA_REACH = 0.15        # cells this close to the player are fetched too, degrees
 CAMERA_DAYS = 30           # a cached cell is asked for again after this long
@@ -1112,7 +1260,7 @@ class OsmCells:
         self.dir = os.path.join(cache_dir, self.NAME)
         os.makedirs(self.dir, exist_ok=True)
         self.fetch = fetch
-        self.state, self.fail_at = {}, {}
+        self.state, self.fail_at, self.fails = {}, {}, {}
         self.details, self.retried_at = {}, {}
         self.lock = threading.Lock()
 
@@ -1122,15 +1270,21 @@ class OsmCells:
     def query(self, box):
         raise NotImplementedError
 
+    def retry_wait(self, key):
+        """Seconds a failed cell waits before it is asked again: short at first, longer when it keeps failing."""
+        return OVERPASS_RETRY_S[min(self.fails.get(key, 1), len(OVERPASS_RETRY_S)) - 1]
+
     def rows(self, data):
         raise NotImplementedError
 
     def _overpass(self, box, progress=lambda **fields: None):
         q = self.query(box)
-        errors = []
-        with overpass_slot(0 if self.NAME == "lines" else 1):
-            for attempt, base in enumerate(OVERPASS, 1):
-                progress(phase="fetching", server=urllib.parse.urlsplit(base).hostname, attempt=attempt)
+        errors, tried = [], []
+        while len(tried) < len(OVERPASS):
+            with overpass_slot(0 if self.NAME == "lines" else 1, tried) as base:
+                tried.append(base)
+                host = urllib.parse.urlsplit(base).hostname
+                progress(phase="fetching", server=host, attempt=len(tried))
                 try:
                     data = json.loads(http_get(base + "?data=" + urllib.parse.quote(q), tries=1,
                                                timeout=OVERPASS_TIMEOUT_S))
@@ -1139,9 +1293,11 @@ class OsmCells:
                         raise ValueError("OpenStreetMap returned an invalid response")
                     if data.get("remark"):
                         raise ValueError(str(data["remark"])[:300])
+                    overpass_mark(base, True)
                     return data
                 except Exception as e2:  # noqa: BLE001 - the next mirror
-                    errors.append(f"{urllib.parse.urlsplit(base).hostname}: {str(e2)[:110] or type(e2).__name__}")
+                    overpass_mark(base, False)
+                    errors.append(f"{host}: {overpass_reason(e2)}")
         raise RuntimeError("; ".join(errors))
 
     def _load(self, key, allow_expired=False):
@@ -1175,11 +1331,13 @@ class OsmCells:
                 self.state[key] = rows
                 self.details[key] = {"phase": "ready"}
                 self.fail_at.pop(key, None)
+                self.fails.pop(key, None)
         except Exception as e:  # noqa: BLE001 - reported to the mod, retried later
             log(f"{self.NAME} {key} failed:", repr(e))
             with self.lock:
                 self.state.pop(key, None)
                 self.fail_at[key] = time.time()
+                self.fails[key] = self.fails.get(key, 0) + 1
                 self.details[key] = {"phase": "failed", "error": str(e)[:300] or type(e).__name__}
 
     def near(self, lat, lon, retry=False):
@@ -1209,7 +1367,7 @@ class OsmCells:
                     rows = self._load(key)
                     if rows is not None:
                         self.state[key] = rows
-                    elif time.time() - self.fail_at.get(key, 0) < 300:
+                    elif time.time() - self.fail_at.get(key, 0) < self.retry_wait(key):
                         rows = "failed"
                     else:
                         rows = self.state[key] = "loading"
@@ -1221,7 +1379,7 @@ class OsmCells:
                 elif rows == "failed":
                     out["failed"] += 1
                     out["errors"].append(detail.get("error", "OpenStreetMap request failed"))
-                    out["retryAfter"] = max(out["retryAfter"], math.ceil(max(0, 300 - (time.time() - self.fail_at[key]))))
+                    out["retryAfter"] = max(out["retryAfter"], math.ceil(max(0, self.retry_wait(key) - (time.time() - self.fail_at[key]))))
                 else:
                     out["loading"] += 1
                     out["queued"] += int(detail.get("phase") == "queued")
@@ -1335,7 +1493,8 @@ def bus_rows(data):
                         "from": str(tags.get("from", "")).strip()[:80] or clean[0][0],
                         "to": str(tags.get("to", "")).strip()[:80] or clean[-1][0],
                         "operator": str(tags.get("operator", "")).strip()[:80],
-                        "colour": str(tags.get("colour", "")).strip()[:16], "km": round(sum(gaps), 2),
+                        "colour": str(tags.get("colour", "")).strip()[:16],
+                        "textColour": str(tags.get("text_colour", "")).strip()[:16], "km": round(sum(gaps), 2),
                         "stops": clean[:80]})
     for e in elements:
         tags = e.get("tags") or {}
@@ -1621,7 +1780,7 @@ class Radio:
 # Two ways to hear a station. 1) The game plays it: the phone's <audio> asks this helper for /v1/stream, which passes
 # the station's stream through (the game's UI browser refuses web streams, but plays what comes from this computer;
 # MP3 and OGG only, it has no AAC). 2) The helper plays it on this computer. Windows: Windows Media Player's engine
-# through PowerShell (the WPF player as a fallback). Elsewhere: ffplay, mpv or VLC if installed. The mod sends a
+# through PowerShell (the WPF player as a fallback). Elsewhere: mpv, ffplay (ffmpeg) or VLC if installed. The mod sends a
 # heartbeat while the radio is on; without one for PLAYER_ALIVE_S the helper stops, so music never outlives the game.
 PLAYER_ALIVE_S = 20
 PLAYER_OPEN_S = 15        # a stream that has not started after this long is given up, with an error the phone shows
@@ -1630,6 +1789,30 @@ STREAM_RECONNECTS = 3     # times a dropped station is reconnected inside one st
 STREAM_LIVE_S = 10        # ... when its connection had been running at least this long
 STREAM_TYPES = ("audio/", "application/ogg", "application/octet-stream")
 STREAMS = threading.BoundedSemaphore(STREAM_MAX)
+PLAYERS = ("mpv", "ffplay", "cvlc")   # outside Windows, the first one found plays
+NO_PLAYER = "no media player on this computer: install mpv, ffmpeg (ffplay) or VLC, then restart the helper"
+RADIO_LOG = []            # the last radio events, for the status page (the console has them too)
+
+
+def radio_log(*a):
+    text = " ".join(str(x) for x in a)
+    log("radio:", text)
+    with NETWORK_LOCK:
+        RADIO_LOG.append(time.strftime("%H:%M:%S ") + text)
+        del RADIO_LOG[:-8]
+
+
+def _host(url):
+    """A station's server name, for the log (never the whole address with its keys)."""
+    try:
+        return urllib.parse.urlsplit(url).hostname or "?"
+    except ValueError:
+        return "?"
+
+
+def _redact(text):
+    """A player's message with every web address cut down to its server name (stations put keys in addresses)."""
+    return re.sub(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s'\"<>]+", lambda m: _host(m.group(0)), text)
 PS_PLAYER = r"""
 $ci = [Globalization.CultureInfo]::InvariantCulture
 $vol = [double]::Parse($env:CARGO_EARTH_VOL, $ci)
@@ -1699,7 +1882,8 @@ class Player:
         self.spawn = spawn or self._spawn
         self.clock = clock
         self.proc, self.url, self.vol, self.alive_at = None, None, 0.6, 0
-        self.started_at, self.pos, self.error, self.kind, self.sound = 0, 0, None, None, False
+        self.started_at, self.pos, self.error, self.kind, self.sound, self.why = 0, 0, None, None, False, None
+        self.generic = False
         self.lock = threading.Lock()
         threading.Thread(target=self._watch, daemon=True).start()
 
@@ -1708,7 +1892,7 @@ class Player:
         import shutil
         if os.name == "nt":
             return "powershell"
-        for name in ("ffplay", "mpv", "cvlc"):
+        for name in PLAYERS:
             if shutil.which(name):
                 return name
         return None
@@ -1717,7 +1901,7 @@ class Player:
         import subprocess
         kind = self.available()
         if not kind:
-            raise OSError("no media player found on this computer")
+            raise OSError(NO_PLAYER)
         import base64
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         env = dict(os.environ, CARGO_EARTH_STREAM=url, CARGO_EARTH_VOL=f"{vol:.2f}")   # data, never code
@@ -1725,15 +1909,31 @@ class Player:
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
                    base64.b64encode(PS_PLAYER.encode("utf-16-le")).decode()]
         elif kind == "ffplay":
-            cmd = ["ffplay", "-nodisp", "-loglevel", "quiet", "-volume", str(int(vol * 100)), url]
+            cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", "-volume", str(int(vol * 100)), url]
         elif kind == "mpv":
-            cmd = ["mpv", "--no-video", "--really-quiet", f"--volume={int(vol * 100)}", url]
+            cmd = ["mpv", "--no-video", "--msg-level=all=error", f"--volume={int(vol * 100)}", url]
         else:
             cmd = ["cvlc", "--quiet", "--play-and-exit", f"--gain={vol:.2f}", url]
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                text=True, bufsize=1, creationflags=flags, env=env)
+        # the players outside Windows say why they failed (no device, a refused stream; mpv on stdout, the others on
+        # stderr): both read as one, kept for the phone
+        err = subprocess.DEVNULL if kind == "powershell" else subprocess.STDOUT
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
+                                text=True, bufsize=1, creationflags=flags, env=env, errors="replace")
         proc.kind = kind
         return proc
+
+    def _read_err(self, proc):
+        for line in proc.stdout:
+            line = _redact(line.strip())
+            if not line:
+                continue
+            with self.lock:
+                if proc is not self.proc:
+                    return
+                self.why = line[:160]
+                if self.generic:       # it ended before saying why: the reason replaces the generic error
+                    self.error, self.generic = f"{proc.kind}: {self.why}", False
+            radio_log(f"{proc.kind}: {line[:200]}")
 
     def _read(self, proc):
         for line in proc.stdout:
@@ -1746,6 +1946,7 @@ class Player:
                     self.sound = self.sound or parts[2] == "1"
                 elif parts and parts[0] == "fail":
                     self.error = ("Windows could not play it: " + " ".join(parts[1:]))[:160]
+                    radio_log(self.error)
 
     def _kill(self):
         proc, self.proc = self.proc, None
@@ -1774,15 +1975,19 @@ class Player:
         with self.lock:
             self._kill()
             self.url, self.vol, self.alive_at = url, max(0.0, min(1.0, vol)), self.clock()
-            self.started_at, self.pos, self.error, self.sound = self.clock(), 0, None, False
+            self.started_at, self.pos, self.error, self.sound, self.why = self.clock(), 0, None, False, None
+            self.generic = False
             try:
                 self.proc = self.spawn(url, self.vol)
                 self.kind = getattr(self.proc, "kind", None)
             except Exception as e:  # noqa: BLE001 - reported to the phone
                 self.error = str(e)
+                radio_log("could not start a player:", e)
                 return self.status()
+            radio_log(f"playing with {self.kind}: {_host(url)}")
             if getattr(self.proc, "stdout", None):
-                threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
+                reader = self._read if self.kind == "powershell" else self._read_err
+                threading.Thread(target=reader, args=(self.proc,), daemon=True).start()
             return self.status()
 
     def volume(self, vol):
@@ -1816,7 +2021,11 @@ class Player:
         proc = self.proc
         running = bool(proc) and proc.poll() is None
         if proc and not running and not self.error:
-            self.error = "the stream stopped or could not be opened"
+            if self.why:
+                self.error = f"{self.kind or 'the player'}: {self.why}"
+            else:   # its reader may not have had its turn yet: a reason arriving later replaces this
+                self.error, self.generic = "the stream stopped or could not be opened", True
+            radio_log(f"{self.kind} stopped (exit {proc.poll()}): {self.error}")
         # Windows' player says when sound comes out ("sound"); the others are taken at their word
         sound = running and (self.sound or self.kind not in ("powershell", None))
         return {"playing": running, "sound": sound, "url": self.url if running else None, "vol": self.vol,
@@ -1973,7 +2182,7 @@ def missing_libraries():
     return [m for m in ("duckdb", "fsspec") if importlib.util.find_spec(m) is None]
 
 
-def status_page(areas, release, port, updates=None):
+def status_page(areas, release, port, updates=None, player=None):
     """The page a player sees at http://127.0.0.1:<port>/: whether the helper works, in plain words."""
     with areas.cv:
         states = dict(areas.state)
@@ -1982,6 +2191,7 @@ def status_page(areas, release, port, updates=None):
     errors = [s[8:] for s in states.values() if s.startswith("failed")]
     with NETWORK_LOCK:
         network = dict(NETWORK)
+        radio_events = list(RADIO_LOG)
     missing = missing_libraries()
     cache = getattr(areas.budget, "stats", {}) or {}
     rows = [("Version", VERSION), ("Port", str(port)), ("Overture release", release),
@@ -1991,6 +2201,12 @@ def status_page(areas, release, port, updates=None):
              "none asked for yet (drive in BeamNG with Cargo Earth)"),
             ("Downloads", f"{network.get('requests', 0)} requests, {network.get('bytes', 0) / 1048576:.1f} MiB"),
             ("Cache", f"{cache.get('bytes', 0) / 1048576:.0f} of {cache.get('limit', 0) / 1048576:.0f} MiB")]
+    no_player = False
+    if player:
+        kind = player.available()
+        no_player = not kind
+        rows.append(("Radio player", {"powershell": "Windows Media Player (through PowerShell)"}.get(kind, kind) if kind
+                     else "none found (the game's own player still works)"))
     up = updates.info() if updates else None
     if up and up["latest"]:
         rows.append(("Newest release", up["latest"] + (" (update available)" if up["helperOutdated"] else " (up to date)")))
@@ -2005,6 +2221,11 @@ def status_page(areas, release, port, updates=None):
     if up and up["helperOutdated"]:
         notes += (f"<p class=bad>Cargo Earth {html.escape(up['latest'])} is out: "
                   f"<a href=\"{html.escape(up['page'])}\">download it from the release page</a>.</p>")
+    if no_player:
+        notes += (f"<p class=bad>Radio: {html.escape(NO_PLAYER)}. Without one, a station the game can't play (AAC, "
+                  "or no sound from the game's browser) stays silent.</p>")
+    if radio_events:
+        notes += "<p>Radio, last events:</p><ul>" + "".join(f"<li>{html.escape(e)}</li>" for e in radio_events) + "</ul>"
     if errors:
         notes += "<p class=bad>Last errors:</p><ul>" + "".join(f"<li>{html.escape(e)}</li>" for e in errors[-5:]) + "</ul>"
     return f"""<!doctype html><html><head><meta charset=utf-8><meta http-equiv=refresh content=5>
@@ -2019,7 +2240,7 @@ td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
 
 
 def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None,
-          buslines=None, sites=None):
+          buslines=None, sites=None, stations=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -2042,11 +2263,14 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                 try:
                     up = urllib.request.urlopen(req, timeout=15)
                 except Exception as e:  # noqa: BLE001 - the phone hears an error and tries the helper's player
+                    radio_log(f"the game's stream from {_host(url)} failed: {e}")
                     return self._send(502, {"error": f"station: {e}"})
                 with up:
                     ctype = (up.headers.get("Content-Type") or "audio/mpeg").split(";")[0].strip().lower()
                     if not ctype.startswith(STREAM_TYPES):
+                        radio_log(f"{_host(url)} sends {ctype}, not audio")
                         return self._send(415, {"error": f"not an audio stream ({ctype})"})
+                    radio_log(f"the game plays {_host(url)} ({ctype})")
                     self.send_response(200)
                     self.send_header("Content-Type", ctype)
                     self.send_header("Cache-Control", "no-store")
@@ -2090,12 +2314,13 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
             try:
                 if u.path in ("/", "/index.html"):
-                    return self._send(200, status_page(areas, release, port, updates), "text/html; charset=utf-8")
+                    return self._send(200, status_page(areas, release, port, updates, player), "text/html; charset=utf-8")
                 if u.path == "/v1/info":
                     with NETWORK_LOCK:
                         network = dict(NETWORK)
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
-                                            "cameras": cameras is not None, "buslines": buslines is not None, "sites": sites is not None, "radio": radio is not None,
+                                            "cameras": cameras is not None, "buslines": buslines is not None, "sites": sites is not None,
+                                            "stations": stations is not None, "radio": radio is not None,
                                             "player": player is not None, "missing": missing_libraries(),
                                             "network": network, "cache": areas.budget.stats,
                                             "update": updates.info() if updates else None})
@@ -2135,6 +2360,8 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     return self._send(200, areas.near(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/sites" and sites:
                     return self._send(200, sites.get(float(q["lat"]), float(q["lon"])))
+                if u.path == "/v1/stations" and stations:
+                    return self._send(200, stations.get(float(q["lat"]), float(q["lon"])))
                 if u.path == "/v1/area":
                     key = q.get("key", "")
                     if not re.fullmatch(r"-?\d+_-?\d+", key):
@@ -2228,7 +2455,8 @@ def main():
         return
     updates = Updates(a.cache, enabled=not a.no_update_check).start()
     serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=Player(), srv=srv,
-          updates=updates, buslines=BusLines(a.cache), sites=Sites(builder, a.cache))
+          updates=updates, buslines=BusLines(a.cache), sites=Sites(builder, a.cache),
+          stations=Stations(builder, a.cache))
 
 
 if __name__ == "__main__":

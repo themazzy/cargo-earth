@@ -21,6 +21,7 @@ local M = {}
 M.USED_CAR = 0.6             -- used cars cost this share of their value
 M.TRADE_IN = 0.5             -- the old car is taken for this share of its parts' value
 M.SELL_PART = 0.4            -- spare parts sell for this share
+M.RESALE = 0.85              -- a dealer never pays more than this share of what you paid for a car and its parts
 M.STARTER_MODEL = 'pigeon'   -- the cheapest config of this model is the starter car
 M.CAR_LIMIT = 3              -- owned cars you can keep before choosing a home (a home sets its own capacity)
 local STARTER_KM, STARTER_CONDITION = 170000, 0.27
@@ -29,13 +30,15 @@ local WEAR_VERSION = 2
 -- Prices follow what deliveries pay. M.scale(income) sets every price from a courier's pay for an hour of play
 -- (M.courierIncome: cargoEarth/food's pay rules for a typical order); the targets are in hours of deliveries.
 M.VALUE_PER_HOUR = 2000      -- an hour of deliveries buys this much BeamNG value (a 10 000 car: 5 hours)
-M.REPAIR_SHARE = 0.18        -- a repair: this share of the value rate per unit of the game's damage
+M.REPAIR_SHARE = 0.11        -- a repair: this share of the value rate per unit of the game's damage (2026-11-22, Jan: was 0.18;
+                             -- Earth's road bugs make repairs a steady cost)
 M.START_HOURS = 1.5          -- money at the start of a career
 M.MIN_PART_HOURS = 0.02      -- the cheapest part (about a minute of deliveries)
 M.REPAIR_CAP = 0.5           -- a repair never costs more than this share of the car's parts value (a wreck is a write-off)
 M.PRICE_V = 2                -- prices' version in saves (1: the first fixed prices)
 
 local haul = require('cargoEarth/haul')
+local faults = require('cargoEarth/faults')
 local function round5(x) return math.floor(x / 5 + 0.5) * 5 end
 
 -- CZK a courier makes in an hour: a typical order (3 km straight from the restaurant, 1.5 km ride to it), a tip for
@@ -165,7 +168,17 @@ function M.carValue(G) return valueOf(G, G.vehicle()) end
 function M.noteValue(G, g, vehicle)
   if not g.car then return end
   local value = valueOf(G, vehicle or G.vehicle())
-  if value > 0 then g.car.value = value end
+  if value > 0 then
+    g.car.value = value
+    if g.car.paid and not g.car.boughtValue then g.car.boughtValue = value end
+  end
+end
+
+-- Share of a part's price that the car's own parts were bought at (nil: not known, e.g. the starter or an older save).
+-- A cheap worn-out listing can't be stripped and its parts sold for more than the car cost.
+function M.ownShare(car)
+  local paid, worth = car and tonumber(car.paid), car and tonumber(car.boughtValue)
+  if paid and worth and worth > 0 then return math.min(1, paid / worth) end
 end
 
 -- The most a repair of the current car can cost, or nil while its value is not known.
@@ -252,13 +265,19 @@ M.FREE_PART = 'cargo_earth_phone_auto' -- the phone on the dashboard (cargoEarth
 -- paid: { [part] = count } parts on this car that were paid at the full price (bought here or fitted from full-price
 -- spares): taking them off again gives full-price spares, not salvage. onSalvage: { [part] = { n, f } } salvage spares
 -- fitted to this car: they keep their discount when taken off again.
-function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage)
+-- ownShare: M.ownShare of the car (its own parts taken off sell at that share as well).
+-- A part's value in CZK without the shop's rounding or minimum: the same measure as a car's value (valueOf), so
+-- the car's own parts taken off can never add up to more than it cost.
+local function rawPrice(value) return (tonumber(value) or 0) * M.PRICE_PER_VALUE end
+
+function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage, ownShare)
   if type(before) ~= 'table' or not vehicle or type(vehicle.slotPartMap) ~= 'table' then
     return nil, 'Waiting for the vehicle parts to load.'
   end
-  local delta, spares, items, total = {}, {}, {}, 0
+  local delta, spares, items, total, invest = {}, {}, {}, 0, 0
   for part, count in pairs(inventory or {}) do spares[part] = count end
   local cheap, factor = {}, M.kindFactor(haul.carrier(vehicle))
+  if tonumber(ownShare) then factor = factor * math.max(0, math.min(1, ownShare)) end
   for part, row in pairs(salvage or {}) do cheap[part] = { n = row.n, f = row.f } end
   local full, onCar = {}, {}
   for part, n in pairs(paid or {}) do full[part] = n end
@@ -293,13 +312,23 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage)
         local fitFull = math.min(owned, math.max(0, pre - row.n))
         local fitCheap = owned - fitFull
         full[part] = (full[part] or 0) + added + fitFull
-        if fitCheap > 0 then addCheap(fitted, fitCheap, row.f) row.n = row.n - fitCheap end
+        invest = invest + M.partPrice(detail.value) * (added + fitFull)
+        if fitCheap > 0 then
+          invest = invest + rawPrice(detail.value) * fitCheap * (row.f or 1)
+          addCheap(fitted, fitCheap, row.f) row.n = row.n - fitCheap
+        end
       elseif removed > 0 then
         -- taken off: salvage fitted earlier first, then parts paid in full, then the car's own parts
         local k1 = math.min(removed, fitted.n)
-        if k1 > 0 then fitted.n = fitted.n - k1 addCheap(row, k1, fitted.f) end
+        if k1 > 0 then
+          invest = invest - rawPrice(detail.value) * k1 * (fitted.f or 1)
+          fitted.n = fitted.n - k1 addCheap(row, k1, fitted.f)
+        end
         local k2 = math.min(removed - k1, full[part] or 0)
         full[part] = (full[part] or 0) - k2
+        invest = invest - M.partPrice(detail.value) * k2
+        -- the car's own parts: their share of the purchase comes off too, so refitting them adds nothing new (Codex)
+        invest = invest - rawPrice(detail.value) * (removed - k1 - k2) * factor
         if factor < 1 then addCheap(row, removed - k1 - k2, factor) end
       end
       if full[part] and full[part] <= 0 then full[part] = nil end
@@ -311,7 +340,9 @@ function M.partsQuote(G, inventory, before, vehicle, salvage, paid, onSalvage)
     end
   end
   table.sort(items, function(a, b) return a.name == b.name and a.part < b.part or a.name < b.name end)
-  return { items = items, cost = total, inventory = spares, salvage = next(cheap) and cheap or nil, paid = next(full) and full or nil,
+  -- invest: what the parts put on (bought or fitted from spares) less those taken off are worth at their price
+  -- (the car's own parts at the share they were bought at); it moves the car's resale cap (car.partsPaid)
+  return { items = items, cost = total, invest = invest, inventory = spares, salvage = next(cheap) and cheap or nil, paid = next(full) and full or nil,
     fittedSalvage = next(onCar) and onCar or nil }
 end
 
@@ -377,27 +408,87 @@ function M.trackDamage(g, damage)
     g.fixUntil = nil
     local freed = before - g.repair
     if not ours and freed > 0 then
-      M.addDebt(g, freed, 'repair', 'Car fixed without paying (game menu repair, reset or respawn)')
-      return 'debt', freed
+      -- an insured crash: the insurer still pays its share, only the rest becomes debt
+      local insurance = require('cargoEarth/insurance')
+      local paid = insurance.quote(g.car, before, freed)
+      insurance.claim(g, g.car, freed / before, paid, nil, 'Car fixed in the game menu')
+      if g.car and (g.repair or 0) <= 0 then g.car.insWreck = nil end   -- fully fixed: no longer a write-off
+      if freed - paid > 0 then
+        M.addDebt(g, freed - paid, 'repair', 'Car fixed without paying (game menu repair, reset or respawn)'
+          .. (paid > 0 and string.format(', insurance paid %d', paid) or ''))
+      end
+      return 'debt', freed - paid, paid
     end
   end
+  require('cargoEarth/insurance').clamp(g.car, g.repair)
   return nil
 end
 
 -- factor: share of the bill actually charged (a firm's workshop at the headquarters), 1 when omitted.
-function M.repairCar(G, g, career, factor)
+-- What the insurer would pay of the repair now (0 without cover). Same factor as repairCar.
+function M.repairInsured(g, factor)
+  local bill = g.repair or 0
+  local cost = round5(bill * math.max(0, math.min(1, tonumber(factor) or 1)))
+  return require('cargoEarth/insurance').quote(g.car, bill, cost), cost
+end
+
+-- insure: claim the covered part from the insurance (raises the premium); false pays it all yourself.
+-- now: play seconds (the claim-free week restarts). Returns ok, message, what you paid, what the insurer paid.
+function M.repairCar(G, g, career, factor, insure, now)
   if (g.repair or 0) <= 0 then return false, 'Nothing to repair' end
-  local cost = round5((g.repair or 0) * math.max(0, math.min(1, tonumber(factor) or 1)))
-  if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK)', cost) end
+  local payout, cost = M.repairInsured(g, factor)
+  if not insure then payout = 0 end
+  local own = cost - payout
+  if (career.money or 0) < own then return false, string.format('Not enough money (%d CZK)', own) end
   M.expectFix(g)
   local ok, err = pcall(G.repair)
   if not ok then g.fixUntil = nil return false, 'Repair failed: ' .. tostring(err) end
-  career.money = career.money - cost
+  career.money = career.money - own
+  local insurance = require('cargoEarth/insurance')
+  insurance.claim(g, g.car, 1, payout, now, 'Repair')
+  if g.car then g.car.insCover, g.car.insWreck = 0, nil end
   require('cargoEarth/damage').clear(g.car)
   g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.carriedRepair = 0, nil
-  g.spent = (g.spent or 0) + cost
-  return true, string.format('Repaired (-%d CZK)', cost), cost
+  g.spent = (g.spent or 0) + own
+  if payout > 0 then
+    return true, string.format('Repaired: insurance paid %d CZK, you paid %d CZK', payout, own), own, payout
+  end
+  return true, string.format('Repaired (-%d CZK)', own), own, 0
+end
+
+-- Unstuck (Jan, 2026-11-22): Earth's roads have bugs (bridge ends held at ground, steps between tiles) that wreck or
+-- trap a car through no fault of the driver. The phone's Unstuck button repairs the car in place for free (your own,
+-- or a company vehicle: core then takes the damage off the contract too): the repairs owed are dropped, but a load
+-- damaged in the crash stays damaged. At most once per UNSTUCK_S of play,
+-- and only standing still, so it is a way out, not free repairs while driving. now: os.time() (saved with the career).
+M.UNSTUCK_S = 300
+M.UNSTUCK_SPEED = 1.5   -- m/s
+-- nil when it can be used now, else why not and the seconds left (0 when time is not the reason).
+-- last: os.time() of the last use (core keeps it on the career: the garage is swapped for company work)
+function M.unstuckBlock(G, g, now, speed, last)
+  if not g.started or not g.car then return 'No career car yet', 0 end
+  if not M.inOwnCar(G, g) then return 'Get in your car first', 0 end
+  local left = math.ceil((last or g.unstuckAt or -math.huge) + M.UNSTUCK_S - (now or 0))
+  if left > M.UNSTUCK_S then left = 0 end   -- the clock went back
+  if left > 0 then return string.format('Unstuck again in %d min', math.ceil(left / 60)), left end
+  if (speed or 0) > M.UNSTUCK_SPEED then return 'Stop the car first', 0 end
+end
+function M.unstuck(G, g, now, speed, last)
+  local why = M.unstuckBlock(G, g, now, speed, last)
+  if why then return false, why end
+  M.expectFix(g)
+  local ok, err = pcall(G.repair)
+  if not ok then g.fixUntil = nil return false, 'Unstuck failed: ' .. tostring(err) end
+  local saved = g.repair or 0
+  g.car.insCover, g.car.insWreck = 0, nil
+  require('cargoEarth/damage').clear(g.car)
+  g.damageBaseline, g.restoringDamage = nil, nil
+  g.repair, g.carriedRepair = 0, nil
+  g.unstuckAt = now or 0
+  local what = g.car.loaner and 'the company vehicle' or 'your car'
+  return true, saved > 0 and string.format('Unstuck: %s is fixed for free (%d CZK of repairs waived)', what, saved)
+    or string.format('Unstuck: %s is back in shape', what), saved
 end
 
 -- Pays as much of the debt as the money allows.
@@ -425,7 +516,7 @@ end
 --   g.debtLog:   what happened, newest first { kind, what, amount (+ added / - paid), left (debt after), at }
 -- Older saves, the debug editor and save fixes can change g.debt alone: debtSync makes the parts match it again.
 M.DEBT_KINDS = {
-  repair = 'Free repairs', fine = 'Speed camera fines', fuel = 'Fuel', roadside = 'Roadside help',
+  repair = 'Free repairs', fine = 'Speed camera fines', insurance = 'Insurance premiums', fuel = 'Fuel', roadside = 'Roadside help',
   earlier = 'Before charges were listed',
 }
 M.DEBT_LOG_MAX, M.DEBT_PARTS_MAX = 30, 40
@@ -574,7 +665,17 @@ function M.tradeInQuote(G, g)
   local fraction = math.min(1, math.max(0, g.car.km or 0) / 80000)
   local floor = math.ceil(value * 0.25 / 5) * 5
   local gross = math.max(floor, round5(value * (M.TRADE_IN - 0.25 * fraction)))
-  return math.max(floor, gross - (g.repair or 0)), gross
+  -- The listing price and the parts' worth come from different BeamNG numbers (a config's value, its parts' values)
+  -- and a worn listing is cheap, so the formula alone could pay more than the car cost (Jan, 2026-11-22: bought for
+  -- 1 000, sold for 3 000). What you paid for the car and its parts caps it.
+  local paid = tonumber(g.car.paid)
+  if paid then
+    -- partsPaid can be negative: the car's own parts taken off and kept as spares
+    local cap = math.max(0, math.floor((paid + (tonumber(g.car.partsPaid) or 0)) * M.RESALE / 5) * 5)
+    floor, gross = math.min(floor, cap), math.min(gross, cap)
+  end
+  -- a misfiring engine or worn gearbox still to repair is taken off (the dealer would have to fix it)
+  return math.max(floor, gross - (g.repair or 0) - faults.repairCost(g.car)), gross
 end
 
 local function captureCurrent(G, g)
@@ -600,7 +701,8 @@ function M.buyForFirm(g, career, offer, limit)
   if M.ownedCount(g) >= limit then return false, 'Every bay is taken. Build more bays or sell a vehicle.' end
   if (career.money or 0) < offer.price then return false, string.format('Not enough money (%d CZK needed).', offer.price) end
   career.money = career.money - offer.price
-  park(g, { model = offer.model, key = offer.key, name = offer.name, km = 0, condition = 1, firm = true })
+  park(g, { model = offer.model, key = offer.key, name = offer.name, km = 0, condition = 1, firm = true,
+    paid = offer.price })
   return true, string.format('%s bought for %d CZK. It is parked at the headquarters.', offer.name, offer.price), offer.price
 end
 
@@ -620,13 +722,23 @@ function M.parkedRepairCost(car)
 end
 
 -- Repairs a parked vehicle picked up (an accident or a breakdown), at the headquarters.
-function M.repairParked(g, career, id, factor)
+-- What the insurer pays of a parked car's repair (crash damage you had insured; never a breakdown).
+function M.parkedInsured(car, factor)
+  local bill = car.parkedRepair or 0
+  return require('cargoEarth/insurance').quote(car, bill, round5(bill * (factor or 1)))
+end
+
+function M.repairParked(g, career, id, factor, now)
   local car = M.parkedCar(g, id)
   if not car then return false, 'That vehicle is not parked here.' end
   local cost = round5(M.parkedRepairCost(car) * (factor or 1))
   if cost <= 0 then return false, car.name .. ' needs no repair.' end
+  local payout = M.parkedInsured(car, factor)
+  cost = cost - payout
   if (career.money or 0) < cost then return false, string.format('Not enough money (%d CZK needed).', cost) end
   career.money = career.money - cost
+  require('cargoEarth/insurance').claim(g, car, 1, payout, now, 'Repair of ' .. tostring(car.name))
+  car.insCover, car.insWreck = 0, nil
   require('cargoEarth/damage').clear(car)
   car.parkedRepair = 0
   if type(car.breakdown) == 'table' then
@@ -634,6 +746,9 @@ function M.repairParked(g, career, id, factor)
     car.breakdown = nil
   end
   if car.driver then car.driver.waiting = nil end
+  if payout > 0 then
+    return true, string.format('%s repaired: insurance paid %d CZK, you paid %d CZK.', car.name, payout, cost), cost
+  end
   return true, string.format('%s repaired for %d CZK.', car.name, cost), cost
 end
 
@@ -759,7 +874,7 @@ function M.buyCar(G, g, career, offer, opts)
   local kept = opts.keepCar and g.car
   if kept then parkCurrent(g) end
   g.car = { model = offer.model, key = offer.key, name = offer.name, parts = nil, km = offer.km or 0,
-    condition = offer.condition or 1 }
+    condition = offer.condition or 1, paid = offer.price }
   g.damageBaseline, g.restoringDamage = nil, nil
   g.repair, g.lastDamage, g.preview, g.carriedRepair = 0, 0, nil, nil
   return true, string.format('Bought %s for %d CZK%s', offer.name, offer.price,
@@ -787,11 +902,15 @@ end
 M.MARKET_LIFE_MIN = { 15, 30 } -- a listing is gone after this many minutes of play
 M.CHEAP_SHARE = 0.5            -- this share of random new listings comes from the cheapest third of its kind
 M.MIN_PER_KIND = 8             -- every kind of vehicle (car, SUV, van, box truck, tractor) has at least this many listings
-M.MARKET_V = 5                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price
+M.MARKET_V = 6                 -- v2: cars only, v3: prices from delivery pay, v4: each listing has its kind, v5: work price,
+                               -- v6: work vehicles a quarter cheaper (2026-11-22)
 -- Work vehicles cost this share of their BeamNG-value price (Jan, 2026-11-18: the first own truck took far too long to
 -- afford and to pay back). Applies to the market, the firm's new vehicles and a vehicle's worth (trade-in, sale,
 -- repair cap). Cars and SUVs keep their price: it follows food pay.
-M.WORK_PRICE = { van = 0.5, rigid = 0.35, semi = 0.35 }
+-- 2026-11-22 (Jan: the climb is grindy enough, and Earth's road bugs make repairs a steady cost): a quarter cheaper,
+-- van 0.5 -> 0.375, box truck and tractor 0.35 -> 0.26.
+M.WORK_PRICE = { van = 0.375, rigid = 0.26, semi = 0.26 }
+local WORK_PRICE_V5 = { van = 0.5, rigid = 0.35, semi = 0.35 }   -- market v5 listings were priced with these
 function M.kindFactor(kind) return M.WORK_PRICE[kind] or 1 end
 
 -- The configs for sale by kind, cheapest first ({ car = {...}, suv = {...}, ... }). Built once per config list.
@@ -861,10 +980,14 @@ local function newListing(G, m, rnd, kind, band)
   local condition = math.max(0.15, math.min(1, 1 - km / 450000 - rnd() * 0.35))
   local price = round5(tonumber(c.value) * M.PRICE_PER_VALUE * M.kindFactor(kind) * (0.3 + 0.55 * condition) * (0.88 + 0.24 * rnd()))
   m.seq = (m.seq or 0) + 1
-  return { id = m.seq, model = c.model, key = c.key, name = (c.brand and (c.brand .. ' ') or '') .. (c.name or c.key),
+  local l = { id = m.seq, model = c.model, key = c.key, name = (c.brand and (c.brand .. ' ') or '') .. (c.name or c.key),
     kind = kind, band = bandOf(list, idx),
     km = km, condition = math.floor(condition * 100 + 0.5) / 100, price = price,
     listedAt = m.t, gone = m.t + M.MARKET_LIFE_MIN[1] + rnd() * (M.MARKET_LIFE_MIN[2] - M.MARKET_LIFE_MIN[1]) }
+  -- worn or faulty components (their own random numbers: the market's stay as they were), cheaper by their repair
+  l.faults = faults.plan(l.condition, faults.seeded(m.seq * 7919 + km + idx), faults.electric(c.fuel))
+  l.price = faults.price(price, l)
+  return l
 end
 
 -- Eight slots per available category, with price variety and a protected test-drive selection.
@@ -910,16 +1033,17 @@ end
 function M.marketTick(G, g, dtMin, rnd)
   rnd = rnd or math.random
   local m = g.market
-  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= 4 and m.v ~= M.MARKET_V) then
+  if type(m) ~= 'table' or (m.v ~= 3 and m.v ~= 4 and m.v ~= 5 and m.v ~= M.MARKET_V) then
     m = { v = M.MARKET_V, t = 0, seq = 0, list = {} }
     g.market = m
   end
   m.t = m.t + (dtMin or 0)
-  local reprice = m.v ~= M.MARKET_V   -- listings from before the work-vehicle prices
+  local reprice = m.v ~= M.MARKET_V   -- listings from before the current work-vehicle prices
+  local was = m.v == 5 and WORK_PRICE_V5 or {}
   for i = #m.list, 1, -1 do
     local l = m.list[i]
     l.kind = l.kind or kindOf(G, l.model, l.key)
-    if reprice and tonumber(l.price) then l.price = round5(l.price * M.kindFactor(l.kind)) end
+    if reprice and tonumber(l.price) then l.price = round5(l.price * M.kindFactor(l.kind) / (was[l.kind] or 1)) end
     if not l.band then
       local list = kindPools(G)[l.kind] or {}
       for n, c in ipairs(list) do
@@ -943,12 +1067,26 @@ function M.market(g, filter)
     if not filter or l.name:lower():find(filter, 1, true) then
       out[#out + 1] = { id = l.id, model = l.model, key = l.key, name = l.name, km = l.km, condition = l.condition,
         missing = l.wearVersion == WEAR_VERSION and l.missing and #l.missing or nil, kind = l.kind,
+        faults = M.listingFaults(l),
         price = l.price, isNew = (m.t - l.listedAt) < 15, held = g.preview and g.preview.id == l.id or nil,
         leftS = math.max(0, math.ceil((l.gone - m.t) * 60)), leftMin = math.max(0, math.floor(l.gone - m.t + 0.5)) }
     end
   end
   table.sort(out, function(a, b) if a.price ~= b.price then return a.price < b.price end return a.id < b.id end)
   return out
+end
+
+-- A listing's worn components for the phone ({ id, name, text, cost }), nil when it has none.
+function M.listingFaults(l)
+  local list = faults.describe(l)
+  return #list > 0 and list or nil
+end
+
+-- What the game applies to a listing while you look at it (the same as once it is yours).
+function M.listingNative(l)
+  local car = {}
+  faults.onBuy(car, l.faults)
+  return faults.native(car)
 end
 
 local function findListing(g, id)
@@ -978,6 +1116,7 @@ function M.buyListing(G, g, career, id, keepCar)
     table.remove(g.market.list, i)
     if g.market.v == M.MARKET_V then M.marketTick(G, g, 0) end
     g.preview = nil
+    faults.onBuy(g.car, l.faults)
     if here then
       g.car.wearVersion = l.wearVersion
     else
@@ -1224,7 +1363,7 @@ function M.previewReady(G, g, rnd)
   p.ready, p.error = ready, why
   if ready then
     l.missing, l.finish, l.wearVersion = p.missing, p.finish, p.wearVersion
-    if G.applyCondition then pcall(G.applyCondition, l.km, l.condition) end
+    if G.applyCondition then pcall(G.applyCondition, l.km, l.condition, M.listingNative(l)) end
   end
   return ready
 end

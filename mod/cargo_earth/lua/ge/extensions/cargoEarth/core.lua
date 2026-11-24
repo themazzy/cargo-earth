@@ -5,7 +5,7 @@
 -- Everything is clicked on the phone (the UI app): orders, the garage and the settings. The debug window opens from
 -- the phone's settings (or the console: extensions.cargoEarth_core.toggleWindow()). No key bindings.
 local M = {}
-M.VERSION = '0.10.4'      -- the mod's version (package.json has the same; the support report shows it)
+M.VERSION = '0.11.0'      -- the mod's version (package.json has the same; the support report shows it)
 M.CAMERAS_PAUSED = true  -- temporarily suspended: no downloads, alerts, fines or lost stars
 M.dependencies = { 'ui_imgui' }
 
@@ -52,6 +52,8 @@ M.RULES = {
   courier = { arriveM = 30, stopS = 5, cancelFee = 50 },
   trucking = { arriveM = 35, stopS = 3, cancelFee = 2000 },
   bus = { arriveM = 30, stopS = 1, cancelFee = 0 },   -- city bus lines (cargoEarth/bus): doors open from the phone
+  -- intercity coaches (cargoEarth/coach): a station's point is the middle of its building or yard, not a bus bay
+  coach = { arriveM = 60, stopS = 1, cancelFee = 0 },
 }
 M.COUNTRY_S = 5   -- seconds between border checks
 M.TOW_RULES = { arriveM = 30, stopS = 3, cancelFee = 200 }
@@ -179,7 +181,19 @@ local function refreshStorage()
     storage.readAt = S.clock + 2
     if not G.readCargoBoxes(id, function(rows)
       -- A delayed reply from a different vehicle or configuration is stale.
-      if S.storage == storage then storage.rows, storage.boxes = rows, cargo.boxes(rows) end
+      if S.storage ~= storage then return end
+      storage.rows, storage.boxes = rows, cargo.boxes(rows)
+      -- nothing on board but a container still holds a load (a restored car state brings back the load it was saved
+      -- with): it would leave no room for freight, so it is emptied (M.sweepCargo, passenger seats aside)
+      if not S.job and #S.orders == 0 and type(rows) == 'table' then
+        for _, row in ipairs(rows) do
+          if type(row) == 'table' and ((tonumber(row.targetVolume) or 0) > 0.01 or (tonumber(row.currentVolume) or 0) > 0.01) then
+            local seats = type(row.cargoTypes) == 'table' and #row.cargoTypes > 0
+            for _, t in ipairs(type(row.cargoTypes) == 'table' and row.cargoTypes or {}) do if t ~= 'passenger' then seats = false end end
+            if not seats then S.sweepWanted = true break end
+          end
+        end
+      end
     end) then
       storage.boxes = {}
     end
@@ -359,7 +373,7 @@ end
 local function rules(job)
   if job and job.kind == 'tow' then return M.TOW_RULES end
   if job and job.kind == 'taxi' then return M.TAXI_RULES end
-  if job and job.kind == 'bus' then return M.RULES.bus end
+  if job and job.kind == 'bus' then return job.bus and job.bus.coach and M.RULES.coach or M.RULES.bus end
   return M.RULES[(job and job.kind == 'food') and 'courier' or (job and 'trucking') or S.mode]
 end
 local function arrivalRadius(job)
@@ -1070,6 +1084,7 @@ function M.generate()
     for k, v in pairs(S.opts) do options[k] = v end
     for k, v in pairs(M.jobOptions('courier')) do options[k] = v end
     S.offers, S.offerStats = food.generate(S.fidx, options, p.lat, p.lon, nil, plan and plan.maxFree or 1, roadKmFn(p))
+    S.offerSearch = { nearKm = options.nearKm, minKm = options.minKm, maxKm = options.maxKm }
   elseif S.mode == 'taxi' then
     S.offers, S.offerStats = {}, nil
     local state = M.taxiState()
@@ -1105,7 +1120,11 @@ function M.generate()
     if tier and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or rows) then
       -- an ordinary car or an SUV takes no company freight board: its own small work comes below
       local offers, stats = {}, nil
-      if not haul.SMALL[tier] then offers, stats = jobs.generate(S.idx, haul.options(tier, freightOptions(tier), rows), p.lat, p.lon) end
+      if not haul.SMALL[tier] then
+        local o = haul.options(tier, freightOptions(tier), rows)
+        offers, stats = jobs.generate(S.idx, o, p.lat, p.lon)
+        S.offerSearch = { nearKm = o.nearKm, minKm = o.minKm, maxKm = o.maxKm }
+      end
       -- Freight customers pay a carrier by its reputation.
       local factor = rating.freightPay(S.career)
       local ownTruck = S.career.garage.car and not S.career.garage.car.loaner
@@ -1119,7 +1138,9 @@ function M.generate()
       end
       -- parts runs in an SUV or a pickup: from a parts supplier to a repair workshop
       if tier == 'suv' and rows then
-        for _, offer in ipairs(M.partsOffers(p, haul.capacity(rows, 'parcel'), M.jobOptions('parts'))) do offers[#offers + 1] = offer end
+        local parts = M.partsOffers(p, haul.capacity(rows, 'parcel'), M.jobOptions('parts'))
+        for _, offer in ipairs(parts) do offers[#offers + 1] = offer end
+        stats = { parts = true, pairs = #parts }   -- an SUV's search is the parts runs (cargoEarth/offerwhy)
       end
       -- parcel routes from the nearest depots to real addresses: vans only (box trucks do business shipping)
       if parcel.TIERS[tier] and rows and S.fidx then
@@ -1172,6 +1193,7 @@ function M.generate()
     end
   end
   S.offeredAt = { lat = p.lat, lon = p.lon }
+  if #S.offers == 0 then S.offerWhyAt = nil M.offerWhy() end   -- a fresh search: say why at once (and log it)
 end
 
 function M.setMode(m)
@@ -1650,6 +1672,9 @@ local function finishDelivery(force)
     pay, tip, tipWhy = require('cargoEarth/taxi').settle(j, j.pay, minutes, j.minutes, perMin, M.LATE_FLOOR, condition, food.tip)
   end
   local c = S.career
+  local restedExtra
+  pay, restedExtra = home.restedPay(c, pay)
+  j.restedExtra = restedExtra > 0 and restedExtra or nil
   local toDebt = 0
   if j.companyShift then
     if not employment.delivered(c, j, pay + tip) then return end
@@ -1744,6 +1769,7 @@ end
 
 function M.busFetch(p)
   if S.mode ~= 'bus' or (S.job and not M.busNamesNeedRefresh()) or not p or S.clock < (S.busAskAt or 0) then return end
+  if S.busKind == 'coach' and not S.job then return end   -- the Coaches list asks for stations instead
   S.busAskAt = S.clock + M.BUS_ASK_S
   S.busIdx = S.busIdx or require('cargoEarth/bus').index()
   local retry = S.busRetry and '&retry=1' or ''
@@ -1763,6 +1789,55 @@ function M.busFetch(p)
     local here = earth.pose()
     if here then S.busBoard = bus.board(S.busIdx, here.lat, here.lon) end
   end, '/v1/buslines')
+end
+
+-- Intercity coaches (cargoEarth/coach): stations near you and in far towns from the helper (/v1/stations), while the
+-- Bus page shows Coaches.
+function M.coachTick(p)
+  if S.mode ~= 'bus' or S.busKind ~= 'coach' or S.job or S.career.employment or not p then return end
+  local coach, longhaul = require('cargoEarth/coach'), require('cargoEarth/longhaul')
+  if not S.cities then
+    local ok, data = pcall(jsonReadFile, DATA_DIR .. 'cities.json')
+    S.cities = longhaul.cities(ok and data or nil)
+  end
+  S.coach = S.coach or {}
+  local range = M.jobOptions('coach')
+  coach.tick(S.coach, S.clock, p, range, S.cities, helper.ask)
+  S.coachBoard, S.coachFrom = coach.board(S.coach, p, range)
+end
+
+-- The coach rides for the phone (the Bus page's Coaches list).
+function M.coachState(p)
+  local coach, bus = require('cargoEarth/coach'), require('cargoEarth/bus')
+  local st = coach.status(S.coach)
+  local out = { status = st, rides = {}, helper = helper.status().state, range = M.jobOptions('coach'),
+    from = S.coachFrom and { n = S.coachFrom.n, rail = S.coachFrom.k == 'rail' or nil } or nil }
+  local share = employment.shareFor('bus', S.career)
+  local function money(x) return math.floor((x or 0) * share / 5 + 0.5) * 5 end
+  local byRide = {}
+  for _, o in ipairs(S.coachBoard or {}) do
+    local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
+    local row = byRide[o.bus.ride]
+    if not row then
+      row = { name = o.bus.name, from = o.bus.from, to = o.bus.to, town = o.bus.town, rail = o.bus.station == 'rail' or nil,
+        depot = o.yard.n, depotM = km and math.floor(km * 1000 + 0.5), seats = bus.COACH.SEATS }
+      byRide[o.bus.ride] = row
+      out.rides[#out.rides + 1] = row
+    end
+    -- one way and the return trip, each with its own button
+    local leg = { id = o.id, km = math.floor(o.km + 0.5), minutes = o.minutes, pay = money(o.gross), fares = money(o.fares) }
+    if o.bus.back then row.back = leg else
+      row.id, row.km, row.minutes, row.pay, row.fares = leg.id, leg.km, leg.minutes, leg.pay, leg.fares
+    end
+  end
+  return out
+end
+
+-- An offer of the bus board or the coach board, by id.
+function M.busOffer(id)
+  for _, list in ipairs({ S.busBoard or {}, S.coachBoard or {} }) do
+    for _, offer in ipairs(list) do if offer.id == id then return offer end end
+  end
 end
 
 -- The phone and upper overlay share this stop state and the boarding clock.
@@ -1787,18 +1862,19 @@ end
 function M.busState()
   local bus, c, p = require('cargoEarth/bus'), S.career, earth.pose()
   local shift = c.employment
-  local out = { state = S.busIdx and S.busIdx.state or 'loading', helper = helper.status().state, collectFee = bus.COLLECT_FEE }
+  local out = { state = S.busIdx and S.busIdx.state or 'loading', helper = helper.status().state, collectFee = bus.COLLECT_FEE,
+    kind = S.busKind == 'coach' and 'coach' or 'lines' }
   out.progress, out.error = S.busIdx and S.busIdx.progress, S.busIdx and S.busIdx.error
   out.found = S.busIdx and #(S.busIdx.lines or {}) or 0
   out.nearestKm = S.busIdx and S.busIdx.nearestKm
   out.radiusKm = bus.NEAR_KM
   if S.busDepot and not shift then
     local d = S.busDepot
-    out.selected = {id = d.offer.id, name = d.offer.jobs[1].cargoName, depot = d.offer.yard.n,
+    out.selected = {id = d.offer.id, name = d.offer.jobs[1].cargoName, depot = d.offer.yard.n, coach = d.offer.coach,
       leftS = math.max(0, math.ceil(bus.PARK_S - (d.parked or 0))), error = d.error}
   end
   if shift and shift.tier == 'bus' then
-    out.shift = { name = shift.companyName, depot = shift.yard.n, phase = shift.phase, error = S.companyError,
+    out.shift = { name = shift.companyName, depot = shift.yard.n, phase = shift.phase, error = S.companyError, coach = shift.coach,
       atDepot = employment.atYard(c, p), handover = shift.handover }
   end
   if S.job and S.job.bus then
@@ -1807,14 +1883,15 @@ function M.busState()
     out.canDoors, out.stop = stop and stop.canDoors, stop
     return out
   end
+  if out.kind == 'coach' and not shift then out.coach = M.coachState(p) end
   out.lines = {}
-  for _, o in ipairs(not shift and S.busBoard or {}) do
+  for _, o in ipairs(not shift and out.kind == 'lines' and S.busBoard or {}) do
     local km = p and jobs.km(p.lat, p.lon, o.yard.g[1], o.yard.g[2])
     out.lines[#out.lines + 1] = { id = o.id, ref = o.bus.ref, name = o.bus.name, from = o.bus.from, to = o.bus.to,
       singleDirection = o.bus.singleDirection, limited = o.bus.limited, stops = o.bus.stops, km = math.floor(o.km * 10 + 0.5) / 10, pay = math.floor(o.gross * employment.shareFor('bus', S.career) / 5 + 0.5) * 5,
       fares = math.floor((o.fares or 0) * employment.shareFor('bus', S.career) / 5 + 0.5) * 5, minutes = o.minutes, depot = o.yard.n,
-      depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= bus.DEPOT_RADIUS and not p.camera
-        and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour }
+      depotM = km and math.floor(km * 1000 + 0.5), atDepot = km and km * 1000 <= bus.depotRadius(o) and not p.camera
+        and (p.speed or 0) <= M.STOP_SPEED or nil, operator = o.name, colour = o.bus.colour, textColour = o.bus.textColour }
   end
   out.message = S.contractMsg and S.clock - S.contractMsg.at < 8 and S.contractMsg.text or nil
   return out
@@ -1976,7 +2053,7 @@ end
 -- A stop the bus cannot reach: skipped, unpaid, and the line goes on (or ends, at the last stop).
 function M.busSkip()
   local j = S.job
-  if not (j and j.bus) or S.busDwell then return end
+  if not (j and j.bus) or j.bus.coach or S.busDwell then return end   -- a coach has only its two stations
   local bus = require('cargoEarth/bus')
   local name, last = j.bus.stops[j.bus.at].n, bus.last(j)
   bus.skip(j, M.elapsed(j))
@@ -2440,6 +2517,28 @@ function M.nearContracts(p)
   return out
 end
 
+-- Why this vehicle gets no freight of its own (shown under "Looking for orders" and logged), nil when it can.
+function M.freightHint(v, tier, rows)
+  if not v or not tier then
+    return 'Take a contract: park at its yard and the company gives you its vehicle.'
+  elseif tier == 'car' then
+    local style = type(v.bodyStyle) == 'string' and v.bodyStyle ~= '' and (' (body style ' .. v.bodyStyle .. ')') or ''
+    return 'This vehicle counts as a car' .. style .. ': no freight board. Tow jobs with a tow hitch, or a company '
+      .. 'contract below. Choose Taxi for passenger rides.'
+  elseif tier == 'suv' and rows and haul.capacity(rows, 'parcel') < 4 then
+    return 'Fit cargo boxes in the bed or boot for parts runs, or take a contract.'
+  elseif not haul.allowed(S.career, tier) then
+    return 'This truck unlocks after completing the earlier stage.'
+  elseif tier ~= 'semi' and not rows then
+    return 'Checking fitted cargo containers…'
+  elseif tier == 'van' and haul.capacity(rows, 'parcel') < 8 then
+    return string.format('Fit parcel boxes with at least 8 free slots (%d free now).', haul.capacity(rows, 'parcel'))
+  elseif tier == 'rigid' and haul.capacity(rows, 'parcel') < 8 and haul.capacity(rows, 'fluid') < 100
+    and haul.capacity(rows, 'dryBulk') < 100 then
+    return 'Fit parcel boxes, a fluid tank, or aggregate storage for freight.'
+  end
+end
+
 local function truckingState()
   local out = haul.state(S.career)
   local g = S.career.garage
@@ -2452,24 +2551,7 @@ local function truckingState()
     -- no van or truck of your own: company contracts, the company's van is handed over at its yard
     out.contracts = not S.job and not g.preview and M.nearContracts(earth.pose()) or {}
   end
-  if not v or not tier then
-    out.hint = 'Take a contract: park at its yard and the company gives you its vehicle.'
-  elseif tier == 'car' then
-    out.hint = 'Tow jobs with a tow hitch, or a company contract below. Choose Taxi for passenger rides.'
-  elseif tier == 'suv' and rows and haul.capacity(rows, 'parcel') < 4 then
-    out.hint = 'Fit cargo boxes in the bed or boot for parts runs, or take a contract.'
-  elseif not haul.allowed(S.career, tier) then
-    out.hint = 'This truck unlocks after completing the earlier stage.'
-  elseif tier ~= 'semi' and not rows then
-    out.hint = 'Checking fitted cargo containers…'
-  elseif tier == 'van' and haul.capacity(rows, 'parcel') < 8 then
-    out.hint = 'Fit parcel boxes with at least 8 free slots.'
-  elseif tier == 'rigid' and haul.capacity(rows, 'parcel') < 8 and haul.capacity(rows, 'fluid') < 100
-    and haul.capacity(rows, 'dryBulk') < 100 then
-    out.hint = 'Fit parcel boxes, a fluid tank, or aggregate storage for freight.'
-  elseif S.offerStats and S.offerStats.pairs == 0 then
-    out.hint = 'No compatible routes nearby. Try a different depot area or widen the distance filters.'
-  end
+  out.hint = M.freightHint(v, tier, rows)
   local cm = S.contractMsg
   if cm and (S.clock or 0) - cm.at > M.CONTRACT_MSG_S then S.contractMsg, cm = nil, nil end
   out.error = S.freightSetupError or (cm and not S.career.employment and cm.text) or nil
@@ -2540,12 +2622,15 @@ function M.placesState()
     S.companyBoardDirty, S.nextBoardAt = nil, S.clock + 2
   end
   local c, p = S.career, earth.pose()
-  local out = { home = c.home, addresses = S.homeAddresses or {}, selected = S.selectedHome,
+  local out = { home = c.home,
     companies = {}, msg = S.placesMsg, status = earth.status(), busy = S.job ~= nil or S.parts ~= nil,
     started = c.garage.started, blocked = S.pendingCareer ~= nil, last = c.lastContract,
     discovery = helper.status() }
   if c.home then
-    out.atHome, out.used = home.near(c, p), home.count(c.employment and c.employment.personalGarage or c.garage)
+    local pg = c.employment and c.employment.personalGarage or c.garage
+    out.homeInfo = home.state(c, p, pg.debt or 0)
+    out.money = math.floor(c.money or 0)
+    out.atHome, out.used = home.near(c, p), home.count(pg)
     out.capacity = firm.capacity(c)
     out.homeKm = p and jobs.km(p.lat, p.lon, c.home.g[1], c.home.g[2]) or nil
   end
@@ -2615,9 +2700,9 @@ local function companyStart(id, independent)
   if earth.status() ~= 'ok' or not p or p.camera or (p.speed or 0) > M.STOP_SPEED then return false, 'Park at the company yard first.' end
   local offer
   for _, row in ipairs(S.companyBoard or {}) do if row.id == id then offer = row break end end
-  for _, row in ipairs(not offer and S.busBoard or {}) do if row.id == id then offer = row break end end
+  offer = offer or M.busOffer(id)
   if not offer then return false, 'Refresh the company board.' end
-  local radius = offer.tier == 'bus' and require('cargoEarth/bus').DEPOT_RADIUS or employment.RADIUS
+  local radius = offer.tier == 'bus' and require('cargoEarth/bus').depotRadius(offer) or employment.RADIUS
   if jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) * 1000 > radius then
     return false, 'Drive to the company yard, then park to start.'
   end
@@ -2647,8 +2732,9 @@ local function companyStart(id, independent)
   local preset, config = haul.loaners[want], nil
   if want == 'bus' then
     local key
-    config, key = M.G.busLoanerConfig and M.G.busLoanerConfig()
-    preset = { model = haul.loaners.bus.model, key = key, name = haul.loaners.bus.name, label = haul.loaners.bus.label }
+    local lent = offer.coach and haul.loaners.coach or haul.loaners.bus
+    config, key = M.G.busLoanerConfig and M.G.busLoanerConfig(offer.coach)
+    preset = { model = lent.model, key = key, name = lent.name, label = lent.label }
   else
     config = M.G.freightLoanerConfig and M.G.freightLoanerConfig(preset.model, preset.key)
   end
@@ -2677,6 +2763,10 @@ local function companyStart(id, independent)
   S.phone.online, S.phone.incoming, S.phone.lastDone = false, nil, nil
   S.offeredAt, S.odometerPose = nil, nil
   saveCareer()
+  if want == 'bus' and offer.coach then
+    return true, string.format('Your %s is ready. Open the doors for your passengers, then drive them to %s%s.',
+      preset.label, offer.jobs[1].bus.stops[2].n, #offer.jobs[1].bus.stops > 2 and ' and back' or '')
+  end
   if want == 'bus' then
     return true, string.format('Your %s is ready. Drive %s, open the doors at every stop, then bring the bus back here.',
       preset.label, offer.jobs[1].cargoName)
@@ -2691,23 +2781,22 @@ function M.busSelect(id)
     S.contractMsg = {text = 'Choose a line while driving your own career car.', at = S.clock}
     return
   end
-  for _, offer in ipairs(S.busBoard or {}) do
-    if offer.id == id then
-      S.busDepot = {offer = offer, parked = 0}
-      earth.gps(offer.yard.g[1], offer.yard.g[2], 'Bus pickup: ' .. offer.yard.n)
-      return
-    end
+  local offer = M.busOffer(id)
+  if offer then
+    S.busDepot = {offer = offer, parked = 0}
+    earth.gps(offer.yard.g[1], offer.yard.g[2], (offer.coach and 'Coach pickup: ' or 'Bus pickup: ') .. offer.yard.n)
+    return
   end
-  S.contractMsg = {text = 'Refresh the bus lines and choose a line again.', at = S.clock}
+  S.contractMsg = {text = S.busKind == 'coach' and 'Choose the ride again.' or 'Refresh the bus lines and choose a line again.', at = S.clock}
 end
 
 function M.busDepotInfo(p)
   local d, bus = S.busDepot, require('cargoEarth/bus')
   if not d or S.job or S.career.employment or not p then return nil end
-  local inside = jobs.km(p.lat, p.lon, d.offer.yard.g[1], d.offer.yard.g[2]) * 1000 <= bus.DEPOT_RADIUS
+  local inside = jobs.km(p.lat, p.lon, d.offer.yard.g[1], d.offer.yard.g[2]) * 1000 <= bus.depotRadius(d.offer)
   return {depot = true, inZone = inside, stopping = inside and (d.parked or 0) > 0,
     frac = math.min(1, (d.parked or 0) / bus.PARK_S), leftS = math.max(0, bus.PARK_S - (d.parked or 0)),
-    title = d.error and 'Bus unavailable' or 'Park here to collect your bus',
+    title = d.error and 'Bus unavailable' or (d.offer.coach and 'Park here to collect your coach' or 'Park here to collect your bus'),
     detail = d.error or 'Your own car will be stored when the bus replaces it.', stopS = bus.PARK_S}
 end
 
@@ -2721,12 +2810,13 @@ function M.busDepotTick(p, dt)
   d.parked = d.parked + dt
   if d.parked < bus.PARK_S then return end
   -- Keep the chosen offer even if the nearby board refreshed while driving to it.
-  S.busBoard = S.busBoard or {}
+  local field = d.offer.coach and 'coachBoard' or 'busBoard'
+  S[field] = S[field] or {}
   local found = false
-  for i, offer in ipairs(S.busBoard) do
-    if offer.id == d.offer.id then S.busBoard[i], found = d.offer, true break end
+  for i, offer in ipairs(S[field]) do
+    if offer.id == d.offer.id then S[field][i], found = d.offer, true break end
   end
-  if not found then S.busBoard[#S.busBoard + 1] = d.offer end
+  if not found then S[field][#S[field] + 1] = d.offer end
   local ok, why = companyStart(d.offer.id)
   if ok or S.career.employment then S.busDepot = nil else d.error = why end
 end
@@ -2831,26 +2921,19 @@ function M.placesDo(name, value)
   if S.pendingCareer then return M.placesState() end
   local c, p, ok, why = S.career, earth.pose(), false, nil
   if earth.status() ~= 'ok' or not p then S.placesMsg = earth.status() return M.placesState() end
-  if name == 'search' then
-    S.homeAddresses = food.addresses(S.fidx, p.lat, p.lon, value)
-    S.placesMsg = #S.homeAddresses > 0 and 'Select an address, route there, then park safely to confirm your garage.'
-      or 'No matching addresses within 3 km. Try another search or wait for local address data.'
-  elseif name == 'select' then
-    for _, address in ipairs(S.homeAddresses or {}) do
-      if address.id == value then S.selectedHome = address break end
-    end
-  elseif name == 'routeSelected' and S.selectedHome then
-    if S.job or c.employment then why = 'Finish your current work before changing GPS.'
-    else ok, why = earth.gps(S.selectedHome.g[1], S.selectedHome.g[2], S.selectedHome.n) end
-  elseif name == 'claimHome' then
+  if name == 'claimHome' then
     if S.job or c.employment or S.parts then why = 'Finish your current work first.'
     elseif not c.garage.started then why = 'A home garage is part of the career. Start one on the phone first.'
-    elseif not garage.inOwnCar(M.G, c.garage) then why = 'Park your career car at this address.'
+    elseif not garage.inOwnCar(M.G, c.garage) then why = 'Sit in your career car to set your home here.'
     else
       local old = c.home
-      ok, why = home.claim(c, S.selectedHome, p)
+      ok, why = home.claim(c, p, food.addresses(S.fidx, p.lat, p.lon, '')[1])
       if ok and not saveCareer() then c.home, ok, why = old, false, S.saveError end
     end
+  elseif name == 'upgradeHome' or name == 'buildRoom' then
+    local debt = (c.employment and c.employment.personalGarage or c.garage).debt or 0
+    if name == 'upgradeHome' then ok, why = home.upgrade(c, debt) else ok, why = home.build(c, value, debt) end
+    if ok and not saveCareer() then why = S.saveError end
   elseif name == 'homeGps' and c.home then
     if S.job or c.employment then why = 'Finish your current work before changing GPS.'
     else ok, why = earth.gps(c.home.g[1], c.home.g[2], c.home.name) end
@@ -2919,7 +3002,7 @@ function M.phoneState()
       companyVehicle = c.employment and employment.vehicleLabel(c.employment),
       currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
       fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
-      canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo() }
+      canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo(), unstuck = M.unstuckInfo() }
   if S.pendingCareer or (not S.career.garage.started and S.career.play ~= 'free' and not c.employment) then
     -- the careers to pick from, on the resume and first-run screens
     local saves = require('cargoEarth/saves')
@@ -2955,6 +3038,11 @@ function M.phoneState()
     if p and not p.camera then out.camera = cameras.ahead(cams, p.lat, p.lon, (p.speed or 0) > M.STOP_SPEED and p.heading or nil) end
     if ph.flash and S.clock < ph.flash.untilT then out.flash = ph.flash else ph.flash = nil end
   end
+  if ph.insNote and S.clock < ph.insNote.untilT then out.insNote = ph.insNote.text else ph.insNote = nil end
+  out.wreck = M.wreckInfo()
+  -- the footer's insured mark, on every screen (also during a job)
+  local ig = S.career.garage
+  if ig.started and not c.employment and require('cargoEarth/insurance').insured(ig.car) and not ig.car.loaner then out.insured = true end
   if S.mode == 'courier' and out.status == 'ok' then
     local plan = storagePlan()
     if plan then
@@ -3064,6 +3152,9 @@ function M.phoneState()
     return out
   end
   out.screen = 'waiting'
+  local why = M.offerWhy()
+  -- the vehicle's own reason is already the freight hint
+  out.why = why and why.code ~= 'vehicle' and why.text or nil
   return out
 end
 
@@ -3071,6 +3162,26 @@ end
 function M.phoneAction(a, orderId)
   if a == 'helperStart' or a == 'helperHide' then
     M.helperStartDo(a)
+    return M.phoneState()
+  end
+  if a == 'unstuck' then
+    if not S.pendingCareer then M.unstuckCar() end
+    return M.phoneState()
+  end
+  -- the write-off window: a free tow home / to the headquarters, or stay
+  if a == 'towHome' or a == 'towHq' or a == 'wreckClose' or a == 'wreckRepair' then
+    if a == 'wreckClose' then S.phone.wreck = nil
+    elseif a == 'wreckRepair' then
+      -- repaired on the spot with the claim (the tow is optional)
+      if not S.pendingCareer and not S.career.employment then
+        local _, msg = M.garageRepair(true)
+        if S.phone.wreck then S.phone.wreck.msg = msg end
+      end
+    elseif not S.pendingCareer then
+      local ok, msg = M.insuranceTow(a == 'towHq' and 'hq' or 'home')
+      if not ok and S.phone.wreck then S.phone.wreck.msg = msg end
+      say(msg, 8)
+    end
     return M.phoneState()
   end
   if a == 'loadSave' or a == 'newCareer' or a == 'deleteSave' then
@@ -3161,6 +3272,19 @@ function M.phoneAction(a, orderId)
     end
   elseif a == 'busGps' or a == 'busStart' then
     M.busSelect(orderId)
+  elseif a == 'busKind' then
+    -- the Bus page's City lines | Coaches switch (not while a bus is chosen or driven)
+    if (orderId == 'coach' or orderId == 'lines') and not S.busDepot and not S.career.employment then
+      S.busKind = orderId == 'coach' and 'coach' or nil
+      if S.busKind then M.coachTick(earth.pose()) else S.busAskAt = 0 M.busFetch(earth.pose()) end
+    end
+  elseif a == 'coachRetry' then
+    if S.coach then
+      S.coach.old = nil
+      for _, t in ipairs(S.coach.towns or {}) do if not t.done then t.nextAt = 0 end end
+      for _, b in ipairs(S.coach.origin and S.coach.origin.points or {}) do if not b.done then b.nextAt = 0 end end
+    end
+    M.coachTick(earth.pose())
   elseif a == 'busCancelSelection' then
     if S.busDepot then S.busDepot = nil earth.gpsClear() end
   elseif a == 'contractGps' or a == 'contractStart' then
@@ -3185,6 +3309,44 @@ M.HELPER_MIN = 20
 M.HELPER_CHECK_S = 5
 
 local helperWanted, helperCheckAt, depotsHere, stationsWanted = false, 0, false, false
+
+-- Why no order or freight comes (cargoEarth/offerwhy): { code, text } for the phone's waiting screen, nil while offers
+-- are there. Worked out at most once a second; beamng.log gets a line when the reason changes and once a minute while it
+-- stays (cargoEarth: no freight offers [code]: ...).
+M.OFFER_WHY_LOG_S = 60
+function M.offerWhy()
+  if (S.mode ~= 'courier' and S.mode ~= 'trucking') or S.pendingCareer then return nil end
+  if S.offerWhyAt and S.clock >= S.offerWhyAt and S.clock - S.offerWhyAt < 1 then return S.offerWhyLast end
+  S.offerWhyAt = S.clock
+  local freight = S.mode == 'trucking'
+  local search = S.offerSearch or {}
+  local i = { mode = S.mode, offers = #S.offers, generated = S.offeredAt ~= nil, stats = S.offerStats,
+    data = (freight and S.idx or S.fidx) ~= nil, helperNeeded = freight and not depotsHere or (not freight and helperWanted),
+    helperOff = helper.enabled == false, helper = helper.status(), helperText = type(helper.describe) == 'function' and helper.describe(S.clock) or nil,
+    nearKm = search.nearKm, minKm = search.minKm, maxKm = search.maxKm }
+  if freight then
+    local v, tier = freightCarrier()
+    local g = S.career.garage
+    if g.car and g.car.loaner and not S.career.employment then v, tier = nil, nil end
+    local rows = S.storage and S.storage.rows
+    i.vehicle = { hint = M.freightHint(v, tier, rows), tier = tier, model = v and v.model, bodyStyle = v and v.bodyStyle,
+      containers = rows and #rows or 0, free = rows and { parcel = haul.capacity(rows, 'parcel'),
+        fluid = haul.capacity(rows, 'fluid'), dryBulk = haul.capacity(rows, 'dryBulk') } or nil }
+  else
+    local plan = storagePlan()
+    i.foodRoom = plan and plan.maxFree or nil
+  end
+  local why = require('cargoEarth/offerwhy').reason(i)
+  local last = S.offerWhyLast
+  if why and log and (not last or last.log ~= why.log or S.clock >= (S.offerWhyLogAt or 0)) then
+    S.offerWhyLogAt = S.clock + M.OFFER_WHY_LOG_S
+    log('I', 'cargoEarth', why.log)
+  elseif not why and last and log then
+    log('I', 'cargoEarth', 'offers found again (' .. #S.offers .. ')')
+  end
+  S.offerWhyLast = why
+  return why
+end
 
 local function packRestaurantsNear(lat, lon)
   local idx = S.fidx
@@ -3245,7 +3407,8 @@ local function onHelperArea(data)
     S.companyBoardDirty = true
   end
   stores = stores or 0
-  log('I', 'cargoEarth', string.format('helper area %s: %d restaurants, %d grocery stores', tostring(data.key), n - stores, stores))
+  log('I', 'cargoEarth', string.format('helper area %s: %d restaurants, %d grocery stores, %d workplaces%s', tostring(data.key),
+    n - stores, stores, workplaces, (lat and packDepotsNear(lat, lon)) and ' (built-in depots used here)' or ''))
   if (n > 0 or S.mode == 'taxi') and not S.job then S.offeredAt = nil end
 end
 M.onHelperArea = onHelperArea
@@ -3290,6 +3453,7 @@ local function cameraTick(p)
   for _, order in ipairs(S.orders) do if order.phase == 'toDelivery' then mark(order.job) end end
   if S.job and S.phase == 'toDelivery' then mark(S.job) end
   c.fines = { count = ((c.fines or {}).count or 0) + 1, paid = ((c.fines or {}).paid or 0) + flash.fine }
+  S.lastFlashAt = S.clock   -- a crash soon after counts as reckless for the insurance
   S.phone.flash = { speed = flash.speed, limit = flash.limit, fine = flash.fine, owed = flash.fine - paid, stars = rated,
     untilT = S.clock + 10 }
   phoneSound('cancelled')
@@ -3382,6 +3546,7 @@ local function helperTick(p)
   local areas = S.mode == 'taxi' or (S.mode == 'trucking' and not depotsHere) or places or helperWanted or stationsWanted or wantsGroceryData()
   local wantCameras = camerasOn() and onHelperCameras or nil
   M.busFetch(p)
+  M.coachTick(p)
   M.longHaulTick(p)
   radioAlive()
   askUpdate()
@@ -3407,6 +3572,11 @@ local function onPlayer(gen)
     if data then radio.player = data
     elseif radio.player then radio.player = { playing = false, error = err == 'HTTP 404' and 'old' or 'helper' } end
     if radio.player then radio.helperOn = radio.player.playing == true end
+    local e = radio.player and radio.player.error
+    if e and radio.loggedGen ~= gen then -- once per station: beamng.log says why the helper's player is silent
+      radio.loggedGen = gen
+      log('W', 'cargoEarth', 'radio: the helper could not play it: ' .. tostring(e == 'helper' and 'the helper is not running' or e))
+    end
   end
 end
 
@@ -3616,6 +3786,8 @@ function M.radioDo(name, a, b, c)
       -- the game's UI has no AAC, and plays only through the helper's relay: otherwise the helper plays it
       w.alone = w.via ~= 'helper' and (not helper.enabled or st.codec:lower():match('^aac') ~= nil)
       if #st.id == 36 then helper.ask('/v1/radioclick?id=' .. st.id, nil) end
+      log('I', 'cargoEarth', string.format('radio: %s (%s), played by %s', st.name, st.codec,
+        (w.via == 'helper' or w.alone) and 'the helper' or 'the game'))
       radioSavePrefs()
     end
   elseif name == 'stop' then
@@ -3649,6 +3821,7 @@ function M.radioDo(name, a, b, c)
       if b == 'error' and w.on and radioMode() == 'page' then
         -- this station only: the helper plays it on the computer (the setting stays as the player set it)
         w.alone, w.why = true, 'the game could not play it' .. (type(c) == 'string' and c ~= '' and ' (' .. c:sub(1, 40) .. ')' or '')
+        log('W', 'cargoEarth', 'radio: ' .. w.why .. ', the helper plays it')
       end
     end
     radioSync()
@@ -3733,7 +3906,9 @@ local function garageTick(dt)
   end
   if not S.parts and conditionAt and own and S.clock >= conditionAt then
     conditionAt = nil
-    if M.G.applyCondition then pcall(M.G.applyCondition, g.car.km or 0, g.car.condition or 1) end
+    if M.G.applyCondition then
+      pcall(M.G.applyCondition, g.car.km or 0, g.car.condition or 1, require('cargoEarth/faults').native(g.car))
+    end
     if g.car.physicalDamage then
       local car = g.car
       g.restoringDamage = {car = car, bill = g.repair or 0}
@@ -3753,6 +3928,10 @@ local function garageTick(dt)
     elseif not pending.ready or S.clock < pending.ready then return
     else
       g.restoringDamage = nil
+      -- the restored state may carry the load the car had when it was saved: read the containers again and empty
+      -- what nothing on board explains
+      S.storage = nil
+      if not S.job then S.sweepWanted, S.sweepAt = true, S.clock + 1 end
       if pending.ok then
         g.damageBaseline = {damage = M.G.damage() or 0, bill = pending.bill}
         g.lastDamage = g.damageBaseline.damage
@@ -3797,19 +3976,23 @@ local function garageTick(dt)
   end
   local damage = M.G.damage()
   M.busDamageTick(damage)
-  local what, amount = garage.trackDamage(g, damage)
+  local what, amount, insured = garage.trackDamage(g, damage)
   if shift and what == 'hit' then employment.damage(S.career, math.max(0, amount)) end
   if shift and not shift.ownerOperator then g.debt = 0 end
   if what == 'hit' then
     S.dirtyAt = S.dirtyAt or (S.clock + 5)
+    M.insuranceHit(g, amount)
   elseif what == 'debt' then
     if shift and not shift.ownerOperator then
       say('Company ' .. employment.vehicleLabel(shift) .. ' repaired. Recorded damage still affects employer reputation.', 8)
+    elseif (insured or 0) > 0 then
+      say(string.format('Your car was fixed in the game menu: insurance paid %d CZK, %d CZK added to your debt.', insured, amount), 8)
     else
       say(string.format('Your car was fixed without paying (menu repair, reset or respawn): %d CZK added to your debt.', amount), 8)
     end
     saveCareer()
   end
+  M.insuranceTick(p)
   if S.dirtyAt and S.clock >= S.dirtyAt then S.dirtyAt = nil saveCareer() end
   if not S.parts and S.clock >= carSeenAt then
     carSeenAt = S.clock + 10
@@ -3947,12 +4130,22 @@ local function fuelNear()
       station, km = { id = 'hq', g = hq.g, n = 'Your firm tank', kind = 'fuel', hq = true }, d
     end
   end
+  -- and the home's fuel tank (it charges electric cars too)
+  local h = S.career.home
+  if h and h.g and home.has(S.career, 'tank') then
+    local d = fuel.km(p.lat, p.lon, h.g[1], h.g[2])
+    if not km or d < km or d * 1000 <= home.RADIUS then
+      station, km = { id = 'home', g = h.g, n = st.kind == 'electric' and 'Your home charger' or 'Your home tank',
+        kind = fuel.stationKind(st.kind), home = true }, d
+    end
+  end
   S.fuelNear = station and { station = station, km = km, kind = st.kind,
     at = km * 1000 <= fuel.STATION_RADIUS and not p.camera and (p.speed or 0) <= M.STOP_SPEED } or { kind = st.kind }
   return S.fuelNear, st
 end
 
 local function fuelFactor(station)
+  if station.home then return home.roomById.tank.factor end
   return station.hq and fuel.HQ_DISCOUNT or fuel.stationFactor(station.id)
 end
 
@@ -4192,13 +4385,194 @@ function M.garageStart(model, name)
   return garageSay(ok, msg)
 end
 function M.garageSell(part) return garageSay(garage.sell(M.G, S.career.garage, S.career, part)) end
-function M.garageRepair()
+-- The cheapest workshop where the car is: the firm's at the headquarters, the home's at home.
+function M.repairFactor(p)
+  return math.min(firm.repairFactor(S.career, p), home.factorHere(S.career, 'workshop', p) or 1)
+end
+-- insure: false pays the whole bill yourself (no claim, the premium stays as it is); otherwise the insurer pays its part
+function M.garageRepair(insure)
   -- the firm's workshop does the work for less at the headquarters: the discount counts before the money check
   local g = S.career.garage
-  local full, factor = g.repair or 0, firm.repairFactor(S.career, earth.pose())
-  local ok, msg, cost = garage.repairCar(M.G, g, S.career, factor)
+  local full, factor = g.repair or 0, M.repairFactor(earth.pose())
+  local ok, msg, cost, payout = garage.repairCar(M.G, g, S.career, factor, insure ~= false, S.career.activeSeconds or 0)
   if ok and factor < 1 then
-    msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved)', cost, full - cost)
+    msg = string.format('Repaired in your workshop (-%d CZK, %d CZK saved%s)', cost, full - cost,
+      (payout or 0) > 0 and string.format(', insurance paid %d CZK', payout) or '')
+  end
+  if ok then S.phone.wreck, S.insTow = nil, nil end   -- a paid repair ends the tow's bill guard (Codex)
+  return garageSay(ok, msg)
+end
+
+------------------------------------------------------------------------------------------ insurance (cargoEarth/insurance)
+
+-- The player's own garage (company work swaps the career's garage for the company's).
+function M.insuranceGarage()
+  local shift = S.career.employment
+  return shift and shift.personalGarage or S.career.garage
+end
+function M.insuranceCars(g)
+  local cars = {}
+  if g.car then cars[1] = g.car end
+  for _, car in ipairs(g.parked or {}) do cars[#cars + 1] = car end
+  return cars
+end
+
+-- Every garage tick: speed and limit samples for judging a crash, a free tow's bill kept, the premiums due.
+function M.insuranceTick(p)
+  local insurance = require('cargoEarth/insurance')
+  S.insHist = S.insHist or {}
+  if p and not p.camera and p.speed then
+    local lim = limitHere(p)
+    insurance.sample(S.insHist, S.clock, p.speed * 3.6, lim and lim.kmh)
+  end
+  local trip = S.insTow
+  if trip then
+    local g = S.career.garage
+    if S.clock > trip.untilT or g.car ~= trip.car then S.insTow = nil
+    elseif (g.repair or 0) < trip.bill then
+      -- the trip reset the car: it is not repaired for free, the bill stays owed
+      local d = M.G.damage and M.G.damage() or 0
+      g.damageBaseline, g.lastDamage = { damage = d, bill = trip.bill }, d
+      g.carriedRepair = d == 0 and trip.bill or nil
+      g.repair, g.car.insCover = trip.bill, trip.cover
+    end
+  end
+end
+
+-- The premiums due (every insured car, also parked ones and during company work), every few seconds.
+function M.insuranceBill()
+  local insurance = require('cargoEarth/insurance')
+  if S.pendingCareer or S.clock < (S.insBillAt or 0) then return end
+  S.insBillAt = S.clock + 10
+  local c = S.career
+  local g = M.insuranceGarage()
+  if not g.started then return end
+  local due, detail = insurance.bill(g, M.insuranceCars(g), c.activeSeconds or 0)
+  if due > 0 then
+    local paid = math.max(0, math.min(due, math.floor(c.money or 0)))
+    if paid > 0 then economy.post(c, -paid, 'insurance', economy.nextId(c, 'insurance'), detail) end
+    if paid < due then garage.addDebt(g, due - paid, 'insurance', detail) end
+    S.dirtyAt = S.dirtyAt or (S.clock + 5)
+  end
+end
+
+-- A crash added `grow` CZK of repairs to the car you drive: an insured car's cover grows by what the verdict allows.
+function M.insuranceHit(g, grow)
+  local insurance = require('cargoEarth/insurance')
+  local car = g.car
+  if not insurance.insured(car) or not insurance.eligible(car) then return end
+  S.insSess = S.insSess or {}
+  local v, fresh = insurance.verdict(S.insSess, S.insHist or {}, S.clock, S.lastFlashAt)
+  insurance.hit(car, grow, v)
+  if fresh and v.why then
+    S.phone.insNote = { text = 'Insurance: ' .. v.why .. '.', untilT = S.clock + 12 }
+    say('Insurance: ' .. v.why .. '.', 8)
+  end
+  if not car.insWreck and insurance.wrecked(car, g.repair, garage.repairCap(g)) then
+    car.insWreck = true
+    S.phone.wreck = { car = car.name }
+    phoneSound('cancelled')
+  end
+end
+
+-- The write-off window on the phone (nil when none is open).
+function M.wreckInfo()
+  local w = S.phone.wreck
+  local c, g = S.career, S.career.garage
+  if not w or not (g.car and g.car.insWreck) then S.phone.wreck = nil return nil end
+  local payout, cost = garage.repairInsured(g, 1)
+  return { car = w.car, bill = cost, payout = payout, own = cost - payout, home = c.home and c.home.name or nil,
+    hq = c.firm and c.firm.hq and c.firm.hq.n or nil, msg = w.msg, company = c.employment ~= nil or nil }
+end
+
+-- The insurer's free tow of a write-off to the home garage or the headquarters (where: 'home' | 'hq').
+function M.insuranceTow(where)
+  local c, g = S.career, S.career.garage
+  local car = g.car
+  local insurance = require('cargoEarth/insurance')
+  if c.employment then return false, 'End the company work first.' end
+  if not (car and car.insWreck and insurance.insured(car)) then return false, 'Only an insured write-off is towed for free.' end
+  if not garage.inOwnCar(M.G, g) then return false, 'Get in your car first.' end
+  if trailers.id() then return false, 'Unhitch the trailer first: the tow takes only your car.' end
+  local spot = (where == 'hq' and c.firm and c.firm.hq) or (where == 'home' and c.home) or nil
+  if not spot or type(spot.g) ~= 'table' then
+    return false, where == 'hq' and 'You have no headquarters.' or 'You have no home garage.'
+  end
+  local name = spot.n or spot.name or (where == 'hq' and 'Headquarters' or 'Home')
+  -- the trip may reset the car in the game: the bill stays (M.insuranceTick), and the drop is not a free repair
+  S.insTow = { car = car, bill = g.repair or 0, cover = car.insCover or 0, untilT = S.clock + 30 }
+  g.fixUntil = garage.clock() + 30
+  local ok, why = earth.teleport(spot.g[1], spot.g[2], name)
+  if not ok then
+    S.insTow, g.fixUntil = nil, nil
+    return false, 'The tow could not start: ' .. tostring(why)
+  end
+  car.insWreck, S.phone.wreck = nil, nil
+  return true, 'Your car is being towed to ' .. name .. ' for free. Repair it there.'
+end
+
+-- Garage actions: insure / uninsure (id: a parked car's id, nil: the car you drive), tow.
+function M.insuranceDo(name, id, where)
+  local insurance = require('cargoEarth/insurance')
+  local c = S.career
+  local g = M.insuranceGarage()
+  if name == 'tow' then return M.insuranceTow(where or id) end
+  local car = id and garage.parkedCar(g, tonumber(id)) or g.car
+  if name == 'uninsure' then return insurance.cancel(g, car) end
+  if name ~= 'insure' then return false, 'Unknown action' end
+  if c.employment then return false, 'End the company work first.' end
+  if car and car == g.car and not car.value then garage.noteValue(M.G, g) end
+  local pose = earth.pose()
+  local ctx = { own = car == g.car and garage.inOwnCar(M.G, g), speed = pose and pose.speed or 0,
+    onJob = S.job ~= nil or #(S.orders or {}) > 0 }
+  local ok, msg, day = insurance.buy(g, c, car, ctx, c.activeSeconds or 0)
+  if ok and (day or 0) > 0 then
+    economy.post(c, -day, 'insurance', economy.nextId(c, 'insurance'), 'Insurance: first day for ' .. tostring(car.name))
+  end
+  if ok then saveCareer() end
+  return ok, msg
+end
+
+-- The Garage page's insurance card.
+function M.insuranceState()
+  local insurance = require('cargoEarth/insurance')
+  local g = M.insuranceGarage()
+  local own = not S.career.employment and g.car and not g.car.loaner
+  local out = insurance.state(g, own and g.car or nil, M.insuranceCars(g))
+  if out.car then
+    local pose = earth.pose()
+    out.car.why = not out.car.insured and insurance.buyBlock(g, g.car, { own = garage.inOwnCar(M.G, g),
+      speed = pose and pose.speed or 0, onJob = S.job ~= nil or #(S.orders or {}) > 0 }) or nil
+    out.car.wreck = g.car.insWreck or nil
+  end
+  local c = S.career
+  out.home, out.hq = c.home and c.home.name or nil, c.firm and c.firm.hq and c.firm.hq.n or nil
+  out.parked = {}
+  for _, car in ipairs(g.parked or {}) do
+    if insurance.insured(car) then
+      out.parked[#out.parked + 1] = { id = car.fleetId, name = car.name, week = insurance.weekPremium(g, car) }
+    end
+  end
+  return out
+end
+-- The phone header's Unstuck button: a free repair in place (garage.unstuck).
+function M.unstuckInfo()
+  local g = S.career and S.career.garage
+  if not g or not g.started or not g.car then return nil end
+  local pose = earth.pose()
+  local why, left = garage.unstuckBlock(M.G, g, os.time(), pose and pose.speed, S.career.unstuckAt)
+  return { can = why == nil, why = why, left = left }
+end
+function M.unstuckCar()
+  local g, pose = S.career.garage, earth.pose()
+  local ok, msg, saved = garage.unstuck(M.G, g, os.time(), pose and pose.speed, S.career.unstuckAt)
+  -- the cooldown is the career's, not the garage's: company work swaps the garage (Codex)
+  if ok then S.career.unstuckAt, S.insTow = g.unstuckAt, nil end
+  -- in a company vehicle the waived damage no longer counts against the contract (Jan: undo the reputation penalty)
+  if ok and S.career.employment then employment.forgive(S.career, saved or 0) end
+  -- a bus's passengers get back the comfort the collision cost them
+  if ok and S.job and S.job.bus and require('cargoEarth/bus').forgive(S.job) > 0 then
+    msg = msg .. string.format('. Passenger comfort back to %d %%', require('cargoEarth/bus').comfort(S.job))
   end
   return garageSay(ok, msg)
 end
@@ -4222,11 +4596,6 @@ function M.garageBringCar(captured)
 end
 local function garageSwitchCar(id, captured)
   if S.job then return false, 'Finish your current orders before switching cars.' end
-  local here = earth.pose()
-  if S.career.home and not home.near(S.career, here) and not firm.atHq(S.career, here) then
-    return false, S.career.firm and S.career.firm.hq and 'Return to your home garage or headquarters to switch cars.'
-      or 'Return to your home garage to switch cars.'
-  end
   if not captured then
     local waiting, why = M.captureOutgoing(function() return garageSwitchCar(id, true) end)
     if waiting then return false, why end
@@ -4267,10 +4636,12 @@ local function garageRoadside()
   say(msg)
   return true, msg
 end
--- Where a service is possible now: at the headquarters (the workshop's share off) or at a fuel station.
+-- Where a service is possible now: at the headquarters or home (the workshop's share off) or at a fuel station.
 local function serviceSpot()
   local p = earth.status() == 'ok' and earth.pose() or nil
-  if firm.atHq(S.career, p) then return 'the headquarters', firm.value(S.career, 'workshop') or 1 end
+  if firm.atHq(S.career, p) then return 'the headquarters', math.min(firm.value(S.career, 'workshop') or 1, home.factorHere(S.career, 'workshop', p) or 1) end
+  local homeFactor = p and not p.camera and (p.speed or 0) <= M.STOP_SPEED and home.factorHere(S.career, 'workshop', p)
+  if homeFactor then return 'your home workshop', homeFactor end
   if not p or p.camera or (p.speed or 0) > M.STOP_SPEED then return nil end
   for _, kind in ipairs({ fuel.stationKind('gasoline'), fuel.stationKind('electric') }) do
     local station, km = fuel.nearest(S.fuelIdx, p.lat, p.lon, kind, 1)
@@ -4292,14 +4663,35 @@ local function garageService(id, item)
     if not car or car.loaner then return false, 'The loaner is serviced by its company.' end
     if not garage.inOwnCar(M.G, g) then return false, 'Sit in your car first.' end
     where, factor = serviceSpot()
-    if not where then return false, 'Drive to your headquarters or a fuel station for a service.' end
+    if not where then return false, 'Drive to a fuel station, your home workshop or your headquarters for a service.' end
   end
-  return garageSay(upkeep.service(c, car, item and item ~= '' and { item } or nil, factor, where))
+  local ok, msg = upkeep.service(c, car, item and item ~= '' and { item } or nil, factor, where)
+  if ok and car == g.car then M.reapplyFaults() end   -- serviced brakes stop as new again
+  return garageSay(ok, msg)
+end
+-- Repair a worn component of the car you drive (an engine that misfires, a worn clutch and gearbox), where it is
+-- serviced: a fuel station, your home workshop or your headquarters.
+function M.garageFixFault(item)
+  local g, c = S.career.garage, S.career
+  local car = g.car
+  if not car or car.loaner then return false, 'There is no car of yours to repair.' end
+  if not garage.inOwnCar(M.G, g) then return false, 'Sit in your car first.' end
+  local where, factor = serviceSpot()
+  if not where then return false, 'Drive to a fuel station, your home workshop or your headquarters for the repair.' end
+  local ok, msg = require('cargoEarth/faults').repair(c, car, item, factor, where)
+  if ok then M.reapplyFaults() end
+  return garageSay(ok, msg)
+end
+-- The car's condition and worn components again on the car you sit in (after a repair or a service).
+function M.reapplyFaults()
+  local g = S.career.garage
+  if not g.car or not M.G.applyCondition or not garage.inOwnCar(M.G, g) then return end
+  pcall(M.G.applyCondition, g.car.km or 0, g.car.condition or 1, require('cargoEarth/faults').native(g.car))
 end
 local function garageRepairParked(id)
   local c = S.career
   if not (c.firm and c.firm.hq) then return false, 'Parked vehicles are repaired at the headquarters.' end
-  return garageSay(garage.repairParked(S.career.garage, c, tonumber(id), firm.value(c, 'workshop') or 1))
+  return garageSay(garage.repairParked(S.career.garage, c, tonumber(id), firm.value(c, 'workshop') or 1, c.activeSeconds or 0))
 end
 local function garageReleaseDriver(id)
   return garageSay(fleet.release(S.career.garage, tonumber(id)))
@@ -4347,7 +4739,8 @@ local function quoteParts()
     if not v then return nil, 'Waiting for BeamNG to apply the preview.' end
     return garage.partsQuote(M.G, S.career.garage.inventory, S.parts.before, v, S.career.garage.salvage,
       S.career.garage.car and S.career.garage.car.paidParts,
-      S.career.garage.car and S.career.garage.car.salvageParts)
+      S.career.garage.car and S.career.garage.car.salvageParts,
+      S.career.garage.car and garage.ownShare(S.career.garage.car))
   end)
   if not ok then
     if S.parts.quoteError ~= tostring(quote) then
@@ -4408,12 +4801,15 @@ local function buyParts(revision)
   if why then return false, why end
   local c, g = S.career, S.career.garage
   local money, spent, inventory, config, parts, salvage, paid, fitted = c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts
+  local partsPaid = g.car.partsPaid
   if not garage.remember(M.G, g, previewVehicle()) then return false, 'Could not capture the new configuration.' end
   c.money, g.spent, g.inventory, g.salvage = (money or 0) - quote.cost, (spent or 0) + quote.cost, quote.inventory, quote.salvage
   g.car.paidParts, g.car.salvageParts = quote.paid, quote.fittedSalvage
+  if (quote.invest or 0) ~= 0 then g.car.partsPaid = (partsPaid or 0) + quote.invest end
   economy.reconcile(c, 'parts', 'Parts fitted')
   if not saveCareer() then
     c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts = money, spent, inventory, config, parts, salvage, paid, fitted
+    g.car.partsPaid = partsPaid
     economy.reconcile(c, 'parts', 'Purchase not saved, refunded')
     return false, 'The purchase could not be saved. Try again.'
   end
@@ -4446,6 +4842,8 @@ function M.garageState()
     local where, factor = serviceSpot()
     out.upkeep = upkeep.state(g.car, factor)
     out.upkeep.where = where
+    local list = require('cargoEarth/faults').state(g.car, factor)
+    out.faults = #list > 0 and list or nil
   end
   local broken = g.car and g.car.breakdown
   if type(broken) == 'table' then out.breakdown = { text = broken.text, cost = broken.cost } end
@@ -4462,6 +4860,12 @@ function M.garageState()
   out.repairHours = garage.hours(out.repair)
   local cap = garage.repairCap(g)
   out.repairCapped = cap ~= nil and out.repair > 0 and out.repair >= cap or nil
+  if out.repair > 0 then
+    -- what the repair costs here (workshop discount) and the part the insurance would pay
+    local pays, cost = garage.repairInsured(g, M.repairFactor(earth.pose()))
+    out.repairCost, out.repairInsured = cost, pays > 0 and pays or nil
+  end
+  if not S.career.employment then out.insurance = M.insuranceState() end
   if g.preview then
     local l = garage.findListing(g, g.preview.id)
     if l then
@@ -4469,7 +4873,8 @@ function M.garageState()
       for i, m in ipairs(g.preview.ready and l.missing or {}) do names[i] = m.name end
       out.preview = { id = l.id, name = l.name, km = l.km, condition = l.condition, price = l.price,
         tradeIn = g.preview.tradeIn, keepCar = g.preview.keepCar, ready = g.preview.ready, error = g.preview.error,
-        paint = g.preview.ready and l.finish and l.finish.name or nil, missing = names }
+        paint = g.preview.ready and l.finish and l.finish.name or nil, missing = names,
+        faults = garage.listingFaults(l) }
     end
   end
   out.damage = g.lastDamage or 0
@@ -4585,10 +4990,14 @@ function M.garageDo(name, a, b)
   end
   local partsAction = name == 'openParts' or name == 'buyParts' or name == 'cancelParts'
   if S.parts and not partsAction then return M.garageState() end
-  local fns = { start = M.garageStart, repair = M.garageRepair, paydebt = M.garagePayDebt, sellCar = M.garageSellCar,
+  local fns = { start = M.garageStart, repair = function() return M.garageRepair(true) end,
+    repairOwn = function() return M.garageRepair(false) end,
+    insure = function(id) return garageSay(M.insuranceDo('insure', id)) end,
+    uninsure = function(id) return garageSay(M.insuranceDo('uninsure', id)) end,
+    tow = function(where) return garageSay(M.insuranceDo('tow', nil, where)) end, paydebt = M.garagePayDebt, sellCar = M.garageSellCar,
     buyListing = M.garageBuyListing, preview = M.garagePreview, back = M.garagePreviewEnd, bring = M.garageBringCar,
     switchCar = garageSwitchCar, hireDriver = garageHireDriver, releaseDriver = garageReleaseDriver,
-    roadside = garageRoadside, service = garageService, repairParked = garageRepairParked,
+    roadside = garageRoadside, service = garageService, fixFault = M.garageFixFault, repairParked = garageRepairParked,
     refuel = garageRefuel, refuelTo = function(pct) return garageRefuel(nil, pct) end,
     fuelDelivery = garageFuelDelivery, fuelGps = garageFuelGps,
     sell = M.garageSell, openParts = openParts, buyParts = buyParts, cancelParts = cancelParts }
@@ -4655,7 +5064,8 @@ function M.hqState()
     local owed = not current and garage.parkedRepairCost(car) or 0
     out.bays[#out.bays + 1] = { id = car.fleetId, name = car.name, current = current or nil, loaner = car.loaner or nil,
       km = math.floor(car.km or 0), condition = car.condition, repair = owed > 0 and owed or nil,
-      repairCost = owed > 0 and math.floor(owed * workshop / 5 + 0.5) * 5 or nil,
+      repairCost = owed > 0 and math.floor(owed * workshop / 5 + 0.5) * 5 - garage.parkedInsured(car, workshop) or nil,
+      insured = require('cargoEarth/insurance').insured(car) or nil,
       broken = type(car.breakdown) == 'table' and car.breakdown.text or nil,
       tier = upkeep.tier(car), upkeep = upkeep.state(car, workshop),
       driver = fleet.driverState(car.driver, car, factor) }
@@ -4720,7 +5130,8 @@ function M.hqState()
   end
   out.parts.count, out.parts.kinds = parts, kinds
   if not c.employment then out.fuel = fuelState() end
-  out.repair = { cost = g.repair or 0, factor = firm.repairFactor(c, earth.pose()) }
+  out.repair = { cost = g.repair or 0, factor = M.repairFactor(earth.pose()) }
+  out.repair.insured = garage.repairInsured(g, out.repair.factor)
   out.debt, out.busy, out.company = g.debt or 0, S.job ~= nil, c.employment ~= nil
   return out
 end
@@ -4849,8 +5260,9 @@ function M.settingsState()
     or profile.company and 'Distance per delivery; the drives back come on top. Applies to new contracts.'
     or id:find('tow_', 1, true) == 1 and 'Distance with the car loaded. A borrowed trailer adds an empty drive.'
     or id == 'parcels' and 'Length of the whole round. The number of stops stays the same.'
+    or id == 'coach' and 'Road km to the far town. Rides go to towns of 30,000 people or more, from the coach station nearest you.'
     or 'Applies to new offers.'
-  if id ~= 'bus' then
+  if id ~= 'bus' and id ~= 'coach' then
     out.jobHint = out.jobHint .. ((profile.tier and id ~= 'parcels')
       and ' Over 120 km, jobs go to real towns; truck access there is not checked.'
       or ' A wider range only finds places already loaded around you.')
@@ -5226,9 +5638,93 @@ function M.toggleWindow() S.window = not S.window end
 function M.togglePhone() S.phoneHidden = not S.phoneHidden end
 -- The phone's page (Work or Radio), the same on both phones: each one shows what the other chose last.
 function M.phoneTab(t)
-  if t == 'orders' or t == 'radio' then S.phoneTab = t end
+  if t == 'orders' or t == 'radio' or t == 'map' then S.phoneTab = t end
   return S.phoneTab or 'orders'
 end
+-- The phone's live map (Map tab), asked 4 times a second while it shows: the car, the GPS route and the job's stops
+-- in game metres (x east, y north), and the roads round the car when they changed. have: the roads key the phone
+-- already has (the roads are sent again only on another tile, another graph or after BeamNG.Earth moved the world).
+--   { car = { x, y, h (degrees clockwise from north), kmh }, roadsKey, roads = { x1, y1, x2, y2, kind, ... },
+--     route = { x, y, ..., false, ... }, routeGps, stops = { { x, y, k = 'next'|'pickup'|'drop'|'stop'|'home'|'hq', n } } }
+M.MAP_ON_ROUTE_M = 40   -- the car this close to the GPS line is on it (farther: the GPS is about to plan again)
+function M.phoneMap(have)
+  local pm = require('cargoEarth/phonemap')
+  local p = earth.pose()
+  if not (p and p.x and p.y) then return { status = earth.status() } end
+  local out = { status = 'ok', car = { x = r1(p.x), y = r1(p.y), h = r1(p.heading or 0), kmh = math.floor((p.speed or 0) * 3.6 + 0.5) } }
+  local frame = tostring(p.anchorLat or '') .. ',' .. tostring(p.anchorLon or '')
+  local graph = M.G.graph and M.G.graph()
+  if graph then
+    local tx, ty, cx, cy = pm.tile(p.x, p.y)
+    pm.grid(graph, S.clock)
+    local key = table.concat({ tx, ty, frame, pm.stamp or 0 }, ':')
+    out.roadsKey = key
+    if key ~= have then out.roads = pm.roads(graph, cx, cy, pm.RADIUS, S.clock) end
+  end
+  local function xy(g)
+    if type(g) ~= 'table' or not g[1] then return nil end
+    local x, y = earth.worldXY(p, g)
+    if x then return math.floor(x + 0.5), math.floor(y + 0.5) end
+  end
+  -- the GPS route as BeamNG.Earth plans it (1.6+); else a straight line to the next stop
+  -- any GPS route counts (home, the workshop, a company yard too), not only the job's
+  local d = target()
+  local rt = earth.route()
+  -- Earth hands out a copy of the whole route: asked only for a new route version or after the world moved
+  local routeKey = rt and rt.routeVersion and (tostring(rt.routeVersion) .. '@' .. frame)
+  local pts = routeKey and pm.routeCached(routeKey)
+  if routeKey and not pts then
+    local geo = earth.routeGeometry and earth.routeGeometry()
+    if geo then pts = pm.routeXY(routeKey, geo.points, function(q) return earth.worldXY(p, q) end) end
+  end
+  if pts then
+    -- only the way still ahead of the car; facing against it while moving: the route is behind you
+    local ahead, where = pm.ahead(pts, p.x, p.y, p.heading, routeKey)
+    out.route, out.routeGps = pm.clip(ahead, p.x, p.y), true
+    if where then
+      out.offM = math.floor(where.off + 0.5)
+      out.behind = where.back and where.off <= M.MAP_ON_ROUTE_M and (p.speed or 0) > M.STOP_SPEED or nil
+    end
+  end
+  local stops = {}
+  local function add(g, k, n)
+    local x, y = xy(g)
+    if x then stops[#stops + 1] = { x = x, y = y, k = k, n = n } end
+  end
+  local c = S.career
+  if c.home and c.home.g then add(c.home.g, 'home', 'Home') end
+  local hq = c.firm and c.firm.hq
+  if hq and hq.g then add(hq.g, 'hq', hq.n or 'Headquarters') end
+  if S.job then
+    for _, o in ipairs(S.orders) do
+      local oj = o.job
+      if oj ~= S.job then
+        local dest = o.phase == 'toPickup' and oj.from or oj.to
+        if dest then add(dest.g, o.phase == 'toPickup' and 'pickup' or 'drop', dest.n) end
+      end
+    end
+    local r = S.job.route
+    if r and type(r.stops) == 'table' then
+      -- on the way to the depot every address is still ahead; later the current one is the next stop
+      local first = S.phase == 'toPickup' and (r.at or 1) or (r.at or 1) + 1
+      for i = first, #r.stops do add(r.stops[i].g, 'stop', tostring(i)) end
+    end
+    if d then
+      add(d.g, 'next', d.n)
+      local last = stops[#stops]
+      if last and last.k == 'next' then
+        last.pickup = S.phase == 'toPickup' or nil
+        if not out.route then
+          local cx, cy = math.floor(p.x + 0.5), math.floor(p.y + 0.5)
+          out.route = { cx, cy, last.x, last.y }
+        end
+      end
+    end
+  end
+  out.stops = stops
+  return out
+end
+
 -- The floating phone folded or open. The game rebuilds UI apps when the camera changes or the pause menu opens, so
 -- the phone asks here on its first answer. Folded keeps the screen it was folded on: a new ring still opens it.
 function M.phoneFold(on, screen)
@@ -5551,7 +6047,14 @@ function M.onUpdate(dtReal, dtSim)
   end
   if worldReady then
     if pose and camerasOn() and marker.drawCameras then marker.drawCameras(pose, cams.near, S.clock) end
-    -- where home and the headquarters count (switching cars, parking): a blue ring when close
+    -- Rested: a few minutes parked at a home with a Rest room
+    local parkedHome = pose and not pose.camera and (pose.speed or 0) <= M.STOP_SPEED and S.career.garage.started
+      and home.near(S.career, pose) and garage.inOwnCar(M.G, S.career.garage)
+    if S.career.home and home.restTick(S.career, parkedHome, activeDt) then
+      say(string.format('Rested: +%d %% pay for the next hour.', math.floor(home.RESTED_BONUS * 100 + 0.5)), 6)
+      saveCareer()
+    end
+    -- where home and the headquarters count (parking, the home's rooms): a blue ring when close
     if pose and not pose.camera and marker.drawArea then
       local myHome = S.career.home
       if myHome and myHome.g then marker.drawArea(pose, 'home', myHome.g, home.RADIUS, 'Home', S.clock) end
@@ -5559,8 +6062,8 @@ function M.onUpdate(dtReal, dtSim)
       if hq and hq.g then marker.drawArea(pose, 'hq', hq.g, firm.HQ_RADIUS, 'Headquarters', S.clock) end
       local depot = S.busDepot
       if depot and S.mode == 'bus' and not S.career.employment then
-        marker.drawArea(pose, 'busDepot', depot.offer.yard.g, require('cargoEarth/bus').DEPOT_RADIUS,
-          'Park to collect your bus', S.clock)
+        marker.drawArea(pose, 'busDepot', depot.offer.yard.g, require('cargoEarth/bus').depotRadius(depot.offer),
+          depot.offer.coach and 'Park to collect your coach' or 'Park to collect your bus', S.clock)
       end
     end
     local okC, errC = pcall(cameraTick, pose)
@@ -5603,6 +6106,8 @@ function M.onUpdate(dtReal, dtSim)
     end
     local okG, errG = pcall(garageTick, dt)
     if not okG and not S.garageErr then S.garageErr = tostring(errG) problem('W', 'garage: ' .. S.garageErr) end
+    local okI, errI = pcall(M.insuranceBill)
+    if not okI and not S.insuranceErr then S.insuranceErr = tostring(errI) problem('W', 'insurance: ' .. S.insuranceErr) end
     local ready = worldReady
     if ready then refreshStorage() else releaseStorage() end
     if ready then
@@ -5738,6 +6243,22 @@ end
 -- A reset (R, recover, the game's repair) rebuilds the vehicle-side containers empty, so the load the mod set is
 -- forgotten there: read the boxes again and put the load back (a meal box at once, freight through workFreight).
 function M.onVehicleResetted(id)
+  -- worn brakes of a used car stay worn: the game's reset puts the brake torque back to new
+  -- (during a test drive, the listing's: the car you sit in is the one for sale)
+  local g = S.career and S.career.garage
+  local worn
+  if g and g.preview then
+    local l = garage.findListing(g, g.preview.id)
+    local native = l and garage.listingNative(l)
+    worn = native and native.brakes
+  else
+    local car = g and g.car
+    worn = type(car) == 'table' and type(car.faults) == 'table' and car.faults.brakes
+  end
+  if worn and M.G.applyBrakes and M.G.ownedVehicle then
+    local own = M.G.ownedVehicle()
+    if own and own.id == id then pcall(M.G.applyBrakes, worn, id) end
+  end
   if S.busDamageWatch and S.busDamageWatch.id == id then S.busDamageWatch = nil end
   if S.storage and S.storage.id == id then S.storage = nil end
   if S.freightLoad and S.freightLoad.id == id then S.freightLoad = nil end

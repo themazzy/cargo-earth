@@ -143,9 +143,48 @@ local function step(now) return stepReq(req, now) end
 
 -- Did the helper answer at all? A connection that failed (not an HTTP error, which the helper itself sends) marks it
 -- down (st.down, for the phone's Start helper button); any answer clears that.
+-- Every answer and every failure is also kept for the "why no orders" line (describe): when the helper last answered
+-- (st.okAt), the last failure (st.err, st.errKind, st.errAt).
+local clockNow = 0
 local function seen(data, err)
   if data or (type(err) == 'string' and err:match('^HTTP ')) then st.down = nil
   elseif err then st.down = tostring(err) end
+  if data then st.okAt, st.err, st.errKind = clockNow, nil, nil
+  elseif err then st.err, st.errKind, st.errAt = tostring(err), M.errorKind(err), clockNow end
+end
+
+-- What kind of failure an error is: 'down' (nothing listens on the port: not running or crashed), 'timeout' (it took
+-- the connection but did not answer in TIMEOUT_S: busy or stuck), 'http' (it answered with an error code), 'bad' (an
+-- answer the game cannot read), 'socket' (the game itself could not open a connection).
+function M.errorKind(err)
+  err = tostring(err)
+  if err == 'timeout' then return 'timeout' end
+  if err:match('^HTTP ') then return 'http' end
+  if err == 'bad JSON' or err == 'bad response' or err:find('size limit', 1, true) then return 'bad' end
+  if err == 'LuaSocket unavailable' or err:find('Could not create', 1, true) then return 'socket' end
+  return 'down'
+end
+
+-- One sentence on what is wrong with the helper, or nil when it answers.
+function M.describe(now)
+  if not M.enabled then return 'The Cargo Earth helper is turned off in Settings.' end
+  if st.state ~= 'off' or not st.err then return nil end
+  local kind, port = st.errKind, M.PORT
+  if kind == 'timeout' then
+    return string.format('The helper did not answer within %d s: it is busy or stuck. Restart it if this stays.', M.TIMEOUT_S)
+  elseif kind == 'http' then
+    return 'The helper answered with an error (' .. st.err .. '). Update it with CargoEarthSetup.'
+  elseif kind == 'bad' then
+    return 'The helper sent an answer the game could not read (' .. st.err .. '). Update it with CargoEarthSetup.'
+  elseif kind == 'socket' then
+    return 'The game could not open a connection to the helper (' .. st.err .. ').'
+  end
+  if st.okAt then
+    local mins = math.max(0, math.floor(((now or clockNow) - st.okAt) / 60))
+    return string.format('The helper stopped answering%s: it may have crashed. Start it again from BeamNG.Earth\'s Add-ons page.',
+      mins >= 1 and string.format(' %d min ago', mins) or '')
+  end
+  return string.format('The Cargo Earth helper is not running (nothing on port %d). Start it from BeamNG.Earth\'s Add-ons page.', port)
 end
 
 local function finish(data, err, now, lat, lon, onArea)
@@ -244,6 +283,7 @@ end
 function M.commanding() return fast ~= nil or #fastQueue > 0 end
 
 function M.pump(now)
+  clockNow = now or clockNow
   if not M.enabled then
     if fast then pcall(function() fast.sock:close() end) fast = nil end
     for _, q in ipairs(fastQueue) do if q[2] then q[2](nil, 'helper turned off') end end
@@ -277,6 +317,7 @@ function M.pump(now)
 end
 
 function M.tick(lat, lon, now, onArea, onCameras, onlyCameras)
+  clockNow = now or clockNow
   if not M.enabled then
     close()
     for _, q in ipairs(queue) do if q[2] then q[2](nil, 'helper turned off') end end
@@ -313,13 +354,14 @@ function M.tick(lat, lon, now, onArea, onCameras, onlyCameras)
   local k = here == nearCell and next(wanted) or nil
   if k then
     local ok, err = start('/v1/area?key=' .. k, 'area', k, now, here)
-    if not ok then wanted = {} st.state, st.msg, nextAsk = 'off', unavailable(err), now + M.RETRY_S end
+    if not ok then seen(nil, tostring(err)) wanted = {} st.state, st.msg, nextAsk = 'off', unavailable(err), now + M.RETRY_S end
     return
   end
   if now >= nextAsk then
     if st.state == 'off' then st.state = 'searching' end
     local ok, err = start(string.format('/v1/near?lat=%.5f&lon=%.5f', lat, lon), 'near', nil, now, here)
     if not ok then
+      seen(nil, tostring(err))
       st.state, st.msg = 'off', unavailable(err)
       nextAsk = now + M.RETRY_S
     end
@@ -330,7 +372,7 @@ function M._reset()
   close()
   st = { state = 'off', loading = 0, ready = 0 }
   nextAsk, wanted, got = 0, {}, {}
-  nearCell, socket, nextCameras, queue = nil, nil, 0, {}
+  nearCell, socket, nextCameras, queue, clockNow = nil, nil, 0, {}, 0
   if fast then pcall(function() fast.sock:close() end) end
   fast, fastQueue = nil, {}
   M.enabled, M.PORT = true, M.DEFAULT_PORT

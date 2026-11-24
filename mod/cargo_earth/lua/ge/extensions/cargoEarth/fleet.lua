@@ -17,7 +17,7 @@ M.HIRE_FEE = 350
 M.GROSS = { car = 70, suv = 90, van = 110, rigid = 170, semi = 260 }   -- CZK a shift brings in, before the wage
 M.KM = { car = 8, suv = 10, van = 10, rigid = 12, semi = 15 }           -- km a shift drives
 M.INCIDENT = 0.03          -- chance a shift ends in an incident for an average driver (care 1)
-M.INCIDENT_COST = { car = 250, suv = 300, van = 350, rigid = 700, semi = 1000 }
+M.INCIDENT_COST = { car = 150, suv = 180, van = 210, rigid = 420, semi = 600 }   -- 2026-11-22: 40 % less, as repairs
 -- Licences: every driver may drive cars, SUVs and vans; some also hold a truck licence (box trucks), and some of those
 -- an articulated one (tractors). Each one adds to the wage.
 M.LICENCES = {

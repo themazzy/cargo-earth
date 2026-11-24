@@ -120,7 +120,7 @@ function M.begin(c, offer, personal, companyGarage, mode, independent)
   if independent and reputation < M.INDEPENDENT_REP then return false, 'Build 20 reputation with this company to unlock independent contracts.' end
   local shift = { id = economy.nextId(c, 'shift'), companyId = companyId, tier = offer.tier or 'van', companyName = offer.name, yard = offer.yard,
     jobs = M.copyJobs(offer.jobs), index = 1, completed = 0, failed = 0, quality = 0, vehicleDamage = 0, gross = 0, phase = independent and 'working' or 'preparing',
-    personalGarage = personal, previousMode = mode, ownerOperator = independent == true, share = independent and 1 or M.shareFor(offer.tier or 'van', c) }
+    personalGarage = personal, previousMode = mode, ownerOperator = independent == true, coach = offer.coach or nil, share = independent and 1 or M.shareFor(offer.tier or 'van', c) }
   c.employment = shift
   return true
 end
@@ -168,6 +168,13 @@ function M.damage(c, cost)
   local s = c.employment
   if not s or s.phase == 'settled' or type(cost) ~= 'number' or cost ~= cost or cost <= 0 or cost == math.huge then return end
   s.vehicleDamage = (s.vehicleDamage or 0) + cost
+end
+
+-- Unstuck (garage.unstuck) waived this much of the vehicle's damage: it no longer costs the contract's reputation.
+function M.forgive(c, cost)
+  local s = c.employment
+  if not s or s.phase == 'settled' or type(cost) ~= 'number' or cost ~= cost or cost <= 0 then return end
+  s.vehicleDamage = math.max(0, (s.vehicleDamage or 0) - cost)
 end
 
 function M.reputation(s, aborted)

@@ -20,7 +20,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
   localStorage: localStorage = { data: {}, getItem (k) { return this.data[k] || null }, setItem (k, v) { this.data[k] = v } },
   setInterval: (fn, interval) => { timers.push({fn, interval}); return timers.length }, clearInterval: () => {}, setTimeout: fn => { later.push(fn); return later.length }, clearTimeout: id => { if (later[id - 1]) later[id - 1] = () => {} }
 })
-assert(directive.template.includes('placeSearch.text'))
+assert(directive.template.includes('ng-click="claimHome()"') && !directive.template.includes('placeSearch'))
 assert(directive.template.includes('startCompany'))
 // while looking at a car the deal is fixed: no keep-car toggle, no Buy on other rows
 assert(directive.template.includes('market.tradeIn > 0 && !g.preview"><input type="checkbox" ng-model="purchase.keep"'), 'keep-car toggle hidden during a preview')
@@ -44,8 +44,25 @@ assert(scope.busStatus({state: 'old'}).includes('Update'))
 assert(scope.busStatus({state: 'ready', lines: [], found: 6, radiusKm: 4, nearestKm: 8.25}).includes('8.3 km'))
 assert(scope.busStatus({state: 'ready', lines: [], found: 0}).includes('No usable bus routes'))
 assert(scope.busStatus({state: 'ready', lines: [{id: 1}]}).includes('Choose a line'))
-scope.pdo('search', 'Dlouhá \"12\"')
-assert(commands.some(command => command.includes('pcall(cargoEarth_core.placesDo, ' + JSON.stringify('search') + ', ' + JSON.stringify('Dlouhá \"12\"'))))
+scope.pdo('companyGps', 'Dlouhá \"12\"')
+assert(commands.some(command => command.includes('pcall(cargoEarth_core.placesDo, ' + JSON.stringify('companyGps') + ', ' + JSON.stringify('Dlouhá \"12\"'))))
+scope.places = null
+scope.claimHome()
+assert(commands.at(-1).includes(JSON.stringify('claimHome')), 'a first home is one press')
+scope.places = {home: {name: 'Old'}}
+const homeBefore = commands.length
+scope.claimHome()
+assert(commands.length === homeBefore && scope.homeAsk, 'moving the home asks for a second press')
+scope.claimHome()
+assert(commands.at(-1).includes(JSON.stringify('claimHome')) && !scope.homeAsk)
+scope.openHome()
+assert(scope.homeOpen && commands.at(-1).includes('pcall(cargoEarth_core.placesState'), 'the home view loads the home')
+scope.places = {capacity: 4, used: 2, homeInfo: {rooms: [{built: true}, {built: false}]}}
+assert.equal(JSON.stringify(scope.carSpots()), '[true,true,false,false]')
+assert(!scope.allRoomsBuilt())
+scope.closeHome()
+assert(!scope.homeOpen)
+assert(directive.template.includes("pdo('upgradeHome')") && directive.template.includes("pdo('buildRoom', r.id)"))
 scope.openCompany()
 assert.equal(scope.tab, 'orders', 'The phone stays on Work')
 assert.equal(scope.panel, 'companies', 'Company contracts open in the menu window')
@@ -113,6 +130,37 @@ scope.togglePanel()
 assert.equal(scope.panel, 'settings')
 scope.closePanel()
 for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directive.template.includes(text), 'Template is missing: ' + text)
+// live map: asks the game only while the Map tab shows; the roads only when the phone has none for this tile
+{
+  const mapTimer = timers.find(t => t.interval === 50)
+  assert(mapTimer, 'the map has its own quick timer')
+  const before = commands.length
+  mapTimer.fn()
+  assert.equal(commands.length, before, 'no map questions on another tab')
+  const saved = answer
+  answer = {status: 'ok', car: {x: 0, y: 0, h: 0, kmh: 0}, roadsKey: 't1', roads: [0, 0, 10, 0, 1], stops: [], route: [0, 0, 5, 5]}
+  scope.setTab('map')
+  assert.equal(scope.tab, 'map')
+  assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("map")')), 'the other phone follows the Map tab')
+  mapTimer.fn()
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null)'), 'first ask: no roads yet')
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap("t1")'), 'then the roads key it has')
+  const asked = commands.length
+  mapTimer.fn()
+  assert.equal(commands.length, asked, 'at most 4 asks a second')
+  scope.mapZoom(-5)
+  assert.equal(scope.lm.zoom, 0)
+  scope.mapZoom(9)
+  assert.equal(scope.lm.zoom, 2)
+  answer = {status: 'Load the BeamNG.Earth level'}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.note, 'Load the BeamNG.Earth level.')
+  answer = saved
+  scope.setTab('orders')
+}
 // radio: one radio for both phones, kept by the game; the page's player makes the sound
 hold = false
 scope.setTab('orders')
@@ -495,4 +543,18 @@ console.log('Phone: navigation, active-work shortcuts, template, Unicode, folded
   sc.restart.word = 'DELETE'
   sc.restartGo()
   assert(sc.restart.open && sc.restart.error.includes('Nothing was deleted'))
+}
+// bus line badges: readable text on any line colour (light lines get dark text; a given text_colour is kept if it reads)
+{
+  const b = (c, t) => JSON.parse(JSON.stringify(scope.badge(c, t)))
+  assert.deepEqual(b('#ffffff', ''), {background: '#ffffff', color: '#111111', 'box-shadow': 'inset 0 0 0 1px rgba(0,0,0,.35)'})
+  assert.equal(b('white', undefined).color, '#111111')
+  assert.equal(b('#FFF', '#ffffff').color, '#111111', 'white on white is replaced')
+  assert.equal(b('#ffff00', '').color, '#111111')
+  assert.equal(b('#003399', '').color, '#ffffff')
+  assert.equal(b('#e30613', 'yellow').color, '#ffff00', 'own readable text colour kept')
+  assert.deepEqual(b(undefined, undefined), {})
+  assert.deepEqual(b('not a colour', ''), {})
+  assert(directive.template.includes('ng-style="badge(l.colour, l.textColour)"'))
+  assert(!/cep-busref" ng-style="[^"]*\{background/.test(directive.template), 'no badge sets only its background')
 }
