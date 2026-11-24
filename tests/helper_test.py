@@ -874,6 +874,17 @@ class NetworkAndStorageTests(unittest.TestCase):
             page = helper.status_page(areas, "test", 47821, player=player).decode()
         self.assertNotIn("install mpv", page)
 
+    def test_linux_players_do_not_inherit_bundled_library_paths(self):
+        base = {"PATH": "/usr/bin", "LD_LIBRARY_PATH": "/opt/earth/lib"}
+        env = helper.player_env(base, "mpv")
+        self.assertNotIn("LD_LIBRARY_PATH", env)
+        self.assertEqual(env["PATH"], "/usr/bin")
+        self.assertEqual(base["LD_LIBRARY_PATH"], "/opt/earth/lib", "the helper's own environment is untouched")
+        env = helper.player_env(dict(base, LD_LIBRARY_PATH_ORIG="/home/me/lib"), "ffplay")
+        self.assertEqual(env["LD_LIBRARY_PATH"], "/home/me/lib", "the path from before Earth started comes back")
+        self.assertNotIn("LD_LIBRARY_PATH_ORIG", env)
+        self.assertEqual(helper.player_env(base, "powershell")["LD_LIBRARY_PATH"], "/opt/earth/lib")
+
     def test_root_is_a_status_page(self):
         captured = []
         def server(address, handler):
