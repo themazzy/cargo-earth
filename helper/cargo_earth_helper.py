@@ -57,6 +57,7 @@ Speed cameras, bus lines: (c) OpenStreetMap contributors, ODbL; https://www.open
 Radio stations: Radio Browser (https://www.radio-browser.info), free community directory; the streams belong to the stations
 """
 import argparse
+import atexit
 import datetime
 import hashlib
 import html
@@ -65,6 +66,7 @@ import json
 import math
 import os
 import re
+import signal
 import sys
 import threading
 import time
@@ -1897,7 +1899,7 @@ class Player:
         self.clock = clock
         self.proc, self.url, self.vol, self.alive_at = None, None, 0.6, 0
         self.started_at, self.pos, self.error, self.kind, self.sound, self.why = 0, 0, None, None, False, None
-        self.generic = False
+        self.generic, self.ending = False, set()
         self.lock = threading.Lock()
         threading.Thread(target=self._watch, daemon=True).start()
 
@@ -1932,9 +1934,13 @@ class Player:
         # the players outside Windows say why they failed (no device, a refused stream; mpv on stdout, the others on
         # stderr): both read as one, kept for the phone
         err = subprocess.DEVNULL if kind == "powershell" else subprocess.STDOUT
+        # outside Windows each player gets its own process group: Stop ends the group, so a launcher (snap, flatpak,
+        # a wrapper script) and the player it started both end
+        group = os.name != "nt"
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
-                                text=True, bufsize=1, creationflags=flags, env=env, errors="replace")
-        proc.kind = kind
+                                text=True, bufsize=1, creationflags=flags, env=env, errors="replace",
+                                start_new_session=group)
+        proc.kind, proc.group = kind, group
         return proc
 
     def _read_err(self, proc):
@@ -1972,17 +1978,68 @@ class Player:
             except (OSError, ValueError, AttributeError):
                 pass
             # never wait here: a press (play another station, stop) is answered at once, the old player ends meanwhile
+            self.ending.add(proc)       # until it is gone: a helper closing meanwhile ends it too
             threading.Thread(target=self._reap, args=(proc,), daemon=True).start()
 
     @staticmethod
-    def _reap(proc):
+    def _signal(proc, sig):
+        """Send sig to the player and everything it started (its process group, outside Windows)."""
         try:
-            proc.wait(timeout=1)
-        except Exception:  # noqa: BLE001 - still running: ended the hard way
-            try:
+            if getattr(proc, "group", False):
+                os.killpg(proc.pid, sig)
+            elif sig == getattr(signal, "SIGKILL", None):
                 proc.kill()
-            except (OSError, AttributeError):
+            else:
+                proc.terminate()
+        except (OSError, AttributeError):
+            pass
+
+    def _reap(self, proc):
+        try:
+            if proc.kind != "powershell":
+                self._signal(proc, signal.SIGTERM)   # mpv, ffplay and VLC read no "stop": ended at once
+            try:
+                proc.wait(timeout=1)
+            except Exception:  # noqa: BLE001 - still running: ended the hard way
                 pass
+            # whatever is left of it (the player itself, or what its launcher started) is ended for good
+            self._signal(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+        finally:
+            with self.lock:
+                self.ending.discard(proc)
+
+    def shutdown(self):
+        """The helper is closing: no music may outlive it."""
+        with self.lock:
+            procs = [p for p in [self.proc, *self.ending] if p]
+            self.proc, self.url = None, None
+        for proc in procs:
+            self._signal(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+
+    @staticmethod
+    def end_leftovers(proc_dir="/proc", me=None):
+        """Players a helper started before it was closed the hard way (killed, crashed) still play: ended at start.
+        They are known by the stream variable only this helper sets. Linux only; elsewhere there is no /proc."""
+        me = me if me is not None else os.getpid()
+        ended = []
+        try:
+            pids = [int(n) for n in os.listdir(proc_dir) if n.isdigit()]
+        except OSError:
+            return ended
+        for pid in pids:
+            if pid == me:
+                continue
+            try:
+                with open(os.path.join(proc_dir, str(pid), "environ"), "rb") as f:
+                    if b"\0CARGO_EARTH_STREAM=" not in b"\0" + f.read():
+                        continue
+                os.kill(pid, signal.SIGTERM)
+                ended.append(pid)
+            except OSError:      # gone, or another user's
+                continue
+        if ended:
+            radio_log(f"ended {len(ended)} radio player(s) left playing by an earlier helper")
+        return ended
 
     def play(self, url, vol):
         if not re.match(r"https?://", url or "") or len(url) > 500:
@@ -2469,7 +2526,17 @@ def main():
         budget.prune(force=True)
         return
     updates = Updates(a.cache, enabled=not a.no_update_check).start()
-    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=Player(), srv=srv,
+    Player.end_leftovers()
+    player = Player()
+    # closed by BeamNG.Earth, Ctrl+C or the window: the radio stops with the helper
+    atexit.register(player.shutdown)
+    for name in ("SIGTERM", "SIGHUP", "SIGBREAK"):
+        if hasattr(signal, name):
+            try:
+                signal.signal(getattr(signal, name), lambda *_: sys.exit(0))
+            except (OSError, ValueError):
+                pass
+    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=player, srv=srv,
           updates=updates, buslines=BusLines(a.cache), sites=Sites(builder, a.cache),
           stations=Stations(builder, a.cache))
 
