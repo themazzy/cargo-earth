@@ -3717,7 +3717,8 @@ local function radioSync()
   elseif radio.helperSeq then
     radio.helperSeq = nil
     radio.gen = (radio.gen or 0) + 1
-    if radio.helperOn then helper.command('/v1/player/stop', nil, '/v1/player/') end
+    -- always: a play whose answer was lost (helperOn false) may still be playing on the computer
+    helper.command('/v1/player/stop', nil, '/v1/player/')
     radio.helperOn, radio.player = false, nil
   end
 end

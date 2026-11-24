@@ -885,6 +885,59 @@ class NetworkAndStorageTests(unittest.TestCase):
         self.assertNotIn("LD_LIBRARY_PATH_ORIG", env)
         self.assertEqual(helper.player_env(base, "powershell")["LD_LIBRARY_PATH"], "/opt/earth/lib")
 
+    @unittest.skipIf(os.name == "nt", "process groups and /proc are Linux")
+    def test_stop_ends_the_player_and_what_it_started_and_nothing_outlives_the_helper(self):
+        import subprocess
+        def spawn(url, vol):
+            # a launcher (like a snap or a wrapper script) that starts the real player and waits for it
+            proc = subprocess.Popen(["sh", "-c", "sleep 60 & echo $!; wait"], stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, text=True, start_new_session=True,
+                                    env=dict(os.environ, CARGO_EARTH_STREAM=url))
+            proc.kind, proc.group = "mpv", True
+            proc.child = int(proc.stdout.readline())
+            return proc
+        def alive(pid):
+            try:
+                with open(f"/proc/{pid}/stat") as f:
+                    return f.read().split(")")[-1].split()[0] != "Z"
+            except OSError:
+                return False
+        def gone(pid):
+            for _ in range(200):
+                if not alive(pid):
+                    return True
+                time.sleep(0.01)
+            return False
+        player = helper.Player(spawn=spawn)
+        player._read_err = lambda proc: None
+        player.play("http://s/1", 0.5)
+        first = player.proc
+        player.stop()
+        self.assertTrue(gone(first.child), "Stop ends what the launcher started, too")
+        self.assertTrue(gone(first.pid))
+        player.play("http://s/2", 0.5)
+        second = player.proc
+        player.shutdown()
+        self.assertTrue(gone(second.child), "a closing helper takes its player with it")
+        # a player left by a helper that was killed outright: found by its stream variable and ended at start
+        # (its owner, a pid no process has, is gone)
+        orphan = subprocess.Popen(["sleep", "60"], env=dict(os.environ, CARGO_EARTH_STREAM="http://s/3",
+                                                             CARGO_EARTH_HELPER_PID=str(2 ** 22 + 7)))
+        other = subprocess.Popen(["sleep", "60"])
+        # another helper's player while that helper (this Python process) runs: left alone
+        owned = subprocess.Popen(["sleep", "60"], env=dict(os.environ, CARGO_EARTH_STREAM="http://s/4",
+                                                            CARGO_EARTH_HELPER_PID=str(os.getpid())))
+        try:
+            ended = helper.Player.end_leftovers(me=-1)
+            self.assertIn(orphan.pid, ended)
+            self.assertNotIn(other.pid, ended)
+            self.assertNotIn(owned.pid, ended, "a running helper's player is not touched")
+            orphan.wait(timeout=5)
+        finally:
+            for p in (other, owned, orphan):
+                p.kill()
+                p.wait()
+
     def test_root_is_a_status_page(self):
         captured = []
         def server(address, handler):
