@@ -96,8 +96,12 @@ do
   state.updateGFX(0.15)
   assert(resets.doorsRear == 1 and rear.state == 'autoCoupling', 'then it latches again like on a fresh spawn')
   assert(not resets.trunk, 'a latch broken when saved is left alone')
+  impulses = {}
+  state.updateGFX(0.6)
+  assert(impulses.doorsRear == 'attached', 'a door saved hanging open (an older broken save) is pushed shut')
   for _ = 1, 40 do state.updateGFX(0.1) end
   assert(resets.doorsRear == 1)
+  rear.state = 'attached'
   tableFromHeaderTable, obj.detachCoupler, v.data.doorsRear, beamstate.nodeNameMap = savedTFHT, nil, nil, nil
 end
 beamstate.load = load

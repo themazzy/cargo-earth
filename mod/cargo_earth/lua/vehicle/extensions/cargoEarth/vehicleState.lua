@@ -12,6 +12,7 @@ local CLOSED = { attached = true, desyncedAttached = true, autoCoupling = true, 
 local OPEN = { detached = true, desyncedDetached = true }
 M.RELEASE_S = 0.2   -- how long the couplers stay let go before the controllers are reset
 M.RELATCH_S = 3
+M.PUSH_AFTER_S = 0.5 -- a shut latch not latched this long after its reset gets the close impulse
 M.RELATCH_TRIES = 3
 local relatch = nil
 
@@ -69,7 +70,10 @@ function M.relatchTick()
   for _, c in ipairs(latches()) do
     local want = relatch.shut[c.name]
     local ok, s = pcall(c.getGroupState)
-    if want and ok and OPEN[s] and (relatch.tries[c.name] or 0) < M.RELATCH_TRIES then
+    -- still latching half a second after its reset: the door is not where it latches (a save made while it hung
+    -- open), so it gets pushed shut too
+    local waiting = s == 'autoCoupling' and relatch.reset[c.name] and relatch.since >= M.PUSH_AFTER_S
+    if want and ok and (OPEN[s] or waiting) and (relatch.tries[c.name] or 0) < M.RELATCH_TRIES then
       relatch.tries[c.name] = (relatch.tries[c.name] or 0) + 1
       -- its reset asks for the same start latching as a fresh spawn; when that is not enough (a latch with no start
       -- radius) the next try uses its own close impulse
@@ -96,6 +100,7 @@ function M.updateGFX(dt)
     resetReleased()
   end
   relatch.left = relatch.left - dt
+  relatch.since = relatch.since + dt
   M.relatchTick()
   if relatch.left <= 0 then relatch = nil end
 end
@@ -127,7 +132,7 @@ function M.run(action, path, token)
         keep[name] = was == 'broken' or s == 'broken'
       end
       beamstate.load(path)
-      relatch = { left = M.RELATCH_S, shut = shut, tries = {}, reset = {} }
+      relatch = { left = M.RELATCH_S, since = 0, shut = shut, tries = {}, reset = {} }
       for _, c in ipairs(latches()) do
         if not keep[c.name] and c.reset and release(c) then relatch.reset[c.name] = true relatch.releasing = M.RELEASE_S end
       end
