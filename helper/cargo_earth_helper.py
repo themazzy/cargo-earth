@@ -1877,6 +1877,20 @@ if ($wmp) { $wmp.controls.stop(); $wmp.close() } else { $p.Stop(); $p.Close() }
 """
 
 
+def player_env(base, kind):
+    """The environment a media player starts with. Outside Windows, the library path BeamNG.Earth (a bundled app) set
+    for itself is taken back: with it, mpv, ffplay and VLC load Earth's older libstdc++ and fail to start
+    (GLIBCXX_3.4.32 not found). A path the computer had before Earth started (LD_LIBRARY_PATH_ORIG, kept by bundled
+    apps) comes back; otherwise there is none, and the players use the system's libraries."""
+    env = dict(base)
+    if kind != "powershell":
+        orig = env.pop("LD_LIBRARY_PATH_ORIG", None)
+        env.pop("LD_LIBRARY_PATH", None)
+        if orig:
+            env["LD_LIBRARY_PATH"] = orig
+    return env
+
+
 class Player:
     def __init__(self, spawn=None, clock=time.time):
         self.spawn = spawn or self._spawn
@@ -1904,7 +1918,8 @@ class Player:
             raise OSError(NO_PLAYER)
         import base64
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        env = dict(os.environ, CARGO_EARTH_STREAM=url, CARGO_EARTH_VOL=f"{vol:.2f}")   # data, never code
+        env = player_env(os.environ, kind)
+        env.update(CARGO_EARTH_STREAM=url, CARGO_EARTH_VOL=f"{vol:.2f}")   # data, never code
         if kind == "powershell":
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
                    base64.b64encode(PS_PLAYER.encode("utf-16-le")).decode()]
