@@ -73,7 +73,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from contextlib import contextmanager
 
-VERSION = "0.10.4"
+VERSION = "0.11.0"
 SITES_CACHE_VERSION = "2"  # /v1/sites: far workplaces for long-distance freight (2: catalogue types "k")
 SITE_GRID = 0.05           # a far town's point is snapped to this grid (one cached box per grid point)
 SITE_HALF = 0.12           # half the size of that box, degrees (about 27 x 17 km in central Europe)
