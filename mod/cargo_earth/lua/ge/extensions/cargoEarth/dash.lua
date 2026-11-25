@@ -483,7 +483,8 @@ end
 
 ------------------------------------------------------------------------------------------ settings
 
--- { on = bool, where = 'middle' | 'wheel', spots = { [model] = spot }, nudge = { [model or 'wheel:' .. model] = { x, y, z } } }
+-- { on = bool, where = 'middle' | 'wheel', spots = { [key] = spot }, nudge = { [key] = { x, y, z } } }
+-- key: the model for the middle of the dash, 'wheel:<model>' behind the wheel
 local cfg = { on = false, where = 'middle', spots = {}, nudge = {} }
 M.store = {
   read = function() return jsonReadFile and jsonReadFile(M.FILE) or nil end,
@@ -516,6 +517,11 @@ function M.isOn() return cfg.on end
 cfg_on = M.isOn
 function M.setOn(on) cfg.on = on and true or false save() end
 function M.where() return cfg.where end
+-- the key a model's spot and nudges are kept under, for a place (default: where the phone stands now): the model for
+-- the middle, 'wheel:<model>' behind the wheel. Each place keeps its own, so a failed move leaves the other as it was.
+local function nkey(model, where)
+  return model and ((where or cfg.where) == 'wheel' and 'wheel:' .. model or model) or nil
+end
 -- moves the phone to the middle of the dash or behind the wheel, in every car; each car is measured again for it.
 -- Nudges are kept for each place apart. Returns true when it changed.
 function M.setWhere(w)
@@ -524,15 +530,15 @@ function M.setWhere(w)
   save()
   return true
 end
--- the key a model's nudges are kept under: the model for the middle, 'wheel:<model>' behind the wheel
-local function nkey(model) return model and (cfg.where == 'wheel' and 'wheel:' .. model or model) or nil end
--- the measured spot of this model, for where the phone stands now (a spot measured for the other place is kept, but
--- not used: the car is measured again)
+
+-- the measured spot of this model, for where the phone stands now (each place has its own)
 function M.spot(model)
-  local s = model and cfg.spots[model]
+  local s = model and cfg.spots[nkey(model)]
   return s and whereOf(s.where) == cfg.where and s or nil
 end
-function M.setSpot(model, spot) if model then cfg.spots[model] = spot save() end end
+function M.setSpot(model, spot)
+  if model and type(spot) == 'table' then cfg.spots[nkey(model, whereOf(spot.where))] = spot save() end
+end
 function M.nudgeOf(model) return clampNudge(model and cfg.nudge[nkey(model)]) end
 
 -- moves the phone of this model by one step along axis ('x' = left, 'y' = back toward the driver, 'z' = up), or puts

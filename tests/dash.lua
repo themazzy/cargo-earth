@@ -105,7 +105,8 @@ test('behind the wheel: straight ahead of the driver, kept apart from the middle
   dash.load()
   assert(dash.where() == 'wheel' and dash.spot('pigeon').where == 'wheel', 'kept through a restart')
   dash.setWhere('middle')
-  assert(dash.spot('pigeon') == nil and near(dash.nudgeOf('pigeon').z, 0.01), 'back in the middle, its nudge is back')
+  assert(dash.spot('pigeon') and dash.spot('pigeon').where == 'middle', 'the middle spot was not overwritten')
+  assert(near(dash.nudgeOf('pigeon').z, 0.01) and dash.partFor('pigeon'), 'back in the middle, as it was')
   reset(nil)
 end)
 
