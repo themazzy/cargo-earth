@@ -12,7 +12,16 @@ const osm = ctx.osm
 
 const tile = osm.decode(new Uint8Array(fs.readFileSync('tests/fixtures/osm-tile.pbf')))
 assert(tile.transportation && tile.water && tile.transportation_name, 'the layers the map draws')
-assert(!tile.poi, 'other layers are left out')
+assert(tile.poi && tile.poi.features.length === 1, 'places too')
+// places: named, without street furniture, the most important first, coloured by kind
+{
+  const P = (name, cls, rank, x) => ({type: 1, tags: {name, 'class': cls, rank}, parts: [[x, 10]]})
+  const pois = osm.poisOf({poi: {extent: 4096, features: [P('Parking A', 'parking', 1, 1), P('Bistro', 'restaurant', 2, 2),
+    P('Lékárna', 'pharmacy', 1, 3), {type: 1, tags: {'class': 'shop', rank: 1}, parts: [[4, 4]]}, P('Shell', 'fuel', 3, 5),
+    P('A very very long business name indeed', 'shop', 4, 6)]}})
+  assert.equal(JSON.stringify(pois.map(p => [p.name, p.kind])),
+    JSON.stringify([['Lékárna', 'health'], ['Bistro', 'food'], ['Shell', 'fuel'], ['A very very long business…', 'shop']]))
+}
 const road = tile.transportation.features.find(f => f.tags.class === 'primary')
 assert.equal(road.type, 2)
 assert.equal(road.tags.brunnel, 'bridge')

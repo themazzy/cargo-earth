@@ -2187,6 +2187,12 @@ test('a speed camera fines the driver and costs a star on the order on board', f
   assert(core.settingsDo('dark', false).dark == false and written.dark == false)
   assert(core.setQuiet(true) == true and written.quiet == true and core.phoneState().quiet == true, 'the speeding chime off')
   assert(core.setQuiet(false) == false and written.quiet == false and core.phoneState().quiet == nil)
+  -- the map's own switches: kept in the same file, only known names, only true / false
+  assert(core.phoneState().mapPrefs.streets == true and core.phoneState().mapPrefs.other == false, 'defaults')
+  assert(core.setMapPref('water', false).water == false and written.map.water == false)
+  assert(core.setMapPref('nonsense', true).nonsense == nil and core.setMapPref('north', 'yes').north == false)
+  assert(core.phoneState().mapPrefs.water == false and written.quiet == false, 'the chime setting stays')
+  core.setMapPref('water', true)
   core.phoneFold(true, 'waiting')
   assert(core.phoneState().fold == 'waiting')
   core.phoneFold(false)
