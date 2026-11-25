@@ -13,7 +13,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
     // BeamNG runs a command without a callback as a Lua statement: an expression like ours would not run at all
     assert(typeof callback === 'function', 'engineLua without a callback never runs: ' + command)
     commands.push(command); if (hold) pending.push(callback); else callback(JSON.parse(JSON.stringify(answer))) } },
-  Date: {now: () => now}, atob, TextEncoder,
+  Date: class extends Date { constructor (...a) { super(...(a.length ? a : [now])) } static now () { return now } }, atob, TextEncoder,
   Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {}; audios.push(this) } addEventListener (n, f) { this.on[n] = f }
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
     getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
@@ -201,7 +201,38 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert.equal(scope.lm.turn.text, 'Turn left onto Dlouha')
   assert.equal(scope.lm.turn.dist, '250 m')
   assert.equal(JSON.stringify(scope.lm.speed), JSON.stringify({v: 50, unit: 'km/h'}))
-  assert.equal(JSON.stringify(scope.lm.left), JSON.stringify({dist: '2.4 km', time: '5 min'}))
+  assert.equal(JSON.stringify(scope.lm.left), JSON.stringify({dist: '2.4 km', time: '5 min', at: scope.mapArriveText(300)}))
+  // the arrival as a clock time: now plus the time left, in the computer's own time
+  assert.equal(scope.mapArriveText(31 * 60 + 20, new Date(2026, 10, 25, 22, 0).getTime()), '22:31')
+  assert.equal(scope.mapArriveText(3 * 3600, new Date(2026, 10, 25, 22, 5).getTime()), '01:05')
+  assert.equal(scope.mapArriveText(0), '')
+  // one-tap routes: offered while no job steers the GPS; Home greyed out without a home
+  assert.equal(scope.lm.go, null, 'no routes of its own while a job has the GPS')
+  answer = {...answer, go: {hq: true}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(JSON.stringify(scope.lm.go), '{"home":false,"hq":true}')
+  assert(directive.template.includes('ng-click="mapGo(\'home\')" ng-disabled="!lm.go.home"'))
+  scope.mapSet()
+  scope.mapGoOpen()
+  assert(scope.lm.goOpen && !scope.lm.set, 'one panel at a time')
+  const beforeGo = answer
+  answer = {ok: true, msg: 'Route set to your headquarters.'}
+  commands.length = 0
+  scope.mapGo('hq')
+  assert.equal(commands[0], 'cargoEarth_core and cargoEarth_core.mapGo("hq") or nil')
+  assert.equal(scope.lm.goMsg, 'Route set to your headquarters.')
+  later[later.length - 1]()
+  assert(!scope.lm.goOpen && !scope.lm.goMsg, 'closes a moment after the route is set')
+  answer = {ok: false, msg: 'Your firm has no headquarters yet.'}
+  scope.mapGoOpen()
+  scope.mapGo('hq')
+  assert(scope.lm.goOpen && !scope.lm.goOk, 'a refusal stays to be read')
+  scope.mapGoOpen()
+  answer = {...beforeGo, go: undefined}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.go, null)
   answer = {...answer, imperial: true, turn: {type: 'roundabout', exit: 2, m: 100}}
   now += 300
   mapTimer.fn()

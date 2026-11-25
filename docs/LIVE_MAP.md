@@ -42,6 +42,17 @@ GPS `remaining` / `eta`). Lengths and speed follow the game's units (Options > D
 km/h, or ft / mi and mph. Earth's step offsets count metres along its full route, ours along the simplified line, so
 the car's distance along our line is scaled by Earth's route length.
 
+**Arrival time**: the way-left pill also shows the clock time you get there (`now + eta`, the computer's own clock,
+like the phone's status row), e.g. `6.4 km · 12 min · 20:32`.
+
+**Next stop's name**: the next stop's pin gets a tag with its name (a drop-off's street and number, a pickup's name),
+right of the pin, or left of it near the zoom buttons. Not shown while the pin is held at the map's edge.
+
+**Route to** (the pin button under the corner buttons, only while no job or company shift steers the GPS): Home,
+Headquarters (greyed out until there is one), Nearest fuel (the same station finder as the Garage's fuel card) and
+Clear route. `cargoEarth_core.mapGo(where)` returns `{ ok, msg }`; `phoneMap` sends `go = { home, hq }` when the map
+may set routes.
+
 **Lanes**: when the next turn is within 1 km and Earth's step has lane data (OSRM `lanes`), a row of lane arrows
 shows under the banner, bright for the lanes that lead your way (a lane with several arrows shows the one the route
 takes).

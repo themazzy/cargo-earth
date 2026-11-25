@@ -4625,6 +4625,7 @@ end
 local function garageRefuel(amount, pct) local ok, msg = fuelRefuel(amount, pct) say(msg) return ok, msg end
 local function garageFuelDelivery() local ok, msg = fuelDelivery() say(msg) return ok, msg end
 local function garageFuelGps() return fuelGps() end
+M.fuelGps = fuelGps   -- (the map's one-tap routes)
 local function garageHireDriver(id, applicant)
   if S.career.firm then fleet.applicants(S.career.firm, (S.career.activeSeconds or 0) / 60, M.random) end
   return garageSay(fleet.hire(S.career.garage, S.career, tonumber(id), applicant))
@@ -5766,6 +5767,10 @@ function M.phoneMap(have, perf, geo, whole)
     end
   end
   out.stops = stops
+  -- the map's own routes (Home, HQ, fuel) while no work steers the GPS
+  if not S.job and not c.employment and not S.pendingCareer then
+    out.go = { home = (c.home and c.home.g) and true or nil, hq = (hq and hq.g) and true or nil }
+  end
   -- speed cameras within 2 km (the ones the fines watch): where, and their limit in km/h (assumed: a class default)
   if camerasOn() and cams.near and #cams.near > 0 then
     local list = {}
@@ -5793,6 +5798,36 @@ function M.phoneMap(have, perf, geo, whole)
       slices = f.slices, edges = f.edges, roadsMs = ms(f.roadsMs), building = f.building or nil }
   end
   return out
+end
+
+-- One-tap routes from the phone's map: home, the firm's headquarters, the nearest fuel station, or no route at all.
+-- Not while a job or a company shift steers the GPS. Returns { ok, msg }.
+function M.mapGo(where)
+  local c = S.career
+  if S.pendingCareer then return { ok = false, msg = 'Start or resume your career first.' } end
+  if S.job or c.employment then return { ok = false, msg = 'The GPS follows your work now.' } end
+  if earth.status() ~= 'ok' then return { ok = false, msg = tostring(earth.status()) } end
+  local ok, msg
+  if where == 'home' then
+    if not (c.home and c.home.g) then return { ok = false, msg = 'You have no home yet. Set one in the Menu, under Places.' } end
+    ok, msg = earth.gps(c.home.g[1], c.home.g[2], c.home.name or 'Home')
+    if ok then msg = 'Route set home.' end
+  elseif where == 'hq' then
+    local hq = c.firm and c.firm.hq
+    if not (hq and hq.g) then return { ok = false, msg = 'Your firm has no headquarters yet.' } end
+    ok, msg = earth.gps(hq.g[1], hq.g[2], c.firm.name or hq.n or 'Headquarters')
+    if ok then msg = 'Route set to your headquarters.' end
+  elseif where == 'fuel' then
+    if not (c.garage and c.garage.car) then return { ok = false, msg = 'The fuel finder needs your career car.' } end
+    return (function(a, b) return { ok = a == true, msg = b } end)(M.fuelGps())
+  elseif where == 'clear' then
+    earth.gpsClear()
+    ok, msg = true, 'Route cleared.'
+  else
+    return { ok = false, msg = 'Unknown place.' }
+  end
+  if not ok then msg = 'GPS not set: ' .. tostring(msg or 'BeamNG.Earth did not answer') end
+  return { ok = ok == true, msg = msg }
 end
 
 -- The floating phone folded or open. The game rebuilds UI apps when the camera changes or the pause menu opens, so
