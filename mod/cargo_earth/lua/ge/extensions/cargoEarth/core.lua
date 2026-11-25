@@ -5996,6 +5996,7 @@ end
 local dashClock, dashCheckAt, dashTried, dashReloaded = 0, nil, {}, {}
 local dashMeasureNext = {} -- car id -> true: reloaded to be measured, so measure it once it is back
 local dashPending -- a change from Settings the car was too busy for: { rebuild } (done once the car is free)
+-- M.dashWhereBack: the phone was just moved (middle / wheel): where it stood before, until this car is measured for it
 M.DASH_CHECK_S, M.DASH_RETRY_S = 1.5, 20
 
 local function dashMeasure(v)
@@ -6036,10 +6037,21 @@ function M.dashFit(on, opts)
   if on and (opts.measure or dashMeasureNext[v.id] or not dash.spot(v.model)) then
     local spot, why, seenLoading = dashMeasure(v)
     if not spot then
-      if seenLoading or dashReloaded[v.id] then dashMeasureNext[v.id] = nil return false, why end
+      if seenLoading or dashReloaded[v.id] then
+        dashMeasureNext[v.id] = nil
+        -- moved to a place this car has no dash for: it goes back where it was, once the car is free
+        if M.dashWhereBack then
+          dash.setWhere(M.dashWhereBack)
+          M.dashWhereBack = nil
+          dashPending = { rebuild = true, why = why } -- the reason stays shown after the phone is back
+          M.dashCheckSoon()
+        end
+        return false, why
+      end
       reload = true
     else
       measured = true
+      M.dashWhereBack = nil
       dashReloaded[v.id], dashMeasureNext[v.id] = nil, nil
     end
   end
@@ -6104,9 +6116,10 @@ dashDoInner = function(a)
   if a == 'middle' or a == 'wheel' then
     local before = dash.where()
     if not dash.setWhere(a) then return true end
+    M.dashWhereBack = before
     local ok, why, busy = M.dashFit(true, { measure = true, rebuild = true })
-    -- this car has no dash there: the phone stays where it was
-    if not ok and not busy then dash.setWhere(before) end
+    -- the car could not take it now (damaged, or it is being changed): the phone stays where it was
+    if not ok and not busy and M.dashWhereBack then dash.setWhere(before) M.dashWhereBack = nil end
     return ok, why, busy
   end
   local axis, sign
@@ -6136,7 +6149,7 @@ local function dashTick(dt)
     local pending = dashPending
     dashPending = nil
     local ok, why = M.dashFit(on, { rebuild = on and pending.rebuild })
-    S.dashError = not ok and why or nil
+    S.dashError = (not ok and why) or pending.why or nil
     return
   end
   -- switched off: a car that still has the phone loses it
