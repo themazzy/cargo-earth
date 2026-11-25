@@ -1737,8 +1737,8 @@ angular.module('beamng.apps')
 
       // live map: roads from BeamNG.Earth's road graph, the GPS route and the job's stops, the car pointing up
       '<div class="cep-body cep-mapbody" ng-if="tab === \'map\'"><div class="cep-mapbox" ng-class="{\'cep-map-hasleft\': lm.left}">' +
-        '<canvas class="cep-livemap" ng-show="lm.engine !== \'vector\'" role="img" aria-label="Map of the roads around your car, your route and your stops"></canvas>' +
-        '<svg class="cep-map-car" ng-show="lm.engine === \'vector\'" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0 -12 L9 9 L0 4 L-9 9 Z" fill="#2f7bf6" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/></svg>' +
+        '<canvas class="cep-livemap" ng-show="!lm.full" role="img" aria-label="Map of the roads around your car, your route and your stops"></canvas>' +
+        '<svg class="cep-map-car" ng-show="lm.full" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0 -12 L9 9 L0 4 L-9 9 Z" fill="#2f7bf6" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/></svg>' +
         '<div class="cep-map-dir" ng-if="lm.turn && !lm.behind" role="status">' +
           '<svg viewBox="-15 -15 30 30" aria-hidden="true"><path ng-attr-d="{{ lm.turn.icon }}" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
           '<div><b>{{ lm.turn.dist }}</b><span>{{ lm.turn.text }}</span></div></div>' +
@@ -2631,9 +2631,15 @@ angular.module('beamng.apps')
       }
       var ROAD_M = [3, 6, 9, 13], ROAD_PX = [1, 2, 3, 4]   // road width in metres, and never thinner than this in pixels
       var STOP_LOOK = {next: ['#e4572e', ''], pickup: ['#e4572e', 'P'], drop: ['#2e9e5b', 'D'], stop: ['#7a5cc7', ''], home: ['#2f7bf6', 'H'], hq: ['#4b5563', 'W']}
-      var lm = scope.lm = {note: '', zoom: 1, behind: false, engine: 'vector', stats: false, statLines: [], turn: null, speed: null, left: null}
+      var lm = scope.lm = {note: '', zoom: 1, behind: false, engine: 'vector', full: true, stats: false, statLines: [], turn: null, speed: null, left: null}
       try { var z = localStorage.getItem('cargoEarthMapZoom'); if (z === '0' || z === '1' || z === '2') lm.zoom = Number(z) } catch (e) {}
       try { if (localStorage.getItem('cargoEarthMapEngine') === 'sketch') lm.engine = 'sketch' } catch (e) {}
+      // the map that really shows: the full one only while it has not failed
+      function mapFull() {
+        var full = lm.engine === 'vector' && !vec.failed
+        if (full !== lm.full) scope.$evalAsync(function () { lm.full = full })
+        lm.full = full
+      }
       var mapData = {roadsKey: null, roads: [], route: null, routeGps: false, stops: [], car: null, from: null, at: 0, routeLL: null}
       // the timing readout's numbers (kept only while it shows)
       var perf = {asks: [], draws: [], frames: 0, framesAt: Date.now(), fps: 0, game: null, bytes: 0, roadsSent: 0}
@@ -2645,6 +2651,7 @@ angular.module('beamng.apps')
       scope.mapEngine = function () {
         lm.engine = lm.engine === 'vector' ? 'sketch' : 'vector'
         if (lm.engine === 'vector') vec.failed = ''
+        mapFull()
         mapData.roadsKey = null
         perf.asks = []; perf.draws = []
         try { localStorage.setItem('cargoEarthMapEngine', lm.engine) } catch (e) {}
@@ -2728,12 +2735,14 @@ angular.module('beamng.apps')
       var LIB = 'local://local/ui/modules/apps/CargoEarthPhone/lib/'
       var VEC_STYLE = {light: 'https://tiles.openfreemap.org/styles/liberty', dark: 'https://tiles.openfreemap.org/styles/dark'}
       var vec = {map: null, div: null, ready: false, failed: '', loading: false, style: null, tiles: 0, errors: 0, lastError: '',
-        cam: '', markers: [], stopsKey: '', routeKey: '', timer: null}
+        cam: '', markers: [], stopsKey: '', routeKey: '', linkKey: '', timer: null}
+      mapFull()
       function vecFail(why) {
         vec.failed = why
+        mapFull()
         if (vec.map) { try { vec.map.remove() } catch (e) {} }
         if (vec.timer) clearTimeout(vec.timer)
-        vec.map = null; vec.ready = false; vec.markers = []; vec.stopsKey = ''; vec.routeKey = ''; vec.cam = ''
+        vec.map = null; vec.ready = false; vec.markers = []; vec.stopsKey = ''; vec.routeKey = ''; vec.linkKey = ''; vec.cam = ''
         if (vec.div && vec.div.parentNode) vec.div.parentNode.removeChild(vec.div)
         vec.div = null
         mapData.roadsKey = null
@@ -2772,6 +2781,7 @@ angular.module('beamng.apps')
         map.addLayer({id: 'ce-route', type: 'line', source: 'ce-route', layout: {'line-cap': 'round', 'line-join': 'round'},
           paint: {'line-color': col.route, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 4, 17, 9]}})
         vec.routeKey = ''
+        vec.linkKey = ''
       }
       function vecMake(box, car) {
         if (!vec.div) { vec.div = document.createElement('div'); vec.div.className = 'cep-vmap' }
@@ -2832,10 +2842,15 @@ angular.module('beamng.apps')
           vec.routeKey = rk
           map.getSource('ce-route').setData(lineGeo(ll))
           try { map.setPaintProperty('ce-route', 'line-dasharray', mapData.routeGps ? null : [1.5, 1.5]) } catch (e) {}
-          var link = mapData.routeGps && mapData.offM > 20 && typeof ll[0] === 'number' && mapData.car && mapData.car.lat !== undefined
-          map.getSource('ce-link').setData(link ? lineGeo([mapData.car.lat, mapData.car.lon, ll[0], ll[1]]) : {type: 'FeatureCollection', features: []})
           map.setPaintProperty('ce-route', 'line-color', col.route)
           map.setPaintProperty('ce-route-casing', 'line-color', col.casing)
+        }
+        // off the line: a dashed link from the car to where the route goes on (its own key: the car moves, the route not)
+        var link = mapData.routeGps && mapData.offM > 20 && typeof ll[0] === 'number' && mapData.car && mapData.car.lat !== undefined
+        var lk = link ? [mapData.car.lat, mapData.car.lon, ll[0], ll[1]].join(',') : ''
+        if (lk !== vec.linkKey) {
+          vec.linkKey = lk
+          map.getSource('ce-link').setData(link ? lineGeo([mapData.car.lat, mapData.car.lon, ll[0], ll[1]]) : {type: 'FeatureCollection', features: []})
         }
         var stops = mapData.stops || []
         var sk = stops.map(function (st) { return [st.lat, st.lon, st.k, st.n, st.pickup ? 1 : 0].join(':') }).join('|')

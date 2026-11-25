@@ -144,8 +144,10 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("map")')), 'the other phone follows the Map tab')
   mapTimer.fn()
   assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, true)'), 'the full map: no roads, by lat / lon')
+  assert.equal(scope.lm.full, true, 'the full map shows')
   scope.mapEngine()
   assert.equal(scope.lm.engine, 'sketch')
+  assert.equal(scope.lm.full, false, 'the canvas shows')
   now += 300
   mapTimer.fn()
   assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, false)'), 'the simple map: first ask, no roads yet')
