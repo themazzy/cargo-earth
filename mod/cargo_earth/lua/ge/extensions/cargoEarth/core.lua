@@ -4795,9 +4795,16 @@ local function partsProblem(quote, repair)
   end
 end
 
-local function openParts()
-  if not garage.inOwnCar(M.G, S.career.garage) then return false, 'Sit in your career car first.' end
+local function openParts(captured)
+  local g = S.career.garage
+  if not garage.inOwnCar(M.G, g) then return false, 'Sit in your career car first.' end
   local opening = not S.parts
+  -- A damaged car's latest physical state is saved first (Codex): the preview rebuilds the car mended, and Discard must
+  -- bring back this damage, not an older snapshot (or none), or opening and discarding would be a free repair.
+  if opening and not captured and ((g.repair or 0) > 0 or (M.G.damage and (M.G.damage() or 0) > 0)) then
+    local busy, msg = M.captureOutgoing(function() return openParts(true) end)
+    if busy then return false, msg end
+  end
   if opening then
     local ok, why = startParts(M.G.vehicle())
     if not ok then return false, why end
