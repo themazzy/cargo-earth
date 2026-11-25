@@ -3423,7 +3423,6 @@ angular.module('beamng.apps')
           lat: car.lat, lon: car.lon, heading: car.h}, !!scope.dark, Date.now()) : null
         if (!!osm !== lm.osm) scope.$evalAsync(function () { lm.osm = !!osm })
         if (osm) {
-          osm.labels()
           sx = function (la, lo) { return osm.proj(la, lo)[0] }
           sy = function (la, lo) { return osm.proj(la, lo)[1] }
         }
@@ -3490,6 +3489,8 @@ angular.module('beamng.apps')
           line()
           if (ctx.setLineDash) ctx.setLineDash([])
         }
+        // street names over the route (the street the route takes keeps its name), under the stops and the car
+        if (osm) { ctx.save(); osm.labels(); ctx.restore() }
         // stops: a dot with a letter; the next one bigger, and held at the edge with an arrow when it is off the map
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
