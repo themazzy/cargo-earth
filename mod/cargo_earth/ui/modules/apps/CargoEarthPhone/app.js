@@ -2032,7 +2032,7 @@ angular.module('beamng.apps')
             '(!st.dash.car ? "Sit in a car: the phone appears on its dash." : ' +
             '(st.dash.fitted ? ("On the dash" + (st.dash.running ? "" : " (its screen starts when the car is loaded)") + ". Point a controller at the screen and pull the trigger.") : "Putting it on this car’s dash…")) }}</small></div>' +
           '<b>{{ st.dash.on ? "On" : "Off" }}</b></div>' +
-        '<div class="cep-li" ng-if="st.dash.on" style="cursor:default"><div class="cep-name">Where on the dash</div><div class="cep-row">' +
+        '<div class="cep-li" ng-if="st.dash.on" style="cursor:default"><div class="cep-name">Default position</div><div class="cep-row">' +
           '<button class="cep-sm" ng-class="{ghost: st.dash.where === \'wheel\'}" ng-click="sdo(\'dash\', \'middle\')">Middle</button>' +
           '<button class="cep-sm" ng-class="{ghost: st.dash.where !== \'wheel\'}" ng-click="sdo(\'dash\', \'wheel\')">Behind wheel</button></div></div>' +
         '<div class="cep-sub" ng-if="st.dash.error">{{ st.dash.error }}</div>' +
