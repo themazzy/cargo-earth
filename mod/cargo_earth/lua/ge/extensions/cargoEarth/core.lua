@@ -5298,7 +5298,7 @@ function M.settingsState()
 end
 
 -- name: mode (a = courier | trucking | taxi | bus), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
--- dark (a = true | false), restart (a = the confirm word, see restartCareer), dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
+-- dark (a = true | false), restart (a = the confirm word, see restartCareer), dash (a = on | off | middle | wheel | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
 function M.settingsDo(name, a, b)
   -- the dash phone is the player's own choice, outside the career: it works on the resume screen too
   if name == 'dash' then
@@ -6005,7 +6005,7 @@ local function dashMeasure(v)
   local camName = camNode ~= nil and type(vdata) == 'table' and type(vdata.nodes) == 'table' and vdata.nodes[camNode]
   camName = type(camName) == 'table' and camName.name or nil
   local nodes = dash.loadedNodes(v.id, v.model, camName)
-  local spot, why = dash.findSpot(nodes or dash.nodesOf(vdata, camNode), eye)
+  local spot, why = dash.findSpot(nodes or dash.nodesOf(vdata, camNode), eye, dash.where())
   if spot then
     dash.setSpot(v.model, spot)
     log('I', 'cargoEarth', string.format('dash phone: %s measured, phone at %.3f %.3f %.3f on group %s', v.model,
@@ -6066,7 +6066,7 @@ function M.dashFit(on, opts)
   return true
 end
 
--- Settings > Phone on the dashboard. a: on | off | reset | measure, or a nudge: x+ / x- (left / right as the driver
+-- Settings > Phone on the dashboard. a: on | off | reset | measure | middle | wheel (where it stands), or a nudge: x+ / x- (left / right as the driver
 -- sees it), y+ / y- (closer / further), z+ / z- (up / down). Nudges are kept per car model.
 local dashDoInner
 -- Moving the phone reloads the car, so presses that come close together are applied with one reload, once they stop.
@@ -6100,6 +6100,14 @@ dashDoInner = function(a)
   if a == 'measure' then
     dash.nudge(v.model, 'reset')
     return M.dashFit(true, { measure = true })
+  end
+  if a == 'middle' or a == 'wheel' then
+    local before = dash.where()
+    if not dash.setWhere(a) then return true end
+    local ok, why, busy = M.dashFit(true, { measure = true, rebuild = true })
+    -- this car has no dash there: the phone stays where it was
+    if not ok and not busy then dash.setWhere(before) end
+    return ok, why, busy
   end
   local axis, sign
   if type(a) == 'string' then axis, sign = a:match('^([xyz])([+-])$') end
