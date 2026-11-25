@@ -286,6 +286,29 @@ function M.geoRoute(points, metres)
   return out
 end
 
+-- The whole way ahead for the map's whole-route view: about `most` points spread along it, in game metres
+-- { x, y, ... } and, where the points have them, lat / lon { lat, lon, ... }.
+M.OUTLINE_POINTS = 240
+function M.outline(points, most)
+  local xy, ll = {}, {}
+  if type(points) ~= 'table' or #points == 0 then return { xy = xy, ll = ll } end
+  most = most or M.OUTLINE_POINTS
+  local total, n = 0, #points
+  for i = 2, n do total = total + sqrt((points[i][1] - points[i - 1][1]) ^ 2 + (points[i][2] - points[i - 1][2]) ^ 2) end
+  local step, run, keptAt = math.max(M.ROUTE_STEP, total / most), 0, -math.huge
+  local function r6(v) return floor(v * 1e6 + 0.5) / 1e6 end
+  for i = 1, n do
+    local p = points[i]
+    if i > 1 then run = run + sqrt((p[1] - points[i - 1][1]) ^ 2 + (p[2] - points[i - 1][2]) ^ 2) end
+    if i == 1 or i == n or run - keptAt >= step then
+      keptAt = run
+      xy[#xy + 1], xy[#xy + 2] = round(p[1]), round(p[2])
+      if p[3] then ll[#ll + 1], ll[#ll + 2] = r6(p[3]), r6(p[4]) end
+    end
+  end
+  return { xy = xy, ll = ll }
+end
+
 -- The next turn: of Earth's route steps (OSRM maneuvers, 1.7: { type, modifier, exit, name, ref, offset = metres
 -- from the route's start }), the first still ahead of `travelled` metres. Returns { type, modifier, exit, name, m }
 -- with m the metres to it, or nil (no steps, or only the arrival left and it is far).

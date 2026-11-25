@@ -151,22 +151,32 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert.equal(scope.tab, 'map')
   assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("map")')), 'the other phone follows the Map tab')
   mapTimer.fn()
-  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, true)'), 'the OSM map: no roads, by lat / lon')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, true, false)'), 'the OSM map: no roads, by lat / lon')
   assert.equal(scope.lm.engine, 'osm')
   scope.mapEngine()
   assert.equal(scope.lm.engine, 'sketch')
   now += 300
   mapTimer.fn()
-  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, false)'), 'the simple map: first ask, no roads yet')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, false, false)'), 'the simple map: first ask, no roads yet')
   now += 300
   mapTimer.fn()
-  assert(commands.at(-1).includes('cargoEarth_core.phoneMap("t1", false, false)'), 'then the roads key it has')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap("t1", false, false, false)'), 'then the roads key it has')
   scope.mapStats()
   now += 300
   mapTimer.fn()
-  assert(commands.at(-1).includes(', true, false)'), 'timings only while the readout shows')
+  assert(commands.at(-1).includes(', true, false, false)'), 'timings only while the readout shows')
   assert(scope.lm.statLines.some(line => line.startsWith('Simple map')), 'the readout says which map')
   scope.mapStats()
+  // the whole-route view: only with a route, asks the game for the whole way, and back with the same button
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.hasRoute, true, 'a route: the whole-route button shows')
+  scope.mapWhole()
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).endsWith(', false, false, true) or nil'), 'the whole way is asked for')
+  scope.mapWhole()
+  assert.equal(scope.lm.overview, false)
   // directions: the next turn, the speed and the way left, in the game's units
   answer = {...answer, routeGps: true, turn: {type: 'turn', modifier: 'left', m: 240, name: 'Dlouha'}, leftM: 2400, leftS: 300,
     car: {x: 0, y: 0, h: 0, kmh: 50}}

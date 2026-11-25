@@ -86,8 +86,18 @@ the Map tab in `tests/phone.cjs`.
   (food, shops, fuel, health, other) and the name beside it, the most important of each tile first (`rank`). Street
   furniture (parking, bins, gates, benches...) is left out. At most 12 at once in the 250 and 500 m views, 5 in the
   1000 m view, never over a street name, each other, the car or the map buttons.
+- **House numbers** (OpenMapTiles `housenumber`, z14) in the 250 m view only, small and grey, at most 60, never over
+  anything else.
+- **One-way arrows**: chevrons every 70 m along one-way primary to service roads (`oneway` 1 / -1), drawn into the map
+  pieces in the 250 and 500 m views (motorways and trunks left out: they are all one-way).
+- **Speed cameras**: the cameras the fines watch (`core.phoneMap` sends `cams`, those within 2 km, with their limit)
+  as small limit signs, in mph when the game shows miles.
+- **Whole-route view** (the corner button under ⚙, only with a route): north up, the whole way ahead
+  (`phoneMap(..., whole)` sends `whole = phonemap.outline(...)`, ~240 points) and the car fitted in, with coarser tiles
+  (z13 down to z9) when it reaches far. The same button goes back to following the car.
 - **River names**: named `waterway` lines, blue and slanted, placed like street names.
-- **⚙ panel** (under the north dial): Speed chime, Street names, River names, Latin names
+- **⚙ panel** (under the north dial): Speed chime, Street names, River names, Latin names,
+  House nos., One-way, Speed cameras
   (the `name:latin` spelling of streets, rivers and places, e.g. Serbian or Bulgarian Cyrillic names), Buildings, North up, Auto zoom (one step
   out from 70 km/h, back under 50), Lane arrows, Speedometer, and Places by kind. Kept in the player's
   `settings/cargoEarth/ui.json` (`map`), set by `cargoEarth_core.setMapPref(key, on)`; `phoneState().mapPrefs` brings
