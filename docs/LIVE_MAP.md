@@ -87,7 +87,8 @@ the Map tab in `tests/phone.cjs`.
   furniture (parking, bins, gates, benches...) is left out. At most 12 at once in the 250 and 500 m views, 5 in the
   1000 m view, never over a street name, each other, the car or the map buttons.
 - **River names**: named `waterway` lines, blue and slanted, placed like street names.
-- **⚙ panel** (under the north dial): Speed chime, Street names, River names, Buildings, North up, Auto zoom (one step
+- **⚙ panel** (under the north dial): Speed chime, Street names, River names, Latin names
+  (the `name:latin` spelling of streets, rivers and places, e.g. Serbian or Bulgarian Cyrillic names), Buildings, North up, Auto zoom (one step
   out from 70 km/h, back under 50), Lane arrows, Speedometer, and Places by kind. Kept in the player's
   `settings/cargoEarth/ui.json` (`map`), set by `cargoEarth_core.setMapPref(key, on)`; `phoneState().mapPrefs` brings
   them to every phone. The panel fits the map without scrolling (VR controllers can't scroll inside it).

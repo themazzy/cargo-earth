@@ -5794,7 +5794,7 @@ M.uiStore = {
 }
 -- The map's own switches (its ⚙ panel): what it shows. Only true / false, only these names.
 M.MAP_PREFS = { streets = true, water = true, food = true, shop = true, fuel = true, health = true, other = false,
-  buildings = true, north = false, autoZoom = false, lanes = true, speedo = true }
+  buildings = true, north = false, autoZoom = false, lanes = true, speedo = true, latin = false }
 function M.mapPrefsOf(t)
   local out = {}
   for k, def in pairs(M.MAP_PREFS) do
