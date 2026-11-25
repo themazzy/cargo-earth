@@ -1059,3 +1059,48 @@ class UpdateCheckTests(unittest.TestCase):
             self.assertTrue(bad.due())
             self.assertFalse(helper.Updates(d, enabled=False).due())
 
+
+
+class OsmTileTests(unittest.TestCase):
+    def test_tiles_come_from_openfreemap_and_stay_on_disk(self):
+        import gzip
+        asked = []
+
+        def get(url):
+            asked.append(url)
+            if url == helper.OsmTiles.TILEJSON:
+                return json.dumps({"tiles": ["https://tiles.openfreemap.org/planet/20251119_001001_pt/{z}/{x}/{y}.pbf"]}).encode()
+            return gzip.compress(b"tile-bytes")
+
+        with tempfile.TemporaryDirectory() as cache:
+            osm = helper.OsmTiles(cache, get=get)
+            self.assertEqual(osm.tile(14, 8848, 5550), b"tile-bytes")
+            self.assertEqual(asked[-1], "https://tiles.openfreemap.org/planet/20251119_001001_pt/14/8848/5550.pbf")
+            self.assertEqual(osm.tile(14, 8848, 5550), b"tile-bytes")
+            self.assertEqual(len(asked), 2, "the second time from disk")
+            osm.tile(14, 8848, 5551)
+            self.assertEqual(len(asked), 3, "the tile address is asked once")
+            with self.assertRaises(ValueError):
+                osm.tile(15, 0, 0)
+            with self.assertRaises(ValueError):
+                osm.tile(14, 2 ** 14, 0)
+
+    def test_only_openfreemap_addresses(self):
+        with tempfile.TemporaryDirectory() as cache:
+            osm = helper.OsmTiles(cache, get=lambda url: json.dumps({"tiles": ["https://evil.example/{z}/{x}/{y}"]}).encode())
+            with self.assertRaises(ValueError):
+                osm.tile(14, 1, 1)
+            self.assertEqual(osm.stats["failed"], 1)
+
+    def test_old_tiles_are_dropped(self):
+        with tempfile.TemporaryDirectory() as cache:
+            osm = helper.OsmTiles(cache, get=lambda url: b"x")
+            osm.MAX_FILES = 2
+            for i in range(4):
+                path = os.path.join(cache, "osm", "14", "1", f"{i}.pbf")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(b"x")
+                os.utime(path, (i, i))
+            osm._prune()
+            self.assertEqual(sorted(os.listdir(os.path.join(cache, "osm", "14", "1"))), ["2.pbf", "3.pbf"])

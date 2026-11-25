@@ -5647,8 +5647,8 @@ end
 -- already has (the roads are sent again only on another tile, another graph or after BeamNG.Earth moved the world).
 --   { car = { x, y, h (degrees clockwise from north), kmh }, roadsKey, roads = { x1, y1, x2, y2, kind, ... },
 --     route = { x, y, ..., false, ... }, routeGps, stops = { { x, y, k = 'next'|'pickup'|'drop'|'stop'|'home'|'hq', n } } }
--- geo (the full map, drawn by MapLibre from OpenFreeMap): no roads; the car, the route (routeLL = { lat, lon, ... })
--- and the stops come with lat / lon too.
+-- geo (the OSM map, drawn by the phone from OpenFreeMap tiles the helper passes on): no roads; the car, the route
+-- (routeLL = { lat, lon, ... }) and the stops come with lat / lon too, and tiles = the helper's tile address.
 -- The game shows lengths in miles (Options > Display > Units)
 function M.imperial()
   local st = rawget(_G, 'settings')
@@ -5665,6 +5665,8 @@ function M.phoneMap(have, perf, geo)
   local frame = tostring(p.anchorLat or '') .. ',' .. tostring(p.anchorLon or '')
   local function r6(v) return math.floor(v * 1e6 + 0.5) / 1e6 end
   if geo and p.lat and p.lon then out.car.lat, out.car.lon = r6(p.lat), r6(p.lon) end
+  -- the OSM map's tiles come through the helper (the game's UI cannot load from the web)
+  if geo and helper.enabled then out.tiles = string.format('http://%s:%d/v1/osm/tile', helper.HOST, helper.PORT) end
   local graph = not geo and M.G.graph and M.G.graph()
   if graph then
     local tx, ty, cx, cy = pm.tile(p.x, p.y)

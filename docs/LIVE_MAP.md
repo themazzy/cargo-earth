@@ -1,20 +1,32 @@
 # Live map (phone Map tab)
 
-The Map tab has two maps. Tap **Use the simple map / Use the full map** in the timing readout (tap the north dial) to
-switch; the choice is remembered per phone.
+The Map tab has two maps. Tap **Use the simple map / Use the OSM map** in the timing readout (tap the north dial)
+to switch; the choice is remembered per phone.
 
-## Full map (default)
+## OSM map (default)
 
-[MapLibre GL JS](https://maplibre.org) 4.7.1 (BSD-3-Clause, bundled in `ui/modules/apps/CargoEarthPhone/lib/` with
-its licence) draws [OpenFreeMap](https://openfreemap.org) vector tiles (OpenStreetMap data, OpenMapTiles schema;
-`liberty` style, `dark` in dark mode). The phone page downloads the tiles itself, so it needs an internet connection
-and WebGL in the game's browser. The style's attribution (OpenFreeMap, OpenMapTiles, OpenStreetMap) shows in the map's
-corner. In this mode the game sends no roads at all: only the car, the route and the stops by lat / lon
-(`core.phoneMap(nil, perf, true)`), so the road graph costs nothing. The car arrow is fixed (68 % down, heading up)
-and the map turns under it; the next stop and the other stops are markers.
+OpenStreetMap vector tiles from [OpenFreeMap](https://openfreemap.org) (OpenMapTiles schema), decoded and drawn by the
+phone itself on its 2D canvas (`cargoEarthOsm` at the top of `app.js`). Two things in BeamNG's UI browser shape it:
 
-If the library cannot load, the screen cannot draw WebGL, or the style has not arrived in 20 s, the phone shows the
-simple map and says why (also in the timing readout).
+- **No WebGL**: the game runs its browser with GPU drawing off ("GL_RENDERER = Disabled"), so a WebGL map library
+  (MapLibre) cannot start. The phone has its own small Mapbox Vector Tile decoder and draws water, parks and woods,
+  residential areas, buildings (close up), rail and roads by class (casing, then fill, small under big) with 2D canvas
+  calls, and street names upright along the streets, kept clear of each other.
+- **No web**: the browser does not load from the internet (the radio streams go through the helper for the same
+  reason). The tiles come through the helper: `GET /v1/osm/tile?z=14&x=..&y=..` asks OpenFreeMap (the tile address
+  from its TileJSON, asked once a day), keeps the tile on disk (`cache/osm`, the oldest past 3000 dropped) and answers
+  the phone with CORS. That path is the only one the helper answers for a page (it still answers only this computer,
+  and only ever passes OpenFreeMap tiles). `core.phoneMap` gives the phone the address (`tiles`) when the helper is on.
+
+Each z14 tile (about 1.5 km) is cut into 512 px pieces, as many as the zoom needs, each drawn north-up once and kept
+(48 at most); a frame only turns and places those pictures under the car, so a frame costs a few image draws. At most
+two new pieces are drawn per frame. Decoded tiles are kept (30 at most), 4 load at once, a failed one is asked again
+after 30 s. In this mode the game sends no roads at all, only the car, the route and the stops by lat / lon
+(`core.phoneMap(nil, perf, true)`). The credit (© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors) is in the
+map's corner.
+
+Without the helper, or when three tiles failed and none came (the reason is named: the helper did not answer, is too
+old, or could not reach OpenFreeMap), the phone shows the simple map and says why in a note you can close (✕).
 
 ## Directions
 
