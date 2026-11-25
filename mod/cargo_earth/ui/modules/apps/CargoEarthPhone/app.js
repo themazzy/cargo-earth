@@ -3917,6 +3917,7 @@ angular.module('beamng.apps')
       }
       // The whole-route view: the way ahead (a few hundred points from the game) and the car fitted between the
       // banner and the bottom, north up. Coarser map tiles the farther it reaches. Null without a route.
+      var OVERVIEW_MIN_Z = 3
       function overviewOf(car, w, h) {
         var wh = mapData.whole
         if (!wh || !wh.xy || wh.xy.length < 4) return null
@@ -3935,11 +3936,20 @@ angular.module('beamng.apps')
           o.lat = (a0 + a1) / 2
           o.lon = (b0 + b1) / 2
         }
-        // about two tiles from top to bottom: z14 up to 2.5 km, one zoom out for each doubling, never under z9
-        o.z = Math.max(9, Math.min(14, 14 - Math.ceil(Math.log(h / scale / 2500) / Math.LN2)))
+        // about two tiles from top to bottom (z14 up to 2.5 km, one zoom out for each doubling), and never more tiles
+        // in view than half of what the tile cache keeps (a long haul: coarse tiles that stay, not a loop of reloads)
+        var z = Math.min(14, 14 - Math.ceil(Math.log(h / scale / 2500) / Math.LN2))
+        var lat = o.lat !== undefined ? o.lat : 50
+        while (z > OVERVIEW_MIN_Z) {
+          var reach = Math.sqrt(w * w + h * h) / 2 / scale / cargoEarthOsm.tileMetres(lat, z)
+          if (Math.pow(2 * reach + 2, 2) <= cargoEarthOsm.TileMap.MAX_TILES / 2) break
+          z--
+        }
+        o.z = Math.max(OVERVIEW_MIN_Z, z)
         return o
       }
       scope.mapWhole = function () { lm.overview = !lm.overview; lastSketch = '' }
+      scope.mapOverviewOf = overviewOf    // (tests)
       // auto zoom: one step farther out while driving fast (on from 70 km/h, back under 50, so it does not flicker)
       var zoomedOut = false
       function mapZoomNow(mp) {
