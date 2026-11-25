@@ -25,7 +25,8 @@ assert(tile.poi && tile.poi.features.length === 1, 'places too')
 const road = tile.transportation.features.find(f => f.tags.class === 'primary')
 assert.equal(road.type, 2)
 assert.equal(road.tags.brunnel, 'bridge')
-assert.equal(road.tags.oneway, undefined, 'only the tags the map uses')
+assert.equal(road.tags.oneway, 1, 'one-way kept for its arrows')
+assert(Object.keys(road.tags).every(k => ['class', 'subclass', 'name', 'name:latin', 'brunnel', 'ref', 'rank', 'oneway', 'housenumber'].includes(k)), 'only the tags the map uses')
 assert.equal(JSON.stringify(Array.from(road.parts[0])), '[100,100,1100,100,1100,900]', 'the line in tile units')
 assert.equal(JSON.stringify(road.box), '[100,100,1100,900]')
 const water = tile.water.features[0]
@@ -67,6 +68,13 @@ assert.equal(JSON.stringify(Array.from(labels[0].pts)), '[100,100,1100,100,1100,
   // a piece crossing the whole screen counts, clipped to it
   assert.equal(JSON.stringify(osm.clipTo([-50, 10], [150, 10], 0, 0, 100, 100)), '[0.25,0.75,0,10,100,10]')
   assert.equal(osm.clipTo([-50, -10], [150, -10], 0, 0, 100, 100), null)
+}
+
+{
+  // house numbers: points with a number, long ones cut
+  const hn = osm.numbersOf({housenumber: {extent: 4096, features: [{type: 1, tags: {housenumber: '12a'}, parts: [[5, 6]]},
+    {type: 1, tags: {}, parts: [[1, 1]]}, {type: 1, tags: {housenumber: 1234567890}, parts: [[2, 2]]}]}})
+  assert.equal(JSON.stringify(hn), '[{"n":"12a","x":5,"y":6},{"n":"1234567…","x":2,"y":2}]')
 }
 
 // tile numbers and sizes

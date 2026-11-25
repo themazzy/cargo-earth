@@ -2298,6 +2298,17 @@ test('the phone shows the limit under the car, red when too fast, and a camera w
   pose.x, pose.y, pose.z = nil, nil, nil
 end)
 
+test('the whole-route view: the way ahead in a few hundred points, ends kept', function()
+  local pm = require('cargoEarth/phonemap')
+  local pts = {}
+  for i = 0, 1000 do pts[#pts + 1] = { i * 10, 0, 50 + i * 1e-4, 14 } end
+  local o = pm.outline(pts, 100)
+  assert(#o.xy / 2 >= 90 and #o.xy / 2 <= 102, 'about 100 points: ' .. #o.xy / 2)
+  assert(o.xy[1] == 0 and o.xy[#o.xy - 1] == 10000, 'both ends')
+  assert(#o.ll == #o.xy and o.ll[1] == 50, 'lat / lon beside them')
+  assert(#pm.outline(nil).xy == 0)
+end)
+
 test('the live map: roads once per tile, the GPS route, the next stop and home', function()
   local core, s = fresh()
   local road = straightRoad(function() return 13.89 end)

@@ -5672,7 +5672,7 @@ function M.osmTile(z, x, y)
   return require('cargoEarth/osmtiles').get(helper, z, x, y, S.clock)
 end
 
-function M.phoneMap(have, perf, geo)
+function M.phoneMap(have, perf, geo, whole)
   local pm = require('cargoEarth/phonemap')
   local t0 = os.clock and os.clock()
   local p = earth.pose()
@@ -5716,6 +5716,8 @@ function M.phoneMap(have, perf, geo)
     local ahead, where = pm.ahead(pts, p.x, p.y, p.heading, routeKey)
     out.route, out.routeGps = pm.clip(ahead, p.x, p.y), true
     if geo then out.routeLL = pm.geoRoute(ahead) end
+    -- the whole-route view: all of the way ahead, a few hundred points
+    if whole then out.whole = pm.outline(ahead) end
     if where then
       -- the next turn: Earth's steps count metres along its full route, ours is the simplified line (a bit shorter)
       local travelled = where.along * ((pts.dist and where.length > 0) and pts.dist / where.length or 1)
@@ -5764,6 +5766,19 @@ function M.phoneMap(have, perf, geo)
     end
   end
   out.stops = stops
+  -- speed cameras within 2 km (the ones the fines watch): where, and their limit in km/h (assumed: a class default)
+  if camerasOn() and cams.near and #cams.near > 0 then
+    local list = {}
+    for _, cam in ipairs(cams.near) do
+      local x, y = xy({ cam.lat, cam.lon })
+      if x then
+        local row = { x = x, y = y, limit = cam.limit, assumed = cam.assumed or nil }
+        if geo then row.lat, row.lon = r6(cam.lat), r6(cam.lon) end
+        list[#list + 1] = row
+      end
+    end
+    if #list > 0 then out.cams = list end
+  end
   -- the way left to the next stop (Earth's GPS: metres, seconds) and the game's units (Options > Display)
   if rt and type(rt.remaining) == 'number' then
     out.leftM = math.floor(rt.remaining + 0.5)
@@ -5796,7 +5811,8 @@ M.uiStore = {
 }
 -- The map's own switches (its ⚙ panel): what it shows. Only true / false, only these names.
 M.MAP_PREFS = { streets = true, water = true, food = true, shop = true, fuel = true, health = true, other = false,
-  buildings = true, north = false, autoZoom = false, lanes = true, speedo = true, latin = false }
+  buildings = true, north = false, autoZoom = false, lanes = true, speedo = true, latin = false, numbers = true,
+  oneway = true, cams = true }
 function M.mapPrefsOf(t)
   local out = {}
   for k, def in pairs(M.MAP_PREFS) do
