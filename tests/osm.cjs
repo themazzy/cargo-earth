@@ -75,4 +75,14 @@ assert(Object.keys(sharp.pieces).length <= osm.TileMap.MAX_PIECES, 'within the c
 const settled = made
 for (let i = 101; i <= 110; i++) sharp.draw(nop, view, false, i)
 assert.equal(made, settled, 'a parked car draws no new pieces')
+// a map that had tiles, then lost the helper and was switched off and on again, falls back again
+let gone = false
+const again = new osm.TileMap({xhr: (url, done) => gone ? done(0, null) : done(200, fixture), canvas: () => ({})})
+again.setBase('x')
+again.want(8848, 5550, 0)
+assert.equal(again.ok, 1)
+gone = true
+again.reset()
+for (let i = 0; i < 3; i++) again.want(i, 0, 0)
+assert(again.failed.includes('did not answer'), 'fallback after a reset: ' + again.failed)
 console.log('OSM map: vector tile decoder, street names, tile numbers and the loader checked')

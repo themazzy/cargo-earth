@@ -455,7 +455,7 @@ var cargoEarthOsm = (function () {
     this.errors = 0
     for (var k in this.tiles) if (this.tiles[k].state === 'error') delete this.tiles[k]
   }
-  TileMap.prototype.reset = function () { this.failed = ''; this.errors = 0; this.tiles = {}; this.pieces = {}; this.version++ }
+  TileMap.prototype.reset = function () { this.failed = ''; this.errors = 0; this.ok = 0; this.tiles = {}; this.pieces = {}; this.version++ }
   TileMap.prototype.fail = function (status, why) {
     this.errors++
     this.lastError = why
