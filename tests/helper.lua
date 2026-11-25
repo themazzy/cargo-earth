@@ -13,6 +13,13 @@ end
 local received, connectedPort = 0, nil
 local function response(path)
   local data
+  if path:find('/v1/osm/tile', 1, true) then
+    if path:find('y=9', 1, true) then
+      local why = '{"error": "no internet"}'
+      return 'HTTP/1.0 502 Bad Gateway\r\nContent-Length: ' .. #why .. '\r\n\r\n' .. why
+    end
+    return 'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nAQID'
+  end
   if path:find('/v1/radio', 1, true) then
     data = {state = 'ready', country = 'CZ', top = {{'id', 'Radio', 'http://x'}}, near = {}}
   elseif path:find('/v1/cameras', 1, true) then
@@ -31,6 +38,7 @@ local function response(path)
   return 'HTTP/1.0 200 OK\r\nContent-Length: ' .. #body .. '\r\n\r\n' .. body
 end
 jsonDecode = function(body)
+  if body == '{"error": "no internet"}' then return {error = 'no internet'} end
   local index = tonumber(body:match('^response(%d+)$'))
   assert(index)
   return replies[index]
@@ -166,6 +174,30 @@ test('radio presses go through their own lane in one frame, even while an area d
   client.configure({helper = false})
   client.pump(0.02)
   assert(why == 'helper turned off' and not client.commanding())
+end)
+
+test('map tiles: their own lane, plain text answers, the helper\'s reason on errors, radio presses go first', function()
+  local tiles = require('cargoEarth/osmtiles')
+  tiles._reset()
+  local first = tiles.get(client, 14, 8848, 5550, 0)
+  assert(first.state == 'loading' and client.commanding())
+  client.command('/v1/player/stop', function() end)
+  client.pump(0.01)
+  assert(requests[1] == '/v1/player/stop' and requests[2] == '/v1/osm/tile?z=14&x=8848&y=5550&as=b64', table.concat(requests, ' '))
+  local ok = tiles.get(client, 14, 8848, 5550, 0.02)
+  assert(ok.state == 'ok' and ok.b64 == 'AQID', tostring(ok.state))
+  assert(#requests == 2, 'a finished tile is handed out again without asking')
+  tiles.get(client, 14, 8848, 9, 0.03)
+  client.pump(0.04)
+  local bad = tiles.get(client, 14, 8848, 9, 0.05)
+  assert(bad.state == 'error' and bad.err == 'HTTP 502: no internet', tostring(bad.err))
+  assert(tiles.get(client, 14, 8848, 5550, 30).state == 'loading', 'asked again after a while')
+  assert(tiles.get(client, 14, 'x', 1, 30).state == 'error')
+  for i = 1, 10 do tiles.get(client, 14, 100, i, 31) end
+  assert(#requests == 3 + 0 and client.commanding(), 'queued, at most a few at once')
+  client.configure({helper = false})
+  assert(tiles.get(client, 14, 5, 5, 32).err == 'the helper is turned off')
+  tiles._reset()
 end)
 
 test('describe tells a helper that never ran from one that stopped, a timeout and an HTTP error', function()

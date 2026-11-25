@@ -59,6 +59,7 @@ Speed cameras, bus lines: (c) OpenStreetMap contributors, ODbL; https://www.open
 Radio stations: Radio Browser (https://www.radio-browser.info), free community directory; the streams belong to the stations
 """
 import argparse
+import base64
 import atexit
 import datetime
 import hashlib
@@ -2498,6 +2499,10 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             try:
                 data = osm.tile(int(q["z"]), int(q["x"]), int(q["y"]))
                 code, ctype = 200, "application/x-protobuf"
+                if q.get("as") == "b64":
+                    # for the game's Lua, which hands it to the phone: BeamNG's UI browser may not load from the
+                    # helper itself (it cancels such requests), so the phone asks the game and the game asks here
+                    data, ctype = base64.b64encode(data), "text/plain"
             except (KeyError, ValueError) as e:
                 data, code, ctype = json.dumps({"error": str(e)}).encode(), 400, "application/json"
             except Exception as e:

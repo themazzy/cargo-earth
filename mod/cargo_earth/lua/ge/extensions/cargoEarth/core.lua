@@ -5648,7 +5648,7 @@ end
 --   { car = { x, y, h (degrees clockwise from north), kmh }, roadsKey, roads = { x1, y1, x2, y2, kind, ... },
 --     route = { x, y, ..., false, ... }, routeGps, stops = { { x, y, k = 'next'|'pickup'|'drop'|'stop'|'home'|'hq', n } } }
 -- geo (the OSM map, drawn by the phone from OpenFreeMap tiles the helper passes on): no roads; the car, the route
--- (routeLL = { lat, lon, ... }) and the stops come with lat / lon too, and tiles = the helper's tile address.
+-- (routeLL = { lat, lon, ... }) and the stops come with lat / lon too, and tiles = 'game' when the map can get tiles.
 -- The game shows lengths in miles (Options > Display > Units)
 function M.imperial()
   local st = rawget(_G, 'settings')
@@ -5656,6 +5656,12 @@ function M.imperial()
   return ok and v == 'imperial'
 end
 M.MAP_ON_ROUTE_M = 40   -- the car this close to the GPS line is on it (farther: the GPS is about to plan again)
+
+-- One OSM map tile for the phone (see cargoEarth/osmtiles): the game asks the helper, the phone polls this.
+function M.osmTile(z, x, y)
+  return require('cargoEarth/osmtiles').get(helper, z, x, y, S.clock)
+end
+
 function M.phoneMap(have, perf, geo)
   local pm = require('cargoEarth/phonemap')
   local t0 = os.clock and os.clock()
@@ -5666,7 +5672,7 @@ function M.phoneMap(have, perf, geo)
   local function r6(v) return math.floor(v * 1e6 + 0.5) / 1e6 end
   if geo and p.lat and p.lon then out.car.lat, out.car.lon = r6(p.lat), r6(p.lon) end
   -- the OSM map's tiles come through the helper (the game's UI cannot load from the web)
-  if geo and helper.enabled then out.tiles = string.format('http://%s:%d/v1/osm/tile', helper.HOST, helper.PORT) end
+  if geo and helper.enabled then out.tiles = 'game' end   -- tiles come through the game (osmTile), not straight from the helper
   local graph = not geo and M.G.graph and M.G.graph()
   if graph then
     local tx, ty, cx, cy = pm.tile(p.x, p.y)

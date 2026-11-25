@@ -5,6 +5,7 @@
 --
 --   helper.tick(lat, lon, now, onArea)   every frame or tick; onArea(data) gets each new area once
 --   helper.command(path, onDone, replace) / helper.pump(now)   the fast lane, every frame, for presses (radio)
+--   helper.tile(path, onDone)            the map lane, also worked by pump(): the phone's map tiles, raw text answers
 --   helper.status()                      { state = 'off' | 'searching' | 'loading' | 'ready' | 'error', loading, ready, msg }
 -- tick also takes onCameras(data) (speed cameras around the player, asked for now and then) and onlyCameras (true
 -- where the mod's own data pack covers everything else).
@@ -101,11 +102,18 @@ local function start(path, what, key, now, requestCell)
 end
 
 -- the body of a finished HTTP response, or nil and why
-local function parse(raw)
+local function parse(raw, plain)
   local head, body = raw:match('^(.-)\r\n\r\n(.*)$')
   if not head then return nil, 'bad response' end
   local code = tonumber(head:match('^HTTP/%d%.%d (%d+)'))
-  if code ~= 200 then return nil, 'HTTP ' .. tostring(code) end
+  if code ~= 200 then
+    if plain and #body < 2000 then         -- the helper's own reason, when it sent one
+      local ok, d = pcall(jsonDecode, body)
+      if ok and type(d) == 'table' and d.error then return nil, 'HTTP ' .. tostring(code) .. ': ' .. tostring(d.error) end
+    end
+    return nil, 'HTTP ' .. tostring(code)
+  end
+  if plain then return body end            -- text as it came (no JSON decoding of big answers)
   local ok, data = pcall(jsonDecode, body)
   if not ok or type(data) ~= 'table' then return nil, 'bad JSON' end
   return data
@@ -131,7 +139,7 @@ local function stepReq(r, now)
       if r.bytes > M.MAX_RESPONSE then return nil, 'helper response exceeds size limit' end
       r.buf[#r.buf + 1] = chunk
     end
-    if err == 'closed' then return parse(table.concat(r.buf)) end
+    if err == 'closed' then return parse(table.concat(r.buf), r.plain) end
     if err then
       if err ~= 'timeout' then return nil, err end
       return
@@ -266,33 +274,42 @@ end
 function M.asking() return #queue > 0 or (req ~= nil and req.what == 'ask') end
 
 -- A second lane for commands a player waits on (the radio's play / stop / volume): its own socket, worked every
--- frame by pump(), so a press never waits behind an area download or for the half-second tick.
+-- frame by pump(), so a press never waits behind an area download or for the half-second tick. A third lane, the same
+-- way, carries the phone's map tiles (plain text answers), so tiles never hold up a radio press.
 M.FAST_STEPS = 4           -- socket steps per frame (connect, send and reading are each one)
-local fast, fastQueue = nil, {}
+M.TILE_QUEUE = 8
+local fastLane = { queue = {} }
+local tileLane = { queue = {}, plain = true }
 
-function M.command(path, onDone, replace)
+local function enqueue(lane, path, onDone, replace, max)
   if replace then
-    for i = #fastQueue, 1, -1 do
-      if fastQueue[i][1]:sub(1, #replace) == replace then table.remove(fastQueue, i) end
+    for i = #lane.queue, 1, -1 do
+      if lane.queue[i][1]:sub(1, #replace) == replace then table.remove(lane.queue, i) end
     end
   end
-  for _, q in ipairs(fastQueue) do if q[1] == path then return end end
-  if #fastQueue < 8 then fastQueue[#fastQueue + 1] = { path, onDone } end
+  for _, q in ipairs(lane.queue) do if q[1] == path then return true end end
+  if #lane.queue >= max then return false end
+  lane.queue[#lane.queue + 1] = { path, onDone }
+  return true
 end
 
-function M.commanding() return fast ~= nil or #fastQueue > 0 end
+function M.command(path, onDone, replace) return enqueue(fastLane, path, onDone, replace, 8) end
+-- false when the map lane is full (ask again later)
+function M.tile(path, onDone) return enqueue(tileLane, path, onDone, nil, M.TILE_QUEUE) end
 
-function M.pump(now)
-  clockNow = now or clockNow
-  if not M.enabled then
-    if fast then pcall(function() fast.sock:close() end) fast = nil end
-    for _, q in ipairs(fastQueue) do if q[2] then q[2](nil, 'helper turned off') end end
-    fastQueue = {}
-    return
-  end
+local function busy(lane) return lane.cur ~= nil or #lane.queue > 0 end
+function M.commanding() return busy(fastLane) or busy(tileLane) end
+
+local function stopLane(lane)
+  if lane.cur then local s = lane.cur.sock pcall(function() s:close() end) lane.cur = nil end
+  for _, q in ipairs(lane.queue) do if q[2] then q[2](nil, 'helper turned off') end end
+  lane.queue = {}
+end
+
+local function pumpLane(lane, now)
   for _ = 1, M.FAST_STEPS do
-    if not fast then
-      local q = table.remove(fastQueue, 1)
+    if not lane.cur then
+      local q = table.remove(lane.queue, 1)
       if not q then return end
       local r, err = open(q[1], now)
       if not r then
@@ -300,20 +317,27 @@ function M.pump(now)
         if q[2] then q[2](nil, tostring(err)) end
         return
       end
-      r.on, fast = q[2], r
+      r.on, r.plain, lane.cur = q[2], lane.plain, r
     end
-    local reading = fast.phase == 'recv'
-    local data, err = stepReq(fast, now)
+    local reading = lane.cur.phase == 'recv'
+    local data, err = stepReq(lane.cur, now)
     if data or err then
-      local r = fast
+      local r = lane.cur
       pcall(function() r.sock:close() end)
-      fast = nil
+      lane.cur = nil
       seen(data, err)
       if r.on then r.on(data, err) end
     elseif reading then
       return       -- the helper is still answering: next frame
     end
   end
+end
+
+function M.pump(now)
+  clockNow = now or clockNow
+  if not M.enabled then stopLane(fastLane) stopLane(tileLane) return end
+  pumpLane(fastLane, now)
+  pumpLane(tileLane, now)
 end
 
 function M.tick(lat, lon, now, onArea, onCameras, onlyCameras)
@@ -373,8 +397,10 @@ function M._reset()
   st = { state = 'off', loading = 0, ready = 0 }
   nextAsk, wanted, got = 0, {}, {}
   nearCell, socket, nextCameras, queue, clockNow = nil, nil, 0, {}, 0
-  if fast then pcall(function() fast.sock:close() end) end
-  fast, fastQueue = nil, {}
+  for _, lane in ipairs({ fastLane, tileLane }) do
+    if lane.cur then local sk = lane.cur.sock pcall(function() sk:close() end) end
+    lane.cur, lane.queue = nil, {}
+  end
   M.enabled, M.PORT = true, M.DEFAULT_PORT
 end
 

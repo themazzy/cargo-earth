@@ -1124,6 +1124,26 @@ class OsmTileTests(unittest.TestCase):
             self.assertEqual(sorted(os.listdir(os.path.join(cache, "osm", "14", "1"))), ["0.pbf", "1.pbf"])
             self.assertFalse([n for n in os.listdir(os.path.join(cache, "osm", "14", "1")) if n.endswith(".tmp")])
 
+    def test_the_game_gets_a_tile_as_base64_text(self):
+        captured = []
+        def server(address, handler):
+            captured.append(handler)
+            return SimpleNamespace(serve_forever=lambda: None)
+        osm = SimpleNamespace(tile=lambda z, x, y: b"\x01\x02\x03", stats={})
+        with patch.object(helper, "ThreadingHTTPServer", side_effect=server):
+            helper.serve(SimpleNamespace(budget=SimpleNamespace(stats={})), "test", 47821, osm=osm)
+        for path, body, ctype in (("/v1/osm/tile?z=14&x=1&y=2&as=b64", b"AQID", "text/plain"),
+                                  ("/v1/osm/tile?z=14&x=1&y=2", b"\x01\x02\x03", "application/x-protobuf")):
+            handler = object.__new__(captured[0])
+            sent = {}
+            handler.headers, handler.path = {"Host": "127.0.0.1:47821"}, path
+            handler.send_response = lambda code: sent.update(code=code)
+            handler.send_header = lambda k, v: sent.update({k: v})
+            handler.end_headers = lambda: None
+            handler.wfile = io.BytesIO()
+            handler.do_GET()
+            self.assertEqual((sent["code"], sent["Content-Type"], handler.wfile.getvalue()), (200, ctype, body))
+
     def test_old_tiles_are_dropped(self):
         with tempfile.TemporaryDirectory() as cache:
             osm = helper.OsmTiles(cache, get=lambda url: b"x")
