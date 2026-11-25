@@ -2293,6 +2293,9 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   assert(m.status == 'ok' and m.car.h == 90 and m.car.kmh == 36)
   assert(#m.roads == 20 * 5 and m.roads[5] == 1, 'every edge of the street, a street at 50 km/h')
   assert(core.phoneMap(m.roadsKey).roads == nil, 'the phone keeps the roads it has')
+  local perf = core.phoneMap(m.roadsKey, true).perf
+  assert(perf and perf.edges == 20 and perf.luaMs >= 0 and perf.slices >= 1, 'the timing readout')
+  assert(core.phoneMap(m.roadsKey).perf == nil, 'timings only when the readout shows')
   assert(m.stops and #m.stops == 0 and m.route == nil, 'no job: no stops, no route')
   -- no job, but the GPS goes home: its route is drawn
   local earthNoJob = require('cargoEarth/earth')
@@ -2328,9 +2331,33 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   pose.y, pose.heading = 0, 90
   core.phoneMap(m.roadsKey)
   assert(copies == 1, 'the same route version is not copied again')
+  -- the full map: no roads, everything by lat / lon, the route from the car on
+  local g = core.phoneMap(m.roadsKey, false, true)
+  assert(g.roads == nil and g.roadsKey == nil and g.car.lat == 50 and g.car.lon == 14, 'no roads for the full map')
+  assert(#g.routeLL == 6 and g.routeLL[1] == 50 and g.routeLL[3] == 50.001 and g.routeLL[6] == 14.001, 'the route by lat / lon')
+  assert(g.stops[1].lat and g.stops[1].lon, 'stops by lat / lon')
+  pose.y = 60
+  g = core.phoneMap(m.roadsKey, false, true)
+  assert(math.abs(g.routeLL[1] - 50.00054) < 0.00002, 'starts where the car is on the route: ' .. g.routeLL[1])
+  pose.y = 0
   gpsRoute.routeVersion = 4
   core.phoneMap(m.roadsKey)
   assert(copies == 2, 'a new plan is')
+  -- turn directions from Earth's steps (1.7), and the way left
+  gpsRoute.routeVersion, gpsRoute.eta = 5, 40
+  earth.routeGeometry = function() return {version = 5, dist = 300, points = {{50, 14}, {50.001, 14}, {50.002, 14.001}},
+    steps = {{type = 'depart', offset = 0}, {type = 'turn', modifier = 'right', offset = 111, name = 'Hlavni'}}} end
+  local tm = core.phoneMap(m.roadsKey)
+  assert(tm.turn and tm.turn.modifier == 'right' and tm.turn.name == 'Hlavni', 'the next turn')
+  assert(tm.turn.m == 111, 'from the start: ' .. tm.turn.m)
+  pose.y = 60
+  local m2 = core.phoneMap(m.roadsKey).turn.m
+  assert(math.abs(m2 - 37) <= 3, 'driven 60 m of the simplified line = 74 m of the route of Earth: ' .. m2)
+  pose.y = 0
+  assert(tm.leftM == 500 and tm.leftS == 40 and not tm.imperial, 'the way left to the stop')
+  _G.settings = {getValue = function(k) return k == 'uiUnitLength' and 'imperial' or nil end}
+  assert(core.phoneMap(m.roadsKey).imperial, 'miles when the game shows miles')
+  _G.settings = nil
   -- a parcel round on the way to the depot: every address is ahead
   s.job.route = {at = 1, stops = {{g = {50.001, 14.001}, n = 'A'}, {g = {50.002, 14.002}, n = 'B'}}}
   local numbered = 0

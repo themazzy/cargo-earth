@@ -143,10 +143,40 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert.equal(scope.tab, 'map')
   assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("map")')), 'the other phone follows the Map tab')
   mapTimer.fn()
-  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null)'), 'first ask: no roads yet')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, true)'), 'the full map: no roads, by lat / lon')
+  assert.equal(scope.lm.full, true, 'the full map shows')
+  scope.mapEngine()
+  assert.equal(scope.lm.engine, 'sketch')
+  assert.equal(scope.lm.full, false, 'the canvas shows')
   now += 300
   mapTimer.fn()
-  assert(commands.at(-1).includes('cargoEarth_core.phoneMap("t1")'), 'then the roads key it has')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, false)'), 'the simple map: first ask, no roads yet')
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap("t1", false, false)'), 'then the roads key it has')
+  scope.mapStats()
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).includes(', true, false)'), 'timings only while the readout shows')
+  assert(scope.lm.statLines.some(line => line.startsWith('Simple map')), 'the readout says which map')
+  scope.mapStats()
+  // directions: the next turn, the speed and the way left, in the game's units
+  answer = {...answer, routeGps: true, turn: {type: 'turn', modifier: 'left', m: 240, name: 'Dlouha'}, leftM: 2400, leftS: 300,
+    car: {x: 0, y: 0, h: 0, kmh: 50}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.turn.text, 'Turn left onto Dlouha')
+  assert.equal(scope.lm.turn.dist, '250 m')
+  assert.equal(JSON.stringify(scope.lm.speed), JSON.stringify({v: 50, unit: 'km/h'}))
+  assert.equal(JSON.stringify(scope.lm.left), JSON.stringify({dist: '2.4 km', time: '5 min'}))
+  answer = {...answer, imperial: true, turn: {type: 'roundabout', exit: 2, m: 100}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.turn.text, 'At the roundabout take exit 2')
+  assert.equal(scope.lm.turn.dist, '350 ft')
+  assert.equal(JSON.stringify(scope.lm.speed), JSON.stringify({v: 31, unit: 'mph'}))
+  assert.equal(scope.lm.left.dist, '1.5 mi')
+  answer = {...answer, imperial: false, turn: null, routeGps: true, roadsKey: 't1', roads: [0, 0, 10, 0, 1]}
   const asked = commands.length
   mapTimer.fn()
   assert.equal(commands.length, asked, 'at most 4 asks a second')
@@ -159,6 +189,8 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   mapTimer.fn()
   assert.equal(scope.lm.note, 'Load the BeamNG.Earth level.')
   answer = saved
+  scope.mapEngine()
+  assert.equal(scope.lm.engine, 'vector', 'back to the full map')
   scope.setTab('orders')
 }
 // radio: one radio for both phones, kept by the game; the page's player makes the sound

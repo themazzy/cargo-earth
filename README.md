@@ -244,4 +244,4 @@ Report bugs through [GitHub Issues](https://github.com/themazzy/cargo-earth/issu
 
 ## Licence
 
-Code: [MIT](LICENSE). Bundled data: Natural Earth (public domain). Data the helper loads: Overture Maps Foundation and OpenStreetMap contributors under their licences (see [LICENSE](LICENSE)).
+Code: [MIT](LICENSE). Bundled library: MapLibre GL JS (BSD-3-Clause, licence in `ui/modules/apps/CargoEarthPhone/lib/`). The phone's full map shows OpenFreeMap tiles (© OpenMapTiles, © OpenStreetMap contributors). Bundled data: Natural Earth (public domain). Data the helper loads: Overture Maps Foundation and OpenStreetMap contributors under their licences (see [LICENSE](LICENSE)).

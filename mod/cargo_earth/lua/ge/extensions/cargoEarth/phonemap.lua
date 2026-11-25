@@ -2,7 +2,7 @@
 -- graph BeamNG.Earth hands to the game for its traffic), the route from BeamNG.Earth's GPS. Nothing is downloaded:
 -- the phone draws a flat sat-nav sketch from these lines. Pure rules: the graph and the points are passed in.
 --
---   phonemap.roads(graph, x, y, radius) -> flat list { x1, y1, x2, y2, kind, ... } of road edges near x, y
+--   phonemap.roads(graph, x, y, radius, now, budget) -> flat list { x1, y1, x2, y2, kind, ... } of road edges near x, y
 --   phonemap.clip(points, x, y, radius)  -> flat list { x, y, ... } of the route near x, y (false where it leaves the view)
 local M = {}
 
@@ -29,50 +29,88 @@ local function kindOf(l)
 end
 
 -- The edges of a graph sorted into cells, kept while the game hands out the same graph table (built again after
--- M.REBUILD_S, so roads BeamNG.Earth streams into the same table show up).
+-- M.REBUILD_S, so roads BeamNG.Earth streams into the same table show up). A big graph takes 15 to 100 ms to sort,
+-- far too long for one frame, so with a budget the sorting is done a few milliseconds at a time over several asks;
+-- the last finished grid is used meanwhile (none for a new graph: the roads appear once it is done).
 M.REBUILD_S = 30
-local gridFor, gridAt, grid = nil, -math.huge, nil
+M.SLICE_MS = 3       -- milliseconds of sorting per ask
+local gridFor, gridAt, grid, job = nil, -math.huge, nil, nil
 local function cellKey(cx, cy) return cx * 65536 + cy end
+M.clock = os.clock or function() return 0 end
+local function clock() return M.clock() end
 
-local function build(graph)
-  local edges, cells = {}, {}
-  local nodes = graph.nodes
-  for a, na in pairs(nodes) do
-    if type(na) == 'table' and na.links and na.pos then
-      for b, l in pairs(na.links) do
-        local nb = nodes[b]
-        -- an edge the graph keeps on both of its ends is drawn once
-        local twice = nb and nb.links and nb.links[a] ~= nil and tostring(b) < tostring(a)
-        if nb and nb.pos and type(l) == 'table' and not twice then
-          local x1, y1, x2, y2 = na.pos.x, na.pos.y, nb.pos.x, nb.pos.y
-          local e = { x1, y1, x2, y2, kindOf(l) }
-          edges[#edges + 1] = e
-          local i = #edges
-          local c1x, c2x = floor(math.min(x1, x2) / M.CELL), floor(math.max(x1, x2) / M.CELL)
-          local c1y, c2y = floor(math.min(y1, y2) / M.CELL), floor(math.max(y1, y2) / M.CELL)
-          if (c2x - c1x + 1) * (c2y - c1y + 1) <= 64 then
-            for cx = c1x, c2x do
-              for cy = c1y, c2y do
-                local k = cellKey(cx, cy)
-                local list = cells[k]
-                if not list then list = {} cells[k] = list end
-                list[#list + 1] = i
-              end
-            end
+-- the numbers the phone's timing readout shows
+M.perf = { buildMs = 0, sliceMaxMs = 0, slices = 0, edges = 0, roadsMs = 0, building = false }
+
+local function newJob(graph, now)
+  return { graph = graph, started = now, edges = {}, cells = {}, ms = 0, slices = 0, sliceMax = 0 }
+end
+
+local function addNode(j, nodes, a, na)
+  if type(na) ~= 'table' or not na.links or not na.pos then return end
+  local edges, cells = j.edges, j.cells
+  for b, l in pairs(na.links) do
+    local nb = nodes[b]
+    -- an edge the graph keeps on both of its ends is drawn once
+    local twice = nb and nb.links and nb.links[a] ~= nil and tostring(b) < tostring(a)
+    if nb and nb.pos and type(l) == 'table' and not twice then
+      local x1, y1, x2, y2 = na.pos.x, na.pos.y, nb.pos.x, nb.pos.y
+      edges[#edges + 1] = { x1, y1, x2, y2, kindOf(l) }
+      local i = #edges
+      local c1x, c2x = floor(math.min(x1, x2) / M.CELL), floor(math.max(x1, x2) / M.CELL)
+      local c1y, c2y = floor(math.min(y1, y2) / M.CELL), floor(math.max(y1, y2) / M.CELL)
+      if (c2x - c1x + 1) * (c2y - c1y + 1) <= 64 then
+        for cx = c1x, c2x do
+          for cy = c1y, c2y do
+            local k = cellKey(cx, cy)
+            local list = cells[k]
+            if not list then list = {} cells[k] = list end
+            list[#list + 1] = i
           end
         end
       end
     end
   end
-  return { edges = edges, cells = cells }
 end
 
-function M.grid(graph, now)
-  now = now or 0
-  if gridFor ~= graph or not grid or now - gridAt >= M.REBUILD_S then
-    grid, gridFor, gridAt = build(graph), graph, now
-    M.stamp = (M.stamp or 0) + 1
+-- Sorts nodes until the budget (ms) is spent; true when the whole graph is done. No budget: all of it at once.
+local function run(j, budget)
+  local nodes = j.graph.nodes
+  local t0 = clock()
+  local a, n = j.at, 0
+  while true do
+    local na
+    a, na = next(nodes, a)
+    if a == nil then j.at = nil break end
+    addNode(j, nodes, a, na)
+    n = n + 1
+    if budget and n % 16 == 0 and (clock() - t0) * 1000 >= budget then j.at = a break end
   end
+  local ms = (clock() - t0) * 1000
+  j.ms, j.slices = j.ms + ms, j.slices + 1
+  if ms > j.sliceMax then j.sliceMax = ms end
+  return j.at == nil
+end
+
+function M.grid(graph, now, budget)
+  now = now or 0
+  if job and job.graph ~= graph then job = nil end
+  if not job and (gridFor ~= graph or not grid or now - gridAt >= M.REBUILD_S) then job = newJob(graph, now) end
+  if job then
+    -- BeamNG.Earth may change the table between two asks (a node taken out stops next()): start the sorting again
+    local ok, done = pcall(run, job, budget)
+    if not ok then
+      job = newJob(graph, now)
+    elseif done then
+      grid, gridFor, gridAt = { edges = job.edges, cells = job.cells }, graph, job.started
+      M.stamp = (M.stamp or 0) + 1
+      local p = M.perf
+      p.buildMs, p.sliceMaxMs, p.slices, p.edges = job.ms, job.sliceMax, job.slices, #job.edges
+      job = nil
+    end
+  end
+  M.perf.building = job ~= nil
+  if gridFor ~= graph then return nil end
   return grid
 end
 
@@ -82,10 +120,14 @@ function M.tile(x, y)
   return tx, ty, tx * M.TILE, ty * M.TILE
 end
 
-function M.roads(graph, x, y, radius, now)
+function M.roads(graph, x, y, radius, now, budget)
   if not (type(graph) == 'table' and type(graph.nodes) == 'table' and x and y) then return {} end
   radius = radius or M.RADIUS
-  local g = M.grid(graph, now)
+  -- with a budget the caller already gave the sorting its slice this ask: use the grid as it is
+  local g
+  if budget then g = gridFor == graph and grid or nil else g = M.grid(graph, now) end
+  if not g then return {} end
+  local t0 = clock()
   local out, seen, n = {}, {}, 0
   local r2 = radius * radius
   for cx = floor((x - radius) / M.CELL), floor((x + radius) / M.CELL) do
@@ -99,7 +141,7 @@ function M.roads(graph, x, y, radius, now)
             local mx, my = (e[1] + e[3]) / 2 - x, (e[2] + e[4]) / 2 - y
             if mx * mx + my * my <= r2 then
               n = n + 1
-              if n > M.MAX_EDGES then return out end
+              if n > M.MAX_EDGES then M.perf.roadsMs = (clock() - t0) * 1000 return out end
               local k = #out
               out[k + 1], out[k + 2], out[k + 3], out[k + 4] = round(e[1]), round(e[2]), round(e[3]), round(e[4])
               out[k + 5] = e[5]
@@ -109,6 +151,7 @@ function M.roads(graph, x, y, radius, now)
       end
     end
   end
+  M.perf.roadsMs = (clock() - t0) * 1000
   return out
 end
 
@@ -141,13 +184,14 @@ function M.clip(points, x, y, radius)
 end
 
 -- The route's game points from Earth's lat / lon ones, kept while the route and the world's frame stay the same.
+-- Each point is { x, y, lat, lon }: the full map draws the same route by lat / lon.
 local routeKey, routeXY = nil, nil
 function M.routeXY(key, latlon, toXY)
   if key ~= nil and key == routeKey and routeXY then return routeXY end
   local out = {}
   for _, p in ipairs(type(latlon) == 'table' and latlon or {}) do
     local x, y = toXY(p)
-    if x then out[#out + 1] = { x, y } end
+    if x then out[#out + 1] = { x, y, p[1], p[2] } end
   end
   routeKey, routeXY = key, out
   return out
@@ -173,7 +217,7 @@ function M.ahead(points, x, y, heading, key)
     local px, py = a[1] + dx * t, a[2] + dy * t
     local d = sqrt((x - px) ^ 2 + (y - py) ^ 2)
     if d <= best + M.SAME_M then
-      cands[#cands + 1] = { i, px, py, d, dx, dy }
+      cands[#cands + 1] = { i, px, py, d, dx, dy, t }
       if d < best then best = d end
     end
   end
@@ -198,14 +242,66 @@ function M.ahead(points, x, y, heading, key)
   end
   local pick = choose(true) or choose(nil)
   lastIdx = pick[1]
-  local out = { { pick[2], pick[3] } }
+  local first = { pick[2], pick[3] }
+  local a, b, t = points[pick[1]], points[pick[1] + 1], pick[7]
+  if a[3] and b[3] then first[3], first[4] = a[3] + (b[3] - a[3]) * t, a[4] + (b[4] - a[4]) * t end
+  local out = { first }
   for i = pick[1] + 1, n do out[#out + 1] = points[i] end
-  local info = { off = pick[4] }
+  -- metres along the route to the car's point on it (the route's own length kept on the list once worked out)
+  local cum = points.cum
+  if not cum then
+    cum = { 0 }
+    for i = 2, n do cum[i] = cum[i - 1] + sqrt((points[i][1] - points[i - 1][1]) ^ 2 + (points[i][2] - points[i - 1][2]) ^ 2) end
+    points.cum = cum
+  end
+  local info = { off = pick[4], along = cum[pick[1]] + (cum[pick[1] + 1] - cum[pick[1]]) * pick[7], length = cum[n] }
   if heading and (pick[5] ~= 0 or pick[6] ~= 0) then
     local dir = math.deg((math.atan2 or math.atan)(pick[5], pick[6]))   -- clockwise from north, like the heading
     info.back = math.abs((dir - heading + 540) % 360 - 180) > M.BACK_DEG
   end
   return out, info
+end
+
+-- The full map's route: lat / lon pairs { lat, lon, lat, lon, ... } of the way ahead (from M.ahead), along the route
+-- up to `metres`, a point at least every M.ROUTE_STEP. Points without lat / lon are left out.
+M.GEO_ROUTE_M = 4000
+function M.geoRoute(points, metres)
+  local out = {}
+  if type(points) ~= 'table' then return out end
+  metres = metres or M.GEO_ROUTE_M
+  local function r6(v) return floor(v * 1e6 + 0.5) / 1e6 end
+  local run, lastX, lastY, keptX, keptY = 0, nil, nil, nil, nil
+  local n = #points
+  for i = 1, n do
+    local p = points[i]
+    if lastX then run = run + sqrt((p[1] - lastX) ^ 2 + (p[2] - lastY) ^ 2) end
+    lastX, lastY = p[1], p[2]
+    local last = i == n or run >= metres
+    if p[3] and (not keptX or last or (p[1] - keptX) ^ 2 + (p[2] - keptY) ^ 2 >= M.ROUTE_STEP * M.ROUTE_STEP) then
+      out[#out + 1], out[#out + 2] = r6(p[3]), r6(p[4])
+      keptX, keptY = p[1], p[2]
+    end
+    if run >= metres then break end
+  end
+  return out
+end
+
+-- The next turn: of Earth's route steps (OSRM maneuvers, 1.7: { type, modifier, exit, name, ref, offset = metres
+-- from the route's start }), the first still ahead of `travelled` metres. Returns { type, modifier, exit, name, m }
+-- with m the metres to it, or nil (no steps, or only the arrival left and it is far).
+local SKIP = { depart = true, ['new name'] = true, notification = true }
+function M.nextTurn(steps, travelled)
+  if type(steps) ~= 'table' or not travelled then return nil end
+  for _, st in ipairs(steps) do
+    local at = type(st) == 'table' and tonumber(st.offset)
+    if at and at > travelled and not SKIP[st.type] and not (st.type == 'continue' and (st.modifier or 'straight') == 'straight') then
+      local name = type(st.name) == 'string' and st.name or ''
+      if name == '' and type(st.ref) == 'string' then name = st.ref end
+      return { type = st.type, modifier = type(st.modifier) == 'string' and st.modifier or nil,
+        exit = tonumber(st.exit), name = name ~= '' and name or nil, m = floor(at - travelled + 0.5) }
+    end
+  end
+  return nil
 end
 
 -- The converted route for this key, or nil when it has to be asked for again.
@@ -214,7 +310,7 @@ function M.routeCached(key)
   return nil
 end
 
-function M._reset() gridFor, gridAt, grid, routeKey, routeXY, lastFor, lastIdx = nil, -math.huge, nil, nil, nil, nil, nil end
+function M._reset() job = nil gridFor, gridAt, grid, routeKey, routeXY, lastFor, lastIdx = nil, -math.huge, nil, nil, nil, nil, nil end
 
 -- distance in metres, for the tests
 function M.len(ax, ay, bx, by) return sqrt((ax - bx) ^ 2 + (ay - by) ^ 2) end

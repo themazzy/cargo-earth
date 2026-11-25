@@ -362,9 +362,33 @@ angular.module('beamng.apps')
     '.cep-map-btn{width:40px;height:40px;padding:0;border:0;border-radius:10px;font:inherit;font-size:22px;font-weight:800;line-height:1;cursor:pointer;' +
       'background:var(--card);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-btn:disabled{opacity:.45;cursor:default}' +
     '.cep-map-note{position:absolute;left:12px;right:60px;bottom:12px;padding:7px 10px;border-radius:10px;background:var(--card);font-size:12px;color:var(--muted)}' +
-    '.cep-map-turn{position:absolute;left:44px;right:8px;top:8px;padding:7px 10px;border-radius:10px;background:var(--card);font-size:12px;font-weight:700;' +
+    '.cep-map-turn{position:absolute;left:44px;right:8px;top:8px;z-index:1;padding:7px 10px;border-radius:10px;background:var(--card);font-size:12px;font-weight:700;' +
       'color:var(--tomato);box-shadow:0 1px 4px rgba(0,0,0,.25)}' +
     '.dark .cep-mapbox{background:#23201e}' +
+    // the full map (MapLibre): its own div under our marks; the car is a fixed arrow where the map keeps it
+    '.cep-vmap{position:absolute;inset:0}.cep-vmap .maplibregl-ctrl-attrib{font-size:9px}.cep-vmap .maplibregl-ctrl-bottom-right{right:52px}' +
+    '.cep-map-car{position:absolute;left:50%;top:68%;width:26px;height:26px;margin:-13px 0 0 -13px;pointer-events:none}' +
+    '.cep-vstop{width:18px;height:18px;border-radius:50%;border:2.5px solid #fff;color:#fff;font:800 10px/18px sans-serif;text-align:center;' +
+      'box-shadow:0 1px 3px rgba(0,0,0,.35)}.cep-vstop.next{width:24px;height:24px;line-height:24px;font-size:12px}' +
+    // the north dial: tap it for the map's timings
+    '.cep-map-n{position:absolute;left:8px;top:8px;width:30px;height:30px;padding:0;border:0;border-radius:50%;cursor:pointer;' +
+      'background:rgba(255,255,255,.88);box-shadow:0 1px 3px rgba(0,0,0,.3)}.dark .cep-map-n{background:rgba(0,0,0,.6)}' +
+    '.cep-map-nd{position:absolute;inset:0;display:block;font:800 10px/30px sans-serif;text-align:center;color:#25201d}.dark .cep-map-nd{color:#fff}' +
+    '.cep-map-nd:before{content:"";position:absolute;left:11px;top:0;border:4px solid transparent;border-bottom:7px solid #e4572e;border-top:0}' +
+    '.cep-map-stats{position:absolute;left:8px;right:56px;top:60px;padding:8px 10px;border-radius:10px;background:var(--card);font-size:11px;line-height:1.45;' +
+      'color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3);z-index:2}.cep-map-stats b{font-weight:800}' +
+    '.cep-map-stats button{margin-top:6px;padding:5px 9px;border:0;border-radius:8px;font:inherit;font-weight:700;cursor:pointer;background:var(--line);color:var(--ink)}' +
+    // directions: the next turn on top, the speed and the way left at the bottom
+    '.cep-map-dir{position:absolute;left:44px;right:8px;top:8px;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;' +
+      'background:#1f6f4a;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}' +
+    '.cep-map-dir svg{flex:none;width:30px;height:30px}.cep-map-dir b{display:block;font-size:17px;font-weight:800;line-height:1.1}' +
+    '.cep-map-dir span{display:block;font-size:11px;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cep-map-dir div{min-width:0}' +
+    '.cep-map-speed{position:absolute;left:8px;bottom:8px;width:46px;height:46px;border-radius:50%;background:var(--card);color:var(--ink);text-align:center;' +
+      'box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-speed b{display:block;font-size:17px;font-weight:800;line-height:1;margin-top:9px}' +
+    '.cep-map-speed small{font-size:9px;color:var(--muted)}.cep-map-speed.over b{color:var(--tomato)}' +
+    '.cep-map-left{position:absolute;left:60px;bottom:14px;padding:5px 9px;border-radius:9px;background:var(--card);font-size:12px;font-weight:700;' +
+      'color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-left small{font-weight:600;color:var(--muted)}' +
+    '.cep-map-hasleft .cep-map-note{left:60px;bottom:48px}' +
     '.cep-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}' +
     '.cep-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}'
 
@@ -1712,8 +1736,18 @@ angular.module('beamng.apps')
       '</div></div>' +
 
       // live map: roads from BeamNG.Earth's road graph, the GPS route and the job's stops, the car pointing up
-      '<div class="cep-body cep-mapbody" ng-if="tab === \'map\'"><div class="cep-mapbox">' +
-        '<canvas class="cep-livemap" role="img" aria-label="Map of the roads around your car, your route and your stops"></canvas>' +
+      '<div class="cep-body cep-mapbody" ng-if="tab === \'map\'"><div class="cep-mapbox" ng-class="{\'cep-map-hasleft\': lm.left}">' +
+        '<canvas class="cep-livemap" ng-show="!lm.full" role="img" aria-label="Map of the roads around your car, your route and your stops"></canvas>' +
+        '<svg class="cep-map-car" ng-show="lm.full" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0 -12 L9 9 L0 4 L-9 9 Z" fill="#2f7bf6" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/></svg>' +
+        '<div class="cep-map-dir" ng-if="lm.turn && !lm.behind" role="status">' +
+          '<svg viewBox="-15 -15 30 30" aria-hidden="true"><path ng-attr-d="{{ lm.turn.icon }}" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+          '<div><b>{{ lm.turn.dist }}</b><span>{{ lm.turn.text }}</span></div></div>' +
+        '<button class="cep-map-n" title="North. Tap for the map\'s timings" aria-label="North. Tap for the map\'s timings" ng-click="mapStats()"><span class="cep-map-nd">N</span></button>' +
+        '<div class="cep-map-stats" ng-if="lm.stats"><div ng-repeat="line in lm.statLines track by $index">{{ line }}</div>' +
+          '<button ng-click="mapEngine()">{{ lm.engine === \'vector\' ? \'Use the simple map\' : \'Use the full map\' }}</button> ' +
+          '<button ng-click="mapStats()">Close</button></div>' +
+        '<div class="cep-map-speed" ng-if="lm.speed" ng-class="{over: lm.speed.over}" title="Your speed"><b>{{ lm.speed.v }}</b><small>{{ lm.speed.unit }}</small></div>' +
+        '<div class="cep-map-left" ng-if="lm.left" title="Left to the next stop">{{ lm.left.dist }} <small ng-if="lm.left.time">· {{ lm.left.time }}</small></div>' +
         '<div class="cep-map-note" ng-if="lm.note">{{ lm.note }}</div>' +
         '<div class="cep-map-turn" ng-if="lm.behind && !lm.note">The route is behind you. Turn around, or keep going and the GPS finds another way.</div>' +
         '<div class="cep-map-zoom"><button class="cep-map-btn" title="Zoom in" ng-disabled="lm.zoom === 0" ng-click="mapZoom(-1)">+</button>' +
@@ -2597,9 +2631,246 @@ angular.module('beamng.apps')
       }
       var ROAD_M = [3, 6, 9, 13], ROAD_PX = [1, 2, 3, 4]   // road width in metres, and never thinner than this in pixels
       var STOP_LOOK = {next: ['#e4572e', ''], pickup: ['#e4572e', 'P'], drop: ['#2e9e5b', 'D'], stop: ['#7a5cc7', ''], home: ['#2f7bf6', 'H'], hq: ['#4b5563', 'W']}
-      var lm = scope.lm = {note: '', zoom: 1, behind: false}
+      var lm = scope.lm = {note: '', zoom: 1, behind: false, engine: 'vector', full: true, stats: false, statLines: [], turn: null, speed: null, left: null}
       try { var z = localStorage.getItem('cargoEarthMapZoom'); if (z === '0' || z === '1' || z === '2') lm.zoom = Number(z) } catch (e) {}
-      var mapData = {roadsKey: null, roads: [], route: null, routeGps: false, stops: [], car: null, from: null, at: 0}
+      try { if (localStorage.getItem('cargoEarthMapEngine') === 'sketch') lm.engine = 'sketch' } catch (e) {}
+      // the map that really shows: the full one only while it has not failed
+      function mapFull() {
+        var full = lm.engine === 'vector' && !vec.failed
+        if (full !== lm.full) scope.$evalAsync(function () { lm.full = full })
+        lm.full = full
+      }
+      var mapData = {roadsKey: null, roads: [], route: null, routeGps: false, stops: [], car: null, from: null, at: 0, routeLL: null}
+      // the timing readout's numbers (kept only while it shows)
+      var perf = {asks: [], draws: [], frames: 0, framesAt: Date.now(), fps: 0, game: null, bytes: 0, roadsSent: 0}
+      function perfPush(list, v) { list.push(v); if (list.length > 40) list.shift() }
+      function perfAvg(list) { var t = 0; for (var i = 0; i < list.length; i++) t += list[i]; return list.length ? t / list.length : 0 }
+      function perfMax(list) { var m = 0; for (var i = 0; i < list.length; i++) if (list[i] > m) m = list[i]; return m }
+      function ms(v) { return (Math.round(v * 100) / 100).toFixed(2) + ' ms' }
+      scope.mapStats = function () { lm.stats = !lm.stats; perf.asks = []; perf.draws = []; perf.game = null; mapStatsLines() }
+      scope.mapEngine = function () {
+        lm.engine = lm.engine === 'vector' ? 'sketch' : 'vector'
+        if (lm.engine === 'vector') vec.failed = ''
+        mapFull()
+        mapData.roadsKey = null
+        perf.asks = []; perf.draws = []
+        try { localStorage.setItem('cargoEarthMapEngine', lm.engine) } catch (e) {}
+        mapStatsLines()
+      }
+      function mapStatsLines() {
+        if (!lm.stats) return
+        var L = [], g = perf.game
+        L.push(lm.engine === 'vector' ? 'Full map (MapLibre, OpenFreeMap)' : 'Simple map (roads drawn by the phone)')
+        if (lm.engine === 'vector' && vec.failed) L.push('Full map off: ' + vec.failed)
+        if (g) {
+          L.push('Game: ' + ms(g.luaAvg) + ' per answer (max ' + ms(g.luaMax) + '), ' + ms(g.luaAvg * 4) + ' a second')
+          if (lm.engine !== 'vector') {
+            L.push('Road index: ' + ms(g.buildMs) + ' in ' + g.slices + ' slices (largest ' + ms(g.sliceMaxMs) + ')' + (g.building ? ', sorting now' : ''))
+            L.push('Roads: ' + g.edges + ' in the index, ' + perf.roadsSent + ' sent last (' + ms(g.roadsMs) + ')')
+          }
+        } else L.push('Game: waiting for an answer')
+        L.push('Answer size: ' + (perf.bytes / 1024).toFixed(1) + ' KB, round trip ' + ms(perfAvg(perf.asks)))
+        L.push('Phone: drawing ' + ms(perfAvg(perf.draws)) + ' (max ' + ms(perfMax(perf.draws)) + '), ' + perf.fps + ' frames a second')
+        if (lm.engine === 'vector') L.push('Tiles: ' + vec.tiles + ' loaded, ' + vec.errors + ' failed' + (vec.lastError ? ' (' + vec.lastError + ')' : ''))
+        scope.$evalAsync(function () { lm.statLines = L })
+      }
+      // ---- directions: the next turn, the speed and the way left, in the game's units
+      var TURN_ICON = {
+        straight: 'M0 12 V-11 M-6 -5 L0 -11 L6 -5',
+        left: 'M4 12 V0 Q4 -6 -2 -6 H-10 M-5 -11 L-10 -6 L-5 -1',
+        right: 'M-4 12 V0 Q-4 -6 2 -6 H10 M5 -11 L10 -6 L5 -1',
+        'slight left': 'M3 12 V2 L-6 -8 M-6 -1 V-8 H1',
+        'slight right': 'M-3 12 V2 L6 -8 M6 -1 V-8 H-1',
+        'sharp left': 'M5 -11 V4 L-7 10 M-7 3 V10 H0',
+        'sharp right': 'M-5 -11 V4 L7 10 M7 3 V10 H0',
+        uturn: 'M4 12 V-3 A5 5 0 0 0 -6 -3 V6 M-11 1 L-6 6 L-1 1',
+        roundabout: 'M0 12 V5 M0 -11 V-5 M-5 -9 L0 -14 L5 -9 M0 -5 A5 5 0 1 1 0 5 A5 5 0 1 1 0 -5',
+        arrive: 'M0 11 C-6 4 -8 0 -8 -4 A8 8 0 0 1 8 -4 C8 0 6 4 0 11 Z M0 -7 A3 3 0 1 0 0.01 -7'
+      }
+      var TURN_WORD = {left: 'Turn left', right: 'Turn right', 'slight left': 'Keep left', 'slight right': 'Keep right',
+        'sharp left': 'Turn sharp left', 'sharp right': 'Turn sharp right', uturn: 'Make a U-turn', straight: 'Go straight'}
+      function lengthText(m, imperial) {
+        if (imperial) {
+          var ft = m * 3.28084
+          if (ft < 1000) return (ft < 100 ? Math.round(ft / 10) * 10 : Math.round(ft / 50) * 50) + ' ft'
+          var mi = m / 1609.344
+          return (mi < 10 ? mi.toFixed(1) : Math.round(mi)) + ' mi'
+        }
+        if (m < 1000) return (m < 100 ? Math.round(m / 10) * 10 : Math.round(m / 50) * 50) + ' m'
+        var km = m / 1000
+        return (km < 10 ? km.toFixed(1) : Math.round(km)) + ' km'
+      }
+      function timeText(s) {
+        if (!(s > 0)) return ''
+        var min = Math.round(s / 60)
+        return min < 60 ? Math.max(1, min) + ' min' : Math.floor(min / 60) + ' h ' + (min % 60) + ' min'
+      }
+      function turnLook(t, imperial) {
+        if (!t) return null
+        var mod = t.modifier || 'straight', icon, text, onto = t.name ? ' onto ' + t.name : ''
+        if (t.type === 'arrive') { icon = TURN_ICON.arrive; text = 'You arrive' }
+        else if (t.type === 'roundabout' || t.type === 'rotary' || t.type === 'exit roundabout' || t.type === 'roundabout turn') {
+          icon = TURN_ICON.roundabout
+          text = t.exit ? 'At the roundabout take exit ' + t.exit + onto : 'Go through the roundabout' + onto
+        } else if (t.type === 'merge') { icon = TURN_ICON[mod] || TURN_ICON.straight; text = 'Merge' + onto }
+        else if (t.type === 'on ramp' || t.type === 'off ramp') {
+          icon = TURN_ICON[mod] || TURN_ICON.straight
+          text = (t.type === 'on ramp' ? 'Take the ramp' : 'Take the exit') + (mod.indexOf('left') !== -1 ? ' on the left' : mod.indexOf('right') !== -1 ? ' on the right' : '') + onto
+        } else if (t.type === 'fork') { icon = TURN_ICON[mod] || TURN_ICON.straight; text = (mod.indexOf('left') !== -1 ? 'Keep left' : mod.indexOf('right') !== -1 ? 'Keep right' : 'Keep straight') + onto }
+        else { icon = TURN_ICON[mod] || TURN_ICON.straight; text = (TURN_WORD[mod] || 'Go on') + onto }
+        return {icon: icon, text: text, dist: lengthText(t.m, imperial)}
+      }
+      function sameLook(a, b) { return a === b || (a && b && a.icon === b.icon && a.text === b.text && a.dist === b.dist) }
+      function directions(r) {
+        var turn = r.routeGps ? turnLook(r.turn, r.imperial) : null
+        var sp = r.car ? {v: r.imperial ? Math.round(r.car.kmh / 1.609344) : r.car.kmh, unit: r.imperial ? 'mph' : 'km/h'} : null
+        var limit = scope.s && scope.s.limit
+        if (sp && limit && limit.over) sp.over = true
+        var left = typeof r.leftM === 'number' ? {dist: lengthText(r.leftM, r.imperial), time: timeText(r.leftS)} : null
+        if (sameLook(turn, lm.turn) && sameLook2(sp, lm.speed) && sameLook2(left, lm.left)) return
+        scope.$evalAsync(function () { lm.turn = turn; lm.speed = sp; lm.left = left })
+      }
+      function sameLook2(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
+      // ---- the full map: MapLibre (bundled with the mod) drawing OpenFreeMap's OpenStreetMap tiles
+      var LIB = 'local://local/ui/modules/apps/CargoEarthPhone/lib/'
+      var VEC_STYLE = {light: 'https://tiles.openfreemap.org/styles/liberty', dark: 'https://tiles.openfreemap.org/styles/dark'}
+      var vec = {map: null, div: null, ready: false, failed: '', loading: false, style: null, tiles: 0, errors: 0, lastError: '',
+        cam: '', markers: [], stopsKey: '', routeKey: '', linkKey: '', timer: null}
+      mapFull()
+      function vecFail(why) {
+        vec.failed = why
+        mapFull()
+        if (vec.map) { try { vec.map.remove() } catch (e) {} }
+        if (vec.timer) clearTimeout(vec.timer)
+        vec.map = null; vec.ready = false; vec.markers = []; vec.stopsKey = ''; vec.routeKey = ''; vec.linkKey = ''; vec.cam = ''
+        if (vec.div && vec.div.parentNode) vec.div.parentNode.removeChild(vec.div)
+        vec.div = null
+        mapData.roadsKey = null
+        mapStatsLines()
+      }
+      function vecLib() {
+        if (typeof window === 'undefined' || typeof document === 'undefined') return false
+        if (window.maplibregl) return true
+        if (vec.loading || vec.failed) return false
+        vec.loading = true
+        var css = document.createElement('link')
+        css.rel = 'stylesheet'
+        css.href = LIB + 'maplibre-gl.css'
+        document.head.appendChild(css)
+        // the page may have an AMD loader: hide it, or the library registers there instead of on window
+        var amd = window.define
+        window.define = undefined
+        var js = document.createElement('script')
+        js.src = LIB + 'maplibre-gl.js'
+        js.onload = function () { window.define = amd; vec.loading = false; if (!window.maplibregl) vecFail('the map library did not start') }
+        js.onerror = function () { window.define = amd; vec.loading = false; vecFail('the map library could not load') }
+        document.head.appendChild(js)
+        return false
+      }
+      function vecStyleUrl() { return VEC_STYLE[scope.dark && !vec.noDark ? 'dark' : 'light'] }
+      function vecLayers() {
+        var map = vec.map
+        if (!map || map.getSource('ce-route')) return
+        var col = MAP_COLORS[scope.dark ? 'dark' : 'light']
+        var empty = {type: 'FeatureCollection', features: []}
+        map.addSource('ce-route', {type: 'geojson', data: empty})
+        map.addSource('ce-link', {type: 'geojson', data: empty})
+        map.addLayer({id: 'ce-link', type: 'line', source: 'ce-link', paint: {'line-color': col.route, 'line-width': 3, 'line-dasharray': [2, 2]}})
+        map.addLayer({id: 'ce-route-casing', type: 'line', source: 'ce-route', layout: {'line-cap': 'round', 'line-join': 'round'},
+          paint: {'line-color': col.casing, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 6, 17, 13]}})
+        map.addLayer({id: 'ce-route', type: 'line', source: 'ce-route', layout: {'line-cap': 'round', 'line-join': 'round'},
+          paint: {'line-color': col.route, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 4, 17, 9]}})
+        vec.routeKey = ''
+        vec.linkKey = ''
+      }
+      function vecMake(box, car) {
+        if (!vec.div) { vec.div = document.createElement('div'); vec.div.className = 'cep-vmap' }
+        if (vec.div.parentNode !== box) { box.insertBefore(vec.div, box.firstChild); if (vec.map) vec.map.resize() }
+        if (vec.map) return
+        vec.style = vecStyleUrl()
+        vec.ready = false; vec.tiles = 0; vec.errors = 0; vec.lastError = ''
+        try {
+          vec.map = new window.maplibregl.Map({container: vec.div, style: vec.style, interactive: false, attributionControl: false,
+            center: [car.lon, car.lat], zoom: 16, bearing: car.h || 0, fadeDuration: 0, renderWorldCopies: false})
+          vec.map.addControl(new window.maplibregl.AttributionControl({compact: true}), 'bottom-right')
+        } catch (e) { vecFail('this screen cannot draw it (' + (e && e.message || e) + ')'); return }
+        vec.map.on('style.load', vecLayers)
+        vec.map.on('load', function () { vec.ready = true; if (vec.timer) clearTimeout(vec.timer); mapNote('') })
+        vec.map.on('render', function () { if (lm.stats) perf.frames++ })
+        vec.map.on('data', function (e) { if (e && e.tile && e.dataType === 'source') vec.tiles++ })
+        vec.map.on('error', function (e) {
+          vec.errors++
+          vec.lastError = String((e && e.error && e.error.message) || 'error').slice(0, 80)
+          // no dark style there: the light one
+          if (!vec.map.isStyleLoaded() && vec.style === VEC_STYLE.dark) { vec.noDark = true; vec.style = VEC_STYLE.light; try { vec.map.setStyle(vec.style) } catch (x) {} }
+        })
+        vec.timer = setTimeout(function () { if (vec.map && !vec.ready) vecFail('the map did not arrive in 20 s (' + (vec.lastError || 'no internet?') + ')') }, 20000)
+      }
+      function lineGeo(ll) {
+        var features = [], cur = []
+        for (var j = 0; j + 1 < ll.length; j += 2) {
+          if (ll[j] === false) { if (cur.length > 1) features.push(cur); cur = []; j -= 1; continue }
+          cur.push([ll[j + 1], ll[j]])
+        }
+        if (cur.length > 1) features.push(cur)
+        return {type: 'FeatureCollection', features: features.map(function (c) { return {type: 'Feature', properties: {}, geometry: {type: 'LineString', coordinates: c}} })}
+      }
+      function vecDraw(box) {
+        var car = carNow(Date.now())
+        if (!car || car.lat === undefined) return
+        vecMake(box, car)
+        var map = vec.map
+        if (!map) return
+        if (vec.ready && vec.style !== vecStyleUrl()) {
+          vec.style = vecStyleUrl()
+          try { map.setStyle(vec.style) } catch (e) {}
+        }
+        var h = box.clientHeight || 1
+        // metres from the top of the map to its bottom at this zoom step: MapLibre's zoom for that, here
+        var mpp = MAP_VIEW[lm.zoom] / h
+        var zoom = Math.log(40075016.686 * Math.cos(car.lat * Math.PI / 180) / (512 * mpp)) / Math.LN2
+        var cam = [car.lat.toFixed(7), car.lon.toFixed(7), car.h.toFixed(1), zoom.toFixed(3), h].join(',')
+        if (cam !== vec.cam) {
+          vec.cam = cam
+          map.jumpTo({center: [car.lon, car.lat], zoom: zoom, bearing: car.h, padding: {top: h * 0.36, bottom: 0, left: 0, right: 0}})
+        }
+        if (!map.getSource('ce-route')) return
+        var col = MAP_COLORS[scope.dark ? 'dark' : 'light']
+        var ll = mapData.routeLL || []
+        var rk = ll.join(',') + (mapData.routeGps ? 'g' : 's')
+        if (rk !== vec.routeKey) {
+          vec.routeKey = rk
+          map.getSource('ce-route').setData(lineGeo(ll))
+          try { map.setPaintProperty('ce-route', 'line-dasharray', mapData.routeGps ? null : [1.5, 1.5]) } catch (e) {}
+          map.setPaintProperty('ce-route', 'line-color', col.route)
+          map.setPaintProperty('ce-route-casing', 'line-color', col.casing)
+        }
+        // off the line: a dashed link from the car to where the route goes on (its own key: the car moves, the route not)
+        var link = mapData.routeGps && mapData.offM > 20 && typeof ll[0] === 'number' && mapData.car && mapData.car.lat !== undefined
+        var lk = link ? [mapData.car.lat, mapData.car.lon, ll[0], ll[1]].join(',') : ''
+        if (lk !== vec.linkKey) {
+          vec.linkKey = lk
+          map.getSource('ce-link').setData(link ? lineGeo([mapData.car.lat, mapData.car.lon, ll[0], ll[1]]) : {type: 'FeatureCollection', features: []})
+        }
+        var stops = mapData.stops || []
+        var sk = stops.map(function (st) { return [st.lat, st.lon, st.k, st.n, st.pickup ? 1 : 0].join(':') }).join('|')
+        if (sk !== vec.stopsKey) {
+          vec.stopsKey = sk
+          vec.markers.forEach(function (m) { m.remove() })
+          vec.markers = []
+          stops.forEach(function (st) {
+            if (st.lat === undefined) return
+            var look = STOP_LOOK[st.k] || STOP_LOOK.stop
+            var el = document.createElement('div')
+            el.className = 'cep-vstop' + (st.k === 'next' ? ' next' : '')
+            el.style.background = look[0]
+            var label = st.k === 'stop' ? st.n : (st.k === 'next' ? (st.pickup ? 'P' : 'D') : look[1])
+            el.textContent = label ? String(label).slice(0, 2) : ''
+            el.title = st.n || ''
+            vec.markers.push(new window.maplibregl.Marker({element: el}).setLngLat([st.lon, st.lat]).addTo(map))
+          })
+        }
+      }
       var mapBusy = false, mapAskedAt = -Infinity
       scope.mapZoom = function (d) {
         lm.zoom = Math.max(0, Math.min(MAP_VIEW.length - 1, lm.zoom + d))
@@ -2617,7 +2888,10 @@ angular.module('beamng.apps')
         if (!a) return b
         var t = Math.max(0, Math.min(1, (now - mapData.at) / 250))
         var dh = ((b.h - a.h + 540) % 360) - 180
-        return {x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, h: a.h + dh * t}
+        var c = {x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, h: a.h + dh * t}
+        if (a.lat !== undefined && b.lat !== undefined) { c.lat = a.lat + (b.lat - a.lat) * t; c.lon = a.lon + (b.lon - a.lon) * t }
+        else if (b.lat !== undefined) { c.lat = b.lat; c.lon = b.lon }
+        return c
       }
       function mapAsk() {
         if (!mapOn() || mapBusy) return
@@ -2625,9 +2899,25 @@ angular.module('beamng.apps')
         if (now - mapAskedAt < 250) return
         mapAskedAt = now
         mapBusy = true
-        bngApi.engineLua('cargoEarth_core and cargoEarth_core.phoneMap(' + bngApi.serializeToLua(mapData.roadsKey) + ') or nil', function (r) {
+        var geo = lm.engine === 'vector' && !vec.failed
+        var sent = Date.now()
+        bngApi.engineLua('cargoEarth_core and cargoEarth_core.phoneMap(' + bngApi.serializeToLua(geo ? null : mapData.roadsKey) + ', ' +
+          (lm.stats ? 'true' : 'false') + ', ' + (geo ? 'true' : 'false') + ') or nil', function (r) {
           mapBusy = false
           if (destroyed) return
+          if (lm.stats && r) {
+            perfPush(perf.asks, Date.now() - sent)
+            try { perf.bytes = JSON.stringify(r).length } catch (e) {}
+            if (r.roads) perf.roadsSent = r.roads.length / 5
+            if (r.perf) {
+              var g = perf.game || {lua: []}
+              perfPush(g.lua, r.perf.luaMs || 0)
+              g.luaAvg = perfAvg(g.lua); g.luaMax = perfMax(g.lua)
+              g.buildMs = r.perf.buildMs || 0; g.slices = r.perf.slices || 0; g.sliceMaxMs = r.perf.sliceMaxMs || 0
+              g.edges = r.perf.edges || 0; g.roadsMs = r.perf.roadsMs || 0; g.building = !!r.perf.building
+              perf.game = g
+            }
+          }
           if (!r || r.status !== 'ok' || !r.car) {
             mapData.car = mapData.from = null
             mapNote(r && r.status && r.status !== 'ok' ? r.status + '.' : 'The map shows once BeamNG.Earth has loaded the world.')
@@ -2644,8 +2934,12 @@ angular.module('beamng.apps')
           mapData.routeGps = !!r.routeGps
           mapData.stops = r.stops || []
           mapData.offM = r.offM || 0
+          mapData.routeLL = r.routeLL || null
           if (!!r.behind !== lm.behind) scope.$evalAsync(function () { lm.behind = !!r.behind })
-          mapNote(mapData.roads.length ? '' : 'No roads here yet. They appear as BeamNG.Earth builds the world around you.')
+          directions(r)
+          if (geo) mapNote(vec.ready ? '' : 'Loading the map…')
+          else if (vec.failed && lm.engine === 'vector') mapNote('The full map is off: ' + vec.failed + '. Showing the simple map.')
+          else mapNote(mapData.roads.length ? '' : 'No roads here yet. They appear as BeamNG.Earth builds the world around you.')
         })
       }
       function mapCanvas() {
@@ -2781,27 +3075,48 @@ angular.module('beamng.apps')
         ctx.lineWidth = 2.5
         ctx.strokeStyle = '#ffffff'
         ctx.stroke()
-        // north: an N with a red tip on the dial's edge, turning with the map
-        ctx.beginPath()
-        ctx.arc(22, 22, 14, 0, Math.PI * 2)
-        ctx.fillStyle = scope.dark ? 'rgba(0,0,0,.55)' : 'rgba(255,255,255,.85)'
-        ctx.fill()
-        ctx.beginPath()
-        ctx.moveTo(22 - sn * 14, 22 - cs * 14)
-        ctx.lineTo(22 - sn * 8 + cs * 4, 22 - cs * 8 - sn * 4)
-        ctx.lineTo(22 - sn * 8 - cs * 4, 22 - cs * 8 + sn * 4)
-        ctx.fillStyle = '#e4572e'
-        ctx.fill()
-        ctx.fillStyle = scope.dark ? '#ffffff' : '#25201d'
-        ctx.font = '800 10px sans-serif'
-        ctx.fillText('N', 22, 23)
       }
+      // the north dial turns with the map (the car's heading is up)
+      var dialAt = null
+      function mapDial(car) {
+        var root = element && element[0]
+        var d = root && root.querySelector ? root.querySelector('.cep-map-nd') : null
+        if (!d || !car) return
+        var deg = Math.round(-car.h)
+        if (dialAt === deg && d.style.transform) return
+        dialAt = deg
+        d.style.transform = 'rotate(' + deg + 'deg)'
+      }
+      var lastSketch = ''
+      var statsTick = 0
       var mapTimer = setInterval(function () {
         if (!mapOn()) return
         mapAsk()
-        mapDraw()
+        var t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+        var car = carNow(Date.now())
+        var root = element && element[0]
+        var box = root && root.querySelector ? root.querySelector('.cep-mapbox') : null
+        var drew = true
+        if (lm.engine === 'vector' && !vec.failed && vecLib()) {
+          if (box) vecDraw(box)
+        } else if (lm.engine === 'vector' && !vec.failed) {
+          mapDraw()   // the library still loading: the simple map meanwhile
+        } else {
+          // the same picture as last time (the car stands, nothing new): not drawn again
+          var key = car ? [car.x.toFixed(1), car.y.toFixed(1), car.h.toFixed(1), lm.zoom, !!scope.dark, mapData.at].join(',') : ''
+          if (key && key === lastSketch) drew = false
+          else { lastSketch = key; mapDraw(); if (lm.stats) perf.frames++ }
+        }
+        mapDial(car)
+        if (lm.stats) {
+          var t1 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+          if (drew) perfPush(perf.draws, t1 - t0)
+          var now = Date.now()
+          if (now - perf.framesAt >= 1000) { perf.fps = Math.round(perf.frames * 1000 / (now - perf.framesAt)); perf.frames = 0; perf.framesAt = now }
+          if (statsTick++ % 10 === 0) mapStatsLines()
+        }
       }, 50)
-      scope.$on('$destroy', function () { clearInterval(mapTimer) })
+      scope.$on('$destroy', function () { clearInterval(mapTimer); if (vec.map) { try { vec.map.remove() } catch (e) {} } })
 
       var slowTicks = 0
       var slow = setInterval(function () {
