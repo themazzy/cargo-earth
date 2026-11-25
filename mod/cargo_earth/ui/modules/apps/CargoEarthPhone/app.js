@@ -3313,7 +3313,7 @@ angular.module('beamng.apps')
               done(code ? +code[1] : why === 'a broken answer' ? 502 : 0,          // no HTTP answer: the helper is not there
                 cargoEarthOsm.utf8Bytes(JSON.stringify({error: why.replace(/^HTTP \d+: /, '')})).buffer)
             } else if (!r) done(0, null)                                   // the mod is not running
-            else if (Date.now() - t0 > 30000) done(0, null)               // the helper never answered
+            else if (Date.now() - t0 > 160000) done(0, null)              // never answered (tiles wait in one queue: up to 6 x 20 s)
             else setTimeout(poll, 200)
           })
         }

@@ -7,6 +7,7 @@ local M = {}
 M.KEEP_S = 20        -- a finished tile is handed out this long (the phones ask again within a fraction of a second)
 M.MAX_KEPT = 16      -- finished tiles kept at most (the oldest go first)
 M.MAX_LOADING = 6    -- tiles asked of the helper at once
+M.STALE_S = 150     -- tiles wait in one queue, each up to the helper client's 20 s: no answer after this, ask again
 
 local tiles = {}     -- 'z/x/y' -> { state, b64, err, at }
 local clock = 0
@@ -16,7 +17,7 @@ local function prune(now)
   for k, t in pairs(tiles) do
     if t.state ~= 'loading' then
       if now - t.at > M.KEEP_S then tiles[k] = nil else done[#done + 1] = k end
-    elseif now - t.at > 60 then
+    elseif now - t.at > M.STALE_S then
       tiles[k] = nil    -- the helper lane dropped it without an answer: ask again
     end
   end
