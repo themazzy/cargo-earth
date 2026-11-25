@@ -936,6 +936,11 @@ test('a car damaged by its own config can change parts and keeps its repair bill
   assert(s.parts and (g.debt or 0) == 0 and g.repair == bill)
   local checkout = core.garageState().parts
   assert(checkout.canBuy and checkout.owed == bill)
+  -- a purchase that cannot be saved keeps the old damage state too
+  failPath = '/settings/cargoEarth/career.json.pending'
+  core.garageDo('buyParts', checkout.revision)
+  assert(s.parts and g.car.physicalDamage and g.lastDamage == 20000)
+  failPath = nil
   core.garageDo('buyParts', checkout.revision)
   assert(not s.parts and g.car.parts.engine == 'new_engine' and not g.car.physicalDamage)
   advance(core, 10)
@@ -945,6 +950,22 @@ test('a car damaged by its own config can change parts and keeps its repair bill
   damageValue = 20000
   advance(core, 2)
   assert(g.repair > bill)
+end)
+
+test('keeping an unchanged parts checkout on a damaged car does not bill its damage twice', function()
+  local core, s = partsFixture()
+  local g = s.career.garage
+  g.car.value = 10000000
+  damageValue = 20000
+  advance(core, 2)
+  local bill = g.repair
+  g.car.physicalDamage = {format = 'v2'}
+  core.garageDo('openParts')
+  local checkout = core.garageState().parts
+  core.garageDo('buyParts', checkout.revision)
+  assert(not s.parts and g.car.physicalDamage)
+  advance(core, 10)
+  assert(g.repair == bill and (g.debt or 0) == 0)
 end)
 
 local function loadedCompany()

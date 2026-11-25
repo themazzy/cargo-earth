@@ -4736,7 +4736,7 @@ local function startParts(vehicle, fromGame)
   end
   if damage > (g.lastDamage or 0) then garage.trackDamage(g, damage) end
   S.partsRevision = (S.partsRevision or 0) + 1
-  S.parts = { before = g.car.parts, id = vehicle.id, blocked = blocked }
+  S.parts = { before = g.car.parts, id = vehicle.id, blocked = blocked, data = vehicle.data }
   S.phone.incoming, S.phone.lastDone, S.window = nil, nil, false
   S.garageMsg = nil
   return true
@@ -4821,7 +4821,18 @@ local function buyParts(revision)
   local c, g = S.career, S.career.garage
   local money, spent, inventory, config, parts, salvage, paid, fitted = c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts
   local partsPaid = g.car.partsPaid
-  if not garage.remember(M.G, g, previewVehicle()) then return false, 'Could not capture the new configuration.' end
+  local live = previewVehicle()
+  if not garage.remember(M.G, g, live) then return false, 'Could not capture the new configuration.' end
+  -- A preview that respawned the car is a fresh car of the new config: the old physical snapshot belongs to the old
+  -- parts (restoring it would put the old damage back), and any repair owed is carried with the car like after a
+  -- respawn. Part of the purchase, so the checkpoint below has it. A checkout with no respawn keeps its baseline.
+  local car = g.car
+  local damageWas = { car.physicalDamage, car.damageFile, car.damageRevision, g.damageBaseline, g.carriedRepair, g.lastDamage }
+  local respawned = live and S.parts.data ~= nil and live.data ~= S.parts.data
+  if respawned then
+    require('cargoEarth/damage').clear(car)
+    g.damageBaseline, g.carriedRepair, g.lastDamage, g.restoringDamage = nil, g.repair or 0, 0, nil
+  end
   c.money, g.spent, g.inventory, g.salvage = (money or 0) - quote.cost, (spent or 0) + quote.cost, quote.inventory, quote.salvage
   g.car.paidParts, g.car.salvageParts = quote.paid, quote.fittedSalvage
   if (quote.invest or 0) ~= 0 then g.car.partsPaid = (partsPaid or 0) + quote.invest end
@@ -4829,16 +4840,13 @@ local function buyParts(revision)
   if not saveCareer() then
     c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts = money, spent, inventory, config, parts, salvage, paid, fitted
     g.car.partsPaid = partsPaid
+    car.physicalDamage, car.damageFile, car.damageRevision = damageWas[1], damageWas[2], damageWas[3]
+    g.damageBaseline, g.carriedRepair, g.lastDamage = damageWas[4], damageWas[5], damageWas[6]
     economy.reconcile(c, 'parts', 'Purchase not saved, refunded')
     return false, 'The purchase could not be saved. Try again.'
   end
   finishParts()
   conditionAt = S.clock + 1
-  -- The kept preview is a freshly spawned car of the new config: the old physical snapshot belongs to the old parts
-  -- (restoring it would put the old damage back), and any repair owed is carried with the car like after a respawn.
-  require('cargoEarth/damage').clear(g.car)
-  g.damageBaseline, g.restoringDamage = nil, nil
-  g.carriedRepair, g.lastDamage = g.repair or 0, 0
   return true, quote.cost > 0 and string.format('Parts fitted. Paid %d CZK.', quote.cost) or 'Parts changes kept.'
 end
 
