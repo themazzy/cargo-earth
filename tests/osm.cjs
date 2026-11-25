@@ -37,6 +37,14 @@ assert.equal(labels[0].name, 'Vodičkova', 'UTF-8 names')
 assert.equal(labels[0].len, 1800, 'its whole length')
 assert.equal(JSON.stringify(Array.from(labels[0].pts)), '[100,100,1100,100,1100,900]', 'the whole line, so the name can follow its bends')
 {
+  // each name keeps its Latin spelling too, for the Latin names switch
+  const sr = osm.labelsOf({transportation_name: {extent: 4096, features: [{type: 2, tags: {name: 'Кнез Михаилова', 'name:latin': 'Knez Mihailova'}, parts: [[0, 0, 500, 0]]},
+    {type: 2, tags: {name: 'Vodičkova', 'name:latin': 'Vodičkova'}, parts: [[0, 10, 400, 10]]}]}})
+  assert.equal(JSON.stringify(sr.map(r => [r.name, r.lat])), '[["Кнез Михаилова","Knez Mihailova"],["Vodičkova",null]]')
+  const pp = osm.poisOf({poi: {extent: 4096, features: [{type: 1, tags: {name: 'Пекара', 'name:latin': 'Pekara', 'class': 'bakery', rank: 1}, parts: [[1, 1]]}]}})
+  assert.equal(pp[0].lat, 'Pekara')
+}
+{
   // a tile with a river but no street names still names the river
   const river = osm.labelsOf({waterway: {extent: 4096, features: [{type: 2, tags: {name: 'Vltava'}, parts: [[0, 0, 500, 0]]}]}})
   assert.equal(JSON.stringify(river.map(r => [r.name, r.water])), '[["Vltava",true]]')

@@ -397,12 +397,13 @@ var cargoEarthOsm = (function () {
 
   // One named line for the labels: its points (tile units) and its length. The name is written along the line,
   // letter by letter, so it follows bends.
-  function lineOf(p, name, water, out) {
+  function lineOf(p, name, water, out, lat) {
     var len = 0
     for (var k = 0; k + 3 < p.length; k += 2) len += Math.sqrt(Math.pow(p[k + 2] - p[k], 2) + Math.pow(p[k + 3] - p[k + 1], 2))
     if (len < 60) return
     var r = {name: name, pts: p, len: len}
     if (water) r.water = true
+    if (lat && lat !== name) r.lat = lat      // the Latin spelling, for the 'Latin names' switch
     out.push(r)
   }
 
@@ -414,7 +415,7 @@ var cargoEarthOsm = (function () {
       var f = l.features[i]
       var name = f.tags.name || f.tags['name:latin'] || f.tags.ref
       if (f.type !== 2 || !name || f.tags['class'] === 'path' || f.tags['class'] === 'track') continue
-      for (var j = 0; j < f.parts.length; j++) lineOf(f.parts[j], name, false, out)
+      for (var j = 0; j < f.parts.length; j++) lineOf(f.parts[j], name, false, out, f.tags['name:latin'])
     }
     // rivers and canals by name, along their line (water names are drawn blue and slanted)
     var ww = data.waterway
@@ -422,7 +423,7 @@ var cargoEarthOsm = (function () {
       for (var wi = 0; wi < ww.features.length; wi++) {
         var wf = ww.features[wi], wname = wf.tags.name || wf.tags['name:latin']
         if (wf.type !== 2 || !wname) continue
-        for (var wj = 0; wj < wf.parts.length; wj++) lineOf(wf.parts[wj], wname, true, out)
+        for (var wj = 0; wj < wf.parts.length; wj++) lineOf(wf.parts[wj], wname, true, out, wf.tags['name:latin'])
       }
     }
     out.sort(function (a, b) { return b.len - a.len })
@@ -445,6 +446,7 @@ var cargoEarthOsm = (function () {
   var POI_OF = {}
   for (var pk in POI_KIND) for (var pi = 0; pi < POI_KIND[pk].length; pi++) POI_OF[POI_KIND[pk][pi]] = pk
   var POI_ORDER = {food: 0, shop: 1, fuel: 2, health: 3, other: 4}
+  function shortName(n) { n = String(n); return n.length > 26 ? n.slice(0, 25) + '…' : n }
   function poisOf(data) {
     var l = data.poi, out = []
     if (!l) return out
@@ -453,8 +455,10 @@ var cargoEarthOsm = (function () {
       var name = f.tags.name || f.tags['name:latin']
       if (f.type !== 1 || !name || POI_SKIP[c] || !f.parts.length) continue
       var kind = POI_OF[c] || POI_OF[f.tags.subclass] || 'other'
-      out.push({name: String(name).length > 26 ? String(name).slice(0, 25) + '…' : String(name), kind: kind,
-        x: f.parts[0][0], y: f.parts[0][1], rank: +f.tags.rank || 99})
+      var lat = f.tags['name:latin']
+      var pl = {name: shortName(name), kind: kind, x: f.parts[0][0], y: f.parts[0][1], rank: +f.tags.rank || 99}
+      if (lat && lat !== name) pl.lat = shortName(lat)
+      out.push(pl)
     }
     out.sort(function (a, b) { return a.rank - b.rank || POI_ORDER[a.kind] - POI_ORDER[b.kind] })
     return out.slice(0, 150)
@@ -715,11 +719,12 @@ var cargoEarthOsm = (function () {
     }
     for (var i = 0; i < list.length && count < 18; i++) {
       var tx = list[i][0], ty = list[i][1], lb = list[i][2]
-      if (done[lb.name] || (lb.water ? opts.water === false : opts.streets === false)) continue
+      var lname = opts.latin && lb.lat || lb.name
+      if (done[lname] || (lb.water ? opts.water === false : opts.streets === false)) continue
       var ext = 4096
       for (var nm in list[i][3]) { ext = list[i][3][nm].extent; break }
       ctx.font = (lb.water ? 'italic ' : '') + labelFont
-      var tw = ctx.measureText(lb.name).width
+      var tw = ctx.measureText(lname).width
       // the longest stretch of the line inside the box, in screen pixels
       // (each piece clipped to the box, so a long piece crossing the screen counts too)
       var best = null, cur = null, pts = lb.pts, prev = scr(tx, ty, pts[0], pts[1], ext)
@@ -735,7 +740,7 @@ var cargoEarthOsm = (function () {
         if (cl[1] < 1) cur = null
       }
       if (!best || best.d[best.d.length - 1] < tw + 4) continue
-      var spot = labelSpot(best, lb.name, tw, ctx)
+      var spot = labelSpot(best, lname, tw, ctx)
       if (!spot) continue
       var clash = false
       for (var g0 = 0; g0 < spot.dots.length && !clash; g0++) clash = under(spot.dots[g0][0], spot.dots[g0][1], 6)
@@ -747,7 +752,7 @@ var cargoEarthOsm = (function () {
         }
       }
       if (clash) continue
-      done[lb.name] = true
+      done[lname] = true
       for (var g2 = 0; g2 < spot.dots.length; g2++) placed.push([spot.dots[g2][0], spot.dots[g2][1], 9])
       count++
       ctx.strokeStyle = look.halo
@@ -775,12 +780,13 @@ var cargoEarthOsm = (function () {
       if (opts[pt.kind] === false || (pt.kind === 'other' && !opts.other)) continue
       for (var pn in pois[q][3]) { pext = pois[q][3][pn].extent; break }
       var at = scr(pois[q][0], pois[q][1], pt.x, pt.y, pext), px0 = at[0], py0 = at[1]
-      var pw = ctx.measureText(pt.name).width
+      var pname = opts.latin && pt.lat || pt.name
+      var pw = ctx.measureText(pname).width
       // the dot on the place, the name to its right (left when that runs off the screen)
       var left = px0 + 7 + pw > bx1
       var cx = left ? px0 - 7 - pw / 2 : px0 + 7 + pw / 2
       if (px0 < bx0 || px0 > bx1 || py0 < by0 || py0 > by1 || cx - pw / 2 < bx0 - 4) continue
-      if (seen[pt.name] && Math.abs(seen[pt.name][0] - px0) + Math.abs(seen[pt.name][1] - py0) < 200) continue
+      if (seen[pname] && Math.abs(seen[pname][0] - px0) + Math.abs(seen[pname][1] - py0) < 200) continue
       var pr = pw / 2 + 10, hit = under(px0, py0, 5) || under(cx, py0, pw / 2)
       for (var m = 0; m < placed.length; m++) {
         var o = placed[m]
@@ -788,7 +794,7 @@ var cargoEarthOsm = (function () {
       }
       if (hit) continue
       placed.push([cx, py0, pr, 1])
-      seen[pt.name] = [px0, py0]
+      seen[pname] = [px0, py0]
       shown++
       ctx.beginPath()
       ctx.arc(px0, py0, 3.5, 0, Math.PI * 2)
@@ -800,9 +806,9 @@ var cargoEarthOsm = (function () {
       ctx.textAlign = left ? 'right' : 'left'
       var lx = left ? px0 - 7 : px0 + 7
       ctx.lineWidth = 3
-      ctx.strokeText(pt.name, lx, py0)
+      ctx.strokeText(pname, lx, py0)
       ctx.fillStyle = look.poi || look.label
-      ctx.fillText(pt.name, lx, py0)
+      ctx.fillText(pname, lx, py0)
     }
     ctx.textAlign = 'center'
   }
@@ -1054,7 +1060,7 @@ angular.module('beamng.apps')
     '.cep-map-nd:before{content:"";position:absolute;left:11px;top:0;border:4px solid transparent;border-bottom:7px solid #e4572e;border-top:0}' +
     '.cep-map-gear{position:absolute;left:8px;top:44px;width:30px;height:30px;padding:0;border:0;border-radius:50%;cursor:pointer;font-size:15px;line-height:30px;' +
       'background:rgba(255,255,255,.88);color:#25201d;box-shadow:0 1px 3px rgba(0,0,0,.3)}.dark .cep-map-gear{background:rgba(0,0,0,.6);color:#fff}.cep-map-gear.on{box-shadow:0 0 0 2px var(--tomato)}' +
-    '.cep-map-set{position:absolute;left:8px;right:8px;top:80px;padding:8px 10px 10px;border-radius:12px;background:var(--card);color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:3}' +
+    '.cep-map-set{position:absolute;left:8px;right:8px;top:8px;padding:8px 10px 10px;border-radius:12px;background:var(--card);color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:3}' +
       '.cep-map-set-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}.cep-map-set-h b{font-size:13px}' +
       '.cep-map-set-h button{width:26px;height:26px;padding:0;border:0;border-radius:8px;font:inherit;cursor:pointer;background:var(--line);color:var(--ink)}' +
       '.cep-map-set-g{display:grid;grid-template-columns:1fr 1fr;gap:5px}.cep-map-set-g button{min-height:30px;padding:4px 8px;border:1px solid var(--line);border-radius:9px;' +
@@ -2584,8 +2590,9 @@ angular.module('beamng.apps')
       }
       // the map's ⚙ panel: what it shows, kept in the player's ui.json by the game (setMapPref)
       var MAP_DEFAULTS = {streets: true, water: true, food: true, shop: true, fuel: true, health: true, other: false,
-        buildings: true, north: false, autoZoom: false, lanes: true, speedo: true}
+        buildings: true, north: false, autoZoom: false, lanes: true, speedo: true, latin: false}
       scope.MAP_SWITCHES = [{k: 'sound', t: 'Speed chime'}, {k: 'streets', t: 'Street names'}, {k: 'water', t: 'River names'},
+        {k: 'latin', t: 'Latin names'},
         {k: 'buildings', t: 'Buildings'}, {k: 'north', t: 'North up'}, {k: 'autoZoom', t: 'Auto zoom'}, {k: 'lanes', t: 'Lane arrows'},
         {k: 'speedo', t: 'Speedometer'}]
       scope.MAP_PLACES = [{k: 'food', t: 'Food', c: '#e8833a'}, {k: 'shop', t: 'Shops', c: '#9b6ad6'}, {k: 'fuel', t: 'Fuel', c: '#2a9d8f'},
