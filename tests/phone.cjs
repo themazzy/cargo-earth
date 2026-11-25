@@ -221,6 +221,24 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert.equal(scope.lm.noteHidden, scope.lm.note, 'closed')
   scope.mapEngine(); scope.mapEngine()
   assert.equal(scope.osmMap.failed, '', 'switching back tries again')
+  // the map's ⚙ panel: switches saved by the game, the chime among them
+  {
+    scope.s = {...(scope.s || {}), mapPrefs: undefined}
+    assert.equal(scope.mapPrefs().streets, true, 'defaults before the game answered')
+    scope.mapSet()
+    assert.equal(scope.lm.set, true)
+    scope.mapPref('water')
+    assert(commands.at(-1).includes('cargoEarth_core.setMapPref("water", false)'), commands.at(-1))
+    assert.equal(scope.mapPrefs().water, false, 'shown at once')
+    scope.mapPref('nonsense')
+    assert(!commands.at(-1).includes('nonsense'))
+    const quiet = !!scope.s.quiet
+    scope.mapPref('sound')
+    assert.equal(!!scope.s.quiet, !quiet, 'the chime switch is the speedometer\'s')
+    scope.mapPref('sound')
+    scope.mapSet()
+    assert(directive.template.includes('cep-map-set') && directive.template.includes('MAP_PLACES'))
+  }
   // tiles come through the game (the UI browser may not ask the helper itself): polled until the helper answered
   {
     const got = []

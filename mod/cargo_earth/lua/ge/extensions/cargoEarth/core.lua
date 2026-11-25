@@ -3001,7 +3001,7 @@ function M.phoneState()
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
       companyVehicle = c.employment and employment.vehicleLabel(c.employment),
       currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
-      fold = S.phoneFold or false, dark = M.uiPrefs().dark or false, quiet = M.uiPrefs().quiet or nil,
+      fold = S.phoneFold or false, dark = M.uiPrefs().dark or false, quiet = M.uiPrefs().quiet or nil, mapPrefs = M.mapPrefs(),
       canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo(), unstuck = M.unstuckInfo() }
   if S.pendingCareer or (not S.career.garage.started and S.career.play ~= 'free' and not c.employment) then
     -- the careers to pick from, on the resume and first-run screens
@@ -5792,14 +5792,38 @@ M.uiStore = {
   read = function() return jsonReadFile and jsonReadFile(M.UI_FILE) or nil end,
   write = function(t) if jsonWriteFile then jsonWriteFile(M.UI_FILE, t, true) end end,
 }
+-- The map's own switches (its ⚙ panel): what it shows. Only true / false, only these names.
+M.MAP_PREFS = { streets = true, water = true, food = true, shop = true, fuel = true, health = true, other = false,
+  buildings = true, north = false, autoZoom = false, lanes = true, speedo = true }
+function M.mapPrefsOf(t)
+  local out = {}
+  for k, def in pairs(M.MAP_PREFS) do
+    local v
+    if type(t) == 'table' then v = t[k] end
+    if type(v) == 'boolean' then out[k] = v else out[k] = def end
+  end
+  return out
+end
 function M.uiPrefs()
   if not S.ui then
     local ok, t = pcall(M.uiStore.read)
-    S.ui = { dark = ok and type(t) == 'table' and t.dark == true or nil, quiet = ok and type(t) == 'table' and t.quiet == true or nil }
+    S.ui = { dark = ok and type(t) == 'table' and t.dark == true or nil, quiet = ok and type(t) == 'table' and t.quiet == true or nil,
+      map = M.mapPrefsOf(ok and type(t) == 'table' and t.map) }
   end
+  if not S.ui.map then S.ui.map = M.mapPrefsOf(nil) end
   return S.ui
 end
-function M.writeUi(u) pcall(M.uiStore.write, { v = 1, dark = u.dark or false, quiet = u.quiet or false }) end
+function M.writeUi(u) pcall(M.uiStore.write, { v = 1, dark = u.dark or false, quiet = u.quiet or false, map = u.map }) end
+function M.mapPrefs() return M.uiPrefs().map end
+-- One of the map's switches; returns all of them
+function M.setMapPref(key, on)
+  local u = M.uiPrefs()
+  if M.MAP_PREFS[key] ~= nil then
+    u.map[key] = on == true
+    M.writeUi(u)
+  end
+  return u.map
+end
 function M.setDark(on)
   local u = M.uiPrefs()
   u.dark = on and true or nil

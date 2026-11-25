@@ -78,3 +78,15 @@ A flat, heading-up sat-nav sketch drawn on a canvas:
 Code: `lua/ge/extensions/cargoEarth/phonemap.lua` (pure rules), `core.phoneMap(roadsKey)`, the Map tab in
 `ui/modules/apps/CargoEarthPhone/app.js`. Tests: `tests/phonemap.lua`, the live map test in `tests/career.lua`,
 the Map tab in `tests/phone.cjs`.
+
+## Places, river names and the map's ⚙ panel
+
+- **Places** come from the tiles' `poi` layer (OpenMapTiles): named businesses and landmarks, a dot coloured by kind
+  (food, shops, fuel, health, other) and the name beside it, the most important of each tile first (`rank`). Street
+  furniture (parking, bins, gates, benches...) is left out. They show only in the 250 and 500 m views, at most 12 at
+  once, never over a street name, each other or the car.
+- **River names**: named `waterway` lines, blue and slanted, placed like street names.
+- **⚙ panel** (under the north dial): Speed chime, Street names, River names, Buildings, North up, Auto zoom (one step
+  out from 70 km/h, back under 50), Lane arrows, Speedometer, and Places by kind. Kept in the player's
+  `settings/cargoEarth/ui.json` (`map`), set by `cargoEarth_core.setMapPref(key, on)`; `phoneState().mapPrefs` brings
+  them to every phone. The panel fits the map without scrolling (VR controllers can't scroll inside it).

@@ -189,8 +189,8 @@ var cargoEarthOsm = (function () {
   function zz(n) { return n % 2 === 1 ? -(n + 1) / 2 : n / 2 }
 
   // the layers and tags the phone draws
-  var LAYERS = {water: 1, waterway: 1, landcover: 1, park: 1, landuse: 1, building: 1, transportation: 1, transportation_name: 1}
-  var TAGS = {'class': 1, subclass: 1, name: 1, 'name:latin': 1, brunnel: 1, ref: 1}
+  var LAYERS = {water: 1, waterway: 1, landcover: 1, park: 1, landuse: 1, building: 1, transportation: 1, transportation_name: 1, poi: 1}
+  var TAGS = {'class': 1, subclass: 1, name: 1, 'name:latin': 1, brunnel: 1, ref: 1, rank: 1}
 
   function value(r, end) {
     var v = null
@@ -278,11 +278,11 @@ var cargoEarthOsm = (function () {
   // ---- looks
   var LOOK = {
     light: {bg: '#f2efe9', water: '#aad3df', green: '#d6e9c6', wood: '#c5dfb0', landuse: '#ebe6de', building: '#dcd6cd',
-      rail: '#b5aca2', label: '#3d3833', halo: '#ffffff', casing: '#c3b8aa', mwCasing: '#d0913a',
+      rail: '#b5aca2', label: '#3d3833', waterLabel: '#3f7fa8', halo: '#ffffff', casing: '#c3b8aa', mwCasing: '#d0913a',
       road: {motorway: '#f4b860', trunk: '#f7c978', primary: '#fbdc8f', secondary: '#fdf0b5', tertiary: '#ffffff', minor: '#ffffff',
         service: '#ffffff', track: '#e6dccb', path: '#d8cbb8'}},
     dark: {bg: '#1f1d1b', water: '#1c3346', green: '#233020', wood: '#20301c', landuse: '#262320', building: '#2f2b28',
-      rail: '#4a4540', label: '#e6e0da', halo: '#151412', casing: '#0f0e0d', mwCasing: '#0f0e0d',
+      rail: '#4a4540', label: '#e6e0da', waterLabel: '#7fb3d8', halo: '#151412', casing: '#0f0e0d', mwCasing: '#0f0e0d',
       road: {motorway: '#a2692a', trunk: '#8d6831', primary: '#7a6838', secondary: '#5f5848', tertiary: '#4f4943', minor: '#4a4540',
         service: '#423d38', track: '#3a3530', path: '#37322e'}}
   }
@@ -310,7 +310,7 @@ var cargoEarthOsm = (function () {
   }
 
   // one 512 px piece of a z14 tile, north up: k = how many times the tile is halved (piece = tile / 2^k)
-  function renderPiece(canvas, data, k, px, py, look, mPerUnit) {
+  function renderPiece(canvas, data, k, px, py, look, mPerUnit, noBuildings) {
     var ctx = canvas.getContext('2d')
     var ext = 4096
     for (var name in data) { ext = data[name].extent; break }
@@ -357,7 +357,7 @@ var cargoEarthOsm = (function () {
       ctx.stroke()
     }
     // buildings only close up (a piece of 400 m or less)
-    if (k >= 2) fill('building', look.building)
+    if (k >= 2 && !noBuildings) fill('building', look.building)
     var tr = data.transportation
     if (!tr) return
     var byKind = {}
@@ -399,8 +399,7 @@ var cargoEarthOsm = (function () {
   // middle of the part of a piece that is on the screen)
   function labelsOf(data) {
     var l = data.transportation_name, out = []
-    if (!l) return out
-    for (var i = 0; i < l.features.length; i++) {
+    for (var i = 0; l && i < l.features.length; i++) {
       var f = l.features[i]
       var name = f.tags.name || f.tags['name:latin'] || f.tags.ref
       if (f.type !== 2 || !name || f.tags['class'] === 'path' || f.tags['class'] === 'track') continue
@@ -412,8 +411,54 @@ var cargoEarthOsm = (function () {
         }
       }
     }
+    // rivers and canals by name, along their line (water names are drawn blue and slanted)
+    var ww = data.waterway
+    if (ww) {
+      for (var wi = 0; wi < ww.features.length; wi++) {
+        var wf = ww.features[wi], wname = wf.tags.name || wf.tags['name:latin']
+        if (wf.type !== 2 || !wname) continue
+        for (var wj = 0; wj < wf.parts.length; wj++) {
+          var wp = wf.parts[wj]
+          for (var wk = 0; wk + 3 < wp.length; wk += 2) {
+            var wdx = wp[wk + 2] - wp[wk], wdy = wp[wk + 3] - wp[wk + 1], wlen = Math.sqrt(wdx * wdx + wdy * wdy)
+            if (wlen >= 60) out.push({name: wname, x1: wp[wk], y1: wp[wk + 1], x2: wp[wk + 2], y2: wp[wk + 3], len: wlen, water: true})
+          }
+        }
+      }
+    }
     out.sort(function (a, b) { return b.len - a.len })
     return out.slice(0, 300)
+  }
+
+  // places (OpenMapTiles poi layer): named businesses and landmarks, the most important of each tile first (rank),
+  // without street furniture and the like. Each gets a dot coloured by kind and its name beside it.
+  var POI_SKIP = {parking: 1, bicycle_parking: 1, information: 1, waste_basket: 1, gate: 1, lift_gate: 1, bollard: 1,
+    toilets: 1, drinking_water: 1, recycling: 1, shelter: 1, swimming_pool: 1, pitch: 1, playground: 1, bench: 1,
+    atm: 1, bus: 1, railway: 1, entrance: 1, garden: 1, brownfield: 1, cemetery: 1, park: 1}
+  var POI_KIND = {
+    food: ['restaurant', 'fast_food', 'cafe', 'bar', 'beer', 'ice_cream', 'bakery', 'pub'],
+    shop: ['shop', 'grocery', 'clothing_store', 'alcohol_shop', 'butcher', 'hairdresser', 'car', 'bicycle', 'furniture',
+      'jewelry', 'mobile_phone', 'books', 'florist', 'hardware', 'laundry', 'optician', 'shoes', 'toys', 'gift', 'music',
+      'electronics', 'doityourself', 'garden_centre', 'pet', 'stationery', 'confectionery', 'deli', 'wine'],
+    health: ['hospital', 'pharmacy', 'doctors', 'dentist', 'veterinary'],
+    fuel: ['fuel', 'charging_station']
+  }                                    // hotels, campsites and the rest show under Other
+  var POI_OF = {}
+  for (var pk in POI_KIND) for (var pi = 0; pi < POI_KIND[pk].length; pi++) POI_OF[POI_KIND[pk][pi]] = pk
+  var POI_ORDER = {food: 0, shop: 1, fuel: 2, health: 3, other: 4}
+  function poisOf(data) {
+    var l = data.poi, out = []
+    if (!l) return out
+    for (var i = 0; i < l.features.length; i++) {
+      var f = l.features[i], c = f.tags['class']
+      var name = f.tags.name || f.tags['name:latin']
+      if (f.type !== 1 || !name || POI_SKIP[c] || !f.parts.length) continue
+      var kind = POI_OF[c] || POI_OF[f.tags.subclass] || 'other'
+      out.push({name: String(name).length > 26 ? String(name).slice(0, 25) + '…' : String(name), kind: kind,
+        x: f.parts[0][0], y: f.parts[0][1], rank: +f.tags.rank || 99})
+    }
+    out.sort(function (a, b) { return a.rank - b.rank || POI_ORDER[a.kind] - POI_ORDER[b.kind] })
+    return out.slice(0, 150)
   }
 
   // ---- tiles through the helper
@@ -481,6 +526,7 @@ var cargoEarthOsm = (function () {
         try {
           t.data = decode(new Uint8Array(buf))
           t.labels = labelsOf(t.data)
+          t.pois = poisOf(t.data)
           t.state = 'ok'
           me.ok++
           me.errors = 0
@@ -514,7 +560,7 @@ var cargoEarthOsm = (function () {
   // Draws the map under the car: view = { w, h, ox, oy, scale (px / m), ratio, lat, lon, heading }, dark.
   // Returns a projector (lat, lon) -> [x, y] in CSS pixels, and whether pieces are still missing (draw again soon).
   TileMap.prototype.draw = function (ctx, v, dark, now) {
-    var look = LOOK[dark ? 'dark' : 'light']
+    var look = LOOK[dark ? 'dark' : 'light'], opts = v.opts || {}
     var tm = tileMetres(v.lat)
     var c = tileXY(v.lat, v.lon)
     var rad = v.heading * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad)
@@ -536,7 +582,7 @@ var cargoEarthOsm = (function () {
     var n2 = Math.pow(2, k)
     var missing = false, budget = 2
     var q = tm / (PIECE * n2)                                // metres per piece pixel
-    var labels = []
+    var labels = [], pois = []
     for (var tx = Math.floor(c[0] - reach); tx <= Math.floor(c[0] + reach); tx++) {
       for (var ty = Math.floor(c[1] - reach); ty <= Math.floor(c[1] + reach); ty++) {
         var t = this.want(tx, ty, now)
@@ -547,14 +593,14 @@ var cargoEarthOsm = (function () {
             // is this piece near enough the view? (its centre within reach plus half a piece diagonal)
             var dxp = gx + 0.5 / n2 - c[0], dyp = gy + 0.5 / n2 - c[1]
             if (Math.sqrt(dxp * dxp + dyp * dyp) > reach + 0.71 / n2) continue
-            var key = tx + '/' + ty + '/' + k + '/' + px + '/' + py + '/' + (dark ? 1 : 0)
+            var key = tx + '/' + ty + '/' + k + '/' + px + '/' + py + '/' + (dark ? 1 : 0) + (opts.buildings === false ? 'n' : '')
             var pc = this.pieces[key]
             if (!pc) {
               if (budget <= 0) { missing = true; continue }
               budget--
               var t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
               pc = this.pieces[key] = {canvas: this.make(PIECE, PIECE), used: now}
-              renderPiece(pc.canvas, t.data, k, px, py, look, (tm / 4096))
+              renderPiece(pc.canvas, t.data, k, px, py, look, (tm / 4096), opts.buildings === false)
               this.renderMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0
             }
             pc.used = now
@@ -566,20 +612,22 @@ var cargoEarthOsm = (function () {
           }
         }
         if (t.labels) for (var li = 0; li < t.labels.length; li++) labels.push([tx, ty, t.labels[li], t.data])
+        if (t.pois) for (var pj = 0; pj < t.pois.length; pj++) pois.push([tx, ty, t.pois[pj], t.data])
       }
     }
     this.drawn = now
     this.trim()
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
-    return {proj: proj, missing: missing, labels: function () { drawLabels(ctx, labels, E, N, cs, sn, scale, ox, oy, v, look, tm) }}
+    return {proj: proj, missing: missing, labels: function () { drawLabels(ctx, labels, E, N, cs, sn, scale, ox, oy, v, look, tm, pois, opts) }}
   }
 
-  function drawLabels(ctx, list, E, N, cs, sn, scale, ox, oy, v, look, tm) {
+  function drawLabels(ctx, list, E, N, cs, sn, scale, ox, oy, v, look, tm, pois, opts) {
+    opts = opts || {}
     ctx.font = '600 11px sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.lineJoin = 'round'
-    var placed = [], count = 0, done = {}
+    var placed = [[ox, oy, 16, 1]], count = 0, done = {}     // the car's arrow stays clear
     // the screen box labels go in (clear of the banner on top and the speed at the bottom)
     var bx0 = 12, bx1 = v.w - 12, by0 = 100, by1 = v.h - 64
     function scr(tx, ty, ux, uy, ext) {
@@ -588,7 +636,7 @@ var cargoEarthOsm = (function () {
     }
     for (var i = 0; i < list.length && count < 14; i++) {
       var tx = list[i][0], ty = list[i][1], lb = list[i][2]
-      if (done[lb.name]) continue
+      if (done[lb.name] || (lb.water ? opts.water === false : opts.streets === false)) continue
       var ext = 4096
       for (var nm in list[i][3]) { ext = list[i][3][nm].extent; break }
       var a = scr(tx, ty, lb.x1, lb.y1, ext), b = scr(tx, ty, lb.x2, lb.y2, ext)
@@ -603,6 +651,7 @@ var cargoEarthOsm = (function () {
       }
       if (!ok) continue
       var lenPx = (t1 - t0) * Math.sqrt(ddx * ddx + ddy * ddy)
+      ctx.font = lb.water ? 'italic 600 11px sans-serif' : '600 11px sans-serif'
       var tw = ctx.measureText(lb.name).width
       if (lenPx < tw + 12) continue
       var tm2 = (t0 + t1) / 2
@@ -623,14 +672,58 @@ var cargoEarthOsm = (function () {
       ctx.save()
       ctx.translate(x, y)
       ctx.rotate(ang)
+      if (lb.water) ctx.font = 'italic 600 11px sans-serif'
       ctx.strokeStyle = look.halo
       ctx.lineWidth = 3
       ctx.strokeText(lb.name, 0, 0)
-      ctx.fillStyle = look.label
+      ctx.fillStyle = lb.water ? look.waterLabel : look.label
       ctx.fillText(lb.name, 0, 0)
       ctx.restore()
     }
+    // places: only close up (the 250 and 500 m views), a few at a time, never over a street name or each other
+    if (!pois || scale < POI_MIN_SCALE) return
+    ctx.font = '500 10px sans-serif'
+    ctx.textAlign = 'left'
+    var shown = 0, seen = {}
+    for (var q = 0; q < pois.length && shown < POI_MAX; q++) {
+      var pt = pois[q][2], pext = 4096
+      if (opts[pt.kind] === false || (pt.kind === 'other' && !opts.other)) continue
+      for (var pn in pois[q][3]) { pext = pois[q][3][pn].extent; break }
+      var at = scr(pois[q][0], pois[q][1], pt.x, pt.y, pext), px0 = at[0], py0 = at[1]
+      var pw = ctx.measureText(pt.name).width
+      // the dot on the place, the name to its right (left when that runs off the screen)
+      var left = px0 + 7 + pw > bx1
+      var cx = left ? px0 - 7 - pw / 2 : px0 + 7 + pw / 2
+      if (px0 < bx0 || px0 > bx1 || py0 < by0 || py0 > by1 || cx - pw / 2 < bx0 - 4) continue
+      if (seen[pt.name] && Math.abs(seen[pt.name][0] - px0) + Math.abs(seen[pt.name][1] - py0) < 200) continue
+      var pr = pw / 2 + 10, hit = false
+      for (var m = 0; m < placed.length; m++) {
+        var o = placed[m]
+        if ((o[0] - cx) * (o[0] - cx) + (o[1] - py0) * (o[1] - py0) < (o[2] + pr) * (o[2] + pr) * (o[3] ? 1 : 0.55)) { hit = true; break }
+      }
+      if (hit) continue
+      placed.push([cx, py0, pr, 1])
+      seen[pt.name] = [px0, py0]
+      shown++
+      ctx.beginPath()
+      ctx.arc(px0, py0, 3.5, 0, Math.PI * 2)
+      ctx.fillStyle = POI_COLOR[pt.kind] || POI_COLOR.other
+      ctx.fill()
+      ctx.lineWidth = 1.5
+      ctx.strokeStyle = look.halo
+      ctx.stroke()
+      ctx.textAlign = left ? 'right' : 'left'
+      var lx = left ? px0 - 7 : px0 + 7
+      ctx.lineWidth = 3
+      ctx.strokeText(pt.name, lx, py0)
+      ctx.fillStyle = look.poi || look.label
+      ctx.fillText(pt.name, lx, py0)
+    }
+    ctx.textAlign = 'center'
   }
+  var POI_MIN_SCALE = 0.65    // pixels per metre: the 250 and 500 m views on the phone, not the 1000 m one
+  var POI_MAX = 12
+  var POI_COLOR = {food: '#e8833a', shop: '#9b6ad6', health: '#d9534f', fuel: '#2a9d8f', other: '#8a8580'}
 
   function fromBase64(b64) {
     var bin = atob(b64), out = new Uint8Array(bin.length)
@@ -638,7 +731,7 @@ var cargoEarthOsm = (function () {
     return out
   }
   function utf8Bytes(text) { return new TextEncoder().encode(text) }
-  return {decode: decode, TileMap: TileMap, tileXY: tileXY, tileMetres: tileMetres, labelsOf: labelsOf,
+  return {decode: decode, TileMap: TileMap, tileXY: tileXY, tileMetres: tileMetres, labelsOf: labelsOf, poisOf: poisOf,
     fromBase64: fromBase64, utf8Bytes: utf8Bytes}
 })()
 
@@ -874,6 +967,17 @@ angular.module('beamng.apps')
       'background:rgba(255,255,255,.88);box-shadow:0 1px 3px rgba(0,0,0,.3)}.dark .cep-map-n{background:rgba(0,0,0,.6)}' +
     '.cep-map-nd{position:absolute;inset:0;display:block;font:800 10px/30px sans-serif;text-align:center;color:#25201d}.dark .cep-map-nd{color:#fff}' +
     '.cep-map-nd:before{content:"";position:absolute;left:11px;top:0;border:4px solid transparent;border-bottom:7px solid #e4572e;border-top:0}' +
+    '.cep-map-gear{position:absolute;left:8px;top:44px;width:30px;height:30px;padding:0;border:0;border-radius:50%;cursor:pointer;font-size:15px;line-height:30px;' +
+      'background:rgba(255,255,255,.88);color:#25201d;box-shadow:0 1px 3px rgba(0,0,0,.3)}.dark .cep-map-gear{background:rgba(0,0,0,.6);color:#fff}.cep-map-gear.on{box-shadow:0 0 0 2px var(--tomato)}' +
+    '.cep-map-set{position:absolute;left:8px;right:8px;top:80px;padding:8px 10px 10px;border-radius:12px;background:var(--card);color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:3}' +
+      '.cep-map-set-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}.cep-map-set-h b{font-size:13px}' +
+      '.cep-map-set-h button{width:26px;height:26px;padding:0;border:0;border-radius:8px;font:inherit;cursor:pointer;background:var(--line);color:var(--ink)}' +
+      '.cep-map-set-g{display:grid;grid-template-columns:1fr 1fr;gap:5px}.cep-map-set-g button{min-height:30px;padding:4px 8px;border:1px solid var(--line);border-radius:9px;' +
+        'font:inherit;font-size:11px;font-weight:700;text-align:left;cursor:pointer;background:transparent;color:var(--muted)}' +
+      '.cep-map-set-g button.on{background:#e7f3ea;border-color:#8cc59a;color:#1f5c31}.dark .cep-map-set-g button.on{background:#1d3a26;border-color:#3d7a4e;color:#bfe6c8}' +
+      '.cep-map-set-g button:before{content:"○ ";}.cep-map-set-g button.on:before{content:"● "}.cep-map-set-p button:before{content:none}.cep-map-set-p button.on:before{content:none}' +
+      '.cep-map-set-p{grid-template-columns:1fr 1fr 1fr}.cep-map-set-p i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0}' +
+      '.cep-map-set-p button:not(.on) i{opacity:.35}.cep-map-set-l{margin:8px 0 4px;font-size:11px;font-weight:700;color:var(--muted)}' +
     '.cep-map-stats{position:absolute;left:8px;right:56px;top:60px;padding:8px 10px;border-radius:10px;background:var(--card);font-size:11px;line-height:1.45;' +
       'color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3);z-index:2}.cep-map-stats b{font-weight:800}' +
     '.cep-map-stats button{margin-top:6px;padding:5px 9px;border:0;border-radius:8px;font:inherit;font-weight:700;cursor:pointer;background:var(--line);color:var(--ink)}' +
@@ -2249,14 +2353,23 @@ angular.module('beamng.apps')
         '<div class="cep-map-dir" ng-if="lm.turn && !lm.behind" role="status">' +
           '<svg viewBox="-15 -15 30 30" aria-hidden="true"><path ng-attr-d="{{ lm.turn.icon }}" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
           '<div><b>{{ lm.turn.dist }}</b><span>{{ lm.turn.text }}</span></div></div>' +
-        '<div class="cep-map-lanes" ng-if="lm.turn.lanes && !lm.behind" aria-label="Lanes: the bright ones lead your way">' +
+        '<div class="cep-map-lanes" ng-if="lm.turn.lanes && !lm.behind && mapPrefs().lanes" aria-label="Lanes: the bright ones lead your way">' +
           '<svg ng-repeat="lane in lm.turn.lanes track by $index" ng-class="{ok: lane.ok}" viewBox="-15 -15 30 30" aria-hidden="true">' +
           '<path ng-attr-d="{{ lane.icon }}" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
         '<button class="cep-map-n" title="North. Tap for the map\'s timings" aria-label="North. Tap for the map\'s timings" ng-click="mapStats()"><span class="cep-map-nd">N</span></button>' +
+        '<button class="cep-map-gear" title="Map settings" aria-label="Map settings" ng-class="{on: lm.set}" ng-click="mapSet()">⚙</button>' +
+        '<div class="cep-map-set" ng-if="lm.set" role="dialog" aria-label="Map settings">' +
+          '<div class="cep-map-set-h"><b>Map</b><button title="Close" aria-label="Close" ng-click="mapSet()">✕</button></div>' +
+          '<div class="cep-map-set-g">' +
+            '<button ng-repeat="o in MAP_SWITCHES track by o.k" ng-class="{on: o.k === \'sound\' ? !s.quiet : mapPrefs()[o.k]}" ng-click="mapPref(o.k)" ' +
+              'aria-pressed="{{ o.k === \'sound\' ? !s.quiet : !!mapPrefs()[o.k] }}">{{ o.t }}</button></div>' +
+          '<div class="cep-map-set-l">Places</div><div class="cep-map-set-g cep-map-set-p">' +
+            '<button ng-repeat="o in MAP_PLACES track by o.k" ng-class="{on: mapPrefs()[o.k]}" ng-click="mapPref(o.k)" aria-pressed="{{ !!mapPrefs()[o.k] }}">' +
+              '<i ng-style="{background: o.c}"></i>{{ o.t }}</button></div></div>' +
         '<div class="cep-map-stats" ng-if="lm.stats"><div ng-repeat="line in lm.statLines track by $index">{{ line }}</div>' +
           '<button ng-click="mapEngine()">{{ lm.engine === \'osm\' ? \'Use the simple map\' : \'Use the OSM map\' }}</button> ' +
           '<button ng-click="mapStats()">Close</button></div>' +
-        '<button class="cep-map-speed" ng-if="lm.speed" ng-class="{over: lm.speed.over}" ng-click="mapQuiet()" ' +
+        '<button class="cep-map-speed" ng-if="lm.speed && mapPrefs().speedo" ng-class="{over: lm.speed.over}" ng-click="mapQuiet()" ' +
           'title="{{ s.quiet ? \'Your speed. The chime over the limit is off: tap to turn it on\' : \'Your speed. Tap to turn off the chime over the limit\' }}">' +
           '<b>{{ lm.speed.v }}</b><small>{{ lm.speed.unit }}</small>' +
           '<i ng-if="s.quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6h2l3-2.5v9L5 10H3z" fill="#7b726a"/><path d="M10 6l4 4M14 6l-4 4" stroke="#e8452c" stroke-width="1.6" stroke-linecap="round"/></svg></i></button>' +
@@ -2383,6 +2496,25 @@ angular.module('beamng.apps')
         if (scope.dash ? !r.hidden : r.hidden) return
         scope.chimes++
         chime()
+      }
+      // the map's ⚙ panel: what it shows, kept in the player's ui.json by the game (setMapPref)
+      var MAP_DEFAULTS = {streets: true, water: true, food: true, shop: true, fuel: true, health: true, other: false,
+        buildings: true, north: false, autoZoom: false, lanes: true, speedo: true}
+      scope.MAP_SWITCHES = [{k: 'sound', t: 'Speed chime'}, {k: 'streets', t: 'Street names'}, {k: 'water', t: 'River names'},
+        {k: 'buildings', t: 'Buildings'}, {k: 'north', t: 'North up'}, {k: 'autoZoom', t: 'Auto zoom'}, {k: 'lanes', t: 'Lane arrows'},
+        {k: 'speedo', t: 'Speedometer'}]
+      scope.MAP_PLACES = [{k: 'food', t: 'Food', c: '#e8833a'}, {k: 'shop', t: 'Shops', c: '#9b6ad6'}, {k: 'fuel', t: 'Fuel', c: '#2a9d8f'},
+        {k: 'health', t: 'Health', c: '#d9534f'}, {k: 'other', t: 'Other', c: '#8a8580'}]
+      scope.mapPrefs = function () { return (scope.s && scope.s.mapPrefs) || MAP_DEFAULTS }
+      scope.mapSet = function () { lm.set = !lm.set }
+      scope.mapPref = function (k) {
+        if (k === 'sound') { scope.mapQuiet(); return }
+        if (!(k in MAP_DEFAULTS)) return
+        var p = {}, cur = scope.mapPrefs()
+        for (var pk in MAP_DEFAULTS) p[pk] = pk in cur ? cur[pk] : MAP_DEFAULTS[pk]
+        p[k] = !p[k]
+        if (scope.s) scope.s.mapPrefs = p
+        bngApi.engineLua('cargoEarth_core and cargoEarth_core.setMapPref(' + bngApi.serializeToLua(k) + ', ' + (p[k] ? 'true' : 'false') + ')', function () {})
       }
       scope.mapQuiet = function () {
         var quiet = !(scope.s && scope.s.quiet)
@@ -3204,7 +3336,7 @@ angular.module('beamng.apps')
       }
       var ROAD_M = [3, 6, 9, 13], ROAD_PX = [1, 2, 3, 4]   // road width in metres, and never thinner than this in pixels
       var STOP_LOOK = {next: ['#e4572e', ''], pickup: ['#e4572e', 'P'], drop: ['#2e9e5b', 'D'], stop: ['#7a5cc7', ''], home: ['#2f7bf6', 'H'], hq: ['#4b5563', 'W']}
-      var lm = scope.lm = {note: '', noteHidden: '', zoom: 1, behind: false, engine: 'osm', osm: false, stats: false, statLines: [], turn: null, speed: null, left: null}
+      var lm = scope.lm = {set: false, note: '', noteHidden: '', zoom: 1, behind: false, engine: 'osm', osm: false, stats: false, statLines: [], turn: null, speed: null, left: null}
       try { var z = localStorage.getItem('cargoEarthMapZoom'); if (z === '0' || z === '1' || z === '2') lm.zoom = Number(z) } catch (e) {}
       try { if (localStorage.getItem('cargoEarthMapEngine') === 'sketch') lm.engine = 'sketch' } catch (e) {}
       var mapData = {roadsKey: null, roads: [], route: null, routeGps: false, stops: [], car: null, from: null, at: 0, routeLL: null}
@@ -3427,14 +3559,16 @@ angular.module('beamng.apps')
         ctx.fillRect(0, 0, w, h)
         var car = carNow(Date.now())
         if (!car) return false
-        var scale = h / MAP_VIEW[lm.zoom], ox = w / 2, oy = h * 0.68
-        var rad = car.h * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad)
+        var mp = scope.mapPrefs()
+        var scale = h / MAP_VIEW[mapZoomNow(mp)], ox = w / 2, oy = mp.north ? h * 0.5 : h * 0.68
+        var hd = mp.north ? 0 : car.h       // north up, or the car's heading up
+        var rad = hd * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad)
         // game metres (x east, y north) to the screen, the car's heading up
         var sx = function (x, y) { return ox + ((x - car.x) * cs - (y - car.y) * sn) * scale }
         var sy = function (x, y) { return oy - ((x - car.x) * sn + (y - car.y) * cs) * scale }
         // the OSM map: its tiles under everything, and the route and stops by lat / lon
         var osm = osmOn() && car.lat !== undefined && osmMap.base ? osmMap.draw(ctx, {w: w, h: h, ox: ox, oy: oy, scale: scale, ratio: ratio,
-          lat: car.lat, lon: car.lon, heading: car.h}, !!scope.dark, Date.now()) : null
+          lat: car.lat, lon: car.lon, heading: hd, opts: mp}, !!scope.dark, Date.now()) : null
         if (!!osm !== lm.osm) scope.$evalAsync(function () { lm.osm = !!osm })
         if (osm) {
           sx = function (la, lo) { return osm.proj(la, lo)[0] }
@@ -3542,12 +3676,15 @@ angular.module('beamng.apps')
             ctx.fillText(String(label).slice(0, 2), x, y + 0.5)
           }
         }
-        // the car: an arrow pointing up
+        // the car: an arrow pointing up (north up: pointing where the car heads)
+        var ca = (car.h - hd) * Math.PI / 180, cc = Math.cos(ca), cn = Math.sin(ca)
+        var arrow = function (x, y) { return [ox + x * cc - y * cn, oy + x * cn + y * cc] }
+        var a1 = arrow(0, -13), a2 = arrow(9, 9), a3 = arrow(0, 4), a4 = arrow(-9, 9)
         ctx.beginPath()
-        ctx.moveTo(ox, oy - 13)
-        ctx.lineTo(ox + 9, oy + 9)
-        ctx.lineTo(ox, oy + 4)
-        ctx.lineTo(ox - 9, oy + 9)
+        ctx.moveTo(a1[0], a1[1])
+        ctx.lineTo(a2[0], a2[1])
+        ctx.lineTo(a3[0], a3[1])
+        ctx.lineTo(a4[0], a4[1])
         ctx.closePath()
         ctx.fillStyle = col.route
         ctx.fill()
@@ -3556,13 +3693,20 @@ angular.module('beamng.apps')
         ctx.stroke()
         return osm ? osm.missing : false
       }
+      // auto zoom: one step farther out while driving fast (on from 70 km/h, back under 50, so it does not flicker)
+      var zoomedOut = false
+      function mapZoomNow(mp) {
+        var kmh = mapData.car && mapData.car.kmh || 0
+        zoomedOut = !!mp.autoZoom && (zoomedOut ? kmh > 50 : kmh >= 70)
+        return Math.min(MAP_VIEW.length - 1, lm.zoom + (zoomedOut ? 1 : 0))
+      }
       // the north dial turns with the map (the car's heading is up)
       var dialAt = null
       function mapDial(car) {
         var root = element && element[0]
         var d = root && root.querySelector ? root.querySelector('.cep-map-nd') : null
         if (!d || !car) return
-        var deg = Math.round(-car.h)
+        var deg = scope.mapPrefs().north ? 0 : Math.round(-car.h)
         if (dialAt === deg && d.style.transform) return
         dialAt = deg
         d.style.transform = 'rotate(' + deg + 'deg)'
@@ -3576,7 +3720,8 @@ angular.module('beamng.apps')
         var car = carNow(Date.now())
         var drew = true
         // the same picture as last time (the car stands, nothing new, no map piece still to come): not drawn again
-        var key = car ? [car.x.toFixed(1), car.y.toFixed(1), car.h.toFixed(1), lm.zoom, !!scope.dark, mapData.at, lm.engine, osmMap.version].join(',') : ''
+        var key = car ? [car.x.toFixed(1), car.y.toFixed(1), car.h.toFixed(1), mapZoomNow(scope.mapPrefs()), !!scope.dark, mapData.at, lm.engine, osmMap.version,
+          JSON.stringify(scope.mapPrefs())].join(',') : ''
         if (key && key === lastSketch) drew = false
         else {
           var missing = mapDraw()
