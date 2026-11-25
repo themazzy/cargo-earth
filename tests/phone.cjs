@@ -13,7 +13,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
     // BeamNG runs a command without a callback as a Lua statement: an expression like ours would not run at all
     assert(typeof callback === 'function', 'engineLua without a callback never runs: ' + command)
     commands.push(command); if (hold) pending.push(callback); else callback(JSON.parse(JSON.stringify(answer))) } },
-  Date: {now: () => now},
+  Date: {now: () => now}, atob, TextEncoder,
   Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {}; audios.push(this) } addEventListener (n, f) { this.on[n] = f }
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
     getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
@@ -213,6 +213,24 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert.equal(scope.lm.noteHidden, scope.lm.note, 'closed')
   scope.mapEngine(); scope.mapEngine()
   assert.equal(scope.osmMap.failed, '', 'switching back tries again')
+  // tiles come through the game (the UI browser may not ask the helper itself): polled until the helper answered
+  {
+    const got = []
+    answer = {state: 'loading'}
+    later.length = 0
+    scope.osmMap.xhr('game?z=14&x=8848&y=5550', (status, buf) => got.push([status, buf && Array.from(new Uint8Array(buf))]))
+    assert(commands.at(-1).includes('cargoEarth_core.osmTile(14, 8848, 5550)'), commands.at(-1))
+    assert.equal(got.length, 0, 'still loading')
+    answer = {state: 'ok', b64: 'AQID'}
+    later.shift()()
+    assert.equal(JSON.stringify(got), '[[200,[1,2,3]]]', 'the tile bytes')
+    answer = {state: 'error', err: 'HTTP 404'}
+    scope.osmMap.xhr('game?z=14&x=1&y=2', (status) => got.push([status]))
+    assert.equal(got.at(-1)[0], 404, 'an old helper: too old')
+    answer = {state: 'error', err: 'connection refused'}
+    scope.osmMap.xhr('game?z=14&x=1&y=3', (status) => got.push([status]))
+    assert.equal(got.at(-1)[0], 0, 'no helper: did not answer')
+  }
   answer = saved
   scope.setTab('orders')
 }

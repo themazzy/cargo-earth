@@ -632,7 +632,14 @@ var cargoEarthOsm = (function () {
     }
   }
 
-  return {decode: decode, TileMap: TileMap, tileXY: tileXY, tileMetres: tileMetres, labelsOf: labelsOf}
+  function fromBase64(b64) {
+    var bin = atob(b64), out = new Uint8Array(bin.length)
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+    return out
+  }
+  function utf8Bytes(text) { return new TextEncoder().encode(text) }
+  return {decode: decode, TileMap: TileMap, tileXY: tileXY, tileMetres: tileMetres, labelsOf: labelsOf,
+    fromBase64: fromBase64, utf8Bytes: utf8Bytes}
 })()
 
 angular.module('beamng.apps')
@@ -3285,7 +3292,33 @@ angular.module('beamng.apps')
       }
       function sameLook2(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
       // ---- the OSM map (see cargoEarthOsm): tiles through the helper, drawn under our route
-      var osmMap = scope.osmMap = new cargoEarthOsm.TileMap()
+      var osmMap = scope.osmMap = new cargoEarthOsm.TileMap({xhr: tileFromGame})
+      // BeamNG's UI browser cancels the page's own requests to the helper, so a tile comes through the game: ask it
+      // (cargoEarth_core.osmTile) every 200 ms until the helper answered. done(status, ArrayBuffer) like an XHR.
+      function tileFromGame(url, done) {
+        var m = /[?&]z=(\d+)&x=(\d+)&y=(\d+)/.exec(url)
+        if (!m) { done(400, null); return }
+        var t0 = Date.now()
+        function poll() {
+          if (destroyed) return
+          bngApi.engineLua('cargoEarth_core and cargoEarth_core.osmTile(' + m[1] + ', ' + m[2] + ', ' + m[3] + ') or nil', function (r) {
+            if (destroyed) return
+            if (r && r.state === 'ok') {
+              var bytes
+              try { bytes = cargoEarthOsm.fromBase64(r.b64 || '') } catch (e) { done(200, null); return }
+              done(200, bytes.buffer)
+            } else if (r && r.state === 'error') {
+              var why = String(r.err || 'no answer')
+              var code = /^HTTP (\d+)/.exec(why)
+              done(code ? +code[1] : why === 'a broken answer' ? 502 : 0,          // no HTTP answer: the helper is not there
+                cargoEarthOsm.utf8Bytes(JSON.stringify({error: why.replace(/^HTTP \d+: /, '')})).buffer)
+            } else if (!r) done(0, null)                                   // the mod is not running
+            else if (Date.now() - t0 > 30000) done(0, null)               // the helper never answered
+            else setTimeout(poll, 200)
+          })
+        }
+        poll()
+      }
       scope.mapNoteClose = function () { lm.noteHidden = lm.note }
       function osmOn() { return lm.engine === 'osm' && !osmMap.failed }
       var mapBusy = false, mapAskedAt = -Infinity

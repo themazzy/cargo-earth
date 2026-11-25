@@ -14,9 +14,14 @@ phone itself on its 2D canvas (`cargoEarthOsm` at the top of `app.js`). Two thin
   calls, and street names upright along the streets, kept clear of each other.
 - **No web**: the browser does not load from the internet (the radio streams go through the helper for the same
   reason). The tiles come through the helper: `GET /v1/osm/tile?z=14&x=..&y=..` asks OpenFreeMap (the tile address
-  from its TileJSON, asked once a day), keeps the tile on disk (`cache/osm`, the oldest past 3000 dropped) and answers
-  the phone with CORS. That path is the only one the helper answers for a page (it still answers only this computer,
-  and only ever passes OpenFreeMap tiles). `core.phoneMap` gives the phone the address (`tiles`) when the helper is on.
+  from its TileJSON, asked once a day) and keeps the tile on disk (`cache/osm`, the oldest past 3000 dropped).
+- **Not even the helper**: BeamNG's UI browser cancels the page's own requests to 127.0.0.1 (beamng.log:
+  `BNGCefClient::OnBeforeResourceLoad| Resource cancel`). So the phone asks the game: `cargoEarth_core.osmTile(z, x, y)`
+  (cargoEarth/osmtiles.lua) queues `/v1/osm/tile?...&as=b64` on the helper client's own map lane (worked every frame
+  next to the radio's lane, never in its way) and answers `loading` until the helper sent the tile as base64 text;
+  the phone asks again every 200 ms. A finished tile is handed out for 20 s, so every phone on screen gets it.
+  `core.phoneMap` says `tiles = 'game'` when the helper is on. (The helper still answers a page directly, with CORS,
+  for a browser that allows it.)
 
 Each z14 tile (about 1.5 km) is cut into 512 px pieces, as many as the zoom needs, each drawn north-up once and kept
 (48 at most); a frame only turns and places those pictures under the car, so a frame costs a few image draws. At most
