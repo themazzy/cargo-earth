@@ -5647,20 +5647,32 @@ end
 -- already has (the roads are sent again only on another tile, another graph or after BeamNG.Earth moved the world).
 --   { car = { x, y, h (degrees clockwise from north), kmh }, roadsKey, roads = { x1, y1, x2, y2, kind, ... },
 --     route = { x, y, ..., false, ... }, routeGps, stops = { { x, y, k = 'next'|'pickup'|'drop'|'stop'|'home'|'hq', n } } }
+-- geo (the full map, drawn by MapLibre from OpenFreeMap): no roads; the car, the route (routeLL = { lat, lon, ... })
+-- and the stops come with lat / lon too.
+-- The game shows lengths in miles (Options > Display > Units)
+function M.imperial()
+  local st = rawget(_G, 'settings')
+  local ok, v = pcall(function() return st and st.getValue and st.getValue('uiUnitLength') end)
+  return ok and v == 'imperial'
+end
 M.MAP_ON_ROUTE_M = 40   -- the car this close to the GPS line is on it (farther: the GPS is about to plan again)
-function M.phoneMap(have)
+function M.phoneMap(have, perf, geo)
   local pm = require('cargoEarth/phonemap')
+  local t0 = os.clock and os.clock()
   local p = earth.pose()
   if not (p and p.x and p.y) then return { status = earth.status() } end
   local out = { status = 'ok', car = { x = r1(p.x), y = r1(p.y), h = r1(p.heading or 0), kmh = math.floor((p.speed or 0) * 3.6 + 0.5) } }
   local frame = tostring(p.anchorLat or '') .. ',' .. tostring(p.anchorLon or '')
-  local graph = M.G.graph and M.G.graph()
+  local function r6(v) return math.floor(v * 1e6 + 0.5) / 1e6 end
+  if geo and p.lat and p.lon then out.car.lat, out.car.lon = r6(p.lat), r6(p.lon) end
+  local graph = not geo and M.G.graph and M.G.graph()
   if graph then
     local tx, ty, cx, cy = pm.tile(p.x, p.y)
-    pm.grid(graph, S.clock)
+    -- the road index is sorted a few milliseconds per ask, never all at once (a big graph would stall a frame)
+    pm.grid(graph, S.clock, pm.SLICE_MS)
     local key = table.concat({ tx, ty, frame, pm.stamp or 0 }, ':')
     out.roadsKey = key
-    if key ~= have then out.roads = pm.roads(graph, cx, cy, pm.RADIUS, S.clock) end
+    if key ~= have then out.roads = pm.roads(graph, cx, cy, pm.RADIUS, S.clock, pm.SLICE_MS) end
   end
   local function xy(g)
     if type(g) ~= 'table' or not g[1] then return nil end
@@ -5676,13 +5688,20 @@ function M.phoneMap(have)
   local pts = routeKey and pm.routeCached(routeKey)
   if routeKey and not pts then
     local geo = earth.routeGeometry and earth.routeGeometry()
-    if geo then pts = pm.routeXY(routeKey, geo.points, function(q) return earth.worldXY(p, q) end) end
+    if geo then
+      pts = pm.routeXY(routeKey, geo.points, function(q) return earth.worldXY(p, q) end)
+      pts.steps, pts.dist = geo.steps, tonumber(geo.dist)
+    end
   end
   if pts then
     -- only the way still ahead of the car; facing against it while moving: the route is behind you
     local ahead, where = pm.ahead(pts, p.x, p.y, p.heading, routeKey)
     out.route, out.routeGps = pm.clip(ahead, p.x, p.y), true
+    if geo then out.routeLL = pm.geoRoute(ahead) end
     if where then
+      -- the next turn: Earth's steps count metres along its full route, ours is the simplified line (a bit shorter)
+      local travelled = where.along * ((pts.dist and where.length > 0) and pts.dist / where.length or 1)
+      out.turn = pm.nextTurn(pts.steps, travelled)
       out.offM = math.floor(where.off + 0.5)
       out.behind = where.back and where.off <= M.MAP_ON_ROUTE_M and (p.speed or 0) > M.STOP_SPEED or nil
     end
@@ -5690,7 +5709,10 @@ function M.phoneMap(have)
   local stops = {}
   local function add(g, k, n)
     local x, y = xy(g)
-    if x then stops[#stops + 1] = { x = x, y = y, k = k, n = n } end
+    if x then
+      stops[#stops + 1] = { x = x, y = y, k = k, n = n }
+      if geo then stops[#stops].lat, stops[#stops].lon = r6(g[1]), r6(g[2]) end
+    end
   end
   local c = S.career
   if c.home and c.home.g then add(c.home.g, 'home', 'Home') end
@@ -5718,11 +5740,25 @@ function M.phoneMap(have)
         if not out.route then
           local cx, cy = math.floor(p.x + 0.5), math.floor(p.y + 0.5)
           out.route = { cx, cy, last.x, last.y }
+          if geo and out.car.lat then out.routeLL = { out.car.lat, out.car.lon, last.lat, last.lon } end
         end
       end
     end
   end
   out.stops = stops
+  -- the way left to the next stop (Earth's GPS: metres, seconds) and the game's units (Options > Display)
+  if rt and type(rt.remaining) == 'number' then
+    out.leftM = math.floor(rt.remaining + 0.5)
+    out.leftS = type(rt.eta) == 'number' and math.floor(rt.eta + 0.5) or nil
+  end
+  out.imperial = M.imperial() or nil
+  -- the timing readout (tap the north dial): what this ask cost and what the road index cost when last sorted
+  if perf then
+    local f = pm.perf
+    local function ms(v) return math.floor((v or 0) * 100 + 0.5) / 100 end
+    out.perf = { luaMs = t0 and ms((os.clock() - t0) * 1000) or 0, buildMs = ms(f.buildMs), sliceMaxMs = ms(f.sliceMaxMs),
+      slices = f.slices, edges = f.edges, roadsMs = ms(f.roadsMs), building = f.building or nil }
+  end
   return out
 end
 
