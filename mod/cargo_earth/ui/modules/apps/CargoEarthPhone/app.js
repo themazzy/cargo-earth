@@ -1875,7 +1875,7 @@ angular.module('beamng.apps')
         '<div ng-if="g.parts" class="cep-scroll">' +
           '<div class="cep-label">Parts checkout</div>' +
           '<div class="cep-sub">The game\'s Apply only previews parts. Confirm here before you drive off, or the changes are dropped.</div>' +
-          '<div class="cep-sub" ng-if="g.parts.owed">Repairs owed ({{ fmt.money(g.parts.owed) }}) stay with the car after the change.</div>' +
+          '<div class="cep-sub" ng-if="g.parts.owed">The car owes {{ fmt.money(g.parts.owed) }} of repairs. Applying new parts rebuilds it mended, and the repair is added to this checkout.</div>' +
           '<div class="cep-sub" ng-if="g.parts.error">{{ g.parts.error }}</div>' +
           '<button class="cep-sm ghost" ng-if="g.parts.error" ng-click="retryGarage()">Retry checkout</button>' +
           '<div class="cep-sub" ng-if="g.parts.items && !g.parts.items.length">No parts added or removed.</div>' +
@@ -1884,6 +1884,8 @@ angular.module('beamng.apps')
               '<span ng-if="p.buy">Buy ×{{ p.buy }} </span><span ng-if="p.fit">Fit spare ×{{ p.fit }} </span>' +
               '<span ng-if="p.keep">Keep as spare ×{{ p.keep }}</span></small></div>' +
             '<b ng-if="p.cost">{{ fmt.money(p.cost) }}</b></div>' +
+          '<div class="cep-li" ng-if="g.parts.repair"><div style="min-width:0"><div class="cep-name" style="white-space:normal">Repair</div>' +
+            '<small>The car is rebuilt mended with the new parts</small></div><b>{{ fmt.money(g.parts.repair) }}</b></div>' +
         '</div>' +
         '<div ng-if="g.parts" class="cep-actionbar" aria-label="Parts checkout actions">' +
           '<div class="cep-label" ng-if="g.parts.items">Total {{ fmt.money(g.parts.cost) }}</div>' +
