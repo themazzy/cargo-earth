@@ -176,6 +176,16 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert.equal(scope.lm.turn.dist, '350 ft')
   assert.equal(JSON.stringify(scope.lm.speed), JSON.stringify({v: 31, unit: 'mph'}))
   assert.equal(scope.lm.left.dist, '1.5 mi')
+  // the lanes once the turn is near: bright where the route goes on
+  answer = {...answer, imperial: false, turn: {type: 'turn', modifier: 'left', m: 400, lanes: [{ok: true, dir: 'left'}, {dir: 'straight'}]}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(JSON.stringify(scope.lm.turn.lanes.map(l => l.ok)), '[true,false]')
+  answer = {...answer, turn: {type: 'turn', modifier: 'left', m: 1400, lanes: [{ok: true, dir: 'left'}, {dir: 'straight'}]}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.turn.lanes, null, 'far away: no lanes yet')
+  assert(directive.template.includes('cep-map-lanes'))
   answer = {...answer, imperial: false, turn: null, routeGps: true, roadsKey: 't1', roads: [0, 0, 10, 0, 1]}
   const asked = commands.length
   mapTimer.fn()
@@ -192,6 +202,38 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   scope.mapEngine()
   assert.equal(scope.lm.engine, 'vector', 'back to the full map')
   scope.setTab('orders')
+}
+// speeding: one chime each time over the limit, again only after 3 s back under; off when quiet
+{
+  const pollTimer = timers.find(t => t.interval === 250)
+  const saved = answer
+  const ask = a => { answer = a; now += 2100; pollTimer.fn() }
+  const base = {screen: 'offline'}
+  const start = scope.chimes
+  ask({...base, limit: {sign: '50', over: true}})
+  assert.equal(scope.chimes, start + 1, 'over the limit: a chime')
+  ask({...base, limit: {sign: '50', over: true}, clock: 'a'})
+  assert.equal(scope.chimes, start + 1, 'still over: no second chime')
+  ask({...base, limit: {sign: '50', over: false}})
+  ask({...base, limit: {sign: '50', over: true}})
+  assert.equal(scope.chimes, start + 1, 'back over within 3 s: quiet')
+  ask({...base, limit: {sign: '50', over: false}})
+  now += 3500
+  ask({...base, limit: {sign: '50', over: false}, clock: 'b'})
+  ask({...base, limit: {sign: '50', over: true}})
+  assert.equal(scope.chimes, start + 2, 'over again after a while: a chime')
+  ask({...base, limit: {sign: '50', over: false}}); now += 3500; ask({...base, clock: 'c'})
+  ask({...base, limit: {sign: '50', over: true}, hidden: true})
+  assert.equal(scope.chimes, start + 2, 'the floating phone hidden: the dash phone chimes instead')
+  ask({...base, limit: {sign: '50', over: true}, clock: 'f'})
+  assert.equal(scope.chimes, start + 2, 'shown again while still over: the time over was already marked')
+  ask({...base, clock: 'd'}); now += 3500; ask({...base, clock: 'e'})
+  ask({...base, limit: {sign: '50', over: true}, quiet: true})
+  assert.equal(scope.chimes, start + 2, 'quiet: no chime')
+  scope.s = {quiet: true}
+  scope.mapQuiet()
+  assert(commands.at(-1).includes('setQuiet(false)'), 'tap the speedometer: the chime back on')
+  answer = saved
 }
 // radio: one radio for both phones, kept by the game; the page's player makes the sound
 hold = false

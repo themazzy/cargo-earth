@@ -2180,6 +2180,8 @@ test('a speed camera fines the driver and costs a star on the order on board', f
   core.uiStore.write = function(t) written = t end
   assert(core.settingsDo('dark', true).dark == true and written.dark == true and core.phoneState().dark == true)
   assert(core.settingsDo('dark', false).dark == false and written.dark == false)
+  assert(core.setQuiet(true) == true and written.quiet == true and core.phoneState().quiet == true, 'the speeding chime off')
+  assert(core.setQuiet(false) == false and written.quiet == false and core.phoneState().quiet == nil)
   core.phoneFold(true, 'waiting')
   assert(core.phoneState().fold == 'waiting')
   core.phoneFold(false)

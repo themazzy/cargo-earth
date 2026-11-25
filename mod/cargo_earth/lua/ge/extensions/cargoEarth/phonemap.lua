@@ -290,6 +290,25 @@ end
 -- from the route's start }), the first still ahead of `travelled` metres. Returns { type, modifier, exit, name, m }
 -- with m the metres to it, or nil (no steps, or only the arrival left and it is far).
 local SKIP = { depart = true, ['new name'] = true, notification = true }
+-- The lanes at a turn, left to right: { { ok = true | nil, dir = 'left' | 'slight right' | ... }, ... }, or nil with
+-- fewer than 2 lanes. dir: the lane's arrow; a lane with several arrows shows the one the route takes when it is a
+-- lane to use, else its first.
+M.MAX_LANES = 8
+local function lanesOf(raw, modifier)
+  if type(raw) ~= 'table' or #raw < 2 or #raw > M.MAX_LANES then return nil end
+  local want = type(modifier) == 'string' and modifier or 'straight'
+  local out = {}
+  for i, lane in ipairs(raw) do
+    if type(lane) ~= 'table' then return nil end
+    local list = type(lane.indications) == 'table' and lane.indications or {}
+    local dir = list[1]
+    if lane.valid == true then
+      for _, d in ipairs(list) do if d == want then dir = d end end
+    end
+    out[i] = { ok = lane.valid == true or nil, dir = type(dir) == 'string' and dir ~= 'none' and dir or 'straight' }
+  end
+  return out
+end
 function M.nextTurn(steps, travelled)
   if type(steps) ~= 'table' or not travelled then return nil end
   for _, st in ipairs(steps) do
@@ -298,7 +317,7 @@ function M.nextTurn(steps, travelled)
       local name = type(st.name) == 'string' and st.name or ''
       if name == '' and type(st.ref) == 'string' then name = st.ref end
       return { type = st.type, modifier = type(st.modifier) == 'string' and st.modifier or nil,
-        exit = tonumber(st.exit), name = name ~= '' and name or nil, m = floor(at - travelled + 0.5) }
+        exit = tonumber(st.exit), name = name ~= '' and name or nil, m = floor(at - travelled + 0.5), lanes = lanesOf(st.lanes, st.modifier) }
     end
   end
   return nil
