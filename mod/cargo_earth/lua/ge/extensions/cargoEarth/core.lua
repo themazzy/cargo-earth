@@ -3028,6 +3028,14 @@ function M.phoneState()
     out.fuel = { pct = math.floor(gauge.share * 100 + 0.5), low = gauge.low, empty = gauge.empty, rangeKm = gauge.rangeKm }
     out.pump = M.pumpOffer(gauge)
   end
+  if S.job then
+    -- the way left to the next stop on Earth's GPS (metres, seconds), for the phone's work bar on every tab
+    local rt = earth.route()
+    if rt and type(rt.remaining) == 'number' then
+      out.routeLeft = { m = math.floor(rt.remaining + 0.5), s = type(rt.eta) == 'number' and math.floor(rt.eta + 0.5) or nil,
+        imperial = M.imperial() or nil }
+    end
+  end
   local here = earth.pose()
   local limit = limitHere(here)
   if limit then

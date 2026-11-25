@@ -765,6 +765,7 @@ angular.module('beamng.apps')
     '.cep-subtabs button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(29,27,25,.1)}' +
     '.cep-live{display:flex;flex-shrink:0;align-items:center;gap:8px;margin:8px 14px 0;padding:9px 10px;border:1px solid #f2c5b7;border-radius:12px;background:#fff0ea;color:var(--ink);font:inherit;text-align:left;cursor:pointer}' +
     '.cep-live>span{flex:1;min-width:0}.cep-live strong,.cep-live small{display:block}.cep-live strong{font-size:12px}.cep-live small{font-size:11px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}' +
+    '.cep-live-left{flex:0 0 auto;font-style:normal;text-align:right}.cep-live .cep-live-left strong{font-size:13px;color:var(--tomato)}.cep-live .cep-live-left small{font-size:10px}' +
     '.cep-live>b{font-size:17px;color:var(--tomato)}.cep-dot-live{width:7px;height:7px;border-radius:50%;background:var(--tomato);flex:0 0 7px}' +
     '.cep-body button{white-space:normal;overflow-wrap:anywhere}.cep-card .cep-btn{margin-top:8px}.cep-card .cep-sm{margin-top:6px}' +
     '.cep-scroll>*{flex-shrink:0}.cep-empty{padding:16px 12px;text-align:center;border:1px dashed var(--line);border-radius:14px}' +
@@ -1247,7 +1248,9 @@ angular.module('beamng.apps')
       '<div class="cem-main"><div class="cem-head"><h1>{{ panelTitle() }}</h1>' +
         '<button class="cem-close" ng-click="closePanel()">Close</button></div>' +
       '<button class="cep-live cem-live" ng-if="showLiveShortcut() && (s.active || s.screen === \'incoming\')" ng-click="openLiveWork()">' +
-        '<i class="cep-dot-live"></i><span><strong>{{ liveTitle() }}</strong><small>{{ liveDetail() }}</small></span><b aria-hidden="true">&rsaquo;</b></button>' +
+        '<i class="cep-dot-live"></i><span><strong>{{ liveTitle() }}</strong><small>{{ liveDetail() }}</small></span>' +
+        '<em class="cep-live-left" ng-if="liveLeft()"><strong>{{ liveLeft().dist }}</strong><small ng-if="liveLeft().time">{{ liveLeft().time }}</small></em>' +
+        '<b aria-hidden="true">&rsaquo;</b></button>' +
       '<div class="cep-body" ng-if="panel === \'career\' && careerView === \'firm\'">' +
         '<div class="cep-sub" ng-if="!firm">Loading your firm…</div>' +
         '<div class="cep-scroll" ng-if="firm">' +
@@ -1809,7 +1812,9 @@ angular.module('beamng.apps')
         '<i class="cep-on" ng-if="s.online" title="Online"></i>' +
         '<button class="cep-min" title="Fold the phone" ng-if="!dash" ng-click="fold(true)">–</button></span></div>' +
       '<button class="cep-live" ng-if="showLiveShortcut()" ng-click="openLiveWork()">' +
-        '<i class="cep-dot-live"></i><span><strong>{{ liveTitle() }}</strong><small>{{ liveDetail() }}</small></span><b aria-hidden="true">&rsaquo;</b></button>' +
+        '<i class="cep-dot-live"></i><span><strong>{{ liveTitle() }}</strong><small>{{ liveDetail() }}</small></span>' +
+        '<em class="cep-live-left" ng-if="liveLeft()"><strong>{{ liveLeft().dist }}</strong><small ng-if="liveLeft().time">{{ liveLeft().time }}</small></em>' +
+        '<b aria-hidden="true">&rsaquo;</b></button>' +
 
       // error / not ready
       '<div class="cep-body" ng-if="tab === \'orders\' && (!s || s.screen === \'error\')"><div class="cep-center">' +
@@ -2852,6 +2857,15 @@ angular.module('beamng.apps')
       scope.liveDetail = function () {
         var s = scope.s || {}, stop = scope.here()
         return s.screen === 'incoming' ? 'Review the offer on the phone' : (stop.name || s.company || '')
+      }
+      // the way left to the next stop (the GPS's), beside the work bar's title: on every tab, not only on the map
+      var liveLeftKey = '', liveLeftLook = null
+      scope.liveLeft = function () {
+        var s = scope.s || {}, r = s.active && s.routeLeft
+        if (!r || typeof r.m !== 'number') return null
+        var key = r.m + '|' + r.s + '|' + r.imperial
+        if (key !== liveLeftKey) { liveLeftKey = key; liveLeftLook = {dist: lengthText(r.m, r.imperial), time: r.s ? timeText(r.s) : ''} }
+        return liveLeftLook
       }
       scope.openLiveWork = function () {
         if (scope.s && (scope.s.active || scope.s.screen === 'incoming')) {

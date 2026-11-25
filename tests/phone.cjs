@@ -121,6 +121,14 @@ scope.s = {screen: 'incoming'}
 watches['s.screen']('incoming')
 assert.equal(scope.tab, 'radio', 'A ringing offer leaves Radio playing on screen')
 assert(scope.showLiveShortcut() && scope.liveTitle() === 'New delivery offer', 'the offer bar is on top of Radio')
+assert.equal(scope.liveLeft(), null, 'no way left without a job')
+scope.s = {screen: 'active', active: {phase: 'toPickup'}, routeLeft: {m: 4300, s: 480}}
+assert.equal(JSON.stringify(scope.liveLeft()), JSON.stringify({dist: '4.3 km', time: '8 min'}), 'the work bar shows the way left')
+assert.equal(scope.liveLeft(), scope.liveLeft(), 'the same object while it does not change (no digest loops)')
+scope.s.routeLeft = {m: 800, imperial: true}
+assert.equal(scope.liveLeft().dist, '0.5 mi')
+assert(directive.template.includes('cep-live-left'))
+scope.s = {screen: 'incoming'}
 assert.equal(scope.panel, null, 'Incoming work closes the menu window')
 // the Menu button opens the last section again and closes the window
 scope.openPanel('settings')

@@ -439,6 +439,11 @@ test('Long hauls: far profiles open the ring, and an unchecked far site can be h
   s.job, s.phase, s.orders, s.dist = k, 'toPickup', {{job = k, phase = 'toPickup'}}, 300
   assert(core.canHandover(), 'an unchecked pickup site can load beside the truck')
   assert(core.phoneState().active.handoverPickup)
+  local savedRoute = gpsRoute
+  gpsRoute = {remaining = 4300, eta = 480}
+  local left = core.phoneState().routeLeft
+  assert(left and left.m == 4300 and left.s == 480, 'the way left to the stop, for the work bar on every tab')
+  gpsRoute = savedRoute
   core.phoneAction('handover')
   assert(k.handover and k.pay == 8500 and k.from.g[1] == pose.lat and k.from.handedOver)
   s.phase, s.dist = 'toDelivery', 300
