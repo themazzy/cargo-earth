@@ -143,11 +143,10 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert.equal(scope.tab, 'map')
   assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("map")')), 'the other phone follows the Map tab')
   mapTimer.fn()
-  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, true)'), 'the full map: no roads, by lat / lon')
-  assert.equal(scope.lm.full, true, 'the full map shows')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, true)'), 'the OSM map: no roads, by lat / lon')
+  assert.equal(scope.lm.engine, 'osm')
   scope.mapEngine()
   assert.equal(scope.lm.engine, 'sketch')
-  assert.equal(scope.lm.full, false, 'the canvas shows')
   now += 300
   mapTimer.fn()
   assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, false)'), 'the simple map: first ask, no roads yet')
@@ -200,7 +199,21 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert.equal(scope.lm.note, 'Load the BeamNG.Earth level.')
   answer = saved
   scope.mapEngine()
-  assert.equal(scope.lm.engine, 'vector', 'back to the full map')
+  assert.equal(scope.lm.engine, 'osm', 'back to the OSM map')
+  // without the helper the OSM map is off, and the note says so and can be closed
+  answer = {status: 'ok', car: {x: 0, y: 0, h: 0, kmh: 0, lat: 50, lon: 14}, stops: []}
+  now += 300
+  mapTimer.fn()
+  assert(scope.osmMap.failed.includes('helper'), 'no tile address: the OSM map is off')
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).includes(', false, false)'), 'then the simple map asks for roads')
+  assert(scope.lm.note.startsWith('Simple map: the OSM map is off'))
+  scope.mapNoteClose()
+  assert.equal(scope.lm.noteHidden, scope.lm.note, 'closed')
+  scope.mapEngine(); scope.mapEngine()
+  assert.equal(scope.osmMap.failed, '', 'switching back tries again')
+  answer = saved
   scope.setTab('orders')
 }
 // speeding: one chime each time over the limit, again only after 3 s back under; off when quiet

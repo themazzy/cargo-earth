@@ -29,6 +29,8 @@ API (GET, JSON):
                               codec, kbps, tags, region], ...] (most listened first), "near": [[... the same, km], ...]}
   /v1/radioclick?id=uuid      tells Radio Browser a station started playing (its listening counts)
   /v1/stream?id=uuid          the station's stream passed through, for the game's UI to play
+  /v1/osm/tile?z=14&x=..&y=.. an OpenStreetMap vector tile (OpenFreeMap, OpenMapTiles schema, Mapbox Vector Tile
+                              bytes) for the phone's map, which the game's UI cannot load from the web; kept on disk
   /v1/player/play?id=uuid&vol=0.6, /v1/player/volume?vol=.., /v1/player/stop, /v1/player/alive
                               the helper plays a listed station itself (when the game's UI cannot); alive is the
                               heartbeat: {"playing", "url", "vol", "secs", "error", "player"}
@@ -2330,8 +2332,100 @@ td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
 <table>{body}</table>{notes}</body></html>""".encode()
 
 
+class OsmTiles:
+    """OpenStreetMap vector tiles for the phone's map, from OpenFreeMap (free, no key; the map shows its credit). The
+    game's UI cannot load from the web, so the phone asks here. Tiles are kept on disk (cache/osm/z/x/y.pbf); past
+    MAX_FILES the oldest go."""
+    TILEJSON = "https://tiles.openfreemap.org/planet"
+    HOST = "https://tiles.openfreemap.org/"
+    MAX_Z = 14
+    MAX_FILES = 3000
+    TEMPLATE_S = 86400   # the tile address changes with each OpenFreeMap build: asked again once a day
+
+    def __init__(self, cache_dir, get=None):
+        self.dir = os.path.join(cache_dir, "osm")
+        self.get_url = get or (lambda url: http_get(url, tries=2, timeout=15))
+        self.lock = threading.Lock()
+        self.template, self.template_at, self.writes = None, 0.0, 0
+        self.stats = {"served": 0, "fetched": 0, "failed": 0, "error": None}
+
+    def _template(self):
+        with self.lock:
+            if self.template and time.time() - self.template_at < self.TEMPLATE_S:
+                return self.template
+        data = json.loads(self.get_url(self.TILEJSON).decode("utf-8"))
+        t = data["tiles"][0]
+        if not (isinstance(t, str) and t.startswith(self.HOST) and "{z}" in t):
+            raise ValueError("unexpected tile address")
+        with self.lock:
+            self.template, self.template_at = t, time.time()
+        return t
+
+    def _prune(self):
+        files = []
+        for root, _, names in os.walk(self.dir):
+            for n in names:
+                path = os.path.join(root, n)
+                try:
+                    files.append((os.path.getmtime(path), path))
+                except OSError:
+                    pass
+        files.sort()
+        for _, path in files[:max(0, len(files) - self.MAX_FILES)]:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def tile(self, z, x, y):
+        """The tile's bytes (b"" for an empty tile, the open sea), or raises."""
+        if not (0 <= z <= self.MAX_Z and 0 <= x < 2 ** z and 0 <= y < 2 ** z):
+            raise ValueError("no such tile")
+        path = os.path.join(self.dir, str(z), str(x), f"{y}.pbf")
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            self.stats["served"] += 1
+            return data
+        except OSError:
+            pass
+        try:
+            url = self._template().replace("{z}", str(z)).replace("{x}", str(x)).replace("{y}", str(y))
+            try:
+                data = self.get_url(url)
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                data = b""
+        except Exception as e:
+            self.stats["failed"] += 1
+            self.stats["error"] = str(e)[:200]
+            raise
+        if data[:2] == b"\x1f\x8b":
+            import gzip
+            data = gzip.decompress(data)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # Each fetch writes its own temp file: two phones can ask for the same tile at once.
+        tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        self.stats["fetched"] += 1
+        self.stats["served"] += 1
+        self.writes += 1
+        if self.writes % 100 == 0:
+            self._prune()
+        return data
+
+
 def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None,
-          buslines=None, sites=None, stations=None):
+          buslines=None, sites=None, stations=None, osm=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -2398,7 +2492,29 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             finally:
                 STREAMS.release()
 
+        def _osm_tile(self, q):
+            """The phone's map tiles: the phone's page asks with an Origin (the game's UI), so this one path answers
+            it, with CORS, but still only to this computer. It only ever passes OpenFreeMap tiles."""
+            try:
+                data = osm.tile(int(q["z"]), int(q["x"]), int(q["y"]))
+                code, ctype = 200, "application/x-protobuf"
+            except (KeyError, ValueError) as e:
+                data, code, ctype = json.dumps({"error": str(e)}).encode(), 400, "application/json"
+            except Exception as e:
+                data, code, ctype = json.dumps({"error": str(e)[:200]}).encode(), 502, "application/json"
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "max-age=86400")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_GET(self):
+            if osm and urllib.parse.urlparse(self.path).path == "/v1/osm/tile" and \
+                    self.headers.get("Host", "").split(":", 1)[0].lower() in ("127.0.0.1", "localhost"):
+                return self._osm_tile({k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).items()})
             if self.headers.get("Origin") or self.headers.get("Host", "").split(":", 1)[0].lower() not in ("127.0.0.1", "localhost"):
                 return self._send(403, {"error": "local client requests only"})
             u = urllib.parse.urlparse(self.path)
@@ -2412,6 +2528,7 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
                                             "cameras": cameras is not None, "buslines": buslines is not None, "sites": sites is not None,
                                             "stations": stations is not None, "radio": radio is not None,
+                                            "osm": osm.stats if osm else None,
                                             "player": player is not None, "missing": missing_libraries(),
                                             "network": network, "cache": areas.budget.stats,
                                             "update": updates.info() if updates else None})
@@ -2557,7 +2674,7 @@ def main():
                 pass
     serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=player, srv=srv,
           updates=updates, buslines=BusLines(a.cache), sites=Sites(builder, a.cache),
-          stations=Stations(builder, a.cache))
+          stations=Stations(builder, a.cache), osm=OsmTiles(a.cache))
 
 
 if __name__ == "__main__":
