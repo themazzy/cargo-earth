@@ -32,14 +32,29 @@ const water = tile.water.features[0]
 assert.equal(water.type, 3)
 assert(water.parts[0].closed, 'a polygon ring is closed')
 const labels = osm.labelsOf(tile)
-assert.equal(labels.length, 2, 'each straight piece')
+assert.equal(labels.length, 1, 'each named line')
 assert.equal(labels[0].name, 'Vodičkova', 'UTF-8 names')
-assert.equal(labels[0].len, 1000, 'the longest straight piece first')
-assert.equal(JSON.stringify([labels[0].x1, labels[0].y1, labels[0].x2, labels[0].y2]), '[100,100,1100,100]')
+assert.equal(labels[0].len, 1800, 'its whole length')
+assert.equal(JSON.stringify(Array.from(labels[0].pts)), '[100,100,1100,100,1100,900]', 'the whole line, so the name can follow its bends')
 {
   // a tile with a river but no street names still names the river
   const river = osm.labelsOf({waterway: {extent: 4096, features: [{type: 2, tags: {name: 'Vltava'}, parts: [[0, 0, 500, 0]]}]}})
   assert.equal(JSON.stringify(river.map(r => [r.name, r.water])), '[["Vltava",true]]')
+}
+
+{
+  // names follow the line: letters along an L-shaped street turn with it, and read left to right
+  const ctx = {measureText: t => ({width: 6 * t.length})}
+  const pl = {xy: [0, 0, 100, 0, 100, 100], d: [0, 100, 200]}
+  const spot = osm.labelSpot(pl, 'Ulice', 30, ctx)
+  assert(spot && spot.chars.length === 5, 'placed on the long L')
+  assert(spot.chars.every(c => Math.abs(c[3]) < 0.01), 'the middle of the first leg, written along it')
+  const back = osm.labelSpot({xy: [100, 0, 0, 0], d: [0, 100]}, 'Ulice', 30, ctx)
+  assert(back.chars[0][1] < back.chars[4][1], 'a line drawn right to left is still read left to right')
+  assert.equal(osm.labelSpot({xy: [0, 0, 20, 0, 20, 20, 40, 20], d: [0, 20, 40, 60]}, 'Zigzag', 36, ctx), null, 'too bendy')
+  // a piece crossing the whole screen counts, clipped to it
+  assert.equal(JSON.stringify(osm.clipTo([-50, 10], [150, 10], 0, 0, 100, 100)), '[0.25,0.75,0,10,100,10]')
+  assert.equal(osm.clipTo([-50, -10], [150, -10], 0, 0, 100, 100), null)
 }
 
 // tile numbers and sizes

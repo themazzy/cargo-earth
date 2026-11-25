@@ -11,7 +11,8 @@ phone itself on its 2D canvas (`cargoEarthOsm` at the top of `app.js`). Two thin
 - **No WebGL**: the game runs its browser with GPU drawing off ("GL_RENDERER = Disabled"), so a WebGL map library
   (MapLibre) cannot start. The phone has its own small Mapbox Vector Tile decoder and draws water, parks and woods,
   residential areas, buildings (close up), rail and roads by class (casing, then fill, small under big) with 2D canvas
-  calls, and street names upright along the streets, kept clear of each other.
+  calls, and street names written letter by letter along the streets (they follow bends, read left to right, a bit
+  smaller in the 1000 m view), kept clear of each other and of the map buttons.
 - **No web**: the browser does not load from the internet (the radio streams go through the helper for the same
   reason). The tiles come through the helper: `GET /v1/osm/tile?z=14&x=..&y=..` asks OpenFreeMap (the tile address
   from its TileJSON, asked once a day) and keeps the tile on disk (`cache/osm`, the oldest past 3000 dropped).
@@ -83,8 +84,8 @@ the Map tab in `tests/phone.cjs`.
 
 - **Places** come from the tiles' `poi` layer (OpenMapTiles): named businesses and landmarks, a dot coloured by kind
   (food, shops, fuel, health, other) and the name beside it, the most important of each tile first (`rank`). Street
-  furniture (parking, bins, gates, benches...) is left out. They show only in the 250 and 500 m views, at most 12 at
-  once, never over a street name, each other or the car.
+  furniture (parking, bins, gates, benches...) is left out. At most 12 at once in the 250 and 500 m views, 5 in the
+  1000 m view, never over a street name, each other, the car or the map buttons.
 - **River names**: named `waterway` lines, blue and slanted, placed like street names.
 - **⚙ panel** (under the north dial): Speed chime, Street names, River names, Buildings, North up, Auto zoom (one step
   out from 70 km/h, back under 50), Lane arrows, Speedometer, and Places by kind. Kept in the player's
