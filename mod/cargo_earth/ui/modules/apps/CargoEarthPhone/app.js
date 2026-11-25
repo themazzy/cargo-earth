@@ -643,11 +643,28 @@ var cargoEarthOsm = (function () {
   // test. It tries the middle first, then spots nearer the ends, and skips spots where the line bends too sharply
   // between letters. Names always read left to right.
   var LABEL_BEND = 0.5      // radians between two letters
+  // scripts whose letters must not be drawn one by one (right to left, or joined / shaped): Hebrew, Arabic, Syriac,
+  // Thaana, Indic, Thai, Lao, Tibetan, Myanmar, Khmer and the Arabic / Hebrew presentation forms
+  var COMPLEX_SCRIPT = /[\u0590-\u08FF\u0900-\u0DFF\u0E00-\u0FFF\u1000-\u109F\u1780-\u17FF\uFB1D-\uFDFF\uFE70-\uFEFF]/
   function labelSpot(pl, name, tw, ctx) {
     var L = pl.d[pl.d.length - 1], tries = [0.5, 0.35, 0.65, 0.2, 0.8]
     for (var q = 0; q < tries.length; q++) {
       var s0 = Math.max(2, Math.min(L - tw - 2, L * tries[q] - tw / 2))
       var a = pathAt(pl, s0), b = pathAt(pl, s0 + tw)
+      if (COMPLEX_SCRIPT.test(name)) {     // right-to-left or joined letters: the whole name on a straight stretch
+        var ca = Math.atan2(b[1] - a[1], b[0] - a[0]), clen = Math.sqrt(Math.pow(b[0] - a[0], 2) + Math.pow(b[1] - a[1], 2)), off = false
+        for (var st = 6; st < tw && !off; st += 6) {
+          var sp = pathAt(pl, s0 + st)
+          off = clen > 0 && Math.abs((sp[0] - a[0]) * (b[1] - a[1]) - (sp[1] - a[1]) * (b[0] - a[0])) / clen > 3
+        }
+        if (off || clen < tw * 0.9) continue
+        if (ca > Math.PI / 2) ca -= Math.PI
+        if (ca < -Math.PI / 2) ca += Math.PI
+        var wd = []
+        for (var wt = 0; wt <= tw; wt += 12) wd.push(pathAt(pl, s0 + wt))
+        wd.push(b)
+        return {chars: [[name, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, ca]], dots: wd}
+      }
       var flip = b[0] < a[0]               // the line runs right to left here: write from its far end
       var chars = [], at = 0, last = null, ok = true
       for (var c = 0; c < name.length; c++) {

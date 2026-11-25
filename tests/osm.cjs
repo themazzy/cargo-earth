@@ -52,6 +52,10 @@ assert.equal(JSON.stringify(Array.from(labels[0].pts)), '[100,100,1100,100,1100,
   const back = osm.labelSpot({xy: [100, 0, 0, 0], d: [0, 100]}, 'Ulice', 30, ctx)
   assert(back.chars[0][1] < back.chars[4][1], 'a line drawn right to left is still read left to right')
   assert.equal(osm.labelSpot({xy: [0, 0, 20, 0, 20, 20, 40, 20], d: [0, 20, 40, 60]}, 'Zigzag', 36, ctx), null, 'too bendy')
+  // right-to-left and joined scripts: the whole name at once, so the browser keeps its direction and shaping
+  const he = osm.labelSpot({xy: [0, 0, 100, 0], d: [0, 100]}, 'רחוב', 24, ctx)
+  assert(he && he.chars.length === 1 && he.chars[0][0] === 'רחוב' && he.chars[0][1] === 50, 'one piece in the middle')
+  assert.equal(osm.labelSpot(pl, 'شارع', 150, ctx), null, 'never bent round a corner')
   // a piece crossing the whole screen counts, clipped to it
   assert.equal(JSON.stringify(osm.clipTo([-50, 10], [150, 10], 0, 0, 100, 100)), '[0.25,0.75,0,10,100,10]')
   assert.equal(osm.clipTo([-50, -10], [150, -10], 0, 0, 100, 100), null)
