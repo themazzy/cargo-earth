@@ -2274,8 +2274,11 @@ test('the phone shows the limit under the car, red when too fast, and a camera w
   advance(core, 2)
   local limit = core.phoneState().limit
   assert(limit and limit.sign == 50 and limit.unit == 'km/h' and not limit.over)
+  pose.speed = 58 / 3.6
+  assert(core.phoneState().limit.over and not core.phoneState().limit.well, 'over at 58 in a 50, not yet well over')
+  pose.speed = 61 / 3.6
+  assert(core.phoneState().limit.well, 'well over: 10 km/h past a 50')
   pose.speed = 60 / 3.6
-  assert(core.phoneState().limit.over, 'red at 60 in a 50')
   near = 60
   advance(core, 2)
   assert(core.phoneState().limit == nil, 'off the road: no sign')

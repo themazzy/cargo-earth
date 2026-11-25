@@ -1172,6 +1172,8 @@ angular.module('beamng.apps')
       '.cep-map-speed i{position:absolute;right:-3px;top:-3px;width:16px;height:16px;border-radius:50%;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.3)}' +
       '.cep-map-speed i svg{width:16px;height:16px;display:block}.cep-map-speed b{display:block;font-size:17px;font-weight:800;line-height:1;margin-top:3px}' +
     '.cep-map-speed small{font-size:9px;color:var(--muted)}.cep-map-speed.over b{color:var(--tomato)}' +
+    '.cep-map-speed.slight{background:#fff3d6;box-shadow:0 0 0 3px var(--warn)}.cep-map-speed.slight b{color:#9a6400}.dark .cep-map-speed.slight{background:#3d2e10}.dark .cep-map-speed.slight b{color:#f0b54a}' +
+    '.cep-map-limit{position:absolute;left:14px;bottom:60px;box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-limit.solo{bottom:14px}' +
     '.cep-map-left{position:absolute;left:60px;bottom:14px;padding:5px 9px;border-radius:9px;background:var(--card);font-size:12px;font-weight:700;' +
       'color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-left small{font-weight:600;color:var(--muted)}' +
     '.cep-map-hasleft .cep-map-note{left:60px;bottom:48px}' +
@@ -2561,7 +2563,9 @@ angular.module('beamng.apps')
         '<div class="cep-map-stats" ng-if="lm.stats"><div ng-repeat="line in lm.statLines track by $index">{{ line }}</div>' +
           '<button ng-click="mapEngine()">{{ lm.engine === \'osm\' ? \'Use the simple map\' : \'Use the OSM map\' }}</button> ' +
           '<button ng-click="mapStats()">Close</button></div>' +
-        '<button class="cep-map-speed" ng-if="lm.speed && mapPrefs().speedo" ng-class="{over: lm.speed.over}" ng-click="mapQuiet()" ' +
+        '<span class="cep-limit cep-map-limit" ng-if="s.limit && mapPrefs().speedo" ng-class="{solo: !lm.speed}" title="Speed limit here">{{ s.limit.sign }}' +
+          '<small ng-if="s.limit.unit === \'mph\'">mph</small></span>' +
+        '<button class="cep-map-speed" ng-if="lm.speed && mapPrefs().speedo" ng-class="{slight: lm.speed.over === \'slight\', over: lm.speed.over === \'well\'}" ng-click="mapQuiet()" ' +
           'title="{{ s.quiet ? \'Your speed. The chime over the limit is off: tap to turn it on\' : \'Your speed. Tap to turn off the chime over the limit\' }}">' +
           '<b>{{ lm.speed.v }}</b><small>{{ lm.speed.unit }}</small>' +
           '<i ng-if="s.quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6h2l3-2.5v9L5 10H3z" fill="#7b726a"/><path d="M10 6l4 4M14 6l-4 4" stroke="#e8452c" stroke-width="1.6" stroke-linecap="round"/></svg></i></button>' +
@@ -3649,7 +3653,8 @@ angular.module('beamng.apps')
         var turn = r.routeGps ? turnLook(r.turn, r.imperial) : null
         var sp = r.car ? {v: r.imperial ? Math.round(r.car.kmh / 1.609344) : r.car.kmh, unit: r.imperial ? 'mph' : 'km/h'} : null
         var limit = scope.s && scope.s.limit
-        if (sp && limit && limit.over) sp.over = true
+        // like the nav apps: amber just over the limit, red well over (the limit's sign stays beside it)
+        if (sp && limit && limit.over) sp.over = limit.well ? 'well' : 'slight'
         var left = typeof r.leftM === 'number' ? {dist: lengthText(r.leftM, r.imperial), time: timeText(r.leftS), at: arriveText(r.leftS)} : null
         if (sameLook(turn, lm.turn) && sameLook2(sp, lm.speed) && sameLook2(left, lm.left)) return
         scope.$evalAsync(function () { lm.turn = turn; lm.speed = sp; lm.left = left })
