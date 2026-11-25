@@ -138,3 +138,12 @@ assert(pm.nextTurn(steps, 600).type == 'arrive' and pm.nextTurn(steps, 901) == n
 assert(pm.nextTurn(nil, 0) == nil and pm.nextTurn(steps, nil) == nil)
 local ah, wh = pm.ahead({{0, 0}, {0, 100}, {100, 100}}, 50, 101, 90, 'len')
 assert(math.abs(wh.along - 150) < 1e-6 and wh.length == 200, 'metres along the route: ' .. wh.along)
+-- lanes at a turn: the arrow of each lane, the ones to use marked
+local laneSteps = {{type = 'turn', modifier = 'left', offset = 100, lanes = {
+  {valid = true, indications = {'left'}}, {valid = true, indications = {'straight', 'left'}}, {valid = false, indications = {'straight'}},
+  {valid = false, indications = {'none'}}}}}
+local lt = pm.nextTurn(laneSteps, 0)
+assert(#lt.lanes == 4 and lt.lanes[1].ok and lt.lanes[1].dir == 'left', 'a left lane to use')
+assert(lt.lanes[2].ok and lt.lanes[2].dir == 'left', 'a lane with two arrows shows the way the route goes')
+assert(not lt.lanes[3].ok and lt.lanes[3].dir == 'straight' and lt.lanes[4].dir == 'straight', 'others dim; none = straight')
+assert(pm.nextTurn({{type = 'turn', offset = 100, lanes = {{valid = true, indications = {'left'}}}}}, 0).lanes == nil, 'one lane: nothing to show')

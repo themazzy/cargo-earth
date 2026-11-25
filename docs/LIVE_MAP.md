@@ -24,6 +24,15 @@ GPS `remaining` / `eta`). Lengths and speed follow the game's units (Options > D
 km/h, or ft / mi and mph. Earth's step offsets count metres along its full route, ours along the simplified line, so
 the car's distance along our line is scaled by Earth's route length.
 
+**Lanes**: when the next turn is within 1 km and Earth's step has lane data (OSRM `lanes`), a row of lane arrows
+shows under the banner, bright for the lanes that lead your way (a lane with several arrows shows the one the route
+takes).
+
+**Speeding**: the speedometer turns red and the phone plays a short two-tone chime (Web Audio) when the car goes over
+the limit (the same moment the phone's speed-limit sign turns red, `OVER_KMH` over). Once per time over, again after
+3 s back under. Only one phone chimes: the floating one, or the dash phone while the floating one is hidden. Tap the
+speedometer to turn the chime off or on (`core.setQuiet`, kept in `settings/cargoEarth/ui.json` for both phones).
+
 ## Timing readout
 
 Tap the north dial. It shows the game's time per answer (and per second, 4 answers a second), the answer's size and

@@ -3001,7 +3001,7 @@ function M.phoneState()
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
       companyVehicle = c.employment and employment.vehicleLabel(c.employment),
       currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
-      fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
+      fold = S.phoneFold or false, dark = M.uiPrefs().dark or false, quiet = M.uiPrefs().quiet or nil,
       canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo(), unstuck = M.unstuckInfo() }
   if S.pendingCareer or (not S.career.garage.started and S.career.play ~= 'free' and not c.employment) then
     -- the careers to pick from, on the resume and first-run screens
@@ -5769,7 +5769,8 @@ function M.phoneFold(on, screen)
   return S.phoneFold or false
 end
 
--- The player's look settings, outside any career (they work before a save loads): { dark = true | nil }
+-- The player's look settings, outside any career (they work before a save loads): { dark = true | nil,
+-- quiet = true | nil (no chime when driving over the limit) }
 M.UI_FILE = '/settings/cargoEarth/ui.json'
 M.uiStore = {
   read = function() return jsonReadFile and jsonReadFile(M.UI_FILE) or nil end,
@@ -5778,14 +5779,22 @@ M.uiStore = {
 function M.uiPrefs()
   if not S.ui then
     local ok, t = pcall(M.uiStore.read)
-    S.ui = { dark = ok and type(t) == 'table' and t.dark == true or nil }
+    S.ui = { dark = ok and type(t) == 'table' and t.dark == true or nil, quiet = ok and type(t) == 'table' and t.quiet == true or nil }
   end
   return S.ui
 end
+function M.writeUi(u) pcall(M.uiStore.write, { v = 1, dark = u.dark or false, quiet = u.quiet or false }) end
 function M.setDark(on)
   local u = M.uiPrefs()
   u.dark = on and true or nil
-  pcall(M.uiStore.write, { v = 1, dark = u.dark or false })
+  M.writeUi(u)
+end
+-- The speeding chime on or off (tap the map's speedometer); returns whether it is quiet now
+function M.setQuiet(on)
+  local u = M.uiPrefs()
+  u.quiet = on and true or nil
+  M.writeUi(u)
+  return u.quiet or false
 end
 
 function M.state() return S end

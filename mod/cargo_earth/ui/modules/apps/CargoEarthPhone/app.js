@@ -383,8 +383,12 @@ angular.module('beamng.apps')
       'background:#1f6f4a;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}' +
     '.cep-map-dir svg{flex:none;width:30px;height:30px}.cep-map-dir b{display:block;font-size:17px;font-weight:800;line-height:1.1}' +
     '.cep-map-dir span{display:block;font-size:11px;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cep-map-dir div{min-width:0}' +
-    '.cep-map-speed{position:absolute;left:8px;bottom:8px;width:46px;height:46px;border-radius:50%;background:var(--card);color:var(--ink);text-align:center;' +
-      'box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-speed b{display:block;font-size:17px;font-weight:800;line-height:1;margin-top:9px}' +
+    '.cep-map-lanes{position:absolute;left:44px;top:58px;display:flex;gap:2px;padding:4px 6px;border-radius:9px;background:#185a3c;box-shadow:0 1px 4px rgba(0,0,0,.3)}' +
+      '.cep-map-lanes svg{width:22px;height:22px;opacity:.35}.cep-map-lanes svg.ok{opacity:1}' +
+    '.cep-map-speed{position:absolute;left:8px;bottom:8px;width:46px;height:46px;padding:0;border:0;font:inherit;cursor:pointer;border-radius:50%;background:var(--card);color:var(--ink);text-align:center;' +
+      'box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-speed.over{background:#fde3de;box-shadow:0 0 0 3px var(--tomato)}.dark .cep-map-speed.over{background:#4a1f18}' +
+      '.cep-map-speed i{position:absolute;right:-3px;top:-3px;width:16px;height:16px;border-radius:50%;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.3)}' +
+      '.cep-map-speed i svg{width:16px;height:16px;display:block}.cep-map-speed b{display:block;font-size:17px;font-weight:800;line-height:1;margin-top:3px}' +
     '.cep-map-speed small{font-size:9px;color:var(--muted)}.cep-map-speed.over b{color:var(--tomato)}' +
     '.cep-map-left{position:absolute;left:60px;bottom:14px;padding:5px 9px;border-radius:9px;background:var(--card);font-size:12px;font-weight:700;' +
       'color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-left small{font-weight:600;color:var(--muted)}' +
@@ -1742,11 +1746,17 @@ angular.module('beamng.apps')
         '<div class="cep-map-dir" ng-if="lm.turn && !lm.behind" role="status">' +
           '<svg viewBox="-15 -15 30 30" aria-hidden="true"><path ng-attr-d="{{ lm.turn.icon }}" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
           '<div><b>{{ lm.turn.dist }}</b><span>{{ lm.turn.text }}</span></div></div>' +
+        '<div class="cep-map-lanes" ng-if="lm.turn.lanes && !lm.behind" aria-label="Lanes: the bright ones lead your way">' +
+          '<svg ng-repeat="lane in lm.turn.lanes track by $index" ng-class="{ok: lane.ok}" viewBox="-15 -15 30 30" aria-hidden="true">' +
+          '<path ng-attr-d="{{ lane.icon }}" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
         '<button class="cep-map-n" title="North. Tap for the map\'s timings" aria-label="North. Tap for the map\'s timings" ng-click="mapStats()"><span class="cep-map-nd">N</span></button>' +
         '<div class="cep-map-stats" ng-if="lm.stats"><div ng-repeat="line in lm.statLines track by $index">{{ line }}</div>' +
           '<button ng-click="mapEngine()">{{ lm.engine === \'vector\' ? \'Use the simple map\' : \'Use the full map\' }}</button> ' +
           '<button ng-click="mapStats()">Close</button></div>' +
-        '<div class="cep-map-speed" ng-if="lm.speed" ng-class="{over: lm.speed.over}" title="Your speed"><b>{{ lm.speed.v }}</b><small>{{ lm.speed.unit }}</small></div>' +
+        '<button class="cep-map-speed" ng-if="lm.speed" ng-class="{over: lm.speed.over}" ng-click="mapQuiet()" ' +
+          'title="{{ s.quiet ? \'Your speed. The chime over the limit is off: tap to turn it on\' : \'Your speed. Tap to turn off the chime over the limit\' }}">' +
+          '<b>{{ lm.speed.v }}</b><small>{{ lm.speed.unit }}</small>' +
+          '<i ng-if="s.quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6h2l3-2.5v9L5 10H3z" fill="#7b726a"/><path d="M10 6l4 4M14 6l-4 4" stroke="#e8452c" stroke-width="1.6" stroke-linecap="round"/></svg></i></button>' +
         '<div class="cep-map-left" ng-if="lm.left" title="Left to the next stop">{{ lm.left.dist }} <small ng-if="lm.left.time">· {{ lm.left.time }}</small></div>' +
         '<div class="cep-map-note" ng-if="lm.note">{{ lm.note }}</div>' +
         '<div class="cep-map-turn" ng-if="lm.behind && !lm.note">The route is behind you. Turn around, or keep going and the GPS finds another way.</div>' +
@@ -1826,8 +1836,55 @@ angular.module('beamng.apps')
         return Math.max(2, Math.min(100, 100 * a.leftS / Math.max(1, a.minutes * 60)))
       }
       var foldKnown = false, busy = false, destroyed = false, lastPoll = -Infinity, lastState = null, shown
+      // ---- speeding: a short chime when the car goes over the limit (the phone's sign turns red at the same moment).
+      // Once per time over; again after 3 s back under. One phone chimes: the floating one, or the dash one while the
+      // floating one is hidden. Tap the map's speedometer to turn it off or on (kept by the game for both phones).
+      var chimed = false, underAt = 0, chimeCtx = null
+      function chime() {
+        try {
+          var AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)
+          if (!AC) return
+          chimeCtx = chimeCtx || new AC()
+          if (chimeCtx.state === 'suspended' && chimeCtx.resume) chimeCtx.resume()
+          var t = chimeCtx.currentTime
+          ;[0, 0.17].forEach(function (d) {
+            var o = chimeCtx.createOscillator(), g = chimeCtx.createGain()
+            o.type = 'sine'
+            o.frequency.value = d ? 1175 : 880
+            g.gain.setValueAtTime(0.0001, t + d)
+            g.gain.exponentialRampToValueAtTime(0.22, t + d + 0.02)
+            g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.15)
+            o.connect(g)
+            g.connect(chimeCtx.destination)
+            o.start(t + d)
+            o.stop(t + d + 0.16)
+          })
+        } catch (e) {}
+      }
+      scope.chimes = 0
+      function speedWatch(r) {
+        var over = !!(r && r.limit && r.limit.over)
+        var now = Date.now()
+        if (!over) {
+          if (chimed && !underAt) underAt = now
+          if (underAt && now - underAt >= 3000) { chimed = false; underAt = 0 }
+          return
+        }
+        underAt = 0
+        if (chimed || r.quiet || scope.menuOnly) return
+        if (scope.dash ? !r.hidden : r.hidden) return
+        chimed = true
+        scope.chimes++
+        chime()
+      }
+      scope.mapQuiet = function () {
+        var quiet = !(scope.s && scope.s.quiet)
+        if (scope.s) scope.s.quiet = quiet || undefined
+        bngApi.engineLua('cargoEarth_core and cargoEarth_core.setQuiet(' + (quiet ? 'true' : 'false') + ')', function () {})
+      }
       function apply(r) {
         if (destroyed) return
+        speedWatch(r)
         // Most answers are the same as the last one (waiting, offline, driving between ticks). An unchanged answer
         // needs no Angular digest, so the UI is not re-checked and redrawn for nothing. (Only while the phone still
         // shows that answer: closing the Menu window clears scope.s, and the next answer must bring it back.)
@@ -2718,9 +2775,14 @@ angular.module('beamng.apps')
           text = (t.type === 'on ramp' ? 'Take the ramp' : 'Take the exit') + (mod.indexOf('left') !== -1 ? ' on the left' : mod.indexOf('right') !== -1 ? ' on the right' : '') + onto
         } else if (t.type === 'fork') { icon = TURN_ICON[mod] || TURN_ICON.straight; text = (mod.indexOf('left') !== -1 ? 'Keep left' : mod.indexOf('right') !== -1 ? 'Keep right' : 'Keep straight') + onto }
         else { icon = TURN_ICON[mod] || TURN_ICON.straight; text = (TURN_WORD[mod] || 'Go on') + onto }
-        return {icon: icon, text: text, dist: lengthText(t.m, imperial)}
+        var lanes = null
+        // the lanes, once the turn is near (1 km): bright where the route goes on
+        if (t.lanes && t.lanes.length > 1 && t.m <= 1000) {
+          lanes = t.lanes.map(function (l) { return {ok: !!l.ok, icon: TURN_ICON[l.dir] || TURN_ICON.straight} })
+        }
+        return {icon: icon, text: text, dist: lengthText(t.m, imperial), lanes: lanes}
       }
-      function sameLook(a, b) { return a === b || (a && b && a.icon === b.icon && a.text === b.text && a.dist === b.dist) }
+      function sameLook(a, b) { return a === b || (a && b && a.icon === b.icon && a.text === b.text && a.dist === b.dist && JSON.stringify(a.lanes) === JSON.stringify(b.lanes)) }
       function directions(r) {
         var turn = r.routeGps ? turnLook(r.turn, r.imperial) : null
         var sp = r.car ? {v: r.imperial ? Math.round(r.car.kmh / 1.609344) : r.car.kmh, unit: r.imperial ? 'mph' : 'km/h'} : null
