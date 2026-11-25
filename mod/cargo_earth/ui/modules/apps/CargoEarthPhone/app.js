@@ -757,7 +757,7 @@ var cargoEarthOsm = (function () {
     // the screen box labels go in (clear of the banner on top and the speed at the bottom)
     var bx0 = 12, bx1 = v.w - 12, by0 = 100, by1 = v.h - 64
     // and never under the zoom buttons (bottom right) or the north and settings buttons (top left)
-    var keepOut = [[v.w - 54, v.h - 106, v.w, v.h], [0, 0, 46, 124]]
+    var keepOut = [[v.w - 54, v.h - 106, v.w, v.h], [0, 0, 46, 152]]
     function under(x, y, r) {
       for (var u = 0; u < keepOut.length; u++) {
         var ko = keepOut[u]
@@ -1145,13 +1145,15 @@ angular.module('beamng.apps')
     '.cep-map-nd:before{content:"";position:absolute;left:11px;top:0;border:4px solid transparent;border-bottom:7px solid #e4572e;border-top:0}' +
     '.cep-map-gear{position:absolute;left:8px;top:44px;width:30px;height:30px;padding:0;border:0;border-radius:50%;cursor:pointer;font-size:15px;line-height:30px;' +
       'background:rgba(255,255,255,.88);color:#25201d;box-shadow:0 1px 3px rgba(0,0,0,.3)}.dark .cep-map-gear{background:rgba(0,0,0,.6);color:#fff}.cep-map-gear.on{box-shadow:0 0 0 2px var(--tomato)}' +
-    '.cep-map-whole{top:80px}.cep-map-whole svg{width:15px;height:15px;vertical-align:-2px}' +
+    '.cep-map-whole{top:80px}.cep-map-whole svg,.cep-map-go svg{width:15px;height:15px;vertical-align:-2px}' +
+    '.cep-map-go{top:80px}.cep-map-go.low{top:116px}.cep-map-set-g.cep-map-gos{grid-template-columns:1fr 1fr}.cep-map-set .cep-map-gos button{color:var(--ink);font-weight:700}.cep-map-set .cep-map-gos button:disabled{color:var(--muted)}' +
+    '.cep-map-gomsg{margin-top:7px;font-size:12px;color:var(--muted)}.cep-map-gomsg.bad{color:var(--tomato)}' +
     '.cep-map-set{position:absolute;left:8px;right:8px;top:8px;padding:8px 10px 10px;border-radius:12px;background:var(--card);color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:3}' +
       '.cep-map-set-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}.cep-map-set-h b{font-size:13px}' +
       '.cep-map-set-h button{width:26px;height:26px;padding:0;border:0;border-radius:8px;font:inherit;cursor:pointer;background:var(--line);color:var(--ink)}' +
       '.cep-map-set-g{display:grid;grid-template-columns:1fr 1fr;gap:5px}.cep-map-set-g button{min-height:30px;padding:4px 8px;border:1px solid var(--line);border-radius:9px;' +
         'font:inherit;font-size:11px;font-weight:700;text-align:left;cursor:pointer;background:transparent;color:var(--muted)}' +
-      '.cep-map-set-g button.on{background:#e7f3ea;border-color:#8cc59a;color:#1f5c31}.dark .cep-map-set-g button.on{background:#1d3a26;border-color:#3d7a4e;color:#bfe6c8}' +
+      '.cep-map-set-g button:disabled{opacity:.45;cursor:default}.cep-map-set-g button.on{background:#e7f3ea;border-color:#8cc59a;color:#1f5c31}.dark .cep-map-set-g button.on{background:#1d3a26;border-color:#3d7a4e;color:#bfe6c8}' +
       '.cep-map-set-g button:before{content:"○ ";}.cep-map-set-g button.on:before{content:"● "}.cep-map-set-p button:before{content:none}.cep-map-set-p button.on:before{content:none}' +
       '.cep-map-set-p{grid-template-columns:1fr 1fr 1fr}.cep-map-set-p i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0}' +
       '.cep-map-set-p button:not(.on) i{opacity:.35}.cep-map-set-l{margin:8px 0 4px;font-size:11px;font-weight:700;color:var(--muted)}' +
@@ -2538,6 +2540,16 @@ angular.module('beamng.apps')
         '<button class="cep-map-gear cep-map-whole" ng-if="lm.hasRoute" ng-class="{on: lm.overview}" ng-click="mapWhole()" ' +
           'title="{{ lm.overview ? \'Back to following the car\' : \'See the whole route\' }}" aria-label="{{ lm.overview ? \'Back to following the car\' : \'See the whole route\' }}">' +
           '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
+        '<button class="cep-map-gear cep-map-go" ng-if="lm.go" ng-class="{on: lm.goOpen, low: lm.hasRoute}" ng-click="mapGoOpen()" title="Route to home, headquarters or fuel" aria-label="Route to home, headquarters or fuel">' +
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 15C5 11 3.5 8.6 3.5 6.2a4.5 4.5 0 0 1 9 0C12.5 8.6 11 11 8 15z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="8" cy="6.2" r="1.6" fill="currentColor"/></svg></button>' +
+        '<div class="cep-map-set" ng-if="lm.goOpen && lm.go" role="dialog" aria-label="Route to">' +
+          '<div class="cep-map-set-h"><b>Route to</b><button title="Close" aria-label="Close" ng-click="mapGoOpen()">✕</button></div>' +
+          '<div class="cep-map-set-g cep-map-set-p cep-map-gos">' +
+            '<button ng-click="mapGo(\'home\')" ng-disabled="!lm.go.home" title="{{ lm.go.home ? \'Route home\' : \'You have no home yet\' }}">Home</button>' +
+            '<button ng-click="mapGo(\'hq\')" ng-disabled="!lm.go.hq" title="{{ lm.go.hq ? \'Route to your headquarters\' : \'Your firm has no headquarters yet\' }}">Headquarters</button>' +
+            '<button ng-click="mapGo(\'fuel\')" title="Route to the nearest station for your car">Nearest fuel</button>' +
+            '<button ng-click="mapGo(\'clear\')" ng-disabled="!lm.hasRoute" title="Clear the GPS route">Clear route</button></div>' +
+          '<div class="cep-map-gomsg" ng-if="lm.goMsg" ng-class="{bad: !lm.goOk}">{{ lm.goMsg }}</div></div>' +
         '<div class="cep-map-set" ng-if="lm.set" role="dialog" aria-label="Map settings">' +
           '<div class="cep-map-set-h"><b>Map</b><button title="Close" aria-label="Close" ng-click="mapSet()">✕</button></div>' +
           '<div class="cep-map-set-g">' +
@@ -2553,7 +2565,7 @@ angular.module('beamng.apps')
           'title="{{ s.quiet ? \'Your speed. The chime over the limit is off: tap to turn it on\' : \'Your speed. Tap to turn off the chime over the limit\' }}">' +
           '<b>{{ lm.speed.v }}</b><small>{{ lm.speed.unit }}</small>' +
           '<i ng-if="s.quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6h2l3-2.5v9L5 10H3z" fill="#7b726a"/><path d="M10 6l4 4M14 6l-4 4" stroke="#e8452c" stroke-width="1.6" stroke-linecap="round"/></svg></i></button>' +
-        '<div class="cep-map-left" ng-if="lm.left" title="Left to the next stop">{{ lm.left.dist }} <small ng-if="lm.left.time">· {{ lm.left.time }}</small></div>' +
+        '<div class="cep-map-left" ng-if="lm.left" title="Left to the next stop, and the time you get there">{{ lm.left.dist }} <small ng-if="lm.left.time">· {{ lm.left.time }}</small><small ng-if="lm.left.at"> · {{ lm.left.at }}</small></div>' +
         '<div class="cep-map-note" ng-if="lm.note && lm.note !== lm.noteHidden" role="status">' +
           '<button title="Close" aria-label="Close" ng-click="mapNoteClose()">✕</button>{{ lm.note }}</div>' +
         '<div class="cep-map-turn" ng-if="lm.behind && !(lm.note && lm.note !== lm.noteHidden)">The route is behind you. Turn around, or keep going and the GPS finds another way.</div>' +
@@ -2687,7 +2699,23 @@ angular.module('beamng.apps')
       scope.MAP_PLACES = [{k: 'food', t: 'Food', c: '#e8833a'}, {k: 'shop', t: 'Shops', c: '#9b6ad6'}, {k: 'fuel', t: 'Fuel', c: '#2a9d8f'},
         {k: 'health', t: 'Health', c: '#d9534f'}, {k: 'other', t: 'Other', c: '#8a8580'}]
       scope.mapPrefs = function () { return (scope.s && scope.s.mapPrefs) || MAP_DEFAULTS }
-      scope.mapSet = function () { lm.set = !lm.set }
+      scope.mapSet = function () { lm.set = !lm.set; if (lm.set) lm.goOpen = false }
+      // one-tap routes (home, headquarters, the nearest fuel) while no job steers the GPS
+      scope.mapGoOpen = function () { lm.goOpen = !lm.goOpen; lm.goMsg = ''; if (lm.goOpen) lm.set = false }
+      scope.mapGo = function (where) {
+        lm.goMsg = 'Asking the GPS…'
+        lm.goOk = true
+        bngApi.engineLua('cargoEarth_core and cargoEarth_core.mapGo(' + bngApi.serializeToLua(where) + ') or nil', function (r) {
+          scope.$evalAsync(function () {
+            lm.goOk = !!(r && r.ok)
+            lm.goMsg = r && r.msg ? r.msg : 'The game did not answer.'
+            if (!lm.goOk) return
+            lastSketch = ''
+            var said = lm.goMsg
+            setTimeout(function () { scope.$evalAsync(function () { if (lm.goMsg === said) { lm.goOpen = false; lm.goMsg = '' } }) }, 2500)
+          })
+        })
+      }
       scope.mapPref = function (k) {
         if (k === 'sound') { scope.mapQuiet(); return }
         if (!(k in MAP_DEFAULTS)) return
@@ -3512,12 +3540,13 @@ angular.module('beamng.apps')
       // pointing up, gliding between answers. Nothing runs while another tab shows or the phone is folded or hidden.
       var MAP_VIEW = [250, 500, 1000]   // metres from the top of the map to its bottom, per zoom step
       var MAP_COLORS = {
-        light: {bg: '#ece6dd', fill: ['#e2dad0', '#ffffff', '#ffe7a3', '#ffc98a'], edge: ['#e2dad0', '#cfc5b8', '#d6b35a', '#cf8a3e'], route: '#2f7bf6', casing: '#ffffff'},
-        dark: {bg: '#23201e', fill: ['#36312d', '#4d4741', '#7a6838', '#8c5a2c'], edge: ['#36312d', '#1b1917', '#1b1917', '#1b1917'], route: '#4a95ff', casing: '#10213d'}
+        light: {bg: '#ece6dd', fill: ['#e2dad0', '#ffffff', '#ffe7a3', '#ffc98a'], edge: ['#e2dad0', '#cfc5b8', '#d6b35a', '#cf8a3e'], route: '#2f7bf6', casing: '#ffffff', tag: '#ffffff', tagText: '#25201d'},
+        dark: {bg: '#23201e', fill: ['#36312d', '#4d4741', '#7a6838', '#8c5a2c'], edge: ['#36312d', '#1b1917', '#1b1917', '#1b1917'], route: '#4a95ff', casing: '#10213d', tag: '#2b2724', tagText: '#f3ede6'}
       }
       var ROAD_M = [3, 6, 9, 13], ROAD_PX = [1, 2, 3, 4]   // road width in metres, and never thinner than this in pixels
       var STOP_LOOK = {next: ['#e4572e', ''], pickup: ['#e4572e', 'P'], drop: ['#2e9e5b', 'D'], stop: ['#7a5cc7', ''], home: ['#2f7bf6', 'H'], hq: ['#4b5563', 'W']}
-      var lm = scope.lm = {overview: false, hasRoute: false, set: false, note: '', noteHidden: '', zoom: 1, behind: false, engine: 'osm', osm: false, stats: false, statLines: [], turn: null, speed: null, left: null}
+      var lm = scope.lm = {overview: false, hasRoute: false, set: false, note: '', noteHidden: '', zoom: 1, behind: false, engine: 'osm', osm: false, stats: false, statLines: [], turn: null, speed: null, left: null,
+        go: null, goOpen: false, goMsg: '', goOk: true}
       try { var z = localStorage.getItem('cargoEarthMapZoom'); if (z === '0' || z === '1' || z === '2') lm.zoom = Number(z) } catch (e) {}
       try { if (localStorage.getItem('cargoEarthMapEngine') === 'sketch') lm.engine = 'sketch' } catch (e) {}
       var mapData = {roadsKey: null, roads: [], route: null, routeGps: false, stops: [], car: null, from: null, at: 0, routeLL: null}
@@ -3587,6 +3616,14 @@ angular.module('beamng.apps')
         var min = Math.round(s / 60)
         return min < 60 ? Math.max(1, min) + ' min' : Math.floor(min / 60) + ' h ' + (min % 60) + ' min'
       }
+      // the clock time you get there (the phone's clock: the computer's own time)
+      function arriveText(s, now) {
+        if (!(s > 0)) return ''
+        var d = new Date((now === undefined ? Date.now() : now) + s * 1000)
+        var hh = d.getHours(), mm = d.getMinutes()
+        return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm
+      }
+      scope.mapArriveText = arriveText    // (tests)
       function turnLook(t, imperial) {
         if (!t) return null
         var mod = t.modifier || 'straight', icon, text, onto = t.name ? ' onto ' + t.name : ''
@@ -3613,7 +3650,7 @@ angular.module('beamng.apps')
         var sp = r.car ? {v: r.imperial ? Math.round(r.car.kmh / 1.609344) : r.car.kmh, unit: r.imperial ? 'mph' : 'km/h'} : null
         var limit = scope.s && scope.s.limit
         if (sp && limit && limit.over) sp.over = true
-        var left = typeof r.leftM === 'number' ? {dist: lengthText(r.leftM, r.imperial), time: timeText(r.leftS)} : null
+        var left = typeof r.leftM === 'number' ? {dist: lengthText(r.leftM, r.imperial), time: timeText(r.leftS), at: arriveText(r.leftS)} : null
         if (sameLook(turn, lm.turn) && sameLook2(sp, lm.speed) && sameLook2(left, lm.left)) return
         scope.$evalAsync(function () { lm.turn = turn; lm.speed = sp; lm.left = left })
       }
@@ -3718,6 +3755,8 @@ angular.module('beamng.apps')
           var hasRoute = !!(r.route && r.route.length >= 4)
           if (hasRoute !== lm.hasRoute || (!hasRoute && lm.overview)) scope.$evalAsync(function () { lm.hasRoute = hasRoute; if (!hasRoute) lm.overview = false })
           if (!!r.behind !== lm.behind) scope.$evalAsync(function () { lm.behind = !!r.behind })
+          var go = r.go ? {home: !!r.go.home, hq: !!r.go.hq} : null
+          if (JSON.stringify(go) !== JSON.stringify(lm.go)) scope.$evalAsync(function () { lm.go = go; if (!go) lm.goOpen = false })
           directions(r)
           if (geo) {
             if (r.tiles) osmMap.setBase(r.tiles)
@@ -3864,7 +3903,7 @@ angular.module('beamng.apps')
         // stops: a dot with a letter; the next one bigger, and held at the edge with an arrow when it is off the map
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        var stops = mapData.stops || []
+        var stops = mapData.stops || [], nextName = null
         for (i = 0; i < stops.length; i++) {
           var st = stops[i], look = STOP_LOOK[st.k] || STOP_LOOK.stop
           var sa = osm ? st.lat : st.x, sb = osm ? st.lon : st.y
@@ -3897,7 +3936,10 @@ angular.module('beamng.apps')
             ctx.font = '800 ' + (r + 1) + 'px sans-serif'
             ctx.fillText(String(label).slice(0, 2), x, y + 0.5)
           }
+          if (st.k === 'next' && !edge && st.n) nextName = {x: x, y: y, r: r, n: String(st.n), c: look[0]}
         }
+        // the next stop's name (the drop-off's street and number, the pickup's name) on a tag beside its pin
+        if (nextName) stopTag(ctx, nextName, w, col)
         // the car: an arrow pointing up (north up: pointing where the car heads)
         var ca = (car.h - hd) * Math.PI / 180, cc = Math.cos(ca), cn = Math.sin(ca)
         var arrow = function (x, y) { return [carSX + x * cc - y * cn, carSY + x * cn + y * cc] }
@@ -3915,6 +3957,30 @@ angular.module('beamng.apps')
         ctx.stroke()
         return osm ? osm.missing : false
       }
+      var STOP_TAG_MAX = 30
+      function stopTag(ctx, t, w, col) {
+        var text = t.n.length > STOP_TAG_MAX ? t.n.slice(0, STOP_TAG_MAX - 1) + '…' : t.n
+        ctx.font = '700 11px sans-serif'
+        var tw = ctx.measureText(text).width, bw = tw + 12, bh = 18
+        // right of the pin, or left of it when the zoom buttons or the edge are in the way
+        var bx = t.x + t.r + 5
+        if (bx + bw > w - 54) bx = t.x - t.r - 5 - bw
+        bx = Math.max(4, bx)
+        var by = t.y - bh / 2
+        ctx.beginPath()
+        if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 6)
+        else ctx.rect(bx, by, bw, bh)
+        ctx.fillStyle = col.tag || '#ffffff'
+        ctx.fill()
+        ctx.lineWidth = 1.5
+        ctx.strokeStyle = t.c
+        ctx.stroke()
+        ctx.fillStyle = col.tagText || '#25201d'
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(text, bx + 6, by + bh / 2 + 0.5)
+      }
+      scope.mapStopTag = stopTag    // (tests)
       // The whole-route view: the way ahead (a few hundred points from the game) and the car fitted between the
       // banner and the bottom, north up. Coarser map tiles the farther it reaches. Null without a route.
       var OVERVIEW_MIN_Z = 3

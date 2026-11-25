@@ -2322,6 +2322,7 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   assert(perf and perf.edges == 20 and perf.luaMs >= 0 and perf.slices >= 1, 'the timing readout')
   assert(core.phoneMap(m.roadsKey).perf == nil, 'timings only when the readout shows')
   assert(m.stops and #m.stops == 0 and m.route == nil, 'no job: no stops, no route')
+  assert(m.go and not m.go.home and not m.go.hq, 'no job: the map offers its own routes, no home yet')
   -- no job, but the GPS goes home: its route is drawn
   local earthNoJob = require('cargoEarth/earth')
   gpsRoute = {remaining = 300, routeVersion = 1}
@@ -2334,6 +2335,7 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   s.orders = {{job = s.job, phase = 'toPickup'}, {job = other, phase = 'toDelivery'}}
   s.career.home = {g = {50.001, 14}, n = 'Dlouha 1'}
   m = core.phoneMap(m.roadsKey)
+  assert(m.go == nil, 'a job steers the GPS: no routes of its own')
   local kinds = {}
   for _, st in ipairs(m.stops) do kinds[st.k] = st end
   assert(kinds.home and math.abs(kinds.home.y - 111) <= 1, 'home 111 m north')
@@ -2399,6 +2401,29 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   pose.x, pose.y, pose.z, pose.heading = nil, nil, nil, nil
   assert(core.phoneMap(nil).car == nil, 'no position: nothing to draw')
   s.job, s.orders, s.phase = nil, {}, nil
+end)
+
+test('the map\'s one-tap routes: home, headquarters, clear; not during a job', function()
+  local core, s = fresh()
+  pose.x, pose.y, pose.z, pose.heading, pose.speed = 0, 0, 0, 0, 0
+  local r = core.mapGo('home')
+  assert(not r.ok and r.msg:find('no home'), 'no home yet')
+  s.career.home = {g = {50.01, 14.02}, name = 'Dlouha 1'}
+  gps = nil
+  r = core.mapGo('home')
+  assert(r.ok and gps and gps.lat == 50.01 and gps.lon == 14.02, 'route home')
+  assert(core.phoneMap(nil).go.home, 'the map shows Home')
+  assert(not core.mapGo('hq').ok, 'no firm, no headquarters')
+  s.career.firm = {name = 'Fast Food Ltd', hq = {g = {50.02, 14.03}, n = 'Yard'}}
+  assert(core.mapGo('hq').ok and gps.lat == 50.02, 'route to the headquarters')
+  assert(core.mapGo('clear').ok and gps == nil, 'route cleared')
+  assert(not core.mapGo('somewhere').ok)
+  s.job = {id = 'j', from = {g = {50, 14}, n = 'A'}, to = {g = {50.1, 14}, n = 'B'}}
+  r = core.mapGo('home')
+  assert(not r.ok and gps == nil, 'a job keeps its own GPS')
+  s.job = nil
+  s.career.home, s.career.firm = nil, nil
+  pose.x, pose.y, pose.z, pose.heading, pose.speed = nil, nil, nil, nil, nil
 end)
 
 local firm = require('cargoEarth/firm')
