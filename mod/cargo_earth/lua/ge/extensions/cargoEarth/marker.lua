@@ -126,27 +126,37 @@ local function roadEdge(x, y, z, doorX, doorY, search)
   return cx + nx * width, cy + ny * width, p1.z + (p2.z - p1.z) * t
 end
 
-local function pickupPosition(p, stop, now)
+-- Address-like stops (restaurants, customers, parcel stops, taxi and tow places: everything but a freight yard,
+-- which has a type `t`) stand at the roadside. The helper's rows carry only the address or building point (often
+-- inside the house), so the ring moves to the edge of the nearest streamed road, on the building's side.
+function M.roadside(stop)
+  return type(stop) == 'table' and stop.t == nil
+end
+
+-- The stop's roadside point in world x, y (and the road's z once found), cached in `cache` until the stop or the
+-- map anchor changes. Before the road is known (out of `range`, roads still streaming), the stop's own point.
+local function roadsidePosition(cache, p, stop, now, range)
   if not (p and p.lat and p.lon and stop.g)
-    or jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000 > M.PICKUP_RANGE + 80 then return nil end
+    or jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000 > range + 80 then return nil end
   local x, y = earth.worldXY(p, stop.g)
   if not (x and p.z) then return nil end
-  if not matches(pickup, stop, p) then pickup = newCache(stop, p) end
-  if pickup.x then return pickup.x, pickup.y, pickup.roadZ end
-  if distance(x, y, p) > M.PICKUP_RANGE then return x, y end
-  local doorX, doorY = earth.worldXY(p, stop.d)
+  if cache.x then return cache.x, cache.y, cache.roadZ end
+  if distance(x, y, p) > range then return x, y end
+  local doorX, doorY
+  if stop.d then doorX, doorY = earth.worldXY(p, stop.d) end
   doorX, doorY = doorX or x, doorY or y
   local dx, dy = doorX - x, doorY - y
   local gap = math.sqrt(dx * dx + dy * dy)
-  if map and map.findClosestRoad and map.getMap and vec3 and now >= pickup.nextRoad then
-    pickup.nextRoad = now + REFRESH_S
+  if map and map.findClosestRoad and map.getMap and vec3 and now >= cache.nextRoad then
+    cache.nextRoad = now + REFRESH_S
+    -- a point that is already a curb (apart from its door) looks close by; a bare address point looks further
     local search = gap < 1 and 80 or 15
     local z = p.z
     if search == 80 then z = surfaceZ(x, y, nil, p.z + 30, 150) or z end
     local ok, rx, ry, rz = pcall(roadEdge, x, y, z, doorX, doorY, search)
     if ok and rx then
-      pickup.x, pickup.y, pickup.roadZ = rx, ry, rz
-      pickup.nextGround = 0
+      cache.x, cache.y, cache.roadZ = rx, ry, rz
+      cache.nextGround = 0
       return rx, ry, rz
     end
   end
@@ -155,9 +165,22 @@ local function pickupPosition(p, stop, now)
   return x + dx * fraction, y + dy * fraction
 end
 
+local function pickupPosition(p, stop, now)
+  if not matches(pickup, stop, p) then pickup = newCache(stop, p) end
+  return roadsidePosition(pickup, p, stop, now, M.PICKUP_RANGE)
+end
+
 function M.pickupDistance(p, stop, now)
   local x, y = pickupPosition(p, stop, now)
   if x then return distance(x, y, p) end
+end
+
+-- Metres from the car to where the ring of `stop` stands once it was moved to the roadside, else nil.
+function M.roadsideDistance(p, stop)
+  if not (p and p.x and p.y and stop) then return nil end
+  for _, cache in ipairs({ pickup, delivery, depot }) do
+    if cache.target == stop and cache.x and matches(cache, stop, p) then return distance(cache.x, cache.y, p) end
+  end
 end
 
 -- One ring point may climb or drop this much from the one before it (a kerb or a steep street is fine, a tree
@@ -243,7 +266,12 @@ local function drawDelivery(p, stop, radius, inZone, now)
     delivery = newCache(stop, p)
     delivery.radius = radius
   end
-  drawRing(delivery, p, x, y, nil, radius, COLORS.delivery, inZone, now)
+  local roadZ
+  if M.roadside(stop) then
+    local rx, ry, rz = roadsidePosition(delivery, p, stop, now, RING_RANGE)
+    if rx then x, y, roadZ = rx, ry, rz end
+  end
+  drawRing(delivery, p, x, y, roadZ, radius, COLORS.delivery, inZone, now)
 end
 
 local function drawDepotPickup(p, stop, radius, inZone, now)
@@ -251,6 +279,10 @@ local function drawDepotPickup(p, stop, radius, inZone, now)
   local x, y = earth.worldXY(p, stop.g)
   if not (x and p.z) or distance(x, y, p) > M.FAR_KM * 1000 then return end
   if not matches(depot, stop, p) then depot = newCache(stop, p) end
+  if M.roadside(stop) then   -- a taxi passenger or a broken-down car waits by the road, not in the house
+    local rx, ry = roadsidePosition(depot, p, stop, now, RING_RANGE)
+    if rx then x, y = rx, ry end
+  end
   if now >= depot.nextGround then
     local ref = distance(x, y, p) <= RING_RANGE and roadZNear(x, y, p.z) or nil
     depot.z = surfaceZ(x, y, ref, (ref or p.z) + 500, 2000) or depot.z

@@ -2281,7 +2281,9 @@ local function distToTarget(p)
   for _, k in ipairs({ 'd', 'r' }) do
     if d[k] then best = math.min(best, jobs.km(p.lat, p.lon, d[k][1], d[k][2]) * 1000) end
   end
-  return best
+  -- the ring moved from the house to the road: it counts too
+  local side = marker.roadsideDistance and marker.roadsideDistance(p, d)
+  return side and math.min(best, side) or best
 end
 
 -- The country the player drives in sets the currency; crossing a border exchanges the money for free.
