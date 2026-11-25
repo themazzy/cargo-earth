@@ -250,6 +250,21 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   mapTimer.fn()
   assert.equal(scope.lm.turn.lanes, null, 'far away: no lanes yet')
   assert(directive.template.includes('cep-map-lanes'))
+  // the speed like the nav apps: amber just over the limit, red well over; the limit's sign beside it
+  const sBefore = scope.s
+  scope.s = {...(sBefore || {}), limit: {sign: '50', over: true}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.speed.over, 'slight')
+  scope.s = {...scope.s, limit: {sign: '50', over: true, well: true}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.speed.over, 'well')
+  scope.s = sBefore
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.speed.over, undefined)
+  assert(directive.template.includes('cep-limit cep-map-limit" ng-if="s.limit && mapPrefs().speedo"'))
   answer = {...answer, imperial: false, turn: null, routeGps: true, roadsKey: 't1', roads: [0, 0, 10, 0, 1]}
   const asked = commands.length
   mapTimer.fn()

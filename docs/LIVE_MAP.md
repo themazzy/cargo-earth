@@ -57,6 +57,10 @@ may set routes.
 shows under the banner, bright for the lanes that lead your way (a lane with several arrows shows the one the route
 takes).
 
+**Speed and limit** (like Google Maps, Waze, TomTom): the limit's sign sits above the speedometer whenever the limit
+is known. The speed turns amber just over the limit (`OVER_KMH`, 3 km/h) and red well over (`WELL_OVER_KMH` 10 km/h or
+10 % of the limit, whichever is more; `phoneState().limit.well`).
+
 **Speeding**: the speedometer turns red and the phone plays a short two-tone chime (Web Audio) when the car goes over
 the limit (the same moment the phone's speed-limit sign turns red, `OVER_KMH` over). Once per time over, again after
 3 s back under. Only one phone chimes: the floating one, or the dash phone while the floating one is hidden. Tap the

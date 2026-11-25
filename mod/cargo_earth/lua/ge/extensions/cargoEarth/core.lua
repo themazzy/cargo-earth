@@ -68,6 +68,8 @@ M.PARCEL_TIP_SHARE = 0.5 -- a parcel route's tip for speed is figured on this sh
 M.ROAD_M = 20          -- the car is on the road edge this close (else: a car park, a field; no limit shown)
 M.LIMIT_S = 0.5        -- the limit under the car is read this often
 M.OVER_KMH = 3         -- the phone's sign turns red this far over the limit
+-- well over (the map's speedometer turns red, amber before): 10 km/h or 10 % of the limit, whichever is more
+M.WELL_OVER_KMH, M.WELL_OVER_SHARE = 10, 0.1
 M.CAMERA_ROAD_M = 600  -- a camera without a mapped limit takes its road's limit from this close
 M.LATE_PER_MIN = { courier = 0.05, trucking = 0.02, bus = 0.01 }   -- share of pay lost per minute late (food goes cold
 -- faster; a bus line adds up the minutes it was late at each stop)
@@ -3041,7 +3043,9 @@ function M.phoneState()
   local here = earth.pose()
   local limit = limitHere(here)
   if limit then
-    out.limit = { sign = limit.sign, unit = limit.unit, over = (here.speed or 0) * 3.6 > limit.kmh + M.OVER_KMH }
+    local kmh = (here.speed or 0) * 3.6
+    out.limit = { sign = limit.sign, unit = limit.unit, over = kmh > limit.kmh + M.OVER_KMH,
+      well = kmh > limit.kmh + math.max(M.WELL_OVER_KMH, limit.kmh * M.WELL_OVER_SHARE) or nil }
   end
   if camerasOn() then
     local p = here
