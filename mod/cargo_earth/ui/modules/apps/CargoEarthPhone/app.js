@@ -421,6 +421,7 @@ var cargoEarthOsm = (function () {
     this.base = null
     this.tiles = {}          // 'x/y' -> { state: 'loading' | 'ok' | 'error', data, labels, at, used, why }
     this.pieces = {}         // 'x/y/k/px/py/dark' -> { canvas, used }
+    this.drawn = 0           // time of the last frame drawn (its pieces stay in the cache)
     this.loading = 0
     this.ok = 0
     this.errors = 0
@@ -505,7 +506,8 @@ var cargoEarthOsm = (function () {
     var pk = Object.keys(this.pieces)
     if (pk.length > TileMap.MAX_PIECES) {
       pk.sort(function (a, b) { return me.pieces[a].used - me.pieces[b].used })
-      for (var j = 0; j < pk.length - TileMap.MAX_PIECES; j++) delete me.pieces[pk[j]]
+      // never the pieces this frame is showing (used now)
+      for (var j = 0; j < pk.length - TileMap.MAX_PIECES; j++) if (me.pieces[pk[j]].used < me.drawn) delete me.pieces[pk[j]]
     }
   }
 
@@ -528,8 +530,10 @@ var cargoEarthOsm = (function () {
     ctx.fillRect(0, 0, v.w, v.h)
     // pieces: halve the tile until a piece's pixels are about the screen's
     var k = Math.max(0, Math.min(3, Math.ceil(Math.log(scale * ratio * tm / PIECE) / Math.LN2)))
-    var n2 = Math.pow(2, k)
     var reach = Math.sqrt(Math.pow(Math.max(ox, v.w - ox), 2) + Math.pow(Math.max(oy, v.h - oy), 2)) / scale / tm   // in tiles
+    // fewer, coarser pieces when the view would need more than the cache keeps (sharp screens, far zoom)
+    while (k > 0 && Math.PI * Math.pow(reach * Math.pow(2, k) + 1.5, 2) > TileMap.MAX_PIECES) k--
+    var n2 = Math.pow(2, k)
     var missing = false, budget = 2
     var q = tm / (PIECE * n2)                                // metres per piece pixel
     var labels = []
@@ -564,6 +568,7 @@ var cargoEarthOsm = (function () {
         if (t.labels) for (var li = 0; li < t.labels.length; li++) labels.push([tx, ty, t.labels[li], t.data])
       }
     }
+    this.drawn = now
     this.trim()
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
     return {proj: proj, missing: missing, labels: function () { drawLabels(ctx, labels, E, N, cs, sn, scale, ox, oy, v, look, tm) }}

@@ -60,4 +60,19 @@ const busy = new osm.TileMap({xhr: () => {}, canvas: () => ({})})
 busy.setBase('x')
 for (let i = 0; i < 6; i++) busy.want(i, 0, 0)
 assert.equal(busy.loading, 4)
+
+// a sharp screen (ratio 3) at the 1000 m zoom: the pieces it shows fit the cache, so a parked car's map settles
+const fixture = Uint8Array.from(fs.readFileSync('tests/fixtures/osm-tile.pbf')).buffer
+const nop = new Proxy({}, {get: (o, k) => (k in o ? o[k] : () => ({width: 10}))})
+let made = 0
+const sharp = new osm.TileMap({xhr: (url, done) => done(200, fixture), canvas: () => { made++; return {getContext: () => nop} }})
+sharp.setBase('x')
+const view = {w: 320, h: 500, ox: 160, oy: 340, scale: 500 / 1000, ratio: 3, lat: 50.087, lon: 14.421, heading: 30}
+let last
+for (let i = 1; i <= 100; i++) last = sharp.draw(nop, view, false, i)
+assert.equal(last.missing, false, 'every piece drawn after a while')
+assert(Object.keys(sharp.pieces).length <= osm.TileMap.MAX_PIECES, 'within the cache')
+const settled = made
+for (let i = 101; i <= 110; i++) sharp.draw(nop, view, false, i)
+assert.equal(made, settled, 'a parked car draws no new pieces')
 console.log('OSM map: vector tile decoder, street names, tile numbers and the loader checked')
