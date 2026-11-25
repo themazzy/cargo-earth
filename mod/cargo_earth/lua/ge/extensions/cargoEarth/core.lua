@@ -3991,7 +3991,9 @@ local function garageTick(dt)
   end
   local damage = M.G.damage()
   M.busDamageTick(damage)
-  local what, amount, insured = garage.trackDamage(g, damage)
+  -- a parts preview respawns the car: the damage counter waits until it is kept (buyParts) or discarded (a respawn)
+  local what, amount, insured
+  if not S.parts then what, amount, insured = garage.trackDamage(g, damage) end
   if shift and what == 'hit' then employment.damage(S.career, math.max(0, amount)) end
   if shift and not shift.ownerOperator then g.debt = 0 end
   if what == 'hit' then
@@ -4723,7 +4725,9 @@ local function startParts(vehicle, fromGame)
   local blocked = S.job and 'Finish the current order before changing parts.'
     or g.pendingUsed and 'Wait for the car to finish loading its parts.'
     or (g.car and g.car.loaner) and 'The loaner comes with fixed equipment.'
-    or ((g.repair or 0) > 0 or damage * garage.REPAIR_PER_DAMAGE >= 2.5) and 'Repair the car before changing parts.'
+  -- A damaged car may change parts (player report, 2026-11-25): a config that breaks itself as it spawns (a Segra box
+  -- truck with the cab aero kit still on) re-breaks after every repair, so requiring a repair first locked the car.
+  -- The repair bill stays owed; the damage counter is frozen while the preview respawns the car (see buyParts).
   if blocked and not fromGame then return false, blocked end
   -- Native Apply may have already changed the live config when its hook arrives.
   -- Keep the last paid snapshot as the baseline, rather than accepting that preview for free.
@@ -4771,7 +4775,6 @@ end
 
 local function partsProblem(quote)
   local g = S.career.garage
-  if (g.repair or 0) > 0 then return 'Repair the car before changing parts.' end
   if quote.cost > 0 and (g.debt or 0) > 0 then return 'Pay off your debt before buying parts.' end
   if quote.cost > (S.career.money or 0) then return 'Not enough money for these parts.' end
 end
@@ -4831,6 +4834,11 @@ local function buyParts(revision)
   end
   finishParts()
   conditionAt = S.clock + 1
+  -- The kept preview is a freshly spawned car of the new config: the old physical snapshot belongs to the old parts
+  -- (restoring it would put the old damage back), and any repair owed is carried with the car like after a respawn.
+  require('cargoEarth/damage').clear(g.car)
+  g.damageBaseline, g.restoringDamage = nil, nil
+  g.carriedRepair, g.lastDamage = g.repair or 0, 0
   return true, quote.cost > 0 and string.format('Parts fitted. Paid %d CZK.', quote.cost) or 'Parts changes kept.'
 end
 
@@ -4844,7 +4852,8 @@ function M.garageState()
     local quote, why = quoteParts()
     if quote then why = partsProblem(quote) end
     out.parts = { revision = S.partsRevision, items = quote and quote.items, cost = quote and quote.cost,
-      error = why, canBuy = quote ~= nil and not why, blocked = not not S.parts.blocked }
+      error = why, canBuy = quote ~= nil and not why, blocked = not not S.parts.blocked,
+      owed = (g.repair or 0) > 0 and g.repair or nil }
     return out
   end
   if not g.started then return out end
@@ -6045,7 +6054,7 @@ function M.dashFit(on, opts)
   end
   if not reload and not measured and not opts.rebuild and dash.treeHasPhone(tree) == (on and true or false) then return true end
   -- a respawn mends the car: never on a damaged career car (it would be repaired for free, and its bill turned into
-  -- debt), the same rule as changing parts
+  -- debt)
   local g = type(S.career) == 'table' and S.career.garage or nil
   local owned = type(g) == 'table' and g.started and G.isOwned and G.isOwned(v)
   if owned then

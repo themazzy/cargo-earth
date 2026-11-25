@@ -1875,6 +1875,7 @@ angular.module('beamng.apps')
         '<div ng-if="g.parts" class="cep-scroll">' +
           '<div class="cep-label">Parts checkout</div>' +
           '<div class="cep-sub">The game\'s Apply only previews parts. Confirm here before you drive off, or the changes are dropped.</div>' +
+          '<div class="cep-sub" ng-if="g.parts.owed">Repairs owed ({{ fmt.money(g.parts.owed) }}) stay with the car after the change.</div>' +
           '<div class="cep-sub" ng-if="g.parts.error">{{ g.parts.error }}</div>' +
           '<button class="cep-sm ghost" ng-if="g.parts.error" ng-click="retryGarage()">Retry checkout</button>' +
           '<div class="cep-sub" ng-if="g.parts.items && !g.parts.items.length">No parts added or removed.</div>' +

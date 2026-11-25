@@ -917,6 +917,36 @@ test('failed parts purchase checkpoint preserves money, inventory and retryable 
   assert(not s.parts and s.career.money == 10000 - checkout.cost)
 end)
 
+test('a car damaged by its own config can change parts and keeps its repair bill without debt', function()
+  local core, s = partsFixture()
+  local g = s.career.garage
+  -- a box truck that breaks its cab aero kit as it spawns: damaged, a bill owed, a physical snapshot saved
+  g.car.value = 10000000   -- no repair cap in the way
+  damageValue = 20000
+  advance(core, 2)
+  local bill = g.repair
+  assert(bill > 0)
+  g.car.physicalDamage = {format = 'v2'}
+  local opened = core.garageDo('openParts')
+  assert(s.parts and opened.parts, 'parts picker blocked on a damaged car')
+  -- the native preview respawns the car with the new parts: undamaged, and no debt for that
+  vehicle.data, vehicle.slotPartMap = {}, {body = 'pigeon', engine = 'new_engine', empty = false}
+  damageValue = 0
+  advance(core, 2)
+  assert(s.parts and (g.debt or 0) == 0 and g.repair == bill)
+  local checkout = core.garageState().parts
+  assert(checkout.canBuy and checkout.owed == bill)
+  core.garageDo('buyParts', checkout.revision)
+  assert(not s.parts and g.car.parts.engine == 'new_engine' and not g.car.physicalDamage)
+  advance(core, 10)
+  assert((g.debt or 0) == 0 and g.repair == bill, 'bill lost or turned into debt')
+  -- new damage on the new parts still adds to the bill
+  g.car.value = 10000000
+  damageValue = 20000
+  advance(core, 2)
+  assert(g.repair > bill)
+end)
+
 local function loadedCompany()
   local core, s = fresh()
   start(core)
