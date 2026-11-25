@@ -2405,10 +2405,17 @@ class OsmTiles:
             import gzip
             data = gzip.decompress(data)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(data)
-        os.replace(tmp, path)
+        # Each fetch writes its own temp file: two phones can ask for the same tile at once.
+        tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
         self.stats["fetched"] += 1
         self.stats["served"] += 1
         self.writes += 1

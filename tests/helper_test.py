@@ -1092,6 +1092,38 @@ class OsmTileTests(unittest.TestCase):
                 osm.tile(14, 1, 1)
             self.assertEqual(osm.stats["failed"], 1)
 
+    def test_same_tile_fetched_at_once_by_two_phones(self):
+        import threading as th
+        gate = th.Barrier(2)
+
+        def get(url):
+            if url == helper.OsmTiles.TILEJSON:
+                return json.dumps({"tiles": ["https://tiles.openfreemap.org/planet/v/{z}/{x}/{y}.pbf"]}).encode()
+            if url.endswith("/1/1.pbf"):
+                gate.wait(5)
+            return b"tile"
+
+        with tempfile.TemporaryDirectory() as cache:
+            osm = helper.OsmTiles(cache, get=get)
+            osm.tile(14, 1, 0)  # TileJSON read first
+            got, errors = [], []
+
+            def ask():
+                try:
+                    got.append(osm.tile(14, 1, 1))
+                except Exception as e:
+                    errors.append(e)
+
+            threads = [th.Thread(target=ask) for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(10)
+            self.assertEqual(errors, [])
+            self.assertEqual(got, [b"tile", b"tile"])
+            self.assertEqual(sorted(os.listdir(os.path.join(cache, "osm", "14", "1"))), ["0.pbf", "1.pbf"])
+            self.assertFalse([n for n in os.listdir(os.path.join(cache, "osm", "14", "1")) if n.endswith(".tmp")])
+
     def test_old_tiles_are_dropped(self):
         with tempfile.TemporaryDirectory() as cache:
             osm = helper.OsmTiles(cache, get=lambda url: b"x")
