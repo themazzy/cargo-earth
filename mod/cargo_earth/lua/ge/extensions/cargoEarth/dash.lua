@@ -686,6 +686,12 @@ function M.partCar(id) if id then partCars[id] = true end end
 -- the car is being respawned (maybe without the part) or removed: its new controller registers again if the part is there
 function M.dropCar(id) if id then partCars[id] = nil end end
 function M.isPartCar(id) return partCars[id] == true end
+function M.partCarIds()
+  local out = {}
+  for id in pairs(partCars) do out[#out + 1] = id end
+  table.sort(out)
+  return out
+end
 
 -- for the phone's Settings. v: the player's car as gamecar describes it (model, id, config) or nil.
 function M.state(v)

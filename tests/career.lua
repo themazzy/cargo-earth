@@ -4374,6 +4374,23 @@ test('the dash phone moves behind the wheel, and goes back when the car has no d
   assert(math.abs(dash.spot('pigeon').centre.x + 0.316) < 1e-6, 'in line with the driver')
   core.settingsDo('dash', 'middle')
   assert(dash.where() == 'middle' and #respawns == 3)
+  -- another car of the same model, fitted in the middle, is rebuilt when the player gets into it after a move
+  local first = v
+  local other = { id = 12, model = 'pigeon', config = copy(v.config), data = v.data }
+  dash.partCar(9) dash.partCar(12)
+  core.settingsDo('dash', 'wheel')
+  assert(#respawns == 4 and core.dashStale[12] and not core.dashStale[9])
+  v = other
+  core.onVehicleSwitched()
+  advance(core, 4)
+  assert(#respawns == 5 and not core.dashStale[12], 'the other car got the phone behind the wheel too')
+  advance(core, 4)
+  assert(#respawns == 5, 'only once')
+  v = first
+  core.settingsDo('dash', 'middle')
+  dash.forget()
+  local base = #respawns
+  assert(#respawns == base)
   -- a car that may not be reloaded (damaged): the setting stays where the phone still is
   core.G.respawnPlayer, local_respawn = function() error('no respawn') end, core.G.respawnPlayer
   st = core.settingsDo('dash', 'wheel').dash

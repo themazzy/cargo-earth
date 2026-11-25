@@ -5997,6 +5997,9 @@ local dashClock, dashCheckAt, dashTried, dashReloaded = 0, nil, {}, {}
 local dashMeasureNext = {} -- car id -> true: reloaded to be measured, so measure it once it is back
 local dashPending -- a change from Settings the car was too busy for: { rebuild } (done once the car is free)
 -- M.dashWhereBack: the phone was just moved (middle / wheel): where it stood before, until the car is back with it there
+-- M.dashStale: car id -> true for other cars that still carry the phone where it stood before a move; each is rebuilt
+-- when the player gets into it
+M.dashStale = {}
 -- the car could not be respawned for a move: the setting goes back to where the phone still is
 function M.dashGoBack()
   if M.dashWhereBack then dash.setWhere(M.dashWhereBack) M.dashWhereBack = nil end
@@ -6081,7 +6084,7 @@ function M.dashFit(on, opts)
   -- the respawn brings the car back new: its mileage and paint wear go back on, as after buying parts
   if owned and g.car then conditionAt = S.clock + 3 end
   -- a move of the phone is done once the car is back with it (not while it is only reloaded to be measured)
-  if not reload then M.dashWhereBack = nil end
+  if not reload then M.dashWhereBack, M.dashStale[v.id] = nil, nil end
   return true
 end
 
@@ -6124,6 +6127,9 @@ dashDoInner = function(a)
     local before = dash.where()
     if not dash.setWhere(a) then return true end
     M.dashWhereBack = before
+    for _, id in ipairs(dash.partCarIds()) do
+      if id ~= v.id then M.dashStale[id] = true end
+    end
     local ok, why, busy = M.dashFit(true, { measure = true, rebuild = true })
     -- the car could not take it now (damaged, or no driver camera): the phone stays where it was
     if not ok and not busy then M.dashGoBack() end
@@ -6162,10 +6168,11 @@ local function dashTick(dt)
   -- switched off: a car that still has the phone loses it
   if not on and not dash.treeHasPhone(tree) then return end
   if dashBusy() then dashCheckAt = dashClock + 2 return end
-  if on and dash.treeHasPhone(tree) and dash.spot(v.model) and not dashMeasureNext[v.id] then return end
+  local stale = on and M.dashStale[v.id]
+  if on and not stale and dash.treeHasPhone(tree) and dash.spot(v.model) and not dashMeasureNext[v.id] then return end
   local last = dashTried[v.id]
-  if on and last and dashClock - last < M.DASH_RETRY_S and not dashMeasureNext[v.id] then return end
-  local ok, why = M.dashFit(on)
+  if on and not stale and last and dashClock - last < M.DASH_RETRY_S and not dashMeasureNext[v.id] then return end
+  local ok, why = M.dashFit(on, { rebuild = stale })
   if not ok then dashTried[v.id] = dashClock end
   S.dashError = not ok and why or nil
 end
