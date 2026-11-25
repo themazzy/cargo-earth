@@ -225,6 +225,8 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   ask({...base, limit: {sign: '50', over: false}}); now += 3500; ask({...base, clock: 'c'})
   ask({...base, limit: {sign: '50', over: true}, hidden: true})
   assert.equal(scope.chimes, start + 2, 'the floating phone hidden: the dash phone chimes instead')
+  ask({...base, limit: {sign: '50', over: true}, clock: 'f'})
+  assert.equal(scope.chimes, start + 2, 'shown again while still over: the time over was already marked')
   ask({...base, clock: 'd'}); now += 3500; ask({...base, clock: 'e'})
   ask({...base, limit: {sign: '50', over: true}, quiet: true})
   assert.equal(scope.chimes, start + 2, 'quiet: no chime')

@@ -1871,9 +1871,12 @@ angular.module('beamng.apps')
           return
         }
         underAt = 0
-        if (chimed || r.quiet || scope.menuOnly) return
-        if (scope.dash ? !r.hidden : r.hidden) return
+        if (chimed) return
+        // every phone marks the time over, also the one that stays quiet: hiding the floating phone while still over
+        // the limit must not make the dash phone chime again
         chimed = true
+        if (r.quiet || scope.menuOnly) return
+        if (scope.dash ? !r.hidden : r.hidden) return
         scope.chimes++
         chime()
       }
