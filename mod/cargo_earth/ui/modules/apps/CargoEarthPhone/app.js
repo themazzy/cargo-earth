@@ -395,21 +395,26 @@ var cargoEarthOsm = (function () {
     }
   }
 
-  // street names: the straight pieces of each named street, longest first (each frame writes a name once, in the
-  // middle of the part of a piece that is on the screen)
+  // One named line for the labels: its points (tile units) and its length. The name is written along the line,
+  // letter by letter, so it follows bends.
+  function lineOf(p, name, water, out) {
+    var len = 0
+    for (var k = 0; k + 3 < p.length; k += 2) len += Math.sqrt(Math.pow(p[k + 2] - p[k], 2) + Math.pow(p[k + 3] - p[k + 1], 2))
+    if (len < 60) return
+    var r = {name: name, pts: p, len: len}
+    if (water) r.water = true
+    out.push(r)
+  }
+
+  // street names: each named line, longest first (each frame writes a name once, along the part of a line that is
+  // on the screen)
   function labelsOf(data) {
     var l = data.transportation_name, out = []
     for (var i = 0; l && i < l.features.length; i++) {
       var f = l.features[i]
       var name = f.tags.name || f.tags['name:latin'] || f.tags.ref
       if (f.type !== 2 || !name || f.tags['class'] === 'path' || f.tags['class'] === 'track') continue
-      for (var j = 0; j < f.parts.length; j++) {
-        var p = f.parts[j]
-        for (var k = 0; k + 3 < p.length; k += 2) {
-          var dx = p[k + 2] - p[k], dy = p[k + 3] - p[k + 1], len = Math.sqrt(dx * dx + dy * dy)
-          if (len >= 60) out.push({name: name, x1: p[k], y1: p[k + 1], x2: p[k + 2], y2: p[k + 3], len: len})
-        }
-      }
+      for (var j = 0; j < f.parts.length; j++) lineOf(f.parts[j], name, false, out)
     }
     // rivers and canals by name, along their line (water names are drawn blue and slanted)
     var ww = data.waterway
@@ -417,13 +422,7 @@ var cargoEarthOsm = (function () {
       for (var wi = 0; wi < ww.features.length; wi++) {
         var wf = ww.features[wi], wname = wf.tags.name || wf.tags['name:latin']
         if (wf.type !== 2 || !wname) continue
-        for (var wj = 0; wj < wf.parts.length; wj++) {
-          var wp = wf.parts[wj]
-          for (var wk = 0; wk + 3 < wp.length; wk += 2) {
-            var wdx = wp[wk + 2] - wp[wk], wdy = wp[wk + 3] - wp[wk + 1], wlen = Math.sqrt(wdx * wdx + wdy * wdy)
-            if (wlen >= 60) out.push({name: wname, x1: wp[wk], y1: wp[wk + 1], x2: wp[wk + 2], y2: wp[wk + 3], len: wlen, water: true})
-          }
-        }
+        for (var wj = 0; wj < wf.parts.length; wj++) lineOf(wf.parts[wj], wname, true, out)
       }
     }
     out.sort(function (a, b) { return b.len - a.len })
@@ -621,6 +620,76 @@ var cargoEarthOsm = (function () {
     return {proj: proj, missing: missing, labels: function () { drawLabels(ctx, labels, E, N, cs, sn, scale, ox, oy, v, look, tm, pois, opts) }}
   }
 
+  // a screen segment a-b clipped to a box (Liang-Barsky): [t0, t1, x0, y0, x1, y1], or null when it misses it
+  function clipTo(a, b, x0, y0, x1, y1) {
+    var t0 = 0, t1 = 1, dx = b[0] - a[0], dy = b[1] - a[1]
+    var pq = [[-dx, a[0] - x0], [dx, x1 - a[0]], [-dy, a[1] - y0], [dy, y1 - a[1]]]
+    for (var c = 0; c < 4; c++) {
+      var pp = pq[c][0], qq = pq[c][1]
+      if (pp === 0) { if (qq < 0) return null; continue }
+      var r = qq / pp
+      if (pp < 0) { if (r > t1) return null; if (r > t0) t0 = r } else { if (r < t0) return null; if (r < t1) t1 = r }
+    }
+    return [t0, t1, a[0] + dx * t0, a[1] + dy * t0, a[0] + dx * t1, a[1] + dy * t1]
+  }
+  // a point on a screen polyline {xy, d} at distance t along it
+  function pathAt(pl, t) {
+    var d = pl.d, i = 1
+    while (i < d.length - 1 && d[i] < t) i++
+    var seg = d[i] - d[i - 1], f = seg > 0 ? Math.max(0, Math.min(1, (t - d[i - 1]) / seg)) : 0
+    return [pl.xy[2 * i - 2] + (pl.xy[2 * i] - pl.xy[2 * i - 2]) * f, pl.xy[2 * i - 1] + (pl.xy[2 * i + 1] - pl.xy[2 * i - 1]) * f]
+  }
+  // Where a name goes along a screen polyline: the letters (char, x, y, angle) and dots along it for the overlap
+  // test. It tries the middle first, then spots nearer the ends, and skips spots where the line bends too sharply
+  // between letters. Names always read left to right.
+  var LABEL_BEND = 0.5      // radians between two letters
+  // scripts whose letters must not be drawn one by one (right to left, or joined / shaped): Hebrew, Arabic, Syriac,
+  // Thaana, Indic, Thai, Lao, Tibetan, Myanmar, Khmer and the Arabic / Hebrew presentation forms
+  var COMPLEX_SCRIPT = /[\u0590-\u08FF\u0900-\u0DFF\u0E00-\u0FFF\u1000-\u109F\u1780-\u17FF\uFB1D-\uFDFF\uFE70-\uFEFF]/
+  function labelSpot(pl, name, tw, ctx) {
+    var L = pl.d[pl.d.length - 1], tries = [0.5, 0.35, 0.65, 0.2, 0.8]
+    for (var q = 0; q < tries.length; q++) {
+      var s0 = Math.max(2, Math.min(L - tw - 2, L * tries[q] - tw / 2))
+      var a = pathAt(pl, s0), b = pathAt(pl, s0 + tw)
+      if (COMPLEX_SCRIPT.test(name)) {     // right-to-left or joined letters: the whole name on a straight stretch
+        var ca = Math.atan2(b[1] - a[1], b[0] - a[0]), clen = Math.sqrt(Math.pow(b[0] - a[0], 2) + Math.pow(b[1] - a[1], 2)), off = false
+        for (var st = 6; st < tw && !off; st += 6) {
+          var sp = pathAt(pl, s0 + st)
+          off = clen > 0 && Math.abs((sp[0] - a[0]) * (b[1] - a[1]) - (sp[1] - a[1]) * (b[0] - a[0])) / clen > 3
+        }
+        if (off || clen < tw * 0.9) continue
+        if (ca > Math.PI / 2) ca -= Math.PI
+        if (ca < -Math.PI / 2) ca += Math.PI
+        var wd = []
+        for (var wt = 0; wt <= tw; wt += 12) wd.push(pathAt(pl, s0 + wt))
+        wd.push(b)
+        return {chars: [[name, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, ca]], dots: wd}
+      }
+      var flip = b[0] < a[0]               // the line runs right to left here: write from its far end
+      var chars = [], at = 0, last = null, ok = true
+      for (var c = 0; c < name.length; c++) {
+        var cw = ctx.measureText(name[c]).width
+        var t1 = flip ? s0 + tw - at : s0 + at, t2 = flip ? t1 - cw : t1 + cw
+        var p1 = pathAt(pl, t1), p2 = pathAt(pl, t2), pm = pathAt(pl, (t1 + t2) / 2)
+        var ang = Math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+        if (last !== null) {
+          var dif = Math.abs(ang - last)
+          if (dif > Math.PI) dif = 2 * Math.PI - dif
+          if (dif > LABEL_BEND) { ok = false; break }
+        }
+        if (cw > 0) last = ang
+        chars.push([name[c], pm[0], pm[1], ang])
+        at += cw
+      }
+      if (!ok) continue
+      var dots = []
+      for (var t = 0; t <= tw; t += 12) dots.push(pathAt(pl, s0 + t))
+      dots.push(pathAt(pl, s0 + tw))
+      return {chars: chars, dots: dots}
+    }
+    return null
+  }
+
   function drawLabels(ctx, list, E, N, cs, sn, scale, ox, oy, v, look, tm, pois, opts) {
     opts = opts || {}
     ctx.font = '600 11px sans-serif'
@@ -628,64 +697,80 @@ var cargoEarthOsm = (function () {
     ctx.textBaseline = 'middle'
     ctx.lineJoin = 'round'
     var placed = [[ox, oy, 16, 1]], count = 0, done = {}     // the car's arrow stays clear
+    var labelFont = scale < POI_MIN_SCALE ? '600 10px sans-serif' : '600 11px sans-serif'   // a bit smaller far out
     // the screen box labels go in (clear of the banner on top and the speed at the bottom)
     var bx0 = 12, bx1 = v.w - 12, by0 = 100, by1 = v.h - 64
+    // and never under the zoom buttons (bottom right) or the north and settings buttons (top left)
+    var keepOut = [[v.w - 54, v.h - 106, v.w, v.h], [0, 0, 46, 124]]
+    function under(x, y, r) {
+      for (var u = 0; u < keepOut.length; u++) {
+        var ko = keepOut[u]
+        if (x + r > ko[0] && x - r < ko[2] && y + r > ko[1] && y - r < ko[3]) return true
+      }
+      return false
+    }
     function scr(tx, ty, ux, uy, ext) {
       var e = E(tx + ux / ext), n = N(ty + uy / ext)
       return [ox + scale * (cs * e - sn * n), oy - scale * (sn * e + cs * n)]
     }
-    for (var i = 0; i < list.length && count < 14; i++) {
+    for (var i = 0; i < list.length && count < 18; i++) {
       var tx = list[i][0], ty = list[i][1], lb = list[i][2]
       if (done[lb.name] || (lb.water ? opts.water === false : opts.streets === false)) continue
       var ext = 4096
       for (var nm in list[i][3]) { ext = list[i][3][nm].extent; break }
-      var a = scr(tx, ty, lb.x1, lb.y1, ext), b = scr(tx, ty, lb.x2, lb.y2, ext)
-      // the part of the piece inside the box (Liang-Barsky)
-      var t0 = 0, t1 = 1, ddx = b[0] - a[0], ddy = b[1] - a[1], ok = true
-      var pq = [[-ddx, a[0] - bx0], [ddx, bx1 - a[0]], [-ddy, a[1] - by0], [ddy, by1 - a[1]]]
-      for (var c = 0; c < 4 && ok; c++) {
-        var pp = pq[c][0], qq = pq[c][1]
-        if (pp === 0) { if (qq < 0) ok = false; continue }
-        var rr = qq / pp
-        if (pp < 0) { if (rr > t1) ok = false; else if (rr > t0) t0 = rr } else { if (rr < t0) ok = false; else if (rr < t1) t1 = rr }
-      }
-      if (!ok) continue
-      var lenPx = (t1 - t0) * Math.sqrt(ddx * ddx + ddy * ddy)
-      ctx.font = lb.water ? 'italic 600 11px sans-serif' : '600 11px sans-serif'
+      ctx.font = (lb.water ? 'italic ' : '') + labelFont
       var tw = ctx.measureText(lb.name).width
-      if (lenPx < tw + 12) continue
-      var tm2 = (t0 + t1) / 2
-      var x = a[0] + ddx * tm2, y = a[1] + ddy * tm2
-      // the street's direction on screen, never upside down
-      var ang = Math.atan2(ddy, ddx)
-      if (ang > Math.PI / 2) ang -= Math.PI
-      if (ang < -Math.PI / 2) ang += Math.PI
-      var r = tw / 2 + 6, clash = false
-      for (var j = 0; j < placed.length; j++) {
+      // the longest stretch of the line inside the box, in screen pixels
+      // (each piece clipped to the box, so a long piece crossing the screen counts too)
+      var best = null, cur = null, pts = lb.pts, prev = scr(tx, ty, pts[0], pts[1], ext)
+      for (var k = 2; k + 1 < pts.length; k += 2) {
+        var sp = scr(tx, ty, pts[k], pts[k + 1], ext), cl = clipTo(prev, sp, bx0, by0, bx1, by1)
+        prev = sp
+        if (!cl) { cur = null; continue }
+        if (!cur || cl[0] > 0) { cur = {xy: [cl[2], cl[3]], d: [0]} }
+        var ln = cur.xy.length
+        cur.d.push(cur.d[cur.d.length - 1] + Math.sqrt(Math.pow(cl[4] - cur.xy[ln - 2], 2) + Math.pow(cl[5] - cur.xy[ln - 1], 2)))
+        cur.xy.push(cl[4], cl[5])
+        if (!best || cur.d[cur.d.length - 1] > best.d[best.d.length - 1]) best = cur
+        if (cl[1] < 1) cur = null
+      }
+      if (!best || best.d[best.d.length - 1] < tw + 4) continue
+      var spot = labelSpot(best, lb.name, tw, ctx)
+      if (!spot) continue
+      var clash = false
+      for (var g0 = 0; g0 < spot.dots.length && !clash; g0++) clash = under(spot.dots[g0][0], spot.dots[g0][1], 6)
+      for (var j = 0; j < placed.length && !clash; j++) {
         var p = placed[j]
-        if ((p[0] - x) * (p[0] - x) + (p[1] - y) * (p[1] - y) < (p[2] + r) * (p[2] + r)) { clash = true; break }
+        for (var g = 0; g < spot.dots.length; g++) {
+          var dg = spot.dots[g]
+          if ((p[0] - dg[0]) * (p[0] - dg[0]) + (p[1] - dg[1]) * (p[1] - dg[1]) < (p[2] + 9) * (p[2] + 9)) { clash = true; break }
+        }
       }
       if (clash) continue
       done[lb.name] = true
-      placed.push([x, y, r])
+      for (var g2 = 0; g2 < spot.dots.length; g2++) placed.push([spot.dots[g2][0], spot.dots[g2][1], 9])
       count++
-      ctx.save()
-      ctx.translate(x, y)
-      ctx.rotate(ang)
-      if (lb.water) ctx.font = 'italic 600 11px sans-serif'
       ctx.strokeStyle = look.halo
       ctx.lineWidth = 3
-      ctx.strokeText(lb.name, 0, 0)
       ctx.fillStyle = lb.water ? look.waterLabel : look.label
-      ctx.fillText(lb.name, 0, 0)
-      ctx.restore()
+      for (var pass = 0; pass < 2; pass++) {
+        for (var ch = 0; ch < spot.chars.length; ch++) {
+          var cc = spot.chars[ch]
+          ctx.save()
+          ctx.translate(cc[1], cc[2])
+          ctx.rotate(cc[3])
+          if (pass) ctx.fillText(cc[0], 0, 0); else ctx.strokeText(cc[0], 0, 0)
+          ctx.restore()
+        }
+      }
     }
-    // places: only close up (the 250 and 500 m views), a few at a time, never over a street name or each other
-    if (!pois || scale < POI_MIN_SCALE) return
+    // places: a few at a time (fewer on the 1000 m view), never over a street name or each other
+    if (!pois) return
+    var poiMax = scale < POI_MIN_SCALE ? POI_FAR_MAX : POI_MAX
     ctx.font = '500 10px sans-serif'
     ctx.textAlign = 'left'
     var shown = 0, seen = {}
-    for (var q = 0; q < pois.length && shown < POI_MAX; q++) {
+    for (var q = 0; q < pois.length && shown < poiMax; q++) {
       var pt = pois[q][2], pext = 4096
       if (opts[pt.kind] === false || (pt.kind === 'other' && !opts.other)) continue
       for (var pn in pois[q][3]) { pext = pois[q][3][pn].extent; break }
@@ -696,7 +781,7 @@ var cargoEarthOsm = (function () {
       var cx = left ? px0 - 7 - pw / 2 : px0 + 7 + pw / 2
       if (px0 < bx0 || px0 > bx1 || py0 < by0 || py0 > by1 || cx - pw / 2 < bx0 - 4) continue
       if (seen[pt.name] && Math.abs(seen[pt.name][0] - px0) + Math.abs(seen[pt.name][1] - py0) < 200) continue
-      var pr = pw / 2 + 10, hit = false
+      var pr = pw / 2 + 10, hit = under(px0, py0, 5) || under(cx, py0, pw / 2)
       for (var m = 0; m < placed.length; m++) {
         var o = placed[m]
         if ((o[0] - cx) * (o[0] - cx) + (o[1] - py0) * (o[1] - py0) < (o[2] + pr) * (o[2] + pr) * (o[3] ? 1 : 0.55)) { hit = true; break }
@@ -721,8 +806,8 @@ var cargoEarthOsm = (function () {
     }
     ctx.textAlign = 'center'
   }
-  var POI_MIN_SCALE = 0.65    // pixels per metre: the 250 and 500 m views on the phone, not the 1000 m one
-  var POI_MAX = 12
+  var POI_MIN_SCALE = 0.65    // pixels per metre: below it (the 1000 m view) only POI_FAR_MAX places
+  var POI_MAX = 12, POI_FAR_MAX = 5
   var POI_COLOR = {food: '#e8833a', shop: '#9b6ad6', health: '#d9534f', fuel: '#2a9d8f', other: '#8a8580'}
 
   function fromBase64(b64) {
@@ -731,7 +816,7 @@ var cargoEarthOsm = (function () {
     return out
   }
   function utf8Bytes(text) { return new TextEncoder().encode(text) }
-  return {decode: decode, TileMap: TileMap, tileXY: tileXY, tileMetres: tileMetres, labelsOf: labelsOf, poisOf: poisOf,
+  return {decode: decode, TileMap: TileMap, tileXY: tileXY, tileMetres: tileMetres, labelsOf: labelsOf, poisOf: poisOf, labelSpot: labelSpot, clipTo: clipTo,
     fromBase64: fromBase64, utf8Bytes: utf8Bytes}
 })()
 
