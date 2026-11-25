@@ -399,8 +399,7 @@ var cargoEarthOsm = (function () {
   // middle of the part of a piece that is on the screen)
   function labelsOf(data) {
     var l = data.transportation_name, out = []
-    if (!l) return out
-    for (var i = 0; i < l.features.length; i++) {
+    for (var i = 0; l && i < l.features.length; i++) {
       var f = l.features[i]
       var name = f.tags.name || f.tags['name:latin'] || f.tags.ref
       if (f.type !== 2 || !name || f.tags['class'] === 'path' || f.tags['class'] === 'track') continue
@@ -442,12 +441,11 @@ var cargoEarthOsm = (function () {
       'jewelry', 'mobile_phone', 'books', 'florist', 'hardware', 'laundry', 'optician', 'shoes', 'toys', 'gift', 'music',
       'electronics', 'doityourself', 'garden_centre', 'pet', 'stationery', 'confectionery', 'deli', 'wine'],
     health: ['hospital', 'pharmacy', 'doctors', 'dentist', 'veterinary'],
-    fuel: ['fuel', 'charging_station'],
-    stay: ['lodging', 'campsite']
-  }
+    fuel: ['fuel', 'charging_station']
+  }                                    // hotels, campsites and the rest show under Other
   var POI_OF = {}
   for (var pk in POI_KIND) for (var pi = 0; pi < POI_KIND[pk].length; pi++) POI_OF[POI_KIND[pk][pi]] = pk
-  var POI_ORDER = {food: 0, shop: 1, fuel: 2, health: 3, stay: 4, other: 5}
+  var POI_ORDER = {food: 0, shop: 1, fuel: 2, health: 3, other: 4}
   function poisOf(data) {
     var l = data.poi, out = []
     if (!l) return out
@@ -725,7 +723,7 @@ var cargoEarthOsm = (function () {
   }
   var POI_MIN_SCALE = 0.65    // pixels per metre: the 250 and 500 m views on the phone, not the 1000 m one
   var POI_MAX = 12
-  var POI_COLOR = {food: '#e8833a', shop: '#9b6ad6', health: '#d9534f', fuel: '#2a9d8f', stay: '#d46a9f', other: '#8a8580'}
+  var POI_COLOR = {food: '#e8833a', shop: '#9b6ad6', health: '#d9534f', fuel: '#2a9d8f', other: '#8a8580'}
 
   function fromBase64(b64) {
     var bin = atob(b64), out = new Uint8Array(bin.length)

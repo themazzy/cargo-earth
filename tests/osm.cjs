@@ -18,9 +18,9 @@ assert(tile.poi && tile.poi.features.length === 1, 'places too')
   const P = (name, cls, rank, x) => ({type: 1, tags: {name, 'class': cls, rank}, parts: [[x, 10]]})
   const pois = osm.poisOf({poi: {extent: 4096, features: [P('Parking A', 'parking', 1, 1), P('Bistro', 'restaurant', 2, 2),
     P('Lékárna', 'pharmacy', 1, 3), {type: 1, tags: {'class': 'shop', rank: 1}, parts: [[4, 4]]}, P('Shell', 'fuel', 3, 5),
-    P('A very very long business name indeed', 'shop', 4, 6)]}})
+    P('A very very long business name indeed', 'shop', 4, 6), P('Kemp', 'campsite', 9, 7)]}})
   assert.equal(JSON.stringify(pois.map(p => [p.name, p.kind])),
-    JSON.stringify([['Lékárna', 'health'], ['Bistro', 'food'], ['Shell', 'fuel'], ['A very very long business…', 'shop']]))
+    JSON.stringify([['Lékárna', 'health'], ['Bistro', 'food'], ['Shell', 'fuel'], ['A very very long business…', 'shop'], ['Kemp', 'other']]), 'lodging and the rest under Other')
 }
 const road = tile.transportation.features.find(f => f.tags.class === 'primary')
 assert.equal(road.type, 2)
@@ -36,6 +36,11 @@ assert.equal(labels.length, 2, 'each straight piece')
 assert.equal(labels[0].name, 'Vodičkova', 'UTF-8 names')
 assert.equal(labels[0].len, 1000, 'the longest straight piece first')
 assert.equal(JSON.stringify([labels[0].x1, labels[0].y1, labels[0].x2, labels[0].y2]), '[100,100,1100,100]')
+{
+  // a tile with a river but no street names still names the river
+  const river = osm.labelsOf({waterway: {extent: 4096, features: [{type: 2, tags: {name: 'Vltava'}, parts: [[0, 0, 500, 0]]}]}})
+  assert.equal(JSON.stringify(river.map(r => [r.name, r.water])), '[["Vltava",true]]')
+}
 
 // tile numbers and sizes
 const t = osm.tileXY(50.087, 14.421)
