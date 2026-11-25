@@ -48,6 +48,8 @@ like the phone's status row), e.g. `6.4 km · 12 min · 20:32`.
 **Next stop's name**: the next stop's pin gets a tag with its name (a drop-off's street and number, a pickup's name),
 right of the pin, or left of it near the zoom buttons. Not shown while the pin is held at the map's edge.
 
+**Job line**: on the Map tab the big work card is gone; the job is one slim line under the turn banner (Pick up / Deliver + the place, New offer, Contract), tap it for the Work tab. The map reaches the status row, and the header limit sign hides while the map shows its own.
+
 **Route to** (the pin button under the corner buttons, only while no job or company shift steers the GPS): Home,
 Headquarters (greyed out until there is one), Nearest fuel (the same station finder as the Garage's fuel card) and
 Clear route. `cargoEarth_core.mapGo(where)` returns `{ ok, msg }`; `phoneMap` sends `go = { home, hq }` when the map

@@ -1129,7 +1129,14 @@ angular.module('beamng.apps')
     '.cep-map-btn{width:40px;height:40px;padding:0;border:0;border-radius:10px;font:inherit;font-size:22px;font-weight:800;line-height:1;cursor:pointer;' +
       'background:var(--card);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-btn:disabled{opacity:.45;cursor:default}' +
     '.cep-map-note{position:absolute;left:12px;right:60px;bottom:12px;padding:7px 10px;border-radius:10px;background:var(--card);font-size:12px;color:var(--muted)}' +
-    '.cep-map-turn{position:absolute;left:44px;right:8px;top:8px;z-index:1;padding:7px 10px;border-radius:10px;background:var(--card);font-size:12px;font-weight:700;' +
+    '.cep-map-head{position:absolute;left:44px;right:8px;top:8px;z-index:1;display:flex;flex-direction:column;align-items:stretch;gap:0}' +
+    '.cep-map-job{display:flex;align-items:center;gap:6px;width:100%;min-height:24px;padding:3px 10px;border:0;border-radius:10px;font:inherit;font-size:11px;' +
+      'text-align:left;cursor:pointer;background:var(--card);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3)}' +
+      '.cep-map-job span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cep-map-job b{font-weight:800}.cep-map-job>i{font-style:normal;font-size:15px;line-height:1;opacity:.8}' +
+      '.cep-map-job.offer{background:var(--tomato);color:#fff}' +
+      '.cep-map-dir+.cep-map-job{border-radius:0 0 10px 10px;background:#185a3c;color:#fff;box-shadow:0 2px 4px rgba(0,0,0,.3)}.cep-map-head .cep-map-dir.joined{border-radius:10px 10px 0 0}' +
+      '.cep-map-head .cep-map-lanes{margin-top:4px;align-self:flex-start}' +
+    '.cep-map-turn{padding:7px 10px;border-radius:10px;background:var(--card);font-size:12px;font-weight:700;' +
       'color:var(--tomato);box-shadow:0 1px 4px rgba(0,0,0,.25)}' +
     '.dark .cep-mapbox{background:#23201e}' +
     // the OSM map's credit line, and the close button of the map's note
@@ -1161,11 +1168,11 @@ angular.module('beamng.apps')
       'color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.3);z-index:2}.cep-map-stats b{font-weight:800}' +
     '.cep-map-stats button{margin-top:6px;padding:5px 9px;border:0;border-radius:8px;font:inherit;font-weight:700;cursor:pointer;background:var(--line);color:var(--ink)}' +
     // directions: the next turn on top, the speed and the way left at the bottom
-    '.cep-map-dir{position:absolute;left:44px;right:8px;top:8px;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;' +
+    '.cep-map-dir{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;' +
       'background:#1f6f4a;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}' +
     '.cep-map-dir svg{flex:none;width:30px;height:30px}.cep-map-dir b{display:block;font-size:17px;font-weight:800;line-height:1.1}' +
     '.cep-map-dir span{display:block;font-size:11px;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cep-map-dir div{min-width:0}' +
-    '.cep-map-lanes{position:absolute;left:44px;top:58px;display:flex;gap:2px;padding:4px 6px;border-radius:9px;background:#185a3c;box-shadow:0 1px 4px rgba(0,0,0,.3)}' +
+    '.cep-map-lanes{display:flex;gap:2px;padding:4px 6px;border-radius:9px;background:#185a3c;box-shadow:0 1px 4px rgba(0,0,0,.3)}' +
       '.cep-map-lanes svg{width:22px;height:22px;opacity:.35}.cep-map-lanes svg.ok{opacity:1}' +
     '.cep-map-speed{position:absolute;left:8px;bottom:8px;width:46px;height:46px;padding:0;border:0;font:inherit;cursor:pointer;border-radius:50%;background:var(--card);color:var(--ink);text-align:center;' +
       'box-shadow:0 1px 4px rgba(0,0,0,.3)}.cep-map-speed.over{background:#fde3de;box-shadow:0 0 0 3px var(--tomato)}.dark .cep-map-speed.over{background:#4a1f18}' +
@@ -2091,7 +2098,7 @@ angular.module('beamng.apps')
         '<button class="cep-unstuck" ng-if="s.unstuck" ng-class="{wait: !s.unstuck.can}" ' +
           'title="{{ s.unstuck.why || \'Stuck or damaged by the road? Fix the car here for free\' }}" ng-click="act(\'unstuck\')">' +
           'Unstuck<small ng-if="s.unstuck.left > 0"> {{ unstuckMin() }}m</small></button></span>' +
-        '<span class="cep-bar-r"><span class="cep-limit" ng-if="s.limit" ng-class="{over: s.limit.over}" title="Speed limit here">{{ s.limit.sign }}' +
+        '<span class="cep-bar-r"><span class="cep-limit" ng-if="s.limit && !(tab === \'map\' && !panel && mapPrefs().speedo)" ng-class="{over: s.limit.over}" title="Speed limit here">{{ s.limit.sign }}' +
           '<small ng-if="s.limit.unit === \'mph\'">mph</small></span>' +
         '<strong class="cep-bal">{{ fmt.money(s.money) }}</strong>' +
         '<i class="cep-on" ng-if="s.online" title="Online"></i>' +
@@ -2531,12 +2538,17 @@ angular.module('beamng.apps')
       '<div class="cep-body cep-mapbody" ng-if="tab === \'map\'"><div class="cep-mapbox" ng-class="{\'cep-map-hasleft\': lm.left}">' +
         '<canvas class="cep-livemap" role="img" aria-label="Map of the roads around your car, your route and your stops"></canvas>' +
         '<div class="cep-map-credit" ng-if="lm.osm">© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors</div>' +
-        '<div class="cep-map-dir" ng-if="lm.turn && !lm.behind" role="status">' +
+        '<div class="cep-map-head">' +
+        '<div class="cep-map-dir" ng-if="lm.turn && !lm.behind" ng-class="{joined: mapJob()}" role="status">' +
           '<svg viewBox="-15 -15 30 30" aria-hidden="true"><path ng-attr-d="{{ lm.turn.icon }}" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
           '<div><b>{{ lm.turn.dist }}</b><span>{{ lm.turn.text }}</span></div></div>' +
+        '<button class="cep-map-job" ng-if="mapJob()" ng-class="{offer: mapJob().offer}" ng-click="openLiveWork()" title="Open the job on the Work tab">' +
+          '<span><b>{{ mapJob().what }}</b> {{ mapJob().where }}</span><i aria-hidden="true">&rsaquo;</i></button>' +
+        '<div class="cep-map-turn" ng-if="lm.behind && !(lm.note && lm.note !== lm.noteHidden)">The route is behind you. Turn around, or keep going and the GPS finds another way.</div>' +
         '<div class="cep-map-lanes" ng-if="lm.turn.lanes && !lm.behind && mapPrefs().lanes" aria-label="Lanes: the bright ones lead your way">' +
           '<svg ng-repeat="lane in lm.turn.lanes track by $index" ng-class="{ok: lane.ok}" viewBox="-15 -15 30 30" aria-hidden="true">' +
           '<path ng-attr-d="{{ lane.icon }}" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
+        '</div>' +
         '<button class="cep-map-n" title="North. Tap for the map\'s timings" aria-label="North. Tap for the map\'s timings" ng-click="mapStats()"><span class="cep-map-nd">N</span></button>' +
         '<button class="cep-map-gear" title="Map settings" aria-label="Map settings" ng-class="{on: lm.set}" ng-click="mapSet()">⚙</button>' +
         '<button class="cep-map-gear cep-map-whole" ng-if="lm.hasRoute" ng-class="{on: lm.overview}" ng-click="mapWhole()" ' +
@@ -2572,7 +2584,6 @@ angular.module('beamng.apps')
         '<div class="cep-map-left" ng-if="lm.left" title="Left to the next stop, and the time you get there">{{ lm.left.dist }} <small ng-if="lm.left.time">· {{ lm.left.time }}</small><small ng-if="lm.left.at"> · {{ lm.left.at }}</small></div>' +
         '<div class="cep-map-note" ng-if="lm.note && lm.note !== lm.noteHidden" role="status">' +
           '<button title="Close" aria-label="Close" ng-click="mapNoteClose()">✕</button>{{ lm.note }}</div>' +
-        '<div class="cep-map-turn" ng-if="lm.behind && !(lm.note && lm.note !== lm.noteHidden)">The route is behind you. Turn around, or keep going and the GPS finds another way.</div>' +
         '<div class="cep-map-zoom"><button class="cep-map-btn" title="Zoom in" ng-disabled="lm.zoom === 0" ng-click="mapZoom(-1)">+</button>' +
           '<button class="cep-map-btn" title="Zoom out" ng-disabled="lm.zoom === 2" ng-click="mapZoom(1)">−</button></div>' +
       '</div></div>' +
@@ -3190,8 +3201,23 @@ angular.module('beamng.apps')
       scope.showLiveShortcut = function () {
         var s = scope.s
         if (!s || s.screen === 'resume') return false
+        // the Map tab has its own slim line under the turn banner (mapJob)
+        if (scope.tab === 'map' && !scope.panel) return false
         if (s.active || s.screen === 'incoming') return scope.tab !== 'orders' || !!scope.panel
         return !!s.company && scope.tab !== 'orders' && scope.panel !== 'companies'
+      }
+      // the job on the Map tab: one slim line under the turn banner (tap: the Work tab)
+      var mapJobKey = '', mapJobLook = null
+      scope.mapJob = function () {
+        var s = scope.s
+        if (!s || s.screen === 'resume') return null
+        var look = null
+        if (s.screen === 'incoming') look = {what: 'New offer', where: 'Tap to see it', offer: true}
+        else if (s.active) look = {what: s.active.phase === 'toPickup' ? 'Pick up' : 'Deliver', where: scope.here().name || ''}
+        else if (s.company) look = {what: 'Contract', where: s.company}
+        var key = look ? look.what + '|' + look.where : ''
+        if (key !== mapJobKey) { mapJobKey = key; mapJobLook = look }
+        return mapJobLook
       }
       scope.liveTitle = function () {
         var s = scope.s || {}

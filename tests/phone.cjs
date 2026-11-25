@@ -128,6 +128,19 @@ assert.equal(scope.liveLeft(), scope.liveLeft(), 'the same object while it does 
 scope.s.routeLeft = {m: 800, imperial: true}
 assert.equal(scope.liveLeft().dist, '0.5 mi')
 assert(directive.template.includes('cep-live-left'))
+// the Map tab: no big work card; one slim line under the turn banner instead (tap: the Work tab)
+const tabBefore = scope.tab
+scope.tab = 'map'
+scope.s = {screen: 'active', active: {phase: 'toPickup', from: {name: 'Pizzeria Roma'}}}
+assert(!scope.showLiveShortcut(), 'no work card over the map')
+assert.equal(JSON.stringify(scope.mapJob()), JSON.stringify({what: 'Pick up', where: 'Pizzeria Roma'}))
+assert.equal(scope.mapJob(), scope.mapJob(), 'the same object while it does not change')
+scope.s = {screen: 'incoming'}
+assert(scope.mapJob().offer)
+scope.s = {screen: 'offline'}
+assert.equal(scope.mapJob(), null)
+assert(directive.template.includes('<div class="cep-map-head">'))
+scope.tab = tabBefore
 scope.s = {screen: 'incoming'}
 assert.equal(scope.panel, null, 'Incoming work closes the menu window')
 // the Menu button opens the last section again and closes the window
