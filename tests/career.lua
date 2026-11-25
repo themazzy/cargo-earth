@@ -4358,7 +4358,7 @@ test('the dash phone moves behind the wheel, and goes back when the car has no d
     return { nodes = nodes, cameras = { onboard = { { name = 'driver', x = -0.316, y = 0.1, z = 1.25 } } } }
   end
   local function copy(t) local o = {} for k, x in pairs(t) do o[k] = type(x) == 'table' and copy(x) or x end return o end
-  local respawns = {}
+  local respawns, local_respawn = {}, nil
   local v = { id = 9, model = 'pigeon', config = { partsTree = { children = {} } }, data = { vdata = car({ -0.6, -0.4, -0.2, 0, 0.2 }) } }
   core.G.vehicle = function() return v end
   core.G.respawnPlayer = function(edit)
@@ -4374,6 +4374,11 @@ test('the dash phone moves behind the wheel, and goes back when the car has no d
   assert(math.abs(dash.spot('pigeon').centre.x + 0.316) < 1e-6, 'in line with the driver')
   core.settingsDo('dash', 'middle')
   assert(dash.where() == 'middle' and #respawns == 3)
+  -- a car that may not be reloaded (damaged): the setting stays where the phone still is
+  core.G.respawnPlayer, local_respawn = function() error('no respawn') end, core.G.respawnPlayer
+  st = core.settingsDo('dash', 'wheel').dash
+  assert(st.error and dash.where() == 'middle' and not core.dashWhereBack, 'kept in the middle: ' .. tostring(dash.where()))
+  core.G.respawnPlayer = local_respawn
   -- a car whose dash is only in the middle: it is reloaded once to be measured, then the phone goes back
   v = { id = 11, model = 'covet', config = { partsTree = { children = {} } }, data = { vdata = car({ 0, 0.2 }) } }
   core.settingsDo('dash', 'on')

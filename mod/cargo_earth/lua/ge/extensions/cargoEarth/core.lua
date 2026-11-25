@@ -5996,7 +5996,11 @@ end
 local dashClock, dashCheckAt, dashTried, dashReloaded = 0, nil, {}, {}
 local dashMeasureNext = {} -- car id -> true: reloaded to be measured, so measure it once it is back
 local dashPending -- a change from Settings the car was too busy for: { rebuild } (done once the car is free)
--- M.dashWhereBack: the phone was just moved (middle / wheel): where it stood before, until this car is measured for it
+-- M.dashWhereBack: the phone was just moved (middle / wheel): where it stood before, until the car is back with it there
+-- the car could not be respawned for a move: the setting goes back to where the phone still is
+function M.dashGoBack()
+  if M.dashWhereBack then dash.setWhere(M.dashWhereBack) M.dashWhereBack = nil end
+end
 M.DASH_CHECK_S, M.DASH_RETRY_S = 1.5, 20
 
 local function dashMeasure(v)
@@ -6051,7 +6055,6 @@ function M.dashFit(on, opts)
       reload = true
     else
       measured = true
-      M.dashWhereBack = nil
       dashReloaded[v.id], dashMeasureNext[v.id] = nil, nil
     end
   end
@@ -6063,6 +6066,7 @@ function M.dashFit(on, opts)
   if owned then
     local damage = (G.damage and G.damage(v.id)) or 0
     if (g.repair or 0) > 0 or damage * garage.REPAIR_PER_DAMAGE >= 2.5 then
+      M.dashGoBack()
       return false, 'Repair the car first: reloading it for the phone would mend it.'
     end
   end
@@ -6071,10 +6075,13 @@ function M.dashFit(on, opts)
   local ok, err = pcall(G.respawnPlayer, function(config) if not reload then dash.setTreePhone(config.partsTree, on) end end)
   if not ok then
     log('W', 'cargoEarth', 'dash phone: ' .. tostring(err))
+    M.dashGoBack()
     return false, 'BeamNG could not respawn this car.'
   end
   -- the respawn brings the car back new: its mileage and paint wear go back on, as after buying parts
   if owned and g.car then conditionAt = S.clock + 3 end
+  -- a move of the phone is done once the car is back with it (not while it is only reloaded to be measured)
+  if not reload then M.dashWhereBack = nil end
   return true
 end
 
@@ -6118,8 +6125,8 @@ dashDoInner = function(a)
     if not dash.setWhere(a) then return true end
     M.dashWhereBack = before
     local ok, why, busy = M.dashFit(true, { measure = true, rebuild = true })
-    -- the car could not take it now (damaged, or it is being changed): the phone stays where it was
-    if not ok and not busy and M.dashWhereBack then dash.setWhere(before) M.dashWhereBack = nil end
+    -- the car could not take it now (damaged, or no driver camera): the phone stays where it was
+    if not ok and not busy then M.dashGoBack() end
     return ok, why, busy
   end
   local axis, sign
