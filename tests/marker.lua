@@ -77,7 +77,7 @@ local uphill = { lat = 50, lon = 14, x = 28, y = 0, z = ground(28, 0) + 0.8, anc
 assert(not marker.offLevel(uphill, stop), 'uphill inside a steep ring counts')
 map = { findClosestRoad = function() return 'a', 'b' end,
   getMap = function() return { nodes = { a = { pos = vec3(-50, 0, ground(-50, 0)) }, b = { pos = vec3(50, 0, ground(50, 0)) } } } end }
-local yard = { g = { 50, 14, x = 0, y = 0 }, n = 'Yard' }
+local yard = { g = { 50, 14, x = 0, y = 0 }, n = 'Yard', t = 'warehouse' }
 marker.reset()
 marker.draw(steep, yard, 'pickup', false, 35, false, 0)
 local truck = { lat = 50, lon = 14, x = 30, y = 0, z = ground(30, 0) + 0.8, anchorLat = 50, anchorLon = 14 }
@@ -85,7 +85,46 @@ assert(not marker.offLevel(truck, yard), 'uphill in a sloping depot yard counts:
 truck.z = truck.z + 6
 assert(marker.offLevel(truck, yard), 'a bridge over the yard does not count')
 
+
+-- A customer's address point inside a house 20 m from the street (y = 0): the ring stands at the street's edge on
+-- the house's side, and the stop counts there. A freight yard (it has a type) stays where it is.
+ground = function() return 100 end
+surfaces = function(x, y)
+  if math.abs(x) < 8 and y > 14 and y < 26 then return { 100, 109 } end   -- the house with its roof
+  return { 100 }
+end
+local house = { g = { 50, 14, x = 0, y = 20 }, d = { 50, 14, x = 0, y = 20 }, n = 'Customer' }
+local centre
+debugDrawer.drawLineInstance = function(_, a) outer = outer or {}; outer[#outer + 1] = a end
+local car = { lat = 50, lon = 14, x = 40, y = -2, z = 100.8, anchorLat = 50, anchorLon = 14 }
+for _, phase in ipairs({ 'delivery', 'pickup' }) do
+  marker.reset()
+  outer = nil
+  marker.draw(car, house, phase, phase == 'pickup', phase == 'pickup' and 5 or 30, false, 0)
+  local sx, sy = 0, 0
+  if phase == 'delivery' then
+    for _, pt in ipairs(outer) do sx, sy = sx + pt.x, sy + pt.y end
+    centre = { x = sx / #outer, y = sy / #outer }
+    assert(math.abs(centre.x) < 0.1 and math.abs(centre.y - 3.5) < 0.1,
+      string.format('the delivery ring stands at the roadside, not in the house: %.1f, %.1f', centre.x, centre.y))
+  end
+  local at = { lat = 50, lon = 14, x = 0, y = 3, z = 100.8, anchorLat = 50, anchorLon = 14 }
+  local d = marker.roadsideDistance(at, house)
+  assert(d and d < 1, phase .. ': the roadside point is known for the distance: ' .. tostring(d))
+end
+local taxi = { g = { 50, 14, x = 0, y = 20 }, n = 'Passenger' }
+marker.reset()
+marker.draw(car, taxi, 'pickup', false, 25, false, 0)
+assert(marker.roadsideDistance({ x = 0, y = 3.5, anchorLat = 50, anchorLon = 14 }, taxi) < 0.1,
+  'a taxi passenger waits at the roadside')
+local depotStop = { g = { 50, 14, x = 0, y = 20 }, n = 'Warehouse', t = 'warehouse' }
+marker.reset()
+marker.draw(car, depotStop, 'pickup', false, 35, false, 0)
+assert(marker.roadsideDistance(car, depotStop) == nil, 'a freight yard is not moved to the road')
+assert(marker.roadside(house) and not marker.roadside(depotStop), 'only yards keep their own point')
+debugDrawer.drawLineInstance = real
+
 castRayStatic, vec3, ColorF, ColorI, String = saved.castRayStatic, saved.vec3, saved.ColorF, saved.ColorI, saved.String
 debugDrawer, map = saved.debugDrawer, saved.map
 package.loaded['cargoEarth/earth'], package.loaded['cargoEarth/marker'] = saved.earth, saved.marker
-print('Stop rings: ground under roofs, trees and pylons; zone column 4.5 m up, 3.5 m down')
+print('Stop rings: ground under roofs, trees and pylons; zone column 4.5 m up, 3.5 m down; houses moved to the roadside')
