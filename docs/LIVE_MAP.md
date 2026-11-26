@@ -50,6 +50,8 @@ right of the pin, or left of it near the zoom buttons. Not shown while the pin i
 
 **Job line**: on the Map tab the big work card is gone; the job is one slim line under the turn banner (Pick up / Deliver + the place, New offer, Contract), tap it for the Work tab. The map reaches the status row, and the header limit sign hides while the map shows its own.
 
+**Names stay put**: a street or river name sits on a fixed spot of its line (the line cut into equal stretches of at least 180 px, the name in the middle of one that fits on screen), and keeps that spot while it still fits, so names move with the map instead of sliding along with the car.
+
 **Route to** (the pin button under the corner buttons, only while no job or company shift steers the GPS): Home,
 Headquarters (greyed out until there is one), Nearest fuel (the same station finder as the Garage's fuel card) and
 Clear route. `cargoEarth_core.mapGo(where)` returns `{ ok, msg }`; `phoneMap` sends `go = { home, hq }` when the map
