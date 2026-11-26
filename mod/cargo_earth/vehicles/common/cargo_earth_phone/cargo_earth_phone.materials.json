@@ -5,20 +5,28 @@
   "class": "Material",
   "Stages": [
    {
-    "baseColorMap": "@cargo_earth_phone",
+    "baseColorFactor": [
+     0.02,
+     0.02,
+     0.02,
+     1
+    ],
+    "emissive": true,
     "emissiveMap": "@cargo_earth_phone",
     "emissiveFactor": [
      1,
      1,
      1
     ],
-    "roughnessFactor": 0.35,
+    "emissiveIntensityNits": 700,
+    "roughnessFactor": 0.15,
     "metallicFactor": 0
    },
    {},
    {},
    {}
   ],
+  "dynamicCubemap": true,
   "materialTag0": "beamng",
   "materialTag1": "vehicle",
   "version": 1.5

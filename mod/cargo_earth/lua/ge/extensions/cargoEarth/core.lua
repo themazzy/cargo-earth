@@ -5,7 +5,7 @@
 -- Everything is clicked on the phone (the UI app): orders, the garage and the settings. The debug window opens from
 -- the phone's settings (or the console: extensions.cargoEarth_core.toggleWindow()). No key bindings.
 local M = {}
-M.VERSION = '0.12.0'      -- the mod's version (package.json has the same; the support report shows it)
+M.VERSION = '0.12.1'      -- the mod's version (package.json has the same; the support report shows it)
 M.CAMERAS_PAUSED = true  -- temporarily suspended: no downloads, alerts, fines or lost stars
 M.dependencies = { 'ui_imgui' }
 
@@ -1905,7 +1905,11 @@ function M.busDoors(fromVehicle)
   if not (j and j.bus) or S.busDwell or earth.status() ~= 'ok' then return end
   local vehicle = M.G.playerId()
   local stop = M.busStopInfo()
-  if not vehicle or not stop or not stop.canDoors then say('Park your bus at the current stop first.') return end
+  if not vehicle or not stop or not stop.canDoors then
+    -- the game's own door key: boarding starts by itself once the bus stands at the stop (M.busDoorWatch)
+    if not (fromVehicle and stop and stop.inZone) then say('Park your bus at the current stop first.') end
+    return
+  end
   local bus = require('cargoEarth/bus')
   local late = bus.arrived(j, M.elapsed(j))
   local off, on, dwell = bus.passengers(j, M.random)
@@ -1958,23 +1962,46 @@ function M.taxiState(fresh)
   return out
 end
 
+M.BUS_WATCH_RENEW_S = 3   -- the bus's own Lua restarts when the car is respawned (dash phone, repairs): watch it again
+M.BUS_DOOR_RETRY_S = 0.5  -- doors opened with the game's key before the bus stood at the stop: board once it does
+
 function M.busDoorWatch()
   local j, watch = S.job, S.busWatch
   local id = j and j.bus and M.G.playerId and M.G.playerId()
   if watch and (not id or watch.id ~= id or watch.job ~= j) then
     if M.G.watchBusDoors then M.G.watchBusDoors(watch.id) end
-    S.busWatch, watch = nil, nil
+    S.busWatch, watch, S.busDoorsOpen = nil, nil, nil
   end
   if id and not watch and M.G.watchBusDoors and garage.inOwnCar(M.G, S.career.garage) then
     S.busDoorToken = (S.busDoorToken or 0) + 1
-    if M.G.watchBusDoors(id, S.busDoorToken) then S.busWatch = {id = id, token = S.busDoorToken, job = j} end
+    if M.G.watchBusDoors(id, S.busDoorToken) then
+      S.busWatch = {id = id, token = S.busDoorToken, job = j, renewAt = (S.clock or 0) + M.BUS_WATCH_RENEW_S}
+    end
+  elseif watch and (S.clock or 0) >= (watch.renewAt or 0) then
+    watch.renewAt = (S.clock or 0) + M.BUS_WATCH_RENEW_S
+    M.G.watchBusDoors(watch.id, watch.token)   -- same token: a running watcher keeps going, a fresh one starts
+  end
+  -- The doors are open (the game's O key or the bus's own lever) but boarding did not start yet: the bus was still
+  -- rolling or short of the stop when they opened. Start it as soon as the bus stands at the stop.
+  if watch and S.busDoorsOpen and not S.busDwell and (S.clock or 0) >= (S.busDoorRetryAt or 0) then
+    S.busDoorRetryAt = (S.clock or 0) + M.BUS_DOOR_RETRY_S
+    local stop = earth.status() == 'ok' and M.busStopInfo()
+    if stop and stop.canDoors then M.busDoors(true) end
   end
 end
 
-function M.onCargoEarthBusDoors(id, token, open)
+-- A respawned or reset bus: forget what its doors did and watch it again with a new token, so boarding waits for
+-- the fresh look at the doors (and late reports from before are ignored).
+function M.busDoorsForget(id)
+  if S.busWatch and S.busWatch.id == id then S.busWatch, S.busDoorsOpen = nil, nil end
+end
+
+function M.onCargoEarthBusDoors(id, token, open, initial)
   local w = S.busWatch
-  if not w or w.id ~= id or w.token ~= token or w.job ~= S.job or M.G.playerId() ~= id
-    or not garage.inOwnCar(M.G, S.career.garage) or earth.status() ~= 'ok' or type(open) ~= 'boolean' then return end
+  if not w or w.id ~= id or w.token ~= token or w.job ~= S.job or type(open) ~= 'boolean' then return end
+  S.busDoorsOpen = open   -- kept even while the world loads: the watcher reports each change only once
+  if M.G.playerId() ~= id or not garage.inOwnCar(M.G, S.career.garage) or earth.status() ~= 'ok' then return end
+  if initial == true and not open then return end   -- first look at closed doors: a phone press may be on its way
   if open then M.busDoors(true)
   elseif S.busDwell then
     S.busDwell = nil
@@ -2019,7 +2046,7 @@ function M.interruptBoarding()
   S.busDwell = nil
   if not d or d.job ~= j then return end
   if d.vehicle == M.G.playerId() then
-    if M.G.busDoors then M.G.busDoors(false) end
+    if M.G.busDoors then M.G.busDoors(false) S.busDoorsOpen = false end
     M.busSeats(j, j.bus.onBoard)
   end
   say('Boarding interrupted. Park at the stop and open the doors again.', 5)
@@ -2040,7 +2067,7 @@ function M.busTick(p, dt)
   d.remaining = math.max(0, d.remaining - dt)
   if d.remaining > 0 then return end
   S.busDwell = nil
-  if M.G.busDoors then M.G.busDoors(false) end
+  if M.G.busDoors then M.G.busDoors(false) S.busDoorsOpen = false end
   local bus = require('cargoEarth/bus')
   local last = bus.last(j)
   bus.served(j, d.off, d.on, M.elapsed(j))
@@ -6448,6 +6475,7 @@ function M.onJbeamLoadingPhase2(_, objID, vehicle) dash.captureLoading(objID, ve
 function M.onVehicleSwitched() M.dashCheckSoon() end
 
 function M.onVehicleSpawned(id)
+  M.busDoorsForget(id)
   if S.busDamageWatch and S.busDamageWatch.id == id then S.busDamageWatch = nil end
   M.dashCheckSoon()
   if fuelWatch and fuelWatch.id == id then stopFuelWatch() end
@@ -6460,6 +6488,7 @@ end
 -- A reset (R, recover, the game's repair) rebuilds the vehicle-side containers empty, so the load the mod set is
 -- forgotten there: read the boxes again and put the load back (a meal box at once, freight through workFreight).
 function M.onVehicleResetted(id)
+  M.busDoorsForget(id)
   -- worn brakes of a used car stay worn: the game's reset puts the brake torque back to new
   -- (during a test drive, the listing's: the car you sit in is the one for sale)
   local g = S.career and S.career.garage

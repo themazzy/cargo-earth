@@ -71,3 +71,14 @@ run(fs.readFileSync('tests/job-settings.lua', 'utf8'), 'tests/job-settings.lua')
 run(fs.readFileSync('tests/longhaul.lua', 'utf8'), 'tests/longhaul.lua')
 run(fs.readFileSync('tests/coach.lua', 'utf8'), 'tests/coach.lua')
 run(fs.readFileSync('tests/phonemap.lua', 'utf8'), 'tests/phonemap.lua')
+{
+  // The dash phone screen must be lit like the game's own screens: the page only as the emissive map (as base colour
+  // too, the cabin light shaded it grey and washed out) at a fixed brightness in nits.
+  const mats = JSON.parse(fs.readFileSync('mod/cargo_earth/vehicles/common/cargo_earth_phone/cargo_earth_phone.materials.json', 'utf8'))
+  const stage = mats.cargo_earth_phone_screen.Stages[0]
+  if (stage.baseColorMap) throw new Error('Dash phone screen must not use the page as its base colour')
+  if (stage.emissive !== true || stage.emissiveMap !== '@cargo_earth_phone' || !(stage.emissiveIntensityNits >= 500)) {
+    throw new Error('Dash phone screen must glow: emissive true, emissiveMap @cargo_earth_phone, emissiveIntensityNits >= 500')
+  }
+  console.log('Dash phone screen: emissive at ' + stage.emissiveIntensityNits + ' nits')
+}

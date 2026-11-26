@@ -6,18 +6,22 @@ obj = {getID = function() return 7 end, queueGameEngineLua = function(_, command
 local doors = dofile('mod/cargo_earth/lua/vehicle/extensions/cargoEarth/busdoors.lua')
 doors.watch(42)
 doors.updateGFX(0.11)
-assert(#events == 0, 'an initial closed snapshot must not cancel a phone boarding request')
+assert(#events == 1 and events[1]:find('7, 42, false, true', 1, true),
+  'an initial closed snapshot is marked initial so it cannot cancel a phone boarding request')
 opened = true
 doors.updateGFX(0.11)
-assert(#events == 1 and events[1]:find('7, 42, true', 1, true))
+assert(#events == 2 and events[2]:find('7, 42, true, false', 1, true))
 doors.updateGFX(0.11)
-assert(#events == 1, 'holding the door open never duplicates boarding')
+assert(#events == 2, 'holding the door open never duplicates boarding')
+doors.watch(42)
+doors.updateGFX(0.11)
+assert(#events == 2, 'the renewed watch with the same token keeps running')
 doors.onReset()
 doors.updateGFX(0.11)
-assert(#events == 2, 'the reset bus reports its doors again')
+assert(#events == 3 and events[3]:find('7, 42, true, true', 1, true), 'the reset bus reports its doors again')
 doors.watch(nil)
 doors.updateGFX(1)
-assert(#events == 2)
+assert(#events == 3)
 controller, obj = savedController, savedObj
 
 local texts, bars = {}, {}
