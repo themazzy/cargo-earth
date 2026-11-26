@@ -917,7 +917,7 @@ test('failed parts purchase checkpoint preserves money, inventory and retryable 
   assert(not s.parts and s.career.money == 10000 - checkout.cost)
 end)
 
-test('a car damaged by its own config can change parts, paying the repair in the checkout', function()
+test('a car damaged by its own config can swap parts: the other parts keep their damage and its share of the bill', function()
   local core, s = partsFixture()
   local g = s.career.garage
   -- a box truck that breaks its cab aero kit as it spawns: damaged, a bill owed, a physical snapshot saved
@@ -929,35 +929,35 @@ test('a car damaged by its own config can change parts, paying the repair in the
   g.car.physicalDamage = {format = 'v2'}
   local opened = core.garageDo('openParts')
   assert(s.parts and opened.parts, 'parts picker blocked on a damaged car')
-  assert(opened.parts.owed == bill and not opened.parts.repair)
+  assert(opened.parts.owed == bill)
   -- the native preview respawns the car with the new parts: undamaged, and no debt for that
   vehicle.data, vehicle.slotPartMap = {}, {body = 'pigeon', engine = 'new_engine', empty = false}
   damageValue = 0
   advance(core, 2)
   assert(s.parts and (g.debt or 0) == 0 and g.repair == bill)
   local checkout = core.garageState().parts
-  assert(checkout.canBuy and checkout.repair == bill and not checkout.owed)
-  local partsCost = checkout.cost - bill
-  assert(partsCost > 0)
-  -- not enough money for parts and repair together: refused
-  s.career.money = checkout.cost - 1
-  assert(not core.garageState().parts.canBuy)
-  s.career.money = 10000
-  -- a purchase that cannot be saved keeps the money, the bill and the old damage state
+  assert(checkout.canBuy and checkout.owed == bill)
+  -- a purchase that cannot be saved keeps the money, the bill and the damage state
   failPath = '/settings/cargoEarth/career.json.pending'
   core.garageDo('buyParts', checkout.revision)
-  assert(s.parts and g.car.physicalDamage and g.lastDamage == 20000 and g.repair == bill and s.career.money == 10000)
+  assert(s.parts and g.lastDamage == 20000 and not g.car.partsRestore and s.career.money == 10000)
   failPath = nil
+  -- the kept build gets the saved damage back on the parts that stayed: here half of it (the rest was the aero kit)
+  local snapshots, restored = require('cargoEarth/damage'), 0
+  core.G.vehicleState = function(action, path, token)
+    if action == 'restore' then restored = restored + 1 damageValue = 10000
+    else disk[path] = {format = 'v2'} end
+    snapshots.complete(token, 1, true)
+    return true
+  end
   core.garageDo('buyParts', checkout.revision)
-  assert(not s.parts and g.car.parts.engine == 'new_engine' and not g.car.physicalDamage)
-  assert(s.career.money == 10000 - partsCost - bill and g.repair == 0)
-  advance(core, 10)
-  assert((g.debt or 0) == 0 and g.repair == 0, 'repair came back or turned into debt')
-  -- new damage on the new parts starts a new bill
+  assert(not s.parts and g.car.parts.engine == 'new_engine' and g.car.physicalDamage)
+  assert(s.career.money == 10000 - checkout.cost and g.car.partsRestore)
   g.car.value = 10000000
-  damageValue = 20000
-  advance(core, 2)
-  assert(g.repair > 0)
+  advance(core, 12)
+  core.G.vehicleState = nil
+  assert(restored == 1 and not g.car.partsRestore, 'saved damage not put back on the kept parts')
+  assert((g.debt or 0) == 0 and math.abs(g.repair - bill / 2) <= 5, 'bill should keep the kept parts share: ' .. tostring(g.repair))
 end)
 
 test('keeping an unchanged parts checkout on a damaged car does not bill its damage twice', function()

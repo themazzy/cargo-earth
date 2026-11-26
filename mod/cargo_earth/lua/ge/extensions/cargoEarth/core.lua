@@ -3947,6 +3947,13 @@ local function garageTick(dt)
       -- what nothing on board explains
       S.storage = nil
       if not S.job then S.sweepWanted, S.sweepAt = true, S.clock + 1 end
+      local swapped = pending.car.partsRestore
+      pending.car.partsRestore = nil
+      if pending.ok and swapped then
+        -- after a parts change: the bill keeps the share of the damage still on the car (the rest left with the parts)
+        local share = math.min(1, (M.G.damage() or 0) / swapped.damage)
+        pending.bill = math.floor(pending.bill * share / 5 + 0.5) * 5
+      end
       if pending.ok then
         g.damageBaseline = {damage = M.G.damage() or 0, bill = pending.bill}
         g.lastDamage = g.damageBaseline.damage
@@ -4779,20 +4786,10 @@ function M.partsRespawned(live)
   return live ~= nil and S.parts.data ~= nil and live.data ~= S.parts.data
 end
 
--- Changing parts on a damaged car (Jan, 2026-11-26): the preview respawns it mended, so the repair is part of the
--- checkout, at the price a Garage repair costs here. Without it a cheap part swap would be a free repair.
-function M.partsRepair(live)
-  local bill = S.career.garage.repair or 0
-  if bill <= 0 or not M.partsRespawned(live) then return 0 end
-  return math.floor(bill * M.repairFactor(earth.pose()) / 5 + 0.5) * 5
-end
-
-local function partsProblem(quote, repair)
+local function partsProblem(quote)
   local g = S.career.garage
   if quote.cost > 0 and (g.debt or 0) > 0 then return 'Pay off your debt before buying parts.' end
-  if quote.cost + (repair or 0) > (S.career.money or 0) then
-    return (repair or 0) > 0 and 'Not enough money for the parts and the repair.' or 'Not enough money for these parts.'
-  end
+  if quote.cost > (S.career.money or 0) then return 'Not enough money for these parts.' end
 end
 
 local function openParts(captured)
@@ -4840,44 +4837,38 @@ local function buyParts(revision)
   local quote, why = quoteParts()
   if not quote then return false, why end
   local live = previewVehicle()
-  local repair = M.partsRepair(live)
-  why = partsProblem(quote, repair)
+  why = partsProblem(quote)
   if why then return false, why end
   local c, g = S.career, S.career.garage
   local money, spent, inventory, config, parts, salvage, paid, fitted = c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts
   local partsPaid = g.car.partsPaid
   if not garage.remember(M.G, g, live) then return false, 'Could not capture the new configuration.' end
-  -- A preview that respawned the car is a fresh car of the new config: the old physical snapshot belongs to the old
-  -- parts (restoring it would put the old damage back), and the repair it owed is paid in this checkout (partsRepair).
+  -- A preview that respawned the car is a new build of the new config (Jan, 2026-11-26): swapped parts come new, but
+  -- no other part is mended. The saved damage goes back onto every part that stayed (the vehicle side matches nodes and
+  -- beams by name and part), and the bill shrinks only by the damage that left with the swapped parts
+  -- (car.partsRestore, settled when that restore completes). Like after a respawn, the bill is carried meanwhile.
   -- Part of the purchase, so the checkpoint below has it. A checkout with no respawn keeps its damage and its bill.
   local car = g.car
-  local damageWas = { car.physicalDamage, car.damageFile, car.damageRevision, g.damageBaseline, g.carriedRepair, g.lastDamage,
-    g.repair, car.insCover, car.insWreck }
+  local damageWas = { g.damageBaseline, g.carriedRepair, g.lastDamage, car.partsRestore }
   if M.partsRespawned(live) then
-    require('cargoEarth/damage').clear(car)
-    g.damageBaseline, g.carriedRepair, g.lastDamage, g.restoringDamage = nil, nil, 0, nil
-    if (g.repair or 0) > 0 then g.repair, car.insCover, car.insWreck = 0, 0, nil end
+    if car.physicalDamage and (g.repair or 0) > 0 then
+      car.partsRestore = { bill = g.repair, damage = math.max(1, g.lastDamage or 0) }
+    end
+    g.damageBaseline, g.carriedRepair, g.lastDamage, g.restoringDamage = nil, g.repair or 0, 0, nil
   end
-  local total = quote.cost + repair
-  c.money, g.spent, g.inventory, g.salvage = (money or 0) - total, (spent or 0) + total, quote.inventory, quote.salvage
+  c.money, g.spent, g.inventory, g.salvage = (money or 0) - quote.cost, (spent or 0) + quote.cost, quote.inventory, quote.salvage
   g.car.paidParts, g.car.salvageParts = quote.paid, quote.fittedSalvage
   if (quote.invest or 0) ~= 0 then g.car.partsPaid = (partsPaid or 0) + quote.invest end
-  economy.reconcile(c, 'parts', repair > 0 and 'Parts fitted and car repaired' or 'Parts fitted')
+  economy.reconcile(c, 'parts', 'Parts fitted')
   if not saveCareer() then
     c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts = money, spent, inventory, config, parts, salvage, paid, fitted
     g.car.partsPaid = partsPaid
-    car.physicalDamage, car.damageFile, car.damageRevision = damageWas[1], damageWas[2], damageWas[3]
-    g.damageBaseline, g.carriedRepair, g.lastDamage = damageWas[4], damageWas[5], damageWas[6]
-    g.repair, car.insCover, car.insWreck = damageWas[7], damageWas[8], damageWas[9]
+    g.damageBaseline, g.carriedRepair, g.lastDamage, car.partsRestore = damageWas[1], damageWas[2], damageWas[3], damageWas[4]
     economy.reconcile(c, 'parts', 'Purchase not saved, refunded')
     return false, 'The purchase could not be saved. Try again.'
   end
   finishParts()
   conditionAt = S.clock + 1
-  if repair > 0 then
-    S.phone.wreck, S.insTow = nil, nil   -- as after a Garage repair
-    return true, string.format('Parts changed and car repaired. Paid %d CZK (repair %d CZK).', total, repair)
-  end
   return true, quote.cost > 0 and string.format('Parts fitted. Paid %d CZK.', quote.cost) or 'Parts changes kept.'
 end
 
@@ -4889,12 +4880,10 @@ function M.garageState()
     currency = moneyInfo() }
   if S.parts then
     local quote, why = quoteParts()
-    local repair = quote and M.partsRepair() or 0
-    if quote then why = partsProblem(quote, repair) end
-    out.parts = { revision = S.partsRevision, items = quote and quote.items,
-      cost = quote and (quote.cost + repair), repair = repair > 0 and repair or nil,
+    if quote then why = partsProblem(quote) end
+    out.parts = { revision = S.partsRevision, items = quote and quote.items, cost = quote and quote.cost,
       error = why, canBuy = quote ~= nil and not why, blocked = not not S.parts.blocked,
-      owed = repair <= 0 and (g.repair or 0) > 0 and g.repair or nil }
+      owed = (g.repair or 0) > 0 and g.repair or nil }
     return out
   end
   if not g.started then return out end
