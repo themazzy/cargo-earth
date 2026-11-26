@@ -36,9 +36,11 @@ local function latchStates()
   return out
 end
 
--- The first node of each of the latch's coupler pairs, as the controller reads them from the car's jbeam (its own
--- section, named like the controller, or its row in the controller list).
-local function couplerNodes(name)
+-- Each of the latch's coupler pairs { cid1, { cid2, ... } }, as the controller reads them from the car's jbeam (its
+-- own section, named like the controller, or its row in the controller list).
+local pairsCache = {}
+local function couplerPairs(name)
+  if pairsCache[name] then return pairsCache[name] end
   local data = v and v.data
   if type(data) ~= 'table' then return {} end
   local rows = type(data[name]) == 'table' and data[name].couplerNodes or nil
@@ -53,16 +55,64 @@ local function couplerNodes(name)
   local out = {}
   for _, row in ipairs(ok and type(list) == 'table' and list or {}) do
     local cid = type(row) == 'table' and map[row.cid1]
-    if cid then out[#out + 1] = cid end
+    if cid then
+      local seconds = {}
+      for _, n in ipairs(type(row.cid2) == 'table' and row.cid2 or { row.cid2 }) do
+        if map[n] then seconds[#seconds + 1] = map[n] end
+      end
+      out[#out + 1] = { cid, seconds }
+    end
   end
+  pairsCache[name] = out
   return out
 end
 
 -- Lets go of the latch's couplers, so the physics and the controller agree again: nothing is latched.
 local function release(c)
-  local nodes = couplerNodes(c.name)
-  for _, cid in ipairs(nodes) do pcall(function() obj:detachCoupler(cid, 0) end) end
-  return #nodes > 0
+  local list = couplerPairs(c.name)
+  for _, p in ipairs(list) do pcall(function() obj:detachCoupler(p[1], 0) end) end
+  return #list > 0
+end
+
+-- The watch: at any time, a latch whose controller says "attached" while one of its pairs is far apart has come loose
+-- without its controller hearing of it (the same fault as after a restore; a player saw it again after taking a
+-- contract). Seen on two checks in a row, it is let go and reset, so a click shuts the door again.
+M.WATCH_S, M.LOOSE_M, M.LOOSE_CHECKS = 0.5, 0.1, 2
+local watchClock, loose, fixing = 0, {}, {}
+
+local function pairGap(p)
+  local best
+  for _, cid2 in ipairs(p[2]) do
+    local ok, d = pcall(function() return obj:nodeLength(p[1], cid2) end)
+    if ok and type(d) == 'number' and (not best or d < best) then best = d end
+  end
+  return best
+end
+
+function M.watchTick()
+  for _, c in ipairs(latches()) do
+    if fixing[c.name] then
+      fixing[c.name] = nil
+      if c.reset then pcall(c.reset) end
+    else
+      local ok, s = pcall(c.getGroupState)
+      local far = false
+      if ok and s == 'attached' then
+        for _, p in ipairs(couplerPairs(c.name)) do
+          local gap = pairGap(p)
+          if gap and gap > M.LOOSE_M then far = true end
+        end
+      end
+      loose[c.name] = far and (loose[c.name] or 0) + 1 or nil
+      if (loose[c.name] or 0) >= M.LOOSE_CHECKS then
+        loose[c.name] = nil
+        if c.reset and release(c) then
+          fixing[c.name] = true
+          if log then log('I', 'cargoEarth', 'latch ' .. tostring(c.name) .. ' had come loose unnoticed: latched again') end
+        end
+      end
+    end
+  end
 end
 
 function M.relatchTick()
@@ -92,8 +142,15 @@ local function resetReleased()
 end
 
 function M.updateGFX(dt)
-  if not relatch then return end
   dt = dt or 0
+  if not relatch then
+    watchClock = watchClock + dt
+    if watchClock >= M.WATCH_S then
+      watchClock = 0
+      M.watchTick()
+    end
+    return
+  end
   if relatch.releasing then
     relatch.releasing = relatch.releasing - dt
     if relatch.releasing > 0 then return end
