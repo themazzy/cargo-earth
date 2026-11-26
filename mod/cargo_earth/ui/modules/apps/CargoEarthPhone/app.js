@@ -719,7 +719,7 @@ var cargoEarthOsm = (function () {
         var wd = []
         for (var wt = 0; wt <= tw; wt += 12) wd.push(pathAt(pl, s0 + wt))
         wd.push(b)
-        return {chars: [[name, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, ca]], dots: wd}
+        return {chars: [[name, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, ca]], dots: wd, start: tries[q]}
       }
       var flip = b[0] < a[0]               // the line runs right to left here: write from its far end
       var chars = [], at = 0, last = null, ok = true

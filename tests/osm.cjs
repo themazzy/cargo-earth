@@ -75,6 +75,12 @@ assert.equal(JSON.stringify(Array.from(labels[0].pts)), '[100,100,1100,100,1100,
   const s2 = osm.anchoredStarts(line(-20), 30, box, 'Ulice@t')
   assert.equal(s2[0], s1[0], 'the same spot on the line after the map moved 20 px')
   assert.equal(-600 - 20 + s2[0], x1 - 20, 'so the name moves with the map, not with the car')
+  // right-to-left names keep their spot too
+  const h1 = osm.anchoredStarts(line(0), 24, box, 'He@t')
+  const hs = osm.labelSpot(line(0), 'רחוב', 24, ctx, h1)
+  assert.equal(hs.start, h1[0], 'the start it used comes back')
+  osm.rememberLabel('He@t', line(0), 24, hs.start)
+  assert.equal(osm.anchoredStarts(line(-20), 24, box, 'He@t')[0], h1[0], 'and is kept after the map moved')
   assert(osm.anchoredStarts(line(0), 30, box, 'x').every(st => (st + 15) % 187.5 === 93.75), 'spots in the middle of equal stretches')
   assert.equal(osm.anchoredStarts({xy: [0, 200, 300, 200], d: [0, 300]}, 30, box, 'y').length, 0, 'outside the box: none')
   // a piece crossing the whole screen counts, clipped to it
