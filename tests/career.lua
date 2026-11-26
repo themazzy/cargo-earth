@@ -3700,6 +3700,19 @@ test('the native bus doors and phone share boarding; closing early cancels witho
   pose.speed = 0
   core.onUpdate(core.BUS_DOOR_RETRY_S + 0.1, 0)
   assert(not s.busDwell, 'a close reported while Earth was loading is remembered')
+  -- a respawned bus: the old open doors do not count until its fresh watcher looks again
+  pose.speed = 5
+  core.onCargoEarthBusDoors(watched.id, watched.token, true)
+  local oldToken = watched.token
+  core.onVehicleSpawned(watched.id)
+  pose.speed = 0
+  core.onUpdate(core.BUS_DOOR_RETRY_S + 0.1, 0)
+  assert(not s.busDwell and watched.token ~= oldToken, 'a respawn needs a fresh look at the doors')
+  core.onCargoEarthBusDoors(watched.id, oldToken, true)
+  assert(not s.busDwell, 'reports from before the respawn are ignored')
+  core.onCargoEarthBusDoors(watched.id, watched.token, false, true)
+  core.onUpdate(core.BUS_DOOR_RETRY_S + 0.1, 0)
+  assert(not s.busDwell)
   core.onCargoEarthBusDoors(watched.id + 1, watched.token, true)
   assert(not s.busDwell, 'another bus cannot start this boarding timer')
   core.onCargoEarthBusDoors(watched.id, watched.token, true)

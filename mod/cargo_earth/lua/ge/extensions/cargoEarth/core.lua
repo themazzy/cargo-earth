@@ -1990,6 +1990,12 @@ function M.busDoorWatch()
   end
 end
 
+-- A respawned or reset bus: forget what its doors did and watch it again with a new token, so boarding waits for
+-- the fresh look at the doors (and late reports from before are ignored).
+function M.busDoorsForget(id)
+  if S.busWatch and S.busWatch.id == id then S.busWatch, S.busDoorsOpen = nil, nil end
+end
+
 function M.onCargoEarthBusDoors(id, token, open, initial)
   local w = S.busWatch
   if not w or w.id ~= id or w.token ~= token or w.job ~= S.job or type(open) ~= 'boolean' then return end
@@ -6469,6 +6475,7 @@ function M.onJbeamLoadingPhase2(_, objID, vehicle) dash.captureLoading(objID, ve
 function M.onVehicleSwitched() M.dashCheckSoon() end
 
 function M.onVehicleSpawned(id)
+  M.busDoorsForget(id)
   if S.busDamageWatch and S.busDamageWatch.id == id then S.busDamageWatch = nil end
   M.dashCheckSoon()
   if fuelWatch and fuelWatch.id == id then stopFuelWatch() end
@@ -6481,6 +6488,7 @@ end
 -- A reset (R, recover, the game's repair) rebuilds the vehicle-side containers empty, so the load the mod set is
 -- forgotten there: read the boxes again and put the load back (a meal box at once, freight through workFreight).
 function M.onVehicleResetted(id)
+  M.busDoorsForget(id)
   -- worn brakes of a used car stay worn: the game's reset puts the brake torque back to new
   -- (during a test drive, the listing's: the car you sit in is the one for sale)
   local g = S.career and S.career.garage
