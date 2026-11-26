@@ -65,6 +65,18 @@ assert.equal(JSON.stringify(Array.from(labels[0].pts)), '[100,100,1100,100,1100,
   const he = osm.labelSpot({xy: [0, 0, 100, 0], d: [0, 100]}, 'רחוב', 24, ctx)
   assert(he && he.chars.length === 1 && he.chars[0][0] === 'רחוב' && he.chars[0][1] === 50, 'one piece in the middle')
   assert.equal(osm.labelSpot(pl, 'شارع', 150, ctx), null, 'never bent round a corner')
+  // names stay on their street while the map moves: fixed spots along the line, the last one kept while it fits
+  const line = dx => ({xy: [-600 + dx, 50, 900 + dx, 50], d: [0, 1500]})
+  const box = [0, 0, 300, 100]
+  const s1 = osm.anchoredStarts(line(0), 30, box, 'Ulice@t')
+  assert(s1.length >= 1, 'a spot in view')
+  osm.rememberLabel('Ulice@t', line(0), 30, s1[0])
+  const x1 = -600 + s1[0]
+  const s2 = osm.anchoredStarts(line(-20), 30, box, 'Ulice@t')
+  assert.equal(s2[0], s1[0], 'the same spot on the line after the map moved 20 px')
+  assert.equal(-600 - 20 + s2[0], x1 - 20, 'so the name moves with the map, not with the car')
+  assert(osm.anchoredStarts(line(0), 30, box, 'x').every(st => (st + 15) % 187.5 === 93.75), 'spots in the middle of equal stretches')
+  assert.equal(osm.anchoredStarts({xy: [0, 200, 300, 200], d: [0, 300]}, 30, box, 'y').length, 0, 'outside the box: none')
   // a piece crossing the whole screen counts, clipped to it
   assert.equal(JSON.stringify(osm.clipTo([-50, 10], [150, 10], 0, 0, 100, 100)), '[0.25,0.75,0,10,100,10]')
   assert.equal(osm.clipTo([-50, -10], [150, -10], 0, 0, 100, 100), null)

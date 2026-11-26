@@ -702,10 +702,10 @@ var cargoEarthOsm = (function () {
   // scripts whose letters must not be drawn one by one (right to left, or joined / shaped): Hebrew, Arabic, Syriac,
   // Thaana, Indic, Thai, Lao, Tibetan, Myanmar, Khmer and the Arabic / Hebrew presentation forms
   var COMPLEX_SCRIPT = /[\u0590-\u08FF\u0900-\u0DFF\u0E00-\u0FFF\u1000-\u109F\u1780-\u17FF\uFB1D-\uFDFF\uFE70-\uFEFF]/
-  function labelSpot(pl, name, tw, ctx) {
-    var L = pl.d[pl.d.length - 1], tries = [0.5, 0.35, 0.65, 0.2, 0.8]
+  function labelSpot(pl, name, tw, ctx, starts) {
+    var L = pl.d[pl.d.length - 1], tries = starts || [0.5, 0.35, 0.65, 0.2, 0.8].map(function (f) { return L * f - tw / 2 })
     for (var q = 0; q < tries.length; q++) {
-      var s0 = Math.max(2, Math.min(L - tw - 2, L * tries[q] - tw / 2))
+      var s0 = Math.max(2, Math.min(L - tw - 2, tries[q]))
       var a = pathAt(pl, s0), b = pathAt(pl, s0 + tw)
       if (COMPLEX_SCRIPT.test(name)) {     // right-to-left or joined letters: the whole name on a straight stretch
         var ca = Math.atan2(b[1] - a[1], b[0] - a[0]), clen = Math.sqrt(Math.pow(b[0] - a[0], 2) + Math.pow(b[1] - a[1], 2)), off = false
@@ -741,9 +741,40 @@ var cargoEarthOsm = (function () {
       var dots = []
       for (var t = 0; t <= tw; t += 12) dots.push(pathAt(pl, s0 + t))
       dots.push(pathAt(pl, s0 + tw))
-      return {chars: chars, dots: dots}
+      return {chars: chars, dots: dots, start: tries[q]}
     }
     return null
+  }
+  // Fixed spots for a name along its whole line, so it stays on its street while the map moves (it never slides
+  // with the car): the line is cut into equal stretches of at least LABEL_STEP px, a name sits in the middle of one.
+  // Only spots whose whole name fits the box count; the one the name had last time first, then the nearest the
+  // middle of the screen.
+  var LABEL_STEP = 180
+  var labelMemo = {}, labelMemoSize = 0
+  function anchoredStarts(pl, tw, box, memoKey) {
+    var L = pl.d[pl.d.length - 1], n = Math.max(1, Math.floor(L / Math.max(LABEL_STEP, tw + 60))), out = []
+    var mx = (box[0] + box[2]) / 2, my = (box[1] + box[3]) / 2
+    for (var j = 0; j < n; j++) {
+      var s0 = (j + 0.5) * L / n - tw / 2
+      if (s0 < 2 || s0 + tw > L - 2) continue
+      var inside = true
+      for (var t = 0; t <= tw && inside; t += 8) {
+        var p = pathAt(pl, s0 + Math.min(t, tw))
+        inside = p[0] >= box[0] && p[0] <= box[2] && p[1] >= box[1] && p[1] <= box[3]
+      }
+      if (!inside) continue
+      var c = pathAt(pl, s0 + tw / 2)
+      out.push({s0: s0, j: j, d: (c[0] - mx) * (c[0] - mx) + (c[1] - my) * (c[1] - my)})
+    }
+    var was = labelMemo[memoKey]
+    out.sort(function (a, b) { return (a.j === was ? -1e12 : a.d) - (b.j === was ? -1e12 : b.d) })
+    return out.map(function (o) { return o.s0 })
+  }
+  function rememberLabel(memoKey, pl, tw, s0) {
+    var L = pl.d[pl.d.length - 1], n = Math.max(1, Math.floor(L / Math.max(LABEL_STEP, tw + 60)))
+    if (labelMemoSize > 600) { labelMemo = {}; labelMemoSize = 0 }
+    if (labelMemo[memoKey] === undefined) labelMemoSize++
+    labelMemo[memoKey] = Math.round((s0 + tw / 2) * n / L - 0.5)
   }
 
   function drawLabels(ctx, list, E, N, cs, sn, scale, ox, oy, v, look, tm, pois, opts, numbers) {
@@ -777,22 +808,20 @@ var cargoEarthOsm = (function () {
       for (var nm in list[i][3]) { ext = list[i][3][nm].extent; break }
       ctx.font = (lb.water ? 'italic ' : '') + labelFont
       var tw = ctx.measureText(lname).width
-      // the longest stretch of the line inside the box, in screen pixels
-      // (each piece clipped to the box, so a long piece crossing the screen counts too)
-      var best = null, cur = null, pts = lb.pts, prev = scr(tx, ty, pts[0], pts[1], ext)
+      // the whole line on the screen (pixels, distances along it); skipped when none of it is in the box
+      var pts = lb.pts, prev = scr(tx, ty, pts[0], pts[1], ext), full = {xy: [prev[0], prev[1]], d: [0]}, seen = false
       for (var k = 2; k + 1 < pts.length; k += 2) {
-        var sp = scr(tx, ty, pts[k], pts[k + 1], ext), cl = clipTo(prev, sp, bx0, by0, bx1, by1)
+        var sp = scr(tx, ty, pts[k], pts[k + 1], ext)
+        if (!seen && clipTo(prev, sp, bx0, by0, bx1, by1)) seen = true
+        full.d.push(full.d[full.d.length - 1] + Math.sqrt(Math.pow(sp[0] - prev[0], 2) + Math.pow(sp[1] - prev[1], 2)))
+        full.xy.push(sp[0], sp[1])
         prev = sp
-        if (!cl) { cur = null; continue }
-        if (!cur || cl[0] > 0) { cur = {xy: [cl[2], cl[3]], d: [0]} }
-        var ln = cur.xy.length
-        cur.d.push(cur.d[cur.d.length - 1] + Math.sqrt(Math.pow(cl[4] - cur.xy[ln - 2], 2) + Math.pow(cl[5] - cur.xy[ln - 1], 2)))
-        cur.xy.push(cl[4], cl[5])
-        if (!best || cur.d[cur.d.length - 1] > best.d[best.d.length - 1]) best = cur
-        if (cl[1] < 1) cur = null
       }
-      if (!best || best.d[best.d.length - 1] < tw + 4) continue
-      var spot = labelSpot(best, lname, tw, ctx)
+      if (!seen || full.d[full.d.length - 1] < tw + 4) continue
+      // fixed spots along the line (they move with the map, never with the car)
+      var memoKey = lname + '@' + tx + '/' + ty + '/' + (v.z || 14) + '/' + pts[0] + ',' + pts[1]
+      var starts = anchoredStarts(full, tw, [bx0, by0, bx1, by1], memoKey)
+      var spot = starts.length ? labelSpot(full, lname, tw, ctx, starts) : null
       if (!spot) continue
       var clash = false
       for (var g0 = 0; g0 < spot.dots.length && !clash; g0++) clash = under(spot.dots[g0][0], spot.dots[g0][1], 6)
@@ -805,6 +834,7 @@ var cargoEarthOsm = (function () {
       }
       if (clash) continue
       done[lname] = true
+      rememberLabel(memoKey, full, tw, spot.start)
       for (var g2 = 0; g2 < spot.dots.length; g2++) placed.push([spot.dots[g2][0], spot.dots[g2][1], 9])
       count++
       ctx.strokeStyle = look.halo
@@ -907,7 +937,7 @@ var cargoEarthOsm = (function () {
     return out
   }
   function utf8Bytes(text) { return new TextEncoder().encode(text) }
-  return {decode: decode, TileMap: TileMap, tileXY: tileXY, tileMetres: tileMetres, labelsOf: labelsOf, poisOf: poisOf, numbersOf: numbersOf, labelSpot: labelSpot, clipTo: clipTo,
+  return {decode: decode, TileMap: TileMap, tileXY: tileXY, tileMetres: tileMetres, labelsOf: labelsOf, poisOf: poisOf, numbersOf: numbersOf, labelSpot: labelSpot, anchoredStarts: anchoredStarts, rememberLabel: rememberLabel, clipTo: clipTo,
     fromBase64: fromBase64, utf8Bytes: utf8Bytes}
 })()
 
