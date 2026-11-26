@@ -14,6 +14,7 @@ M.FAR_KM = 6         -- draw distance for the beacon over every stop
 M.YARD_KEEP_M = 20
 M.YARD_SEARCH_M = 400
 M.YARD_FIND_M = 1500
+M.SETTLE_M = 100      -- a roadside spot stays put once the car is this close
 
 local CURB_OFFSET = 3.5
 local RING_SEGMENTS = 20
@@ -32,7 +33,7 @@ local COLORS = {
 local pickup, delivery, depot = {}, {}, {}
 local depotDirections = {}
 for i = 1, 8 do depotDirections[i] = { math.cos(math.pi * i / 4), math.sin(math.pi * i / 4) } end
-local warned = false
+local warned = {}   -- each distinct draw error is logged once
 local ringDirections = {}
 for i = 1, RING_SEGMENTS do
   local angle = 2 * math.pi * i / RING_SEGMENTS
@@ -172,8 +173,10 @@ local function roadsidePosition(cache, p, stop, now, range)
     or jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000 > range + 80 then return nil end
   local x, y = earth.worldXY(p, stop.g)
   if not (x and p.z) then return nil end
-  if cache.x then return cache.x, cache.y, cache.roadZ end
-  if distance(x, y, p) > range then return x, y end
+  -- The road is looked up again every second until the car is within SETTLE_M of it: a road found while the streets
+  -- near the stop were still streaming in (another street further off) gives way to the nearer one.
+  if cache.x and (cache.locked or now < cache.nextRoad) then return cache.x, cache.y, cache.roadZ end
+  if distance(x, y, p) > range then return cache.x or x, cache.y or y, cache.roadZ end
   local doorX, doorY
   if stop.d then doorX, doorY = earth.worldXY(p, stop.d) end
   doorX, doorY = doorX or x, doorY or y
@@ -183,15 +186,19 @@ local function roadsidePosition(cache, p, stop, now, range)
     cache.nextRoad = now + REFRESH_S
     -- a point that is already a curb (apart from its door) looks close by; a bare address point looks further
     local search = gap < 1 and 80 or 15
-    local z = p.z
-    if search == 80 then z = surfaceZ(x, y, nil, p.z + 30, 150) or z end
+    -- the road is searched at the stop's ground, not the car's height (a car on a bridge would find the bridge)
+    local z = surfaceZ(x, y, nil, p.z + 30, 150) or p.z
     local ok, rx, ry, rz = pcall(roadEdge, x, y, z, doorX, doorY, search)
     if ok and rx then
-      cache.x, cache.y, cache.roadZ = rx, ry, rz
-      cache.nextGround = 0
-      return rx, ry, rz
+      if not cache.x or (rx - cache.x)^2 + (ry - cache.y)^2 > 1 then
+        cache.x, cache.y, cache.roadZ = rx, ry, rz
+        cache.outer, cache.cz, cache.beaconZ, cache.nextGround = nil, nil, nil, 0
+      end
+      if distance(rx, ry, p) <= M.SETTLE_M then cache.locked = true end
+      return cache.x, cache.y, cache.roadZ
     end
   end
+  if cache.x then return cache.x, cache.y, cache.roadZ end
   -- While roads stream in, use the known curb, nudged towards the address.
   local fraction = gap > 0 and math.min(1, CURB_OFFSET / gap) or 0
   return x + dx * fraction, y + dy * fraction
@@ -288,7 +295,9 @@ local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
     -- every second until the ring stands, then only now and then (late ground tiles still lift it)
     cache.nextGround = now + (cache.outer and GROUND_AGAIN_S or REFRESH_S)
     local ref = roadZ or roadZNear(x, y, p.z)
-    local z = ref and (surfaceZ(x, y, ref, ref + 4, 12) or ref) or surfaceZ(x, y, nil, p.z + 30, 150)
+    -- the column reaches 12 m above and below the road: a yard or a kerb on a bank above the road is still found
+    -- (the surface nearest the road wins, so a roof or a bridge over the stop is not)
+    local z = ref and (surfaceZ(x, y, ref, ref + 12, 24) or ref) or surfaceZ(x, y, nil, p.z + 30, 150)
     if not z and distance(x, y, p) <= 50 then z = surfaceZ(p.x, p.y, p.z - 0.5, p.z + 2, 12) end
     if z then
       local outer, inner = {}, {}
@@ -418,8 +427,8 @@ function M.draw(p, stop, phase, courier, radius, inZone, now)
   else
     ok, err = pcall(drawDepotPickup, p, stop, radius, inZone, now)
   end
-  if not ok and not warned then
-    warned = true
+  if not ok and not warned[tostring(err)] then
+    warned[tostring(err)] = true
     if log then log('W', 'cargoEarth', 'stop marker draw failed: ' .. tostring(err)) end
   end
 end
@@ -454,8 +463,8 @@ end
 function M.drawCameras(p, list, now)
   if not (p and p.lat and list and #list > 0 and debugDrawer and vec3 and ColorF) then return end
   local ok, err = pcall(drawCameras, p, list, now)
-  if not ok and not warned then
-    warned = true
+  if not ok and not warned[tostring(err)] then
+    warned[tostring(err)] = true
     if log then log('W', 'cargoEarth', 'camera marker draw failed: ' .. tostring(err)) end
   end
 end
@@ -487,14 +496,14 @@ end
 function M.drawArea(p, key, g, radius, label, now)
   if not (p and debugDrawer and vec3 and ColorF) then return end
   local ok, err = pcall(drawArea, p, key, g, radius, label, now)
-  if not ok and not warned then
-    warned = true
+  if not ok and not warned[tostring(err)] then
+    warned[tostring(err)] = true
     if log then log('W', 'cargoEarth', 'area marker draw failed: ' .. tostring(err)) end
   end
 end
 
 M.roadEdge, M.groundZ, M.surfaceZ, M.columnHits = roadEdge, groundZ, surfaceZ, columnHits
 
-function M.reset() pickup, delivery, depot, poles, areas, warned, triColour = {}, {}, {}, {}, {}, false, nil end
+function M.reset() pickup, delivery, depot, poles, areas, warned, triColour = {}, {}, {}, {}, {}, {}, nil end
 
 return M

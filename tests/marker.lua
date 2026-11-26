@@ -155,6 +155,35 @@ for _, phase in ipairs({ 'delivery', 'pickup' }) do
 end
 debugDrawer.drawLineInstance, debugDrawer.drawCylinder, debugDrawer.drawTextAdvanced = real, function() end, function() end
 
+-- Roads still streaming: the first road found is a street 60 m off; once the near street streams in the ring moves
+-- there, and once the car is close it stays.
+local streets = { { y = -60 } }
+map = { findClosestRoad = function(pos)
+    local best
+    for i, st in ipairs(streets) do if not best or math.abs(pos.y - st.y) < math.abs(pos.y - streets[best].y) then best = i end end
+    return 'a' .. best, 'b' .. best
+  end,
+  getMap = function()
+    local nodes = {}
+    for i, st in ipairs(streets) do
+      nodes['a' .. i], nodes['b' .. i] = { pos = vec3(-50, st.y, 100) }, { pos = vec3(50, st.y, 100) }
+    end
+    return { nodes = nodes }
+  end }
+local late = { g = { 50, 14, x = 0, y = 20 }, n = 'Late street' }
+marker.reset()
+local farAway = { lat = 50, lon = 14, x = 200, y = -2, z = 100.8, anchorLat = 50, anchorLon = 14 }
+marker.draw(farAway, late, 'delivery', true, 30, false, 0)
+assert(marker.roadsideDistance({ x = 0, y = -56.5, anchorLat = 50, anchorLon = 14 }, late) < 0.1, 'first: the far street')
+streets[2] = { y = 0 }
+marker.draw(farAway, late, 'delivery', true, 30, false, 2)
+assert(marker.roadsideDistance({ x = 0, y = 3.5, anchorLat = 50, anchorLon = 14 }, late) < 0.1, 'then the near street')
+local close = { lat = 50, lon = 14, x = 20, y = 0, z = 100.8, anchorLat = 50, anchorLon = 14 }
+marker.draw(close, late, 'delivery', true, 30, false, 4)
+streets[3] = { y = 10 }
+marker.draw(close, late, 'delivery', true, 30, false, 6)
+assert(marker.roadsideDistance({ x = 0, y = 3.5, anchorLat = 50, anchorLon = 14 }, late) < 0.1, 'close by, the spot stays')
+
 -- BeamNG 0.40.6: drawTriSolid takes a packed colour number and throws on a ColorF (beamng.log, 2026-11-26)
 local packedTris, threw = 0, 0
 color = function(r, g, b, a) return r * 16777216 + g * 65536 + b * 256 + a end
@@ -170,4 +199,4 @@ color = nil
 castRayStatic, vec3, ColorF, ColorI, String = saved.castRayStatic, saved.vec3, saved.ColorF, saved.ColorI, saved.String
 debugDrawer, map = saved.debugDrawer, saved.map
 package.loaded['cargoEarth/earth'], package.loaded['cargoEarth/marker'] = saved.earth, saved.marker
-print('Stop rings: ground under roofs, trees and pylons; zone column 4.5 m up, 3.5 m down; houses moved to the roadside; deep yards moved to their road, beacons from afar')
+print('Stop rings: ground under roofs, trees and pylons; zone column 4.5 m up, 3.5 m down; houses moved to the roadside; deep yards moved to their road, beacons from afar, late streets')
