@@ -33,11 +33,19 @@ BUTTONS = [('online', 'Go online / offline'), ('accept', 'Accept the order'), ('
            ('up', 'Scroll up'), ('down', 'Scroll down'), ('gps', 'Route to the next stop')]
 
 
+# screen brightness: the game's own screens use 500 nits; a phone is a bit brighter so it reads in daylight
+SCREEN_NITS = 700
+
 MATERIALS = {
     'cargo_earth_phone_screen': {
         'name': 'cargo_earth_phone_screen', 'mapTo': 'cargo_earth_phone_screen', 'class': 'Material',
-        'Stages': [{'baseColorMap': '@cargo_earth_phone', 'emissiveMap': '@cargo_earth_phone',
-                    'emissiveFactor': [1, 1, 1], 'roughnessFactor': 0.35, 'metallicFactor': 0}, {}, {}, {}],
+        # set up like the game's own screens (e.g. the UTV's gauges and navigation screen): the page is ONLY the
+        # emissive map, lit at a fixed brightness in nits, over a near-black glass. With the page as the base colour
+        # too, the cabin's light shaded it and it looked grey and washed out.
+        'Stages': [{'baseColorFactor': [0.02, 0.02, 0.02, 1], 'emissive': True, 'emissiveMap': '@cargo_earth_phone',
+                    'emissiveFactor': [1, 1, 1], 'emissiveIntensityNits': SCREEN_NITS,
+                    'roughnessFactor': 0.15, 'metallicFactor': 0}, {}, {}, {}],
+        'dynamicCubemap': True,
         'materialTag0': 'beamng', 'materialTag1': 'vehicle', 'version': 1.5,
     },
     'cargo_earth_phone_body': {
