@@ -13,7 +13,7 @@ vm.runInNewContext(fs.readFileSync('mod/cargo_earth/ui/modules/apps/CargoEarthPh
     // BeamNG runs a command without a callback as a Lua statement: an expression like ours would not run at all
     assert(typeof callback === 'function', 'engineLua without a callback never runs: ' + command)
     commands.push(command); if (hold) pending.push(callback); else callback(JSON.parse(JSON.stringify(answer))) } },
-  Date: {now: () => now},
+  Date: class extends Date { constructor (...a) { super(...(a.length ? a : [now])) } static now () { return now } }, atob, TextEncoder,
   Audio: class { constructor () { this.paused = true; this.attrs = {}; this.on = {}; audios.push(this) } addEventListener (n, f) { this.on[n] = f }
     play () { this.paused = false; this.played = this.src; return {catch () {}} } pause () { this.paused = true }
     getAttribute (n) { return n === 'src' ? this.src : null } removeAttribute () { this.src = undefined } load () {} },
@@ -121,6 +121,27 @@ scope.s = {screen: 'incoming'}
 watches['s.screen']('incoming')
 assert.equal(scope.tab, 'radio', 'A ringing offer leaves Radio playing on screen')
 assert(scope.showLiveShortcut() && scope.liveTitle() === 'New delivery offer', 'the offer bar is on top of Radio')
+assert.equal(scope.liveLeft(), null, 'no way left without a job')
+scope.s = {screen: 'active', active: {phase: 'toPickup'}, routeLeft: {m: 4300, s: 480}}
+assert.equal(JSON.stringify(scope.liveLeft()), JSON.stringify({dist: '4.3 km', time: '8 min'}), 'the work bar shows the way left')
+assert.equal(scope.liveLeft(), scope.liveLeft(), 'the same object while it does not change (no digest loops)')
+scope.s.routeLeft = {m: 800, imperial: true}
+assert.equal(scope.liveLeft().dist, '0.5 mi')
+assert(directive.template.includes('cep-live-left'))
+// the Map tab: no big work card; one slim line under the turn banner instead (tap: the Work tab)
+const tabBefore = scope.tab
+scope.tab = 'map'
+scope.s = {screen: 'active', active: {phase: 'toPickup', from: {name: 'Pizzeria Roma'}}}
+assert(!scope.showLiveShortcut(), 'no work card over the map')
+assert.equal(JSON.stringify(scope.mapJob()), JSON.stringify({what: 'Pick up', where: 'Pizzeria Roma'}))
+assert.equal(scope.mapJob(), scope.mapJob(), 'the same object while it does not change')
+scope.s = {screen: 'incoming'}
+assert(scope.mapJob().offer)
+scope.s = {screen: 'offline'}
+assert.equal(scope.mapJob(), null)
+assert(directive.template.includes('<div class="cep-map-head">'))
+scope.tab = tabBefore
+scope.s = {screen: 'incoming'}
 assert.equal(scope.panel, null, 'Incoming work closes the menu window')
 // the Menu button opens the last section again and closes the window
 scope.openPanel('settings')
@@ -143,10 +164,121 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   assert.equal(scope.tab, 'map')
   assert(commands.some(command => command.includes('cargoEarth_core.phoneTab("map")')), 'the other phone follows the Map tab')
   mapTimer.fn()
-  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null)'), 'first ask: no roads yet')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, true, false)'), 'the OSM map: no roads, by lat / lon')
+  assert.equal(scope.lm.engine, 'osm')
+  scope.mapEngine()
+  assert.equal(scope.lm.engine, 'sketch')
   now += 300
   mapTimer.fn()
-  assert(commands.at(-1).includes('cargoEarth_core.phoneMap("t1")'), 'then the roads key it has')
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap(null, false, false, false)'), 'the simple map: first ask, no roads yet')
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).includes('cargoEarth_core.phoneMap("t1", false, false, false)'), 'then the roads key it has')
+  scope.mapStats()
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).includes(', true, false, false)'), 'timings only while the readout shows')
+  assert(scope.lm.statLines.some(line => line.startsWith('Simple map')), 'the readout says which map')
+  scope.mapStats()
+  // the whole-route view: only with a route, asks the game for the whole way, and back with the same button
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.hasRoute, true, 'a route: the whole-route button shows')
+  scope.mapWhole()
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).endsWith(', false, false, true) or nil'), 'the whole way is asked for')
+  {
+    // a 500 km haul: coarse tiles, never more in view than half the tile cache keeps
+    const saved2 = answer
+    answer = {...answer, car: {x: 0, y: 0, h: 0, kmh: 0, lat: 50, lon: 14}, whole: {xy: [0, 0, 0, 500000], ll: [50, 14, 54.5, 14]}}
+    now += 300
+    mapTimer.fn()
+    const o = scope.mapOverviewOf({x: 0, y: 0, lat: 50, lon: 14}, 320, 500)
+    const tileM = 40075016.686 * Math.cos(o.lat * Math.PI / 180) / Math.pow(2, o.z)
+    const reach = Math.sqrt(320 * 320 + 500 * 500) / 2 / o.scale / tileM
+    assert(Math.pow(2 * reach + 2, 2) <= 30 / 2 && o.z < 9, 'z' + o.z)
+    answer = {...answer, whole: {xy: [0, 0, 0, 800], ll: [50, 14, 50.007, 14]}}
+    now += 300
+    mapTimer.fn()
+    assert.equal(scope.mapOverviewOf({x: 0, y: 0, lat: 50, lon: 14}, 320, 500).z, 14, 'a short route: the close tiles')
+    answer = saved2
+  }
+  scope.mapWhole()
+  assert.equal(scope.lm.overview, false)
+  // directions: the next turn, the speed and the way left, in the game's units
+  answer = {...answer, routeGps: true, turn: {type: 'turn', modifier: 'left', m: 240, name: 'Dlouha'}, leftM: 2400, leftS: 300,
+    car: {x: 0, y: 0, h: 0, kmh: 50}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.turn.text, 'Turn left onto Dlouha')
+  assert.equal(scope.lm.turn.dist, '250 m')
+  assert.equal(JSON.stringify(scope.lm.speed), JSON.stringify({v: 50, unit: 'km/h'}))
+  assert.equal(JSON.stringify(scope.lm.left), JSON.stringify({dist: '2.4 km', time: '5 min', at: scope.mapArriveText(300)}))
+  // the arrival as a clock time: now plus the time left, in the computer's own time
+  assert.equal(scope.mapArriveText(31 * 60 + 20, new Date(2026, 10, 25, 22, 0).getTime()), '22:31')
+  assert.equal(scope.mapArriveText(3 * 3600, new Date(2026, 10, 25, 22, 5).getTime()), '01:05')
+  assert.equal(scope.mapArriveText(0), '')
+  // one-tap routes: offered while no job steers the GPS; Home greyed out without a home
+  assert.equal(scope.lm.go, null, 'no routes of its own while a job has the GPS')
+  answer = {...answer, go: {hq: true}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(JSON.stringify(scope.lm.go), '{"home":false,"hq":true}')
+  assert(directive.template.includes('ng-click="mapGo(\'home\')" ng-disabled="!lm.go.home"'))
+  scope.mapSet()
+  scope.mapGoOpen()
+  assert(scope.lm.goOpen && !scope.lm.set, 'one panel at a time')
+  const beforeGo = answer
+  answer = {ok: true, msg: 'Route set to your headquarters.'}
+  commands.length = 0
+  scope.mapGo('hq')
+  assert.equal(commands[0], 'cargoEarth_core and cargoEarth_core.mapGo("hq") or nil')
+  assert.equal(scope.lm.goMsg, 'Route set to your headquarters.')
+  later[later.length - 1]()
+  assert(!scope.lm.goOpen && !scope.lm.goMsg, 'closes a moment after the route is set')
+  answer = {ok: false, msg: 'Your firm has no headquarters yet.'}
+  scope.mapGoOpen()
+  scope.mapGo('hq')
+  assert(scope.lm.goOpen && !scope.lm.goOk, 'a refusal stays to be read')
+  scope.mapGoOpen()
+  answer = {...beforeGo, go: undefined}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.go, null)
+  answer = {...answer, imperial: true, turn: {type: 'roundabout', exit: 2, m: 100}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.turn.text, 'At the roundabout take exit 2')
+  assert.equal(scope.lm.turn.dist, '350 ft')
+  assert.equal(JSON.stringify(scope.lm.speed), JSON.stringify({v: 31, unit: 'mph'}))
+  assert.equal(scope.lm.left.dist, '1.5 mi')
+  // the lanes once the turn is near: bright where the route goes on
+  answer = {...answer, imperial: false, turn: {type: 'turn', modifier: 'left', m: 400, lanes: [{ok: true, dir: 'left'}, {dir: 'straight'}]}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(JSON.stringify(scope.lm.turn.lanes.map(l => l.ok)), '[true,false]')
+  answer = {...answer, turn: {type: 'turn', modifier: 'left', m: 1400, lanes: [{ok: true, dir: 'left'}, {dir: 'straight'}]}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.turn.lanes, null, 'far away: no lanes yet')
+  assert(directive.template.includes('cep-map-lanes'))
+  // the speed like the nav apps: amber just over the limit, red well over; the limit's sign beside it
+  const sBefore = scope.s
+  scope.s = {...(sBefore || {}), limit: {sign: '50', over: true}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.speed.over, 'slight')
+  scope.s = {...scope.s, limit: {sign: '50', over: true, well: true}}
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.speed.over, 'well')
+  scope.s = sBefore
+  now += 300
+  mapTimer.fn()
+  assert.equal(scope.lm.speed.over, undefined)
+  assert(directive.template.includes('cep-limit cep-map-limit" ng-if="s.limit && mapPrefs().speedo"'))
+  answer = {...answer, imperial: false, turn: null, routeGps: true, roadsKey: 't1', roads: [0, 0, 10, 0, 1]}
   const asked = commands.length
   mapTimer.fn()
   assert.equal(commands.length, asked, 'at most 4 asks a second')
@@ -159,7 +291,91 @@ for (const text of ['class="cem"', 'cem-close', 'Delivery map']) assert(directiv
   mapTimer.fn()
   assert.equal(scope.lm.note, 'Load the BeamNG.Earth level.')
   answer = saved
+  scope.mapEngine()
+  assert.equal(scope.lm.engine, 'osm', 'back to the OSM map')
+  // without the helper the OSM map is off, and the note says so and can be closed
+  answer = {status: 'ok', car: {x: 0, y: 0, h: 0, kmh: 0, lat: 50, lon: 14}, stops: []}
+  now += 300
+  mapTimer.fn()
+  assert(scope.osmMap.failed.includes('helper'), 'no tile address: the OSM map is off')
+  now += 300
+  mapTimer.fn()
+  assert(commands.at(-1).includes(', false, false)'), 'then the simple map asks for roads')
+  assert(scope.lm.note.startsWith('Simple map: the OSM map is off'))
+  scope.mapNoteClose()
+  assert.equal(scope.lm.noteHidden, scope.lm.note, 'closed')
+  scope.mapEngine(); scope.mapEngine()
+  assert.equal(scope.osmMap.failed, '', 'switching back tries again')
+  // the map's ⚙ panel: switches saved by the game, the chime among them
+  {
+    scope.s = {...(scope.s || {}), mapPrefs: undefined}
+    assert.equal(scope.mapPrefs().streets, true, 'defaults before the game answered')
+    scope.mapSet()
+    assert.equal(scope.lm.set, true)
+    scope.mapPref('water')
+    assert(commands.at(-1).includes('cargoEarth_core.setMapPref("water", false)'), commands.at(-1))
+    assert.equal(scope.mapPrefs().water, false, 'shown at once')
+    scope.mapPref('nonsense')
+    assert(!commands.at(-1).includes('nonsense'))
+    const quiet = !!scope.s.quiet
+    scope.mapPref('sound')
+    assert.equal(!!scope.s.quiet, !quiet, 'the chime switch is the speedometer\'s')
+    scope.mapPref('sound')
+    scope.mapSet()
+    assert(directive.template.includes('cep-map-set') && directive.template.includes('MAP_PLACES'))
+  }
+  // tiles come through the game (the UI browser may not ask the helper itself): polled until the helper answered
+  {
+    const got = []
+    answer = {state: 'loading'}
+    later.length = 0
+    scope.osmMap.xhr('game?z=14&x=8848&y=5550', (status, buf) => got.push([status, buf && Array.from(new Uint8Array(buf))]))
+    assert(commands.at(-1).includes('cargoEarth_core.osmTile(14, 8848, 5550)'), commands.at(-1))
+    assert.equal(got.length, 0, 'still loading')
+    answer = {state: 'ok', b64: 'AQID'}
+    later.shift()()
+    assert.equal(JSON.stringify(got), '[[200,[1,2,3]]]', 'the tile bytes')
+    answer = {state: 'error', err: 'HTTP 404'}
+    scope.osmMap.xhr('game?z=14&x=1&y=2', (status) => got.push([status]))
+    assert.equal(got.at(-1)[0], 404, 'an old helper: too old')
+    answer = {state: 'error', err: 'connection refused'}
+    scope.osmMap.xhr('game?z=14&x=1&y=3', (status) => got.push([status]))
+    assert.equal(got.at(-1)[0], 0, 'no helper: did not answer')
+  }
+  answer = saved
   scope.setTab('orders')
+}
+// speeding: one chime each time over the limit, again only after 3 s back under; off when quiet
+{
+  const pollTimer = timers.find(t => t.interval === 250)
+  const saved = answer
+  const ask = a => { answer = a; now += 2100; pollTimer.fn() }
+  const base = {screen: 'offline'}
+  const start = scope.chimes
+  ask({...base, limit: {sign: '50', over: true}})
+  assert.equal(scope.chimes, start + 1, 'over the limit: a chime')
+  ask({...base, limit: {sign: '50', over: true}, clock: 'a'})
+  assert.equal(scope.chimes, start + 1, 'still over: no second chime')
+  ask({...base, limit: {sign: '50', over: false}})
+  ask({...base, limit: {sign: '50', over: true}})
+  assert.equal(scope.chimes, start + 1, 'back over within 3 s: quiet')
+  ask({...base, limit: {sign: '50', over: false}})
+  now += 3500
+  ask({...base, limit: {sign: '50', over: false}, clock: 'b'})
+  ask({...base, limit: {sign: '50', over: true}})
+  assert.equal(scope.chimes, start + 2, 'over again after a while: a chime')
+  ask({...base, limit: {sign: '50', over: false}}); now += 3500; ask({...base, clock: 'c'})
+  ask({...base, limit: {sign: '50', over: true}, hidden: true})
+  assert.equal(scope.chimes, start + 2, 'the floating phone hidden: the dash phone chimes instead')
+  ask({...base, limit: {sign: '50', over: true}, clock: 'f'})
+  assert.equal(scope.chimes, start + 2, 'shown again while still over: the time over was already marked')
+  ask({...base, clock: 'd'}); now += 3500; ask({...base, clock: 'e'})
+  ask({...base, limit: {sign: '50', over: true}, quiet: true})
+  assert.equal(scope.chimes, start + 2, 'quiet: no chime')
+  scope.s = {quiet: true}
+  scope.mapQuiet()
+  assert(commands.at(-1).includes('setQuiet(false)'), 'tap the speedometer: the chime back on')
+  answer = saved
 }
 // radio: one radio for both phones, kept by the game; the page's player makes the sound
 hold = false

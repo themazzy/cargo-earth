@@ -1,6 +1,82 @@
 # Live map (phone Map tab)
 
-The phone's **Map** tab draws a flat, heading-up sat-nav sketch:
+The Map tab has two maps. Tap **Use the simple map / Use the OSM map** in the timing readout (tap the north dial)
+to switch; the choice is remembered per phone.
+
+## OSM map (default)
+
+OpenStreetMap vector tiles from [OpenFreeMap](https://openfreemap.org) (OpenMapTiles schema), decoded and drawn by the
+phone itself on its 2D canvas (`cargoEarthOsm` at the top of `app.js`). Two things in BeamNG's UI browser shape it:
+
+- **No WebGL**: the game runs its browser with GPU drawing off ("GL_RENDERER = Disabled"), so a WebGL map library
+  (MapLibre) cannot start. The phone has its own small Mapbox Vector Tile decoder and draws water, parks and woods,
+  residential areas, buildings (close up), rail and roads by class (casing, then fill, small under big) with 2D canvas
+  calls, and street names written letter by letter along the streets (they follow bends, read left to right, a bit
+  smaller in the 1000 m view), kept clear of each other and of the map buttons.
+- **No web**: the browser does not load from the internet (the radio streams go through the helper for the same
+  reason). The tiles come through the helper: `GET /v1/osm/tile?z=14&x=..&y=..` asks OpenFreeMap (the tile address
+  from its TileJSON, asked once a day) and keeps the tile on disk (`cache/osm`, the oldest past 3000 dropped).
+- **Not even the helper**: BeamNG's UI browser cancels the page's own requests to 127.0.0.1 (beamng.log:
+  `BNGCefClient::OnBeforeResourceLoad| Resource cancel`). So the phone asks the game: `cargoEarth_core.osmTile(z, x, y)`
+  (cargoEarth/osmtiles.lua) queues `/v1/osm/tile?...&as=b64` on the helper client's own map lane (worked every frame
+  next to the radio's lane, never in its way) and answers `loading` until the helper sent the tile as base64 text;
+  the phone asks again every 200 ms. A finished tile is handed out for 20 s, so every phone on screen gets it.
+  `core.phoneMap` says `tiles = 'game'` when the helper is on. (The helper still answers a page directly, with CORS,
+  for a browser that allows it.)
+
+Each z14 tile (about 1.5 km) is cut into 512 px pieces, as many as the zoom needs, each drawn north-up once and kept
+(48 at most); a frame only turns and places those pictures under the car, so a frame costs a few image draws. At most
+two new pieces are drawn per frame. Decoded tiles are kept (30 at most), 4 load at once, a failed one is asked again
+after 30 s. In this mode the game sends no roads at all, only the car, the route and the stops by lat / lon
+(`core.phoneMap(nil, perf, true)`). The credit (© OpenFreeMap © OpenMapTiles © OpenStreetMap contributors) is in the
+map's corner.
+
+Without the helper, or when three tiles failed and none came (the reason is named: the helper did not answer, is too
+old, or could not reach OpenFreeMap), the phone shows the simple map and says why in a note you can close (✕).
+
+## Directions
+
+Over both maps: the next turn (BeamNG.Earth's route steps, OSRM maneuvers, modding API 1.7 `routeSteps`; arrow,
+distance, "Turn left onto …", roundabout exits), the car's speed, and the way and time left to the next stop (Earth's
+GPS `remaining` / `eta`). Lengths and speed follow the game's units (Options > Display, `uiUnitLength`): m / km and
+km/h, or ft / mi and mph. Earth's step offsets count metres along its full route, ours along the simplified line, so
+the car's distance along our line is scaled by Earth's route length.
+
+**Arrival time**: the way-left pill also shows the clock time you get there (`now + eta`, the computer's own clock,
+like the phone's status row), e.g. `6.4 km · 12 min · 20:32`.
+
+**Next stop's name**: the next stop's pin gets a tag with its name (a drop-off's street and number, a pickup's name),
+right of the pin, or left of it near the zoom buttons. Not shown while the pin is held at the map's edge.
+
+**Job line**: on the Map tab the big work card is gone; the job is one slim line under the turn banner (Pick up / Deliver + the place, New offer, Contract), tap it for the Work tab. The map reaches the status row, and the header limit sign hides while the map shows its own.
+
+**Route to** (the pin button under the corner buttons, only while no job or company shift steers the GPS): Home,
+Headquarters (greyed out until there is one), Nearest fuel (the same station finder as the Garage's fuel card) and
+Clear route. `cargoEarth_core.mapGo(where)` returns `{ ok, msg }`; `phoneMap` sends `go = { home, hq }` when the map
+may set routes.
+
+**Lanes**: when the next turn is within 1 km and Earth's step has lane data (OSRM `lanes`), a row of lane arrows
+shows under the banner, bright for the lanes that lead your way (a lane with several arrows shows the one the route
+takes).
+
+**Speed and limit** (like Google Maps, Waze, TomTom): the limit's sign sits above the speedometer whenever the limit
+is known. The speed turns amber just over the limit (`OVER_KMH`, 3 km/h) and red well over (`WELL_OVER_KMH` 10 km/h or
+10 % of the limit, whichever is more; `phoneState().limit.well`).
+
+**Speeding**: the speedometer turns red and the phone plays a short two-tone chime (Web Audio) when the car goes over
+the limit (the same moment the phone's speed-limit sign turns red, `OVER_KMH` over). Once per time over, again after
+3 s back under. Only one phone chimes: the floating one, or the dash phone while the floating one is hidden. Tap the
+speedometer to turn the chime off or on (`core.setQuiet`, kept in `settings/cargoEarth/ui.json` for both phones).
+
+## Timing readout
+
+Tap the north dial. It shows the game's time per answer (and per second, 4 answers a second), the answer's size and
+round trip, the phone's drawing time and frames a second, and for the simple map the road index (time, slices,
+edges) and the roads last sent; for the full map the tiles loaded and failed.
+
+## Simple map
+
+A flat, heading-up sat-nav sketch drawn on a canvas:
 
 - **Roads** come from the game's road graph (`map.getMap()`), the graph BeamNG.Earth hands to the game for its
   traffic. Nothing is downloaded and no other add-on is needed. Roads within 1 km of the car are sent to the phone
@@ -11,8 +87,35 @@ The phone's **Map** tab draws a flat, heading-up sat-nav sketch:
 - **Stops**: the next stop (P pickup / D delivery, held at the map's edge with an arrow when off screen), the other
   orders' stops, a parcel route's stops ahead (numbered), Home (H) and the firm's workshop (W).
 - Three zoom steps (250 / 500 / 1000 m top to bottom), remembered per phone. Click-only, works on the dash phone.
-- Nothing is asked or drawn while another tab shows or the phone is folded or hidden.
+- Nothing is asked or drawn while another tab shows or the phone is folded or hidden. A frame that would look the
+  same as the last one (the car stands) is not drawn again.
+- The road index (the graph's edges sorted into 250 m cells) is built 3 ms at a time over several answers
+  (`phonemap.SLICE_MS`), never in one frame: a city-size graph takes 15 to 100 ms to sort. The last finished index
+  is used meanwhile; it is built again every 30 s so roads Earth streams in show up.
 
 Code: `lua/ge/extensions/cargoEarth/phonemap.lua` (pure rules), `core.phoneMap(roadsKey)`, the Map tab in
 `ui/modules/apps/CargoEarthPhone/app.js`. Tests: `tests/phonemap.lua`, the live map test in `tests/career.lua`,
 the Map tab in `tests/phone.cjs`.
+
+## Places, river names and the map's ⚙ panel
+
+- **Places** come from the tiles' `poi` layer (OpenMapTiles): named businesses and landmarks, a dot coloured by kind
+  (food, shops, fuel, health, other) and the name beside it, the most important of each tile first (`rank`). Street
+  furniture (parking, bins, gates, benches...) is left out. At most 12 at once in the 250 and 500 m views, 5 in the
+  1000 m view, never over a street name, each other, the car or the map buttons.
+- **House numbers** (OpenMapTiles `housenumber`, z14) in the 250 m view only, small and grey, at most 60, never over
+  anything else.
+- **One-way arrows**: chevrons every 70 m along one-way primary to service roads (`oneway` 1 / -1), drawn into the map
+  pieces in the 250 and 500 m views (motorways and trunks left out: they are all one-way).
+- **Speed cameras**: the cameras the fines watch (`core.phoneMap` sends `cams`, those within 2 km, with their limit)
+  as small limit signs, in mph when the game shows miles.
+- **Whole-route view** (the corner button under ⚙, only with a route): north up, the whole way ahead
+  (`phoneMap(..., whole)` sends `whole = phonemap.outline(...)`, ~240 points) and the car fitted in, with coarser tiles
+  (z13 down to z9) when it reaches far. The same button goes back to following the car.
+- **River names**: named `waterway` lines, blue and slanted, placed like street names.
+- **⚙ panel** (under the north dial): Speed chime, Street names, River names, Latin names,
+  House nos., One-way, Speed cameras
+  (the `name:latin` spelling of streets, rivers and places, e.g. Serbian or Bulgarian Cyrillic names), Buildings, North up, Auto zoom (one step
+  out from 70 km/h, back under 50), Lane arrows, Speedometer, and Places by kind. Kept in the player's
+  `settings/cargoEarth/ui.json` (`map`), set by `cargoEarth_core.setMapPref(key, on)`; `phoneState().mapPrefs` brings
+  them to every phone. The panel fits the map without scrolling (VR controllers can't scroll inside it).

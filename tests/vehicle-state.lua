@@ -70,10 +70,104 @@ broken.state = 'broken'
 state.run('restore','snapshot.json',4)
 assert(resets.doors == 1 and resets.hood == 1 and not resets.trunk)
 for _ = 1, 40 do state.updateGFX(0.1) end
+-- a latch the load let go of while its controller still says attached (player report 2026-11-24: the door could
+-- never be shut again): its couplers are let go, then its controller is reset like on a fresh spawn
+do
+  local detached = {}
+  obj.detachCoupler = function(_, cid, force) detached[#detached + 1] = cid assert(force == 0) end
+  v.data.doorsRear = {couplerNodes = {{'cid1', 'cid2', 'couplingStartRadius'}, {'rl1', 'rl2', 0.05}, {'rr1', 'rr2', 0.05}}}
+  beamstate.nodeNameMap = {rl1 = 41, rr1 = 42, rl2 = 51, rr2 = 52}
+  local savedTFHT = tableFromHeaderTable
+  tableFromHeaderTable = function(t)
+    local out = {}
+    for i = 2, #t do local row = {} for k, key in ipairs(t[1]) do row[key] = t[i][k] end out[#out + 1] = row end
+    return out
+  end
+  local rear = latch('doorsRear', 'attached')
+  controller = {getControllersByType=function() return {rear, broken} end}
+  file.cargoEarthLatches = {doorsRear = 'attached', trunk = 'broken'}
+  resets = {}
+  beamstate.load = function(...) load(...) end   -- the controller keeps saying attached
+  state.run('restore','snapshot.json',5)
+  assert(#detached == 2 and detached[1] == 41 and detached[2] == 42, 'its couplers are let go')
+  assert(not resets.doorsRear, 'the reset waits for the release')
+  state.updateGFX(0.1)
+  assert(not resets.doorsRear)
+  state.updateGFX(0.15)
+  assert(resets.doorsRear == 1 and rear.state == 'autoCoupling', 'then it latches again like on a fresh spawn')
+  assert(not resets.trunk, 'a latch broken when saved is left alone')
+  impulses = {}
+  state.updateGFX(0.6)
+  assert(impulses.doorsRear == 'attached', 'a door saved hanging open (an older broken save) is pushed shut')
+  for _ = 1, 40 do state.updateGFX(0.1) end
+  assert(resets.doorsRear == 1)
+  -- later (a contract taken, player report 2026-11-26): the controller says attached, but a pair is 30 cm apart
+  rear.state = 'attached'
+  resets, detached = {}, {}
+  obj.nodeLength = function(_, a, b) return (a == 41 and b == 51) and 0.3 or 0.005 end
+  state.updateGFX(0.5)
+  assert(#detached == 0, 'one look is not enough')
+  state.updateGFX(0.5)
+  assert(#detached == 2 and not resets.doorsRear, 'a loose latch is let go first')
+  state.updateGFX(0.5)
+  assert(resets.doorsRear == 1, 'then reset, so a click shuts the door again')
+  rear.state = 'attached'
+  obj.nodeLength = function() return 0.005 end
+  resets, detached = {}, {}
+  for _ = 1, 10 do state.updateGFX(0.5) end
+  assert(#detached == 0 and not resets.doorsRear, 'a latched door is left alone')
+  obj.nodeLength = nil
+  tableFromHeaderTable, obj.detachCoupler, v.data.doorsRear, beamstate.nodeNameMap = savedTFHT, nil, nil, nil
+end
 beamstate.load = load
+-- a parts change (Jan, 2026-11-26): the old build's damage goes back onto the parts that stayed, a swapped part
+-- stays new. Old build: body nodes b1, b2 and the aero kit's a1; new build: b1, b2 and a box's x1 (other numbers).
+do
+  local nodesOld = { {cid=0, name='b1', partOrigin='body'}, {cid=1, name='a1', partOrigin='aero'}, {cid=2, name='b2', partOrigin='body'} }
+  local beamsOld = { {cid=0, id1=0, id2=2, partOrigin='body'}, {cid=1, id1=0, id2=1, partOrigin='aero'} }
+  local nodesNew = { {cid=0, name='x1', partOrigin='box'}, {cid=1, name='b1', partOrigin='body'}, {cid=2, name='b2', partOrigin='body'},
+    {cid=3, name='x2', partOrigin='box'} }
+  local beamsNew = { {cid=0, id1=0, id2=3, partOrigin='box'}, {cid=1, id1=1, id2=2, partOrigin='body'} }
+  local function index(list) local t = {} for _, x in ipairs(list) do t[x.cid] = x end return t end
+  local setPos, setLen, broke, deformed, committed, fullLoads = {}, {}, {}, {}, 0, 0
+  obj.setNodePosition = function(_, cid, p) setPos[cid] = p end
+  obj.setNodeMass = function() end
+  obj.setBeamLength = function(_, cid, l) setLen[cid] = l end
+  obj.breakBeam = function(_, cid) broke[cid] = true end
+  obj.commitLoad = function() committed = committed + 1 end
+  v.data.nodes, v.data.beams = index(nodesOld), index(beamsOld)
+  tableSizeC = function(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
+  heading = 1
+  beamstate.save = function()
+    file = {format='v2', vehicleDirectory=v.data.vehicleDirectory, nodeCount=3, beamCount=2,
+      nodes={{{1,1,1}}, {{9,9,9}}, {{2,2,2}}}, beams={{1.5,true,0.4}, {0.9,false,0.8}}, luaState='old'}
+  end
+  beamstate.load = function() fullLoads = fullLoads + 1 end
+  beamstate.onBeamDeformed = function(cid, r) deformed[cid] = r end
+  controller = {getControllersByType=function() return {} end}
+  state.run('capture','snapshot.json',6)
+  assert(file.cargoEarthKeys and file.cargoEarthKeys.nodes[2] == 'a1|aero' and file.cargoEarthKeys.beams[1] == 'b1|b2|body')
+  v.data.nodes, v.data.beams = index(nodesNew), index(beamsNew)
+  state.run('restore','snapshot.json',7)
+  assert(message:find('true') and fullLoads == 0 and committed == 1, 'another build is loaded part by part')
+  assert(setPos[1] and setPos[1].x == 1 and setPos[2] and setPos[2].x == 2, 'the body keeps its dents')
+  assert(not setPos[0] and not setPos[3], 'the new box stays new')
+  assert(setLen[1] == 1.5 and broke[1] and deformed[1] == 0.4, 'the body beam keeps its damage')
+  assert(not setLen[0] and not broke[0], 'the new part beam is untouched')
+  -- the same build again is a full load
+  v.data.nodes, v.data.beams = index(nodesOld), index(beamsOld)
+  state.run('capture','snapshot.json',8)
+  state.run('restore','snapshot.json',9)
+  assert(fullLoads == 1)
+  obj.setNodePosition, obj.setNodeMass, obj.setBeamLength, obj.breakBeam, obj.commitLoad = nil, nil, nil, nil, nil
+  v.data.nodes, v.data.beams = {1}, {1}
+  tableSizeC = function(t) return #t end
+  file.cargoEarthKeys = nil
+  beamstate.save, beamstate.load, beamstate.onBeamDeformed = saved.beamstateSave or beamstate.save, load, nil
+end
 file.nodeCount=2
 state.run('restore','snapshot.json',3)
-assert(calls==2 and message:find('false'), 'a different vehicle structure must reject the snapshot')
+assert(calls==3 and message:find('false'), 'a different vehicle structure must reject the snapshot')
 obj,beamstate,v,quatFromDir,vec3,tableSizeC,jsonReadFile,jsonWriteFile =
   saved.obj,saved.beamstate,saved.v,saved.quatFromDir,saved.vec3,saved.tableSizeC,saved.jsonReadFile,saved.jsonWriteFile
 controller = saved.controller

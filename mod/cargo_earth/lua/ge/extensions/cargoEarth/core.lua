@@ -5,7 +5,7 @@
 -- Everything is clicked on the phone (the UI app): orders, the garage and the settings. The debug window opens from
 -- the phone's settings (or the console: extensions.cargoEarth_core.toggleWindow()). No key bindings.
 local M = {}
-M.VERSION = '0.11.0'      -- the mod's version (package.json has the same; the support report shows it)
+M.VERSION = '0.12.0'      -- the mod's version (package.json has the same; the support report shows it)
 M.CAMERAS_PAUSED = true  -- temporarily suspended: no downloads, alerts, fines or lost stars
 M.dependencies = { 'ui_imgui' }
 
@@ -68,6 +68,8 @@ M.PARCEL_TIP_SHARE = 0.5 -- a parcel route's tip for speed is figured on this sh
 M.ROAD_M = 20          -- the car is on the road edge this close (else: a car park, a field; no limit shown)
 M.LIMIT_S = 0.5        -- the limit under the car is read this often
 M.OVER_KMH = 3         -- the phone's sign turns red this far over the limit
+-- well over (the map's speedometer turns red, amber before): 10 km/h or 10 % of the limit, whichever is more
+M.WELL_OVER_KMH, M.WELL_OVER_SHARE = 10, 0.1
 M.CAMERA_ROAD_M = 600  -- a camera without a mapped limit takes its road's limit from this close
 M.LATE_PER_MIN = { courier = 0.05, trucking = 0.02, bus = 0.01 }   -- share of pay lost per minute late (food goes cold
 -- faster; a bus line adds up the minutes it was late at each stop)
@@ -2281,7 +2283,9 @@ local function distToTarget(p)
   for _, k in ipairs({ 'd', 'r' }) do
     if d[k] then best = math.min(best, jobs.km(p.lat, p.lon, d[k][1], d[k][2]) * 1000) end
   end
-  return best
+  -- the ring moved from the house to the road: it counts too
+  local side = marker.roadsideDistance and marker.roadsideDistance(p, d)
+  return side and math.min(best, side) or best
 end
 
 -- The country the player drives in sets the currency; crossing a border exchanges the money for free.
@@ -3001,7 +3005,7 @@ function M.phoneState()
       companyDamage = c.employment and (c.employment.vehicleDamage or 0), companyOwnerOperator = c.employment and c.employment.ownerOperator,
       companyVehicle = c.employment and employment.vehicleLabel(c.employment),
       currency = moneyInfo(), update = M.updateInfo(), helperBehind = M.helperBehind(), tab = S.phoneTab or 'orders', radio = M.radioBrief(),
-      fold = S.phoneFold or false, dark = M.uiPrefs().dark or false,
+      fold = S.phoneFold or false, dark = M.uiPrefs().dark or false, quiet = M.uiPrefs().quiet or nil, mapPrefs = M.mapPrefs(),
       canSwitch = S.job == nil and not c.employment, helperStart = M.helperStartInfo(), unstuck = M.unstuckInfo() }
   if S.pendingCareer or (not S.career.garage.started and S.career.play ~= 'free' and not c.employment) then
     -- the careers to pick from, on the resume and first-run screens
@@ -3028,10 +3032,20 @@ function M.phoneState()
     out.fuel = { pct = math.floor(gauge.share * 100 + 0.5), low = gauge.low, empty = gauge.empty, rangeKm = gauge.rangeKm }
     out.pump = M.pumpOffer(gauge)
   end
+  if S.job then
+    -- the way left to the next stop on Earth's GPS (metres, seconds), for the phone's work bar on every tab
+    local rt = earth.route()
+    if rt and type(rt.remaining) == 'number' then
+      out.routeLeft = { m = math.floor(rt.remaining + 0.5), s = type(rt.eta) == 'number' and math.floor(rt.eta + 0.5) or nil,
+        imperial = M.imperial() or nil }
+    end
+  end
   local here = earth.pose()
   local limit = limitHere(here)
   if limit then
-    out.limit = { sign = limit.sign, unit = limit.unit, over = (here.speed or 0) * 3.6 > limit.kmh + M.OVER_KMH }
+    local kmh = (here.speed or 0) * 3.6
+    out.limit = { sign = limit.sign, unit = limit.unit, over = kmh > limit.kmh + M.OVER_KMH,
+      well = kmh > limit.kmh + math.max(M.WELL_OVER_KMH, limit.kmh * M.WELL_OVER_SHARE) or nil }
   end
   if camerasOn() then
     local p = here
@@ -3717,7 +3731,8 @@ local function radioSync()
   elseif radio.helperSeq then
     radio.helperSeq = nil
     radio.gen = (radio.gen or 0) + 1
-    if radio.helperOn then helper.command('/v1/player/stop', nil, '/v1/player/') end
+    -- always: a play whose answer was lost (helperOn false) may still be playing on the computer
+    helper.command('/v1/player/stop', nil, '/v1/player/')
     radio.helperOn, radio.player = false, nil
   end
 end
@@ -3932,6 +3947,13 @@ local function garageTick(dt)
       -- what nothing on board explains
       S.storage = nil
       if not S.job then S.sweepWanted, S.sweepAt = true, S.clock + 1 end
+      local swapped = pending.car.partsRestore
+      pending.car.partsRestore = nil
+      if pending.ok and swapped then
+        -- after a parts change: the bill keeps the share of the damage still on the car (the rest left with the parts)
+        local share = math.min(1, (M.G.damage() or 0) / swapped.damage)
+        pending.bill = math.floor(pending.bill * share / 5 + 0.5) * 5
+      end
       if pending.ok then
         g.damageBaseline = {damage = M.G.damage() or 0, bill = pending.bill}
         g.lastDamage = g.damageBaseline.damage
@@ -3976,7 +3998,9 @@ local function garageTick(dt)
   end
   local damage = M.G.damage()
   M.busDamageTick(damage)
-  local what, amount, insured = garage.trackDamage(g, damage)
+  -- a parts preview respawns the car: the damage counter waits until it is kept (buyParts) or discarded (a respawn)
+  local what, amount, insured
+  if not S.parts then what, amount, insured = garage.trackDamage(g, damage) end
   if shift and what == 'hit' then employment.damage(S.career, math.max(0, amount)) end
   if shift and not shift.ownerOperator then g.debt = 0 end
   if what == 'hit' then
@@ -4614,6 +4638,7 @@ end
 local function garageRefuel(amount, pct) local ok, msg = fuelRefuel(amount, pct) say(msg) return ok, msg end
 local function garageFuelDelivery() local ok, msg = fuelDelivery() say(msg) return ok, msg end
 local function garageFuelGps() return fuelGps() end
+M.fuelGps = fuelGps   -- (the map's one-tap routes)
 local function garageHireDriver(id, applicant)
   if S.career.firm then fleet.applicants(S.career.firm, (S.career.activeSeconds or 0) / 60, M.random) end
   return garageSay(fleet.hire(S.career.garage, S.career, tonumber(id), applicant))
@@ -4707,7 +4732,9 @@ local function startParts(vehicle, fromGame)
   local blocked = S.job and 'Finish the current order before changing parts.'
     or g.pendingUsed and 'Wait for the car to finish loading its parts.'
     or (g.car and g.car.loaner) and 'The loaner comes with fixed equipment.'
-    or ((g.repair or 0) > 0 or damage * garage.REPAIR_PER_DAMAGE >= 2.5) and 'Repair the car before changing parts.'
+  -- A damaged car may change parts (player report, 2026-11-25): a config that breaks itself as it spawns (a Segra box
+  -- truck with the cab aero kit still on) re-breaks after every repair, so requiring a repair first locked the car.
+  -- The repair bill stays owed; the damage counter is frozen while the preview respawns the car (see buyParts).
   if blocked and not fromGame then return false, blocked end
   -- Native Apply may have already changed the live config when its hook arrives.
   -- Keep the last paid snapshot as the baseline, rather than accepting that preview for free.
@@ -4716,7 +4743,7 @@ local function startParts(vehicle, fromGame)
   end
   if damage > (g.lastDamage or 0) then garage.trackDamage(g, damage) end
   S.partsRevision = (S.partsRevision or 0) + 1
-  S.parts = { before = g.car.parts, id = vehicle.id, blocked = blocked }
+  S.parts = { before = g.car.parts, id = vehicle.id, blocked = blocked, data = vehicle.data }
   S.phone.incoming, S.phone.lastDone, S.window = nil, nil, false
   S.garageMsg = nil
   return true
@@ -4753,16 +4780,28 @@ local function quoteParts()
   return quote, why
 end
 
+-- Did the preview respawn the car (BeamNG rebuilt it with the previewed parts)? Then it is physically new.
+function M.partsRespawned(live)
+  live = live or previewVehicle()
+  return live ~= nil and S.parts.data ~= nil and live.data ~= S.parts.data
+end
+
 local function partsProblem(quote)
   local g = S.career.garage
-  if (g.repair or 0) > 0 then return 'Repair the car before changing parts.' end
   if quote.cost > 0 and (g.debt or 0) > 0 then return 'Pay off your debt before buying parts.' end
   if quote.cost > (S.career.money or 0) then return 'Not enough money for these parts.' end
 end
 
-local function openParts()
-  if not garage.inOwnCar(M.G, S.career.garage) then return false, 'Sit in your career car first.' end
+local function openParts(captured)
+  local g = S.career.garage
+  if not garage.inOwnCar(M.G, g) then return false, 'Sit in your career car first.' end
   local opening = not S.parts
+  -- A damaged car's latest physical state is saved first (Codex): the preview rebuilds the car mended, and Discard must
+  -- bring back this damage, not an older snapshot (or none), or opening and discarding would be a free repair.
+  if opening and not captured and ((g.repair or 0) > 0 or (M.G.damage and (M.G.damage() or 0) > 0)) then
+    local busy, msg = M.captureOutgoing(function() return openParts(true) end)
+    if busy then return false, msg end
+  end
   if opening then
     local ok, why = startParts(M.G.vehicle())
     if not ok then return false, why end
@@ -4797,12 +4836,26 @@ local function buyParts(revision)
   if tonumber(revision) ~= S.partsRevision then return false, 'The preview changed. Review the new total.' end
   local quote, why = quoteParts()
   if not quote then return false, why end
+  local live = previewVehicle()
   why = partsProblem(quote)
   if why then return false, why end
   local c, g = S.career, S.career.garage
   local money, spent, inventory, config, parts, salvage, paid, fitted = c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts
   local partsPaid = g.car.partsPaid
-  if not garage.remember(M.G, g, previewVehicle()) then return false, 'Could not capture the new configuration.' end
+  if not garage.remember(M.G, g, live) then return false, 'Could not capture the new configuration.' end
+  -- A preview that respawned the car is a new build of the new config (Jan, 2026-11-26): swapped parts come new, but
+  -- no other part is mended. The saved damage goes back onto every part that stayed (the vehicle side matches nodes and
+  -- beams by name and part), and the bill shrinks only by the damage that left with the swapped parts
+  -- (car.partsRestore, settled when that restore completes). Like after a respawn, the bill is carried meanwhile.
+  -- Part of the purchase, so the checkpoint below has it. A checkout with no respawn keeps its damage and its bill.
+  local car = g.car
+  local damageWas = { g.damageBaseline, g.carriedRepair, g.lastDamage, car.partsRestore }
+  if M.partsRespawned(live) then
+    if car.physicalDamage and (g.repair or 0) > 0 then
+      car.partsRestore = { bill = g.repair, damage = math.max(1, g.lastDamage or 0) }
+    end
+    g.damageBaseline, g.carriedRepair, g.lastDamage, g.restoringDamage = nil, g.repair or 0, 0, nil
+  end
   c.money, g.spent, g.inventory, g.salvage = (money or 0) - quote.cost, (spent or 0) + quote.cost, quote.inventory, quote.salvage
   g.car.paidParts, g.car.salvageParts = quote.paid, quote.fittedSalvage
   if (quote.invest or 0) ~= 0 then g.car.partsPaid = (partsPaid or 0) + quote.invest end
@@ -4810,6 +4863,7 @@ local function buyParts(revision)
   if not saveCareer() then
     c.money, g.spent, g.inventory, g.car.config, g.car.parts, g.salvage, g.car.paidParts, g.car.salvageParts = money, spent, inventory, config, parts, salvage, paid, fitted
     g.car.partsPaid = partsPaid
+    g.damageBaseline, g.carriedRepair, g.lastDamage, car.partsRestore = damageWas[1], damageWas[2], damageWas[3], damageWas[4]
     economy.reconcile(c, 'parts', 'Purchase not saved, refunded')
     return false, 'The purchase could not be saved. Try again.'
   end
@@ -4828,7 +4882,8 @@ function M.garageState()
     local quote, why = quoteParts()
     if quote then why = partsProblem(quote) end
     out.parts = { revision = S.partsRevision, items = quote and quote.items, cost = quote and quote.cost,
-      error = why, canBuy = quote ~= nil and not why, blocked = not not S.parts.blocked }
+      error = why, canBuy = quote ~= nil and not why, blocked = not not S.parts.blocked,
+      owed = (g.repair or 0) > 0 and g.repair or nil }
     return out
   end
   if not g.started then return out end
@@ -5282,7 +5337,7 @@ function M.settingsState()
 end
 
 -- name: mode (a = courier | trucking | taxi | bus), step (a = key, b = +1 | -1), autoReach (a = true | false), reset, window,
--- dark (a = true | false), restart (a = the confirm word, see restartCareer), dash (a = on | off | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
+-- dark (a = true | false), restart (a = the confirm word, see restartCareer), dash (a = on | off | middle | wheel | x+ | x- | y+ | y- | z+ | z- | reset | measure: the phone on the dashboard, see dashDo)
 function M.settingsDo(name, a, b)
   -- the dash phone is the player's own choice, outside the career: it works on the resume screen too
   if name == 'dash' then
@@ -5646,20 +5701,40 @@ end
 -- already has (the roads are sent again only on another tile, another graph or after BeamNG.Earth moved the world).
 --   { car = { x, y, h (degrees clockwise from north), kmh }, roadsKey, roads = { x1, y1, x2, y2, kind, ... },
 --     route = { x, y, ..., false, ... }, routeGps, stops = { { x, y, k = 'next'|'pickup'|'drop'|'stop'|'home'|'hq', n } } }
+-- geo (the OSM map, drawn by the phone from OpenFreeMap tiles the helper passes on): no roads; the car, the route
+-- (routeLL = { lat, lon, ... }) and the stops come with lat / lon too, and tiles = 'game' when the map can get tiles.
+-- The game shows lengths in miles (Options > Display > Units)
+function M.imperial()
+  local st = rawget(_G, 'settings')
+  local ok, v = pcall(function() return st and st.getValue and st.getValue('uiUnitLength') end)
+  return ok and v == 'imperial'
+end
 M.MAP_ON_ROUTE_M = 40   -- the car this close to the GPS line is on it (farther: the GPS is about to plan again)
-function M.phoneMap(have)
+
+-- One OSM map tile for the phone (see cargoEarth/osmtiles): the game asks the helper, the phone polls this.
+function M.osmTile(z, x, y)
+  return require('cargoEarth/osmtiles').get(helper, z, x, y, S.clock)
+end
+
+function M.phoneMap(have, perf, geo, whole)
   local pm = require('cargoEarth/phonemap')
+  local t0 = os.clock and os.clock()
   local p = earth.pose()
   if not (p and p.x and p.y) then return { status = earth.status() } end
   local out = { status = 'ok', car = { x = r1(p.x), y = r1(p.y), h = r1(p.heading or 0), kmh = math.floor((p.speed or 0) * 3.6 + 0.5) } }
   local frame = tostring(p.anchorLat or '') .. ',' .. tostring(p.anchorLon or '')
-  local graph = M.G.graph and M.G.graph()
+  local function r6(v) return math.floor(v * 1e6 + 0.5) / 1e6 end
+  if geo and p.lat and p.lon then out.car.lat, out.car.lon = r6(p.lat), r6(p.lon) end
+  -- the OSM map's tiles come through the helper (the game's UI cannot load from the web)
+  if geo and helper.enabled then out.tiles = 'game' end   -- tiles come through the game (osmTile), not straight from the helper
+  local graph = not geo and M.G.graph and M.G.graph()
   if graph then
     local tx, ty, cx, cy = pm.tile(p.x, p.y)
-    pm.grid(graph, S.clock)
+    -- the road index is sorted a few milliseconds per ask, never all at once (a big graph would stall a frame)
+    pm.grid(graph, S.clock, pm.SLICE_MS)
     local key = table.concat({ tx, ty, frame, pm.stamp or 0 }, ':')
     out.roadsKey = key
-    if key ~= have then out.roads = pm.roads(graph, cx, cy, pm.RADIUS, S.clock) end
+    if key ~= have then out.roads = pm.roads(graph, cx, cy, pm.RADIUS, S.clock, pm.SLICE_MS) end
   end
   local function xy(g)
     if type(g) ~= 'table' or not g[1] then return nil end
@@ -5675,13 +5750,22 @@ function M.phoneMap(have)
   local pts = routeKey and pm.routeCached(routeKey)
   if routeKey and not pts then
     local geo = earth.routeGeometry and earth.routeGeometry()
-    if geo then pts = pm.routeXY(routeKey, geo.points, function(q) return earth.worldXY(p, q) end) end
+    if geo then
+      pts = pm.routeXY(routeKey, geo.points, function(q) return earth.worldXY(p, q) end)
+      pts.steps, pts.dist = geo.steps, tonumber(geo.dist)
+    end
   end
   if pts then
     -- only the way still ahead of the car; facing against it while moving: the route is behind you
     local ahead, where = pm.ahead(pts, p.x, p.y, p.heading, routeKey)
     out.route, out.routeGps = pm.clip(ahead, p.x, p.y), true
+    if geo then out.routeLL = pm.geoRoute(ahead) end
+    -- the whole-route view: all of the way ahead, a few hundred points
+    if whole then out.whole = pm.outline(ahead) end
     if where then
+      -- the next turn: Earth's steps count metres along its full route, ours is the simplified line (a bit shorter)
+      local travelled = where.along * ((pts.dist and where.length > 0) and pts.dist / where.length or 1)
+      out.turn = pm.nextTurn(pts.steps, travelled)
       out.offM = math.floor(where.off + 0.5)
       out.behind = where.back and where.off <= M.MAP_ON_ROUTE_M and (p.speed or 0) > M.STOP_SPEED or nil
     end
@@ -5689,7 +5773,10 @@ function M.phoneMap(have)
   local stops = {}
   local function add(g, k, n)
     local x, y = xy(g)
-    if x then stops[#stops + 1] = { x = x, y = y, k = k, n = n } end
+    if x then
+      stops[#stops + 1] = { x = x, y = y, k = k, n = n }
+      if geo then stops[#stops].lat, stops[#stops].lon = r6(g[1]), r6(g[2]) end
+    end
   end
   local c = S.career
   if c.home and c.home.g then add(c.home.g, 'home', 'Home') end
@@ -5717,12 +5804,73 @@ function M.phoneMap(have)
         if not out.route then
           local cx, cy = math.floor(p.x + 0.5), math.floor(p.y + 0.5)
           out.route = { cx, cy, last.x, last.y }
+          if geo and out.car.lat then out.routeLL = { out.car.lat, out.car.lon, last.lat, last.lon } end
         end
       end
     end
   end
   out.stops = stops
+  -- the map's own routes (Home, HQ, fuel) while no work steers the GPS
+  if not S.job and not c.employment and not S.pendingCareer then
+    out.go = { home = (c.home and c.home.g) and true or nil, hq = (hq and hq.g) and true or nil }
+  end
+  -- speed cameras within 2 km (the ones the fines watch): where, and their limit in km/h (assumed: a class default)
+  if camerasOn() and cams.near and #cams.near > 0 then
+    local list = {}
+    for _, cam in ipairs(cams.near) do
+      local x, y = xy({ cam.lat, cam.lon })
+      if x then
+        local row = { x = x, y = y, limit = cam.limit, assumed = cam.assumed or nil }
+        if geo then row.lat, row.lon = r6(cam.lat), r6(cam.lon) end
+        list[#list + 1] = row
+      end
+    end
+    if #list > 0 then out.cams = list end
+  end
+  -- the way left to the next stop (Earth's GPS: metres, seconds) and the game's units (Options > Display)
+  if rt and type(rt.remaining) == 'number' then
+    out.leftM = math.floor(rt.remaining + 0.5)
+    out.leftS = type(rt.eta) == 'number' and math.floor(rt.eta + 0.5) or nil
+  end
+  out.imperial = M.imperial() or nil
+  -- the timing readout (tap the north dial): what this ask cost and what the road index cost when last sorted
+  if perf then
+    local f = pm.perf
+    local function ms(v) return math.floor((v or 0) * 100 + 0.5) / 100 end
+    out.perf = { luaMs = t0 and ms((os.clock() - t0) * 1000) or 0, buildMs = ms(f.buildMs), sliceMaxMs = ms(f.sliceMaxMs),
+      slices = f.slices, edges = f.edges, roadsMs = ms(f.roadsMs), building = f.building or nil }
+  end
   return out
+end
+
+-- One-tap routes from the phone's map: home, the firm's headquarters, the nearest fuel station, or no route at all.
+-- Not while a job or a company shift steers the GPS. Returns { ok, msg }.
+function M.mapGo(where)
+  local c = S.career
+  if S.pendingCareer then return { ok = false, msg = 'Start or resume your career first.' } end
+  if S.job or c.employment then return { ok = false, msg = 'The GPS follows your work now.' } end
+  if earth.status() ~= 'ok' then return { ok = false, msg = tostring(earth.status()) } end
+  local ok, msg
+  if where == 'home' then
+    if not (c.home and c.home.g) then return { ok = false, msg = 'You have no home yet. Set one in the Menu, under Places.' } end
+    ok, msg = earth.gps(c.home.g[1], c.home.g[2], c.home.name or 'Home')
+    if ok then msg = 'Route set home.' end
+  elseif where == 'hq' then
+    local hq = c.firm and c.firm.hq
+    if not (hq and hq.g) then return { ok = false, msg = 'Your firm has no headquarters yet.' } end
+    ok, msg = earth.gps(hq.g[1], hq.g[2], c.firm.name or hq.n or 'Headquarters')
+    if ok then msg = 'Route set to your headquarters.' end
+  elseif where == 'fuel' then
+    if not (c.garage and c.garage.car) then return { ok = false, msg = 'The fuel finder needs your career car.' } end
+    return (function(a, b) return { ok = a == true, msg = b } end)(M.fuelGps())
+  elseif where == 'clear' then
+    earth.gpsClear()
+    ok, msg = true, 'Route cleared.'
+  else
+    return { ok = false, msg = 'Unknown place.' }
+  end
+  if not ok then msg = 'GPS not set: ' .. tostring(msg or 'BeamNG.Earth did not answer') end
+  return { ok = ok == true, msg = msg }
 end
 
 -- The floating phone folded or open. The game rebuilds UI apps when the camera changes or the pause menu opens, so
@@ -5732,23 +5880,57 @@ function M.phoneFold(on, screen)
   return S.phoneFold or false
 end
 
--- The player's look settings, outside any career (they work before a save loads): { dark = true | nil }
+-- The player's look settings, outside any career (they work before a save loads): { dark = true | nil,
+-- quiet = true | nil (no chime when driving over the limit) }
 M.UI_FILE = '/settings/cargoEarth/ui.json'
 M.uiStore = {
   read = function() return jsonReadFile and jsonReadFile(M.UI_FILE) or nil end,
   write = function(t) if jsonWriteFile then jsonWriteFile(M.UI_FILE, t, true) end end,
 }
+-- The map's own switches (its ⚙ panel): what it shows. Only true / false, only these names.
+M.MAP_PREFS = { streets = true, water = true, food = true, shop = true, fuel = true, health = true, other = false,
+  buildings = true, north = false, autoZoom = false, lanes = true, speedo = true, latin = false, numbers = true,
+  oneway = true, cams = true }
+function M.mapPrefsOf(t)
+  local out = {}
+  for k, def in pairs(M.MAP_PREFS) do
+    local v
+    if type(t) == 'table' then v = t[k] end
+    if type(v) == 'boolean' then out[k] = v else out[k] = def end
+  end
+  return out
+end
 function M.uiPrefs()
   if not S.ui then
     local ok, t = pcall(M.uiStore.read)
-    S.ui = { dark = ok and type(t) == 'table' and t.dark == true or nil }
+    S.ui = { dark = ok and type(t) == 'table' and t.dark == true or nil, quiet = ok and type(t) == 'table' and t.quiet == true or nil,
+      map = M.mapPrefsOf(ok and type(t) == 'table' and t.map) }
   end
+  if not S.ui.map then S.ui.map = M.mapPrefsOf(nil) end
   return S.ui
+end
+function M.writeUi(u) pcall(M.uiStore.write, { v = 1, dark = u.dark or false, quiet = u.quiet or false, map = u.map }) end
+function M.mapPrefs() return M.uiPrefs().map end
+-- One of the map's switches; returns all of them
+function M.setMapPref(key, on)
+  local u = M.uiPrefs()
+  if M.MAP_PREFS[key] ~= nil then
+    u.map[key] = on == true
+    M.writeUi(u)
+  end
+  return u.map
 end
 function M.setDark(on)
   local u = M.uiPrefs()
   u.dark = on and true or nil
-  pcall(M.uiStore.write, { v = 1, dark = u.dark or false })
+  M.writeUi(u)
+end
+-- The speeding chime on or off (tap the map's speedometer); returns whether it is quiet now
+function M.setQuiet(on)
+  local u = M.uiPrefs()
+  u.quiet = on and true or nil
+  M.writeUi(u)
+  return u.quiet or false
 end
 
 function M.state() return S end
@@ -5853,6 +6035,14 @@ end
 local dashClock, dashCheckAt, dashTried, dashReloaded = 0, nil, {}, {}
 local dashMeasureNext = {} -- car id -> true: reloaded to be measured, so measure it once it is back
 local dashPending -- a change from Settings the car was too busy for: { rebuild } (done once the car is free)
+-- M.dashWhereBack: the phone was just moved (middle / wheel): where it stood before, until the car is back with it there
+-- M.dashStale: car id -> true for other cars that still carry the phone where it stood before a move; each is rebuilt
+-- when the player gets into it
+M.dashStale = {}
+-- the car could not be respawned for a move: the setting goes back to where the phone still is
+function M.dashGoBack()
+  if M.dashWhereBack then dash.setWhere(M.dashWhereBack) M.dashWhereBack = nil end
+end
 M.DASH_CHECK_S, M.DASH_RETRY_S = 1.5, 20
 
 local function dashMeasure(v)
@@ -5862,7 +6052,7 @@ local function dashMeasure(v)
   local camName = camNode ~= nil and type(vdata) == 'table' and type(vdata.nodes) == 'table' and vdata.nodes[camNode]
   camName = type(camName) == 'table' and camName.name or nil
   local nodes = dash.loadedNodes(v.id, v.model, camName)
-  local spot, why = dash.findSpot(nodes or dash.nodesOf(vdata, camNode), eye)
+  local spot, why = dash.findSpot(nodes or dash.nodesOf(vdata, camNode), eye, dash.where())
   if spot then
     dash.setSpot(v.model, spot)
     log('I', 'cargoEarth', string.format('dash phone: %s measured, phone at %.3f %.3f %.3f on group %s', v.model,
@@ -5893,7 +6083,17 @@ function M.dashFit(on, opts)
   if on and (opts.measure or dashMeasureNext[v.id] or not dash.spot(v.model)) then
     local spot, why, seenLoading = dashMeasure(v)
     if not spot then
-      if seenLoading or dashReloaded[v.id] then dashMeasureNext[v.id] = nil return false, why end
+      if seenLoading or dashReloaded[v.id] then
+        dashMeasureNext[v.id] = nil
+        -- moved to a place this car has no dash for: it goes back where it was, once the car is free
+        if M.dashWhereBack then
+          dash.setWhere(M.dashWhereBack)
+          M.dashWhereBack = nil
+          dashPending = { rebuild = true, why = why } -- the reason stays shown after the phone is back
+          M.dashCheckSoon()
+        end
+        return false, why
+      end
       reload = true
     else
       measured = true
@@ -5902,12 +6102,13 @@ function M.dashFit(on, opts)
   end
   if not reload and not measured and not opts.rebuild and dash.treeHasPhone(tree) == (on and true or false) then return true end
   -- a respawn mends the car: never on a damaged career car (it would be repaired for free, and its bill turned into
-  -- debt), the same rule as changing parts
+  -- debt)
   local g = type(S.career) == 'table' and S.career.garage or nil
   local owned = type(g) == 'table' and g.started and G.isOwned and G.isOwned(v)
   if owned then
     local damage = (G.damage and G.damage(v.id)) or 0
     if (g.repair or 0) > 0 or damage * garage.REPAIR_PER_DAMAGE >= 2.5 then
+      M.dashGoBack()
       return false, 'Repair the car first: reloading it for the phone would mend it.'
     end
   end
@@ -5916,14 +6117,17 @@ function M.dashFit(on, opts)
   local ok, err = pcall(G.respawnPlayer, function(config) if not reload then dash.setTreePhone(config.partsTree, on) end end)
   if not ok then
     log('W', 'cargoEarth', 'dash phone: ' .. tostring(err))
+    M.dashGoBack()
     return false, 'BeamNG could not respawn this car.'
   end
   -- the respawn brings the car back new: its mileage and paint wear go back on, as after buying parts
   if owned and g.car then conditionAt = S.clock + 3 end
+  -- a move of the phone is done once the car is back with it (not while it is only reloaded to be measured)
+  if not reload then M.dashWhereBack, M.dashStale[v.id] = nil, nil end
   return true
 end
 
--- Settings > Phone on the dashboard. a: on | off | reset | measure, or a nudge: x+ / x- (left / right as the driver
+-- Settings > Phone on the dashboard. a: on | off | reset | measure | middle | wheel (where it stands), or a nudge: x+ / x- (left / right as the driver
 -- sees it), y+ / y- (closer / further), z+ / z- (up / down). Nudges are kept per car model.
 local dashDoInner
 -- Moving the phone reloads the car, so presses that come close together are applied with one reload, once they stop.
@@ -5958,6 +6162,18 @@ dashDoInner = function(a)
     dash.nudge(v.model, 'reset')
     return M.dashFit(true, { measure = true })
   end
+  if a == 'middle' or a == 'wheel' then
+    local before = dash.where()
+    if not dash.setWhere(a) then return true end
+    M.dashWhereBack = before
+    for _, id in ipairs(dash.partCarIds()) do
+      if id ~= v.id then M.dashStale[id] = true end
+    end
+    local ok, why, busy = M.dashFit(true, { measure = true, rebuild = true })
+    -- the car could not take it now (damaged, or no driver camera): the phone stays where it was
+    if not ok and not busy then M.dashGoBack() end
+    return ok, why, busy
+  end
   local axis, sign
   if type(a) == 'string' then axis, sign = a:match('^([xyz])([+-])$') end
   if axis then
@@ -5985,16 +6201,17 @@ local function dashTick(dt)
     local pending = dashPending
     dashPending = nil
     local ok, why = M.dashFit(on, { rebuild = on and pending.rebuild })
-    S.dashError = not ok and why or nil
+    S.dashError = (not ok and why) or pending.why or nil
     return
   end
   -- switched off: a car that still has the phone loses it
   if not on and not dash.treeHasPhone(tree) then return end
   if dashBusy() then dashCheckAt = dashClock + 2 return end
-  if on and dash.treeHasPhone(tree) and dash.spot(v.model) and not dashMeasureNext[v.id] then return end
+  local stale = on and M.dashStale[v.id]
+  if on and not stale and dash.treeHasPhone(tree) and dash.spot(v.model) and not dashMeasureNext[v.id] then return end
   local last = dashTried[v.id]
-  if on and last and dashClock - last < M.DASH_RETRY_S and not dashMeasureNext[v.id] then return end
-  local ok, why = M.dashFit(on)
+  if on and not stale and last and dashClock - last < M.DASH_RETRY_S and not dashMeasureNext[v.id] then return end
+  local ok, why = M.dashFit(on, { rebuild = stale })
   if not ok then dashTried[v.id] = dashClock end
   S.dashError = not ok and why or nil
 end

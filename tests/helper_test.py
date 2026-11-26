@@ -874,6 +874,70 @@ class NetworkAndStorageTests(unittest.TestCase):
             page = helper.status_page(areas, "test", 47821, player=player).decode()
         self.assertNotIn("install mpv", page)
 
+    def test_linux_players_do_not_inherit_bundled_library_paths(self):
+        base = {"PATH": "/usr/bin", "LD_LIBRARY_PATH": "/opt/earth/lib"}
+        env = helper.player_env(base, "mpv")
+        self.assertNotIn("LD_LIBRARY_PATH", env)
+        self.assertEqual(env["PATH"], "/usr/bin")
+        self.assertEqual(base["LD_LIBRARY_PATH"], "/opt/earth/lib", "the helper's own environment is untouched")
+        env = helper.player_env(dict(base, LD_LIBRARY_PATH_ORIG="/home/me/lib"), "ffplay")
+        self.assertEqual(env["LD_LIBRARY_PATH"], "/home/me/lib", "the path from before Earth started comes back")
+        self.assertNotIn("LD_LIBRARY_PATH_ORIG", env)
+        self.assertEqual(helper.player_env(base, "powershell")["LD_LIBRARY_PATH"], "/opt/earth/lib")
+
+    @unittest.skipIf(os.name == "nt", "process groups and /proc are Linux")
+    def test_stop_ends_the_player_and_what_it_started_and_nothing_outlives_the_helper(self):
+        import subprocess
+        def spawn(url, vol):
+            # a launcher (like a snap or a wrapper script) that starts the real player and waits for it
+            proc = subprocess.Popen(["sh", "-c", "sleep 60 & echo $!; wait"], stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, text=True, start_new_session=True,
+                                    env=dict(os.environ, CARGO_EARTH_STREAM=url))
+            proc.kind, proc.group = "mpv", True
+            proc.child = int(proc.stdout.readline())
+            return proc
+        def alive(pid):
+            try:
+                with open(f"/proc/{pid}/stat") as f:
+                    return f.read().split(")")[-1].split()[0] != "Z"
+            except OSError:
+                return False
+        def gone(pid):
+            for _ in range(200):
+                if not alive(pid):
+                    return True
+                time.sleep(0.01)
+            return False
+        player = helper.Player(spawn=spawn)
+        player._read_err = lambda proc: None
+        player.play("http://s/1", 0.5)
+        first = player.proc
+        player.stop()
+        self.assertTrue(gone(first.child), "Stop ends what the launcher started, too")
+        self.assertTrue(gone(first.pid))
+        player.play("http://s/2", 0.5)
+        second = player.proc
+        player.shutdown()
+        self.assertTrue(gone(second.child), "a closing helper takes its player with it")
+        # a player left by a helper that was killed outright: found by its stream variable and ended at start
+        # (its owner, a pid no process has, is gone)
+        orphan = subprocess.Popen(["sleep", "60"], env=dict(os.environ, CARGO_EARTH_STREAM="http://s/3",
+                                                             CARGO_EARTH_HELPER_PID=str(2 ** 22 + 7)))
+        other = subprocess.Popen(["sleep", "60"])
+        # another helper's player while that helper (this Python process) runs: left alone
+        owned = subprocess.Popen(["sleep", "60"], env=dict(os.environ, CARGO_EARTH_STREAM="http://s/4",
+                                                            CARGO_EARTH_HELPER_PID=str(os.getpid())))
+        try:
+            ended = helper.Player.end_leftovers(me=-1)
+            self.assertIn(orphan.pid, ended)
+            self.assertNotIn(other.pid, ended)
+            self.assertNotIn(owned.pid, ended, "a running helper's player is not touched")
+            orphan.wait(timeout=5)
+        finally:
+            for p in (other, owned, orphan):
+                p.kill()
+                p.wait()
+
     def test_root_is_a_status_page(self):
         captured = []
         def server(address, handler):
@@ -995,3 +1059,100 @@ class UpdateCheckTests(unittest.TestCase):
             self.assertTrue(bad.due())
             self.assertFalse(helper.Updates(d, enabled=False).due())
 
+
+
+class OsmTileTests(unittest.TestCase):
+    def test_tiles_come_from_openfreemap_and_stay_on_disk(self):
+        import gzip
+        asked = []
+
+        def get(url):
+            asked.append(url)
+            if url == helper.OsmTiles.TILEJSON:
+                return json.dumps({"tiles": ["https://tiles.openfreemap.org/planet/20251119_001001_pt/{z}/{x}/{y}.pbf"]}).encode()
+            return gzip.compress(b"tile-bytes")
+
+        with tempfile.TemporaryDirectory() as cache:
+            osm = helper.OsmTiles(cache, get=get)
+            self.assertEqual(osm.tile(14, 8848, 5550), b"tile-bytes")
+            self.assertEqual(asked[-1], "https://tiles.openfreemap.org/planet/20251119_001001_pt/14/8848/5550.pbf")
+            self.assertEqual(osm.tile(14, 8848, 5550), b"tile-bytes")
+            self.assertEqual(len(asked), 2, "the second time from disk")
+            osm.tile(14, 8848, 5551)
+            self.assertEqual(len(asked), 3, "the tile address is asked once")
+            with self.assertRaises(ValueError):
+                osm.tile(15, 0, 0)
+            with self.assertRaises(ValueError):
+                osm.tile(14, 2 ** 14, 0)
+
+    def test_only_openfreemap_addresses(self):
+        with tempfile.TemporaryDirectory() as cache:
+            osm = helper.OsmTiles(cache, get=lambda url: json.dumps({"tiles": ["https://evil.example/{z}/{x}/{y}"]}).encode())
+            with self.assertRaises(ValueError):
+                osm.tile(14, 1, 1)
+            self.assertEqual(osm.stats["failed"], 1)
+
+    def test_same_tile_fetched_at_once_by_two_phones(self):
+        import threading as th
+        gate = th.Barrier(2)
+
+        def get(url):
+            if url == helper.OsmTiles.TILEJSON:
+                return json.dumps({"tiles": ["https://tiles.openfreemap.org/planet/v/{z}/{x}/{y}.pbf"]}).encode()
+            if url.endswith("/1/1.pbf"):
+                gate.wait(5)
+            return b"tile"
+
+        with tempfile.TemporaryDirectory() as cache:
+            osm = helper.OsmTiles(cache, get=get)
+            osm.tile(14, 1, 0)  # TileJSON read first
+            got, errors = [], []
+
+            def ask():
+                try:
+                    got.append(osm.tile(14, 1, 1))
+                except Exception as e:
+                    errors.append(e)
+
+            threads = [th.Thread(target=ask) for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(10)
+            self.assertEqual(errors, [])
+            self.assertEqual(got, [b"tile", b"tile"])
+            self.assertEqual(sorted(os.listdir(os.path.join(cache, "osm", "14", "1"))), ["0.pbf", "1.pbf"])
+            self.assertFalse([n for n in os.listdir(os.path.join(cache, "osm", "14", "1")) if n.endswith(".tmp")])
+
+    def test_the_game_gets_a_tile_as_base64_text(self):
+        captured = []
+        def server(address, handler):
+            captured.append(handler)
+            return SimpleNamespace(serve_forever=lambda: None)
+        osm = SimpleNamespace(tile=lambda z, x, y: b"\x01\x02\x03", stats={})
+        with patch.object(helper, "ThreadingHTTPServer", side_effect=server):
+            helper.serve(SimpleNamespace(budget=SimpleNamespace(stats={})), "test", 47821, osm=osm)
+        for path, body, ctype in (("/v1/osm/tile?z=14&x=1&y=2&as=b64", b"AQID", "text/plain"),
+                                  ("/v1/osm/tile?z=14&x=1&y=2", b"\x01\x02\x03", "application/x-protobuf")):
+            handler = object.__new__(captured[0])
+            sent = {}
+            handler.headers, handler.path = {"Host": "127.0.0.1:47821"}, path
+            handler.send_response = lambda code: sent.update(code=code)
+            handler.send_header = lambda k, v: sent.update({k: v})
+            handler.end_headers = lambda: None
+            handler.wfile = io.BytesIO()
+            handler.do_GET()
+            self.assertEqual((sent["code"], sent["Content-Type"], handler.wfile.getvalue()), (200, ctype, body))
+
+    def test_old_tiles_are_dropped(self):
+        with tempfile.TemporaryDirectory() as cache:
+            osm = helper.OsmTiles(cache, get=lambda url: b"x")
+            osm.MAX_FILES = 2
+            for i in range(4):
+                path = os.path.join(cache, "osm", "14", "1", f"{i}.pbf")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(b"x")
+                os.utime(path, (i, i))
+            osm._prune()
+            self.assertEqual(sorted(os.listdir(os.path.join(cache, "osm", "14", "1"))), ["2.pbf", "3.pbf"])

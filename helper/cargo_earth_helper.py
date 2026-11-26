@@ -29,6 +29,8 @@ API (GET, JSON):
                               codec, kbps, tags, region], ...] (most listened first), "near": [[... the same, km], ...]}
   /v1/radioclick?id=uuid      tells Radio Browser a station started playing (its listening counts)
   /v1/stream?id=uuid          the station's stream passed through, for the game's UI to play
+  /v1/osm/tile?z=14&x=..&y=.. an OpenStreetMap vector tile (OpenFreeMap, OpenMapTiles schema, Mapbox Vector Tile
+                              bytes) for the phone's map, which the game's UI cannot load from the web; kept on disk
   /v1/player/play?id=uuid&vol=0.6, /v1/player/volume?vol=.., /v1/player/stop, /v1/player/alive
                               the helper plays a listed station itself (when the game's UI cannot); alive is the
                               heartbeat: {"playing", "url", "vol", "secs", "error", "player"}
@@ -57,6 +59,8 @@ Speed cameras, bus lines: (c) OpenStreetMap contributors, ODbL; https://www.open
 Radio stations: Radio Browser (https://www.radio-browser.info), free community directory; the streams belong to the stations
 """
 import argparse
+import base64
+import atexit
 import datetime
 import hashlib
 import html
@@ -65,6 +69,7 @@ import json
 import math
 import os
 import re
+import signal
 import sys
 import threading
 import time
@@ -73,7 +78,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from contextlib import contextmanager
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 SITES_CACHE_VERSION = "2"  # /v1/sites: far workplaces for long-distance freight (2: catalogue types "k")
 SITE_GRID = 0.05           # a far town's point is snapped to this grid (one cached box per grid point)
 SITE_HALF = 0.12           # half the size of that box, degrees (about 27 x 17 km in central Europe)
@@ -1877,13 +1882,27 @@ if ($wmp) { $wmp.controls.stop(); $wmp.close() } else { $p.Stop(); $p.Close() }
 """
 
 
+def player_env(base, kind):
+    """The environment a media player starts with. Outside Windows, the library path BeamNG.Earth (a bundled app) set
+    for itself is taken back: with it, mpv, ffplay and VLC load Earth's older libstdc++ and fail to start
+    (GLIBCXX_3.4.32 not found). A path the computer had before Earth started (LD_LIBRARY_PATH_ORIG, kept by bundled
+    apps) comes back; otherwise there is none, and the players use the system's libraries."""
+    env = dict(base)
+    if kind != "powershell":
+        orig = env.pop("LD_LIBRARY_PATH_ORIG", None)
+        env.pop("LD_LIBRARY_PATH", None)
+        if orig:
+            env["LD_LIBRARY_PATH"] = orig
+    return env
+
+
 class Player:
     def __init__(self, spawn=None, clock=time.time):
         self.spawn = spawn or self._spawn
         self.clock = clock
         self.proc, self.url, self.vol, self.alive_at = None, None, 0.6, 0
         self.started_at, self.pos, self.error, self.kind, self.sound, self.why = 0, 0, None, None, False, None
-        self.generic = False
+        self.generic, self.ending = False, set()
         self.lock = threading.Lock()
         threading.Thread(target=self._watch, daemon=True).start()
 
@@ -1904,7 +1923,9 @@ class Player:
             raise OSError(NO_PLAYER)
         import base64
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        env = dict(os.environ, CARGO_EARTH_STREAM=url, CARGO_EARTH_VOL=f"{vol:.2f}")   # data, never code
+        env = player_env(os.environ, kind)
+        env.update(CARGO_EARTH_STREAM=url, CARGO_EARTH_VOL=f"{vol:.2f}",   # data, never code
+                   CARGO_EARTH_HELPER_PID=str(os.getpid()))     # whose player it is (end_leftovers)
         if kind == "powershell":
             cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
                    base64.b64encode(PS_PLAYER.encode("utf-16-le")).decode()]
@@ -1917,9 +1938,13 @@ class Player:
         # the players outside Windows say why they failed (no device, a refused stream; mpv on stdout, the others on
         # stderr): both read as one, kept for the phone
         err = subprocess.DEVNULL if kind == "powershell" else subprocess.STDOUT
+        # outside Windows each player gets its own process group: Stop ends the group, so a launcher (snap, flatpak,
+        # a wrapper script) and the player it started both end
+        group = os.name != "nt"
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
-                                text=True, bufsize=1, creationflags=flags, env=env, errors="replace")
-        proc.kind = kind
+                                text=True, bufsize=1, creationflags=flags, env=env, errors="replace",
+                                start_new_session=group)
+        proc.kind, proc.group = kind, group
         return proc
 
     def _read_err(self, proc):
@@ -1957,17 +1982,86 @@ class Player:
             except (OSError, ValueError, AttributeError):
                 pass
             # never wait here: a press (play another station, stop) is answered at once, the old player ends meanwhile
+            self.ending.add(proc)       # until it is gone: a helper closing meanwhile ends it too
             threading.Thread(target=self._reap, args=(proc,), daemon=True).start()
 
     @staticmethod
-    def _reap(proc):
+    def _signal(proc, sig):
+        """Send sig to the player and everything it started (its process group, outside Windows)."""
         try:
-            proc.wait(timeout=1)
-        except Exception:  # noqa: BLE001 - still running: ended the hard way
-            try:
+            if getattr(proc, "group", False):
+                os.killpg(proc.pid, sig)
+            elif sig == getattr(signal, "SIGKILL", None):
                 proc.kill()
-            except (OSError, AttributeError):
+            else:
+                proc.terminate()
+        except (OSError, AttributeError):
+            pass
+
+    def _reap(self, proc):
+        try:
+            if proc.kind != "powershell":
+                self._signal(proc, signal.SIGTERM)   # mpv, ffplay and VLC read no "stop": ended at once
+            try:
+                proc.wait(timeout=1)
+            except Exception:  # noqa: BLE001 - still running: ended the hard way
                 pass
+            # whatever is left of it (the player itself, or what its launcher started) is ended for good
+            self._signal(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+        finally:
+            with self.lock:
+                self.ending.discard(proc)
+
+    def shutdown(self):
+        """The helper is closing: no music may outlive it."""
+        with self.lock:
+            procs = [p for p in [self.proc, *self.ending] if p]
+            self.proc, self.url = None, None
+        for proc in procs:
+            self._signal(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+
+    @staticmethod
+    def _is_helper(proc_dir, pid):
+        """Whether pid is a running Cargo Earth helper (a Python process): its players are its own business."""
+        try:
+            with open(os.path.join(proc_dir, str(pid), "cmdline"), "rb") as f:
+                cmd = f.read().lower()
+        except OSError:
+            return False
+        return b"cargo_earth_helper" in cmd or b"python" in cmd
+
+    @staticmethod
+    def end_leftovers(proc_dir="/proc", me=None):
+        """Players a helper started before it was closed the hard way (killed, crashed) still play: ended at start.
+        They are known by the stream variable only this helper sets; one whose helper still runs (a second helper on
+        another port) is left alone. Linux only; elsewhere there is no /proc."""
+        me = me if me is not None else os.getpid()
+        ended = []
+        try:
+            pids = [int(n) for n in os.listdir(proc_dir) if n.isdigit()]
+        except OSError:
+            return ended
+        for pid in pids:
+            if pid == me:
+                continue
+            try:
+                with open(os.path.join(proc_dir, str(pid), "environ"), "rb") as f:
+                    env = dict(x.split(b"=", 1) for x in f.read().split(b"\0") if b"=" in x)
+                if b"CARGO_EARTH_STREAM" not in env:
+                    continue
+                owner = env.get(b"CARGO_EARTH_HELPER_PID", b"")
+                if not owner.isdigit():      # from a helper before this one said: its parent
+                    with open(os.path.join(proc_dir, str(pid), "stat"), "rb") as f:
+                        owner = f.read().rsplit(b")", 1)[-1].split()[1]
+                if Player._is_helper(proc_dir, int(owner)):
+                    continue
+                os.kill(pid, signal.SIGTERM)
+                ended.append(pid)
+            except OSError:      # gone, or another user's
+                continue
+        if ended:
+            radio_log(f"ended {len(ended)} radio player(s) left playing by an earlier helper")
+        return ended
 
     def play(self, url, vol):
         if not re.match(r"https?://", url or "") or len(url) > 500:
@@ -2239,8 +2333,100 @@ td,th{{vertical-align:top}}code{{background:#eee;padding:1px 4px}}
 <table>{body}</table>{notes}</body></html>""".encode()
 
 
+class OsmTiles:
+    """OpenStreetMap vector tiles for the phone's map, from OpenFreeMap (free, no key; the map shows its credit). The
+    game's UI cannot load from the web, so the phone asks here. Tiles are kept on disk (cache/osm/z/x/y.pbf); past
+    MAX_FILES the oldest go."""
+    TILEJSON = "https://tiles.openfreemap.org/planet"
+    HOST = "https://tiles.openfreemap.org/"
+    MAX_Z = 14
+    MAX_FILES = 3000
+    TEMPLATE_S = 86400   # the tile address changes with each OpenFreeMap build: asked again once a day
+
+    def __init__(self, cache_dir, get=None):
+        self.dir = os.path.join(cache_dir, "osm")
+        self.get_url = get or (lambda url: http_get(url, tries=2, timeout=15))
+        self.lock = threading.Lock()
+        self.template, self.template_at, self.writes = None, 0.0, 0
+        self.stats = {"served": 0, "fetched": 0, "failed": 0, "error": None}
+
+    def _template(self):
+        with self.lock:
+            if self.template and time.time() - self.template_at < self.TEMPLATE_S:
+                return self.template
+        data = json.loads(self.get_url(self.TILEJSON).decode("utf-8"))
+        t = data["tiles"][0]
+        if not (isinstance(t, str) and t.startswith(self.HOST) and "{z}" in t):
+            raise ValueError("unexpected tile address")
+        with self.lock:
+            self.template, self.template_at = t, time.time()
+        return t
+
+    def _prune(self):
+        files = []
+        for root, _, names in os.walk(self.dir):
+            for n in names:
+                path = os.path.join(root, n)
+                try:
+                    files.append((os.path.getmtime(path), path))
+                except OSError:
+                    pass
+        files.sort()
+        for _, path in files[:max(0, len(files) - self.MAX_FILES)]:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def tile(self, z, x, y):
+        """The tile's bytes (b"" for an empty tile, the open sea), or raises."""
+        if not (0 <= z <= self.MAX_Z and 0 <= x < 2 ** z and 0 <= y < 2 ** z):
+            raise ValueError("no such tile")
+        path = os.path.join(self.dir, str(z), str(x), f"{y}.pbf")
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            self.stats["served"] += 1
+            return data
+        except OSError:
+            pass
+        try:
+            url = self._template().replace("{z}", str(z)).replace("{x}", str(x)).replace("{y}", str(y))
+            try:
+                data = self.get_url(url)
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                data = b""
+        except Exception as e:
+            self.stats["failed"] += 1
+            self.stats["error"] = str(e)[:200]
+            raise
+        if data[:2] == b"\x1f\x8b":
+            import gzip
+            data = gzip.decompress(data)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # Each fetch writes its own temp file: two phones can ask for the same tile at once.
+        tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        self.stats["fetched"] += 1
+        self.stats["served"] += 1
+        self.writes += 1
+        if self.writes % 100 == 0:
+            self._prune()
+        return data
+
+
 def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, player=None, srv=None, updates=None,
-          buslines=None, sites=None, stations=None):
+          buslines=None, sites=None, stations=None, osm=None):
     class H(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype="application/json"):
             if isinstance(body, (dict, list)):
@@ -2307,7 +2493,33 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
             finally:
                 STREAMS.release()
 
+        def _osm_tile(self, q):
+            """The phone's map tiles: the phone's page asks with an Origin (the game's UI), so this one path answers
+            it, with CORS, but still only to this computer. It only ever passes OpenFreeMap tiles."""
+            try:
+                data = osm.tile(int(q["z"]), int(q["x"]), int(q["y"]))
+                code, ctype = 200, "application/x-protobuf"
+                if q.get("as") == "b64":
+                    # for the game's Lua, which hands it to the phone: BeamNG's UI browser may not load from the
+                    # helper itself (it cancels such requests), so the phone asks the game and the game asks here
+                    data, ctype = base64.b64encode(data), "text/plain"
+            except (KeyError, ValueError) as e:
+                data, code, ctype = json.dumps({"error": str(e)}).encode(), 400, "application/json"
+            except Exception as e:
+                data, code, ctype = json.dumps({"error": str(e)[:200]}).encode(), 502, "application/json"
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "max-age=86400")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_GET(self):
+            if osm and urllib.parse.urlparse(self.path).path == "/v1/osm/tile" and \
+                    self.headers.get("Host", "").split(":", 1)[0].lower() in ("127.0.0.1", "localhost"):
+                return self._osm_tile({k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).items()})
             if self.headers.get("Origin") or self.headers.get("Host", "").split(":", 1)[0].lower() not in ("127.0.0.1", "localhost"):
                 return self._send(403, {"error": "local client requests only"})
             u = urllib.parse.urlparse(self.path)
@@ -2321,6 +2533,7 @@ def serve(areas, release, port, host="127.0.0.1", cameras=None, radio=None, play
                     return self._send(200, {"app": "cargo-earth-helper", "version": VERSION, "release": release,
                                             "cameras": cameras is not None, "buslines": buslines is not None, "sites": sites is not None,
                                             "stations": stations is not None, "radio": radio is not None,
+                                            "osm": osm.stats if osm else None,
                                             "player": player is not None, "missing": missing_libraries(),
                                             "network": network, "cache": areas.budget.stats,
                                             "update": updates.info() if updates else None})
@@ -2454,9 +2667,19 @@ def main():
         budget.prune(force=True)
         return
     updates = Updates(a.cache, enabled=not a.no_update_check).start()
-    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=Player(), srv=srv,
+    Player.end_leftovers()
+    player = Player()
+    # closed by BeamNG.Earth, Ctrl+C or the window: the radio stops with the helper
+    atexit.register(player.shutdown)
+    for name in ("SIGTERM", "SIGHUP", "SIGBREAK"):
+        if hasattr(signal, name):
+            try:
+                signal.signal(getattr(signal, name), lambda *_: sys.exit(0))
+            except (OSError, ValueError):
+                pass
+    serve(Areas(builder, a.cache, budget), release, a.port, cameras=Cameras(a.cache, enabled=False), radio=Radio(a.cache), player=player, srv=srv,
           updates=updates, buslines=BusLines(a.cache), sites=Sites(builder, a.cache),
-          stations=Stations(builder, a.cache))
+          stations=Stations(builder, a.cache), osm=OsmTiles(a.cache))
 
 
 if __name__ == "__main__":

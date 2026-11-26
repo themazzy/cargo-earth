@@ -56,6 +56,7 @@ run('local jobs=require("cargoEarth/jobs"); local employment=require("cargoEarth
   ' local cargos={}; for _,o in ipairs(all) do for _,j in ipairs(o.jobs or {}) do cargos[j.cargo]=true end end; local kinds=0; for _ in pairs(cargos) do kinds=kinds+1 end; assert(kinds>=3,"cargo variety");' +
   ' print("Helper workplaces, no bundled pack: "..#board.." Prague van contracts; with trucks unlocked "..n.rigid.." box truck and "..n.semi.." tractor contracts, "..kinds.." kinds of cargo")', 'helper-workplaces')
 require('./phone.cjs')
+require('./osm.cjs')
 
 run(fs.readFileSync('tests/tow-teleport.lua', 'utf8'), 'tests/tow-teleport.lua')
 

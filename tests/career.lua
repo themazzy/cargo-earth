@@ -439,6 +439,11 @@ test('Long hauls: far profiles open the ring, and an unchecked far site can be h
   s.job, s.phase, s.orders, s.dist = k, 'toPickup', {{job = k, phase = 'toPickup'}}, 300
   assert(core.canHandover(), 'an unchecked pickup site can load beside the truck')
   assert(core.phoneState().active.handoverPickup)
+  local savedRoute = gpsRoute
+  gpsRoute = {remaining = 4300, eta = 480}
+  local left = core.phoneState().routeLeft
+  assert(left and left.m == 4300 and left.s == 480, 'the way left to the stop, for the work bar on every tab')
+  gpsRoute = savedRoute
   core.phoneAction('handover')
   assert(k.handover and k.pay == 8500 and k.from.g[1] == pose.lat and k.from.handedOver)
   s.phase, s.dist = 'toDelivery', 300
@@ -910,6 +915,83 @@ test('failed parts purchase checkpoint preserves money, inventory and retryable 
   failPath = nil
   core.garageDo('buyParts', checkout.revision)
   assert(not s.parts and s.career.money == 10000 - checkout.cost)
+end)
+
+test('a car damaged by its own config can swap parts: the other parts keep their damage and its share of the bill', function()
+  local core, s = partsFixture()
+  local g = s.career.garage
+  -- a box truck that breaks its cab aero kit as it spawns: damaged, a bill owed, a physical snapshot saved
+  g.car.value = 10000000   -- no repair cap in the way
+  damageValue = 20000
+  advance(core, 2)
+  local bill = g.repair
+  assert(bill > 0)
+  g.car.physicalDamage = {format = 'v2'}
+  local opened = core.garageDo('openParts')
+  assert(s.parts and opened.parts, 'parts picker blocked on a damaged car')
+  assert(opened.parts.owed == bill)
+  -- the native preview respawns the car with the new parts: undamaged, and no debt for that
+  vehicle.data, vehicle.slotPartMap = {}, {body = 'pigeon', engine = 'new_engine', empty = false}
+  damageValue = 0
+  advance(core, 2)
+  assert(s.parts and (g.debt or 0) == 0 and g.repair == bill)
+  local checkout = core.garageState().parts
+  assert(checkout.canBuy and checkout.owed == bill)
+  -- a purchase that cannot be saved keeps the money, the bill and the damage state
+  failPath = '/settings/cargoEarth/career.json.pending'
+  core.garageDo('buyParts', checkout.revision)
+  assert(s.parts and g.lastDamage == 20000 and not g.car.partsRestore and s.career.money == 10000)
+  failPath = nil
+  -- the kept build gets the saved damage back on the parts that stayed: here half of it (the rest was the aero kit)
+  local snapshots, restored = require('cargoEarth/damage'), 0
+  core.G.vehicleState = function(action, path, token)
+    if action == 'restore' then restored = restored + 1 damageValue = 10000
+    else disk[path] = {format = 'v2'} end
+    snapshots.complete(token, 1, true)
+    return true
+  end
+  core.garageDo('buyParts', checkout.revision)
+  assert(not s.parts and g.car.parts.engine == 'new_engine' and g.car.physicalDamage)
+  assert(s.career.money == 10000 - checkout.cost and g.car.partsRestore)
+  g.car.value = 10000000
+  advance(core, 12)
+  core.G.vehicleState = nil
+  assert(restored == 1 and not g.car.partsRestore, 'saved damage not put back on the kept parts')
+  assert((g.debt or 0) == 0 and math.abs(g.repair - bill / 2) <= 5, 'bill should keep the kept parts share: ' .. tostring(g.repair))
+end)
+
+test('keeping an unchanged parts checkout on a damaged car does not bill its damage twice', function()
+  local core, s = partsFixture()
+  local g = s.career.garage
+  g.car.value = 10000000
+  damageValue = 20000
+  advance(core, 2)
+  local bill = g.repair
+  g.car.physicalDamage = {format = 'v2'}
+  core.garageDo('openParts')
+  local checkout = core.garageState().parts
+  core.garageDo('buyParts', checkout.revision)
+  assert(not s.parts and g.car.physicalDamage)
+  advance(core, 10)
+  assert(g.repair == bill and (g.debt or 0) == 0)
+end)
+
+test('opening parts on a damaged car saves its latest damage first, so Discard brings it back', function()
+  local core, s = partsFixture()
+  local g = s.career.garage
+  g.car.value = 10000000
+  damageValue = 20000
+  advance(core, 2)
+  g.car.physicalDamage = {format = 'v2', old = true}   -- an older snapshot from before the last crash
+  local snapshots, captured = require('cargoEarth/damage'), 0
+  core.G.vehicleState = function(action, path, token)
+    if action ~= 'restore' then captured = captured + 1 disk[path] = {format = 'v2', fresh = true} end
+    snapshots.complete(token, 1, true)
+    return true
+  end
+  core.garageDo('openParts')
+  core.G.vehicleState = nil
+  assert(captured == 1 and s.parts and g.car.physicalDamage.fresh, 'parts opened without saving the damage')
 end)
 
 local function loadedCompany()
@@ -2180,6 +2262,15 @@ test('a speed camera fines the driver and costs a star on the order on board', f
   core.uiStore.write = function(t) written = t end
   assert(core.settingsDo('dark', true).dark == true and written.dark == true and core.phoneState().dark == true)
   assert(core.settingsDo('dark', false).dark == false and written.dark == false)
+  assert(core.setQuiet(true) == true and written.quiet == true and core.phoneState().quiet == true, 'the speeding chime off')
+  assert(core.setQuiet(false) == false and written.quiet == false and core.phoneState().quiet == nil)
+  -- the map's own switches: kept in the same file, only known names, only true / false
+  assert(core.phoneState().mapPrefs.streets == true and core.phoneState().mapPrefs.other == false, 'defaults')
+  assert(core.phoneState().mapPrefs.latin == false, 'local names by default')
+  assert(core.setMapPref('water', false).water == false and written.map.water == false)
+  assert(core.setMapPref('nonsense', true).nonsense == nil and core.setMapPref('north', 'yes').north == false)
+  assert(core.phoneState().mapPrefs.water == false and written.quiet == false, 'the chime setting stays')
+  core.setMapPref('water', true)
   core.phoneFold(true, 'waiting')
   assert(core.phoneState().fold == 'waiting')
   core.phoneFold(false)
@@ -2260,8 +2351,11 @@ test('the phone shows the limit under the car, red when too fast, and a camera w
   advance(core, 2)
   local limit = core.phoneState().limit
   assert(limit and limit.sign == 50 and limit.unit == 'km/h' and not limit.over)
+  pose.speed = 58 / 3.6
+  assert(core.phoneState().limit.over and not core.phoneState().limit.well, 'over at 58 in a 50, not yet well over')
+  pose.speed = 61 / 3.6
+  assert(core.phoneState().limit.well, 'well over: 10 km/h past a 50')
   pose.speed = 60 / 3.6
-  assert(core.phoneState().limit.over, 'red at 60 in a 50')
   near = 60
   advance(core, 2)
   assert(core.phoneState().limit == nil, 'off the road: no sign')
@@ -2284,6 +2378,17 @@ test('the phone shows the limit under the car, red when too fast, and a camera w
   pose.x, pose.y, pose.z = nil, nil, nil
 end)
 
+test('the whole-route view: the way ahead in a few hundred points, ends kept', function()
+  local pm = require('cargoEarth/phonemap')
+  local pts = {}
+  for i = 0, 1000 do pts[#pts + 1] = { i * 10, 0, 50 + i * 1e-4, 14 } end
+  local o = pm.outline(pts, 100)
+  assert(#o.xy / 2 >= 90 and #o.xy / 2 <= 102, 'about 100 points: ' .. #o.xy / 2)
+  assert(o.xy[1] == 0 and o.xy[#o.xy - 1] == 10000, 'both ends')
+  assert(#o.ll == #o.xy and o.ll[1] == 50, 'lat / lon beside them')
+  assert(#pm.outline(nil).xy == 0)
+end)
+
 test('the live map: roads once per tile, the GPS route, the next stop and home', function()
   local core, s = fresh()
   local road = straightRoad(function() return 13.89 end)
@@ -2293,7 +2398,11 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   assert(m.status == 'ok' and m.car.h == 90 and m.car.kmh == 36)
   assert(#m.roads == 20 * 5 and m.roads[5] == 1, 'every edge of the street, a street at 50 km/h')
   assert(core.phoneMap(m.roadsKey).roads == nil, 'the phone keeps the roads it has')
+  local perf = core.phoneMap(m.roadsKey, true).perf
+  assert(perf and perf.edges == 20 and perf.luaMs >= 0 and perf.slices >= 1, 'the timing readout')
+  assert(core.phoneMap(m.roadsKey).perf == nil, 'timings only when the readout shows')
   assert(m.stops and #m.stops == 0 and m.route == nil, 'no job: no stops, no route')
+  assert(m.go and not m.go.home and not m.go.hq, 'no job: the map offers its own routes, no home yet')
   -- no job, but the GPS goes home: its route is drawn
   local earthNoJob = require('cargoEarth/earth')
   gpsRoute = {remaining = 300, routeVersion = 1}
@@ -2306,6 +2415,7 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   s.orders = {{job = s.job, phase = 'toPickup'}, {job = other, phase = 'toDelivery'}}
   s.career.home = {g = {50.001, 14}, n = 'Dlouha 1'}
   m = core.phoneMap(m.roadsKey)
+  assert(m.go == nil, 'a job steers the GPS: no routes of its own')
   local kinds = {}
   for _, st in ipairs(m.stops) do kinds[st.k] = st end
   assert(kinds.home and math.abs(kinds.home.y - 111) <= 1, 'home 111 m north')
@@ -2328,9 +2438,33 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   pose.y, pose.heading = 0, 90
   core.phoneMap(m.roadsKey)
   assert(copies == 1, 'the same route version is not copied again')
+  -- the full map: no roads, everything by lat / lon, the route from the car on
+  local g = core.phoneMap(m.roadsKey, false, true)
+  assert(g.roads == nil and g.roadsKey == nil and g.car.lat == 50 and g.car.lon == 14, 'no roads for the full map')
+  assert(#g.routeLL == 6 and g.routeLL[1] == 50 and g.routeLL[3] == 50.001 and g.routeLL[6] == 14.001, 'the route by lat / lon')
+  assert(g.stops[1].lat and g.stops[1].lon, 'stops by lat / lon')
+  pose.y = 60
+  g = core.phoneMap(m.roadsKey, false, true)
+  assert(math.abs(g.routeLL[1] - 50.00054) < 0.00002, 'starts where the car is on the route: ' .. g.routeLL[1])
+  pose.y = 0
   gpsRoute.routeVersion = 4
   core.phoneMap(m.roadsKey)
   assert(copies == 2, 'a new plan is')
+  -- turn directions from Earth's steps (1.7), and the way left
+  gpsRoute.routeVersion, gpsRoute.eta = 5, 40
+  earth.routeGeometry = function() return {version = 5, dist = 300, points = {{50, 14}, {50.001, 14}, {50.002, 14.001}},
+    steps = {{type = 'depart', offset = 0}, {type = 'turn', modifier = 'right', offset = 111, name = 'Hlavni'}}} end
+  local tm = core.phoneMap(m.roadsKey)
+  assert(tm.turn and tm.turn.modifier == 'right' and tm.turn.name == 'Hlavni', 'the next turn')
+  assert(tm.turn.m == 111, 'from the start: ' .. tm.turn.m)
+  pose.y = 60
+  local m2 = core.phoneMap(m.roadsKey).turn.m
+  assert(math.abs(m2 - 37) <= 3, 'driven 60 m of the simplified line = 74 m of the route of Earth: ' .. m2)
+  pose.y = 0
+  assert(tm.leftM == 500 and tm.leftS == 40 and not tm.imperial, 'the way left to the stop')
+  _G.settings = {getValue = function(k) return k == 'uiUnitLength' and 'imperial' or nil end}
+  assert(core.phoneMap(m.roadsKey).imperial, 'miles when the game shows miles')
+  _G.settings = nil
   -- a parcel round on the way to the depot: every address is ahead
   s.job.route = {at = 1, stops = {{g = {50.001, 14.001}, n = 'A'}, {g = {50.002, 14.002}, n = 'B'}}}
   local numbered = 0
@@ -2347,6 +2481,29 @@ test('the live map: roads once per tile, the GPS route, the next stop and home',
   pose.x, pose.y, pose.z, pose.heading = nil, nil, nil, nil
   assert(core.phoneMap(nil).car == nil, 'no position: nothing to draw')
   s.job, s.orders, s.phase = nil, {}, nil
+end)
+
+test('the map\'s one-tap routes: home, headquarters, clear; not during a job', function()
+  local core, s = fresh()
+  pose.x, pose.y, pose.z, pose.heading, pose.speed = 0, 0, 0, 0, 0
+  local r = core.mapGo('home')
+  assert(not r.ok and r.msg:find('no home'), 'no home yet')
+  s.career.home = {g = {50.01, 14.02}, name = 'Dlouha 1'}
+  gps = nil
+  r = core.mapGo('home')
+  assert(r.ok and gps and gps.lat == 50.01 and gps.lon == 14.02, 'route home')
+  assert(core.phoneMap(nil).go.home, 'the map shows Home')
+  assert(not core.mapGo('hq').ok, 'no firm, no headquarters')
+  s.career.firm = {name = 'Fast Food Ltd', hq = {g = {50.02, 14.03}, n = 'Yard'}}
+  assert(core.mapGo('hq').ok and gps.lat == 50.02, 'route to the headquarters')
+  assert(core.mapGo('clear').ok and gps == nil, 'route cleared')
+  assert(not core.mapGo('somewhere').ok)
+  s.job = {id = 'j', from = {g = {50, 14}, n = 'A'}, to = {g = {50.1, 14}, n = 'B'}}
+  r = core.mapGo('home')
+  assert(not r.ok and gps == nil, 'a job keeps its own GPS')
+  s.job = nil
+  s.career.home, s.career.firm = nil, nil
+  pose.x, pose.y, pose.z, pose.heading, pose.speed = nil, nil, nil, nil, nil
 end)
 
 local firm = require('cargoEarth/firm')
@@ -4260,6 +4417,75 @@ test('snapshot capture rejects late results after a paid repair and retries a lo
   disk[request.path] = {format = 'v2'}
   module.complete(request.token, 1, true)
   assert(g.car.physicalDamage and writes == 1)
+end)
+
+test('the dash phone moves behind the wheel, and goes back when the car has no dash there', function()
+  local core = fresh()
+  local dash = require('cargoEarth/dash')
+  dash.store = { read = function() return nil end, write = function() end }
+  dash.load()
+  local function car(xs)
+    local nodes, cid = {}, 0
+    for _, x in ipairs(xs) do
+      for _, z in ipairs({ 0.87, 0.99 }) do
+        nodes[cid] = { cid = cid, name = 'dsh' .. cid, pos = { x = x, y = -0.457, z = z }, group = { [0] = 'dash' } }
+        cid = cid + 1
+      end
+    end
+    return { nodes = nodes, cameras = { onboard = { { name = 'driver', x = -0.316, y = 0.1, z = 1.25 } } } }
+  end
+  local function copy(t) local o = {} for k, x in pairs(t) do o[k] = type(x) == 'table' and copy(x) or x end return o end
+  local respawns, local_respawn = {}, nil
+  local v = { id = 9, model = 'pigeon', config = { partsTree = { children = {} } }, data = { vdata = car({ -0.6, -0.4, -0.2, 0, 0.2 }) } }
+  core.G.vehicle = function() return v end
+  core.G.respawnPlayer = function(edit)
+    local config = copy(v.config)
+    edit(config)
+    respawns[#respawns + 1] = config
+    v.config = config
+  end
+  core.settingsDo('dash', 'on')
+  assert(#respawns == 1 and dash.spot('pigeon').where == 'middle')
+  local st = core.settingsDo('dash', 'wheel').dash
+  assert(st.where == 'wheel' and st.placed and not st.error and #respawns == 2, 'measured and moved: ' .. tostring(st.error))
+  assert(math.abs(dash.spot('pigeon').centre.x + 0.316) < 1e-6, 'in line with the driver')
+  core.settingsDo('dash', 'middle')
+  assert(dash.where() == 'middle' and #respawns == 3)
+  -- another car of the same model, fitted in the middle, is rebuilt when the player gets into it after a move
+  local first = v
+  local other = { id = 12, model = 'pigeon', config = copy(v.config), data = v.data }
+  dash.partCar(9) dash.partCar(12)
+  core.settingsDo('dash', 'wheel')
+  assert(#respawns == 4 and core.dashStale[12] and not core.dashStale[9])
+  v = other
+  core.onVehicleSwitched()
+  advance(core, 4)
+  assert(#respawns == 5 and not core.dashStale[12], 'the other car got the phone behind the wheel too')
+  advance(core, 4)
+  assert(#respawns == 5, 'only once')
+  v = first
+  core.settingsDo('dash', 'middle')
+  dash.forget()
+  local base = #respawns
+  assert(#respawns == base)
+  -- a car that may not be reloaded (damaged): the setting stays where the phone still is
+  core.G.respawnPlayer, local_respawn = function() error('no respawn') end, core.G.respawnPlayer
+  st = core.settingsDo('dash', 'wheel').dash
+  assert(st.error and dash.where() == 'middle' and not core.dashWhereBack, 'kept in the middle: ' .. tostring(dash.where()))
+  core.G.respawnPlayer = local_respawn
+  -- a car whose dash is only in the middle: it is reloaded once to be measured, then the phone goes back
+  v = { id = 11, model = 'covet', config = { partsTree = { children = {} } }, data = { vdata = car({ 0, 0.2 }) } }
+  core.settingsDo('dash', 'on')
+  local n = #respawns
+  assert(dash.spot('covet') and dash.spot('covet').where == 'middle', 'placed in the middle')
+  core.settingsDo('dash', 'wheel')
+  assert(#respawns == n + 1, 'reloaded to be measured')
+  core.onVehicleSpawned(11)
+  advance(core, 4)
+  advance(core, 4)
+  st = core.settingsState().dash
+  assert(dash.where() == 'middle' and st.placed and st.error, 'back in the middle, with the reason: ' .. tostring(st.error))
+  assert(#respawns > n and dash.treeHasPhone(respawns[#respawns].partsTree), 'the phone is back on the car')
 end)
 
 test('Settings puts the phone on the dash of the car you drive, and each new car gets it', function()
