@@ -3664,6 +3664,29 @@ test('the native bus doors and phone share boarding; closing early cancels witho
   core.busDoorWatch()
   local stop = j.bus.stops[1]
   pose.lat, pose.lon = stop.g[1], stop.g[2]
+  -- the bus's own Lua restarts on a respawn: the same watch is asked for again every few seconds
+  local first = watched
+  watched = nil
+  core.onUpdate(core.BUS_WATCH_RENEW_S + 0.1, 0)
+  assert(watched and watched.id == first.id and watched.token == first.token, 'the door watch is renewed')
+  -- O pressed while the bus still rolls in: boarding starts by itself once it stands at the stop
+  pose.speed = 5
+  core.onCargoEarthBusDoors(watched.id, watched.token, true)
+  assert(not s.busDwell, 'no boarding while the bus still rolls')
+  pose.speed = 0
+  core.onUpdate(core.BUS_DOOR_RETRY_S + 0.1, 0)
+  assert(s.busDwell and commands == 0, 'open doors board the passengers once the bus stands at the stop')
+  core.onCargoEarthBusDoors(watched.id, watched.token, false)
+  assert(not s.busDwell, 'closing the doors stops boarding')
+  core.onUpdate(core.BUS_DOOR_RETRY_S + 0.1, 0)
+  assert(not s.busDwell, 'closed doors do not board again')
+  -- a restarted watcher's first look at closed doors does not cancel a boarding the phone just started
+  core.onCargoEarthBusDoors(watched.id, watched.token, true)
+  assert(s.busDwell)
+  core.onCargoEarthBusDoors(watched.id, watched.token, false, true)
+  assert(s.busDwell, 'an initial closed snapshot keeps boarding')
+  core.onCargoEarthBusDoors(watched.id, watched.token, false)
+  assert(not s.busDwell)
   core.onCargoEarthBusDoors(watched.id + 1, watched.token, true)
   assert(not s.busDwell, 'another bus cannot start this boarding timer')
   core.onCargoEarthBusDoors(watched.id, watched.token, true)
