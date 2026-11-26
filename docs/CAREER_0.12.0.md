@@ -32,7 +32,7 @@ part changes on damaged cars and the door watch have only passed the automated t
   scripts in Latin letters).
 - On the Map tab the job is one slim line under the turn banner, so the map reaches the top of the phone. Tap it to
   open the Work tab.
-- Details: [live map](LIVE_MAP.md).
+- Details: [live map](https://github.com/themazzy/cargo-earth/blob/main/docs/LIVE_MAP.md).
 
 ## Phone
 - Slimmer bottom tab bar (icon beside the label) and footer: about 26 px more room for every tab.
