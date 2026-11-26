@@ -105,6 +105,61 @@ function M.updateGFX(dt)
   if relatch.left <= 0 then relatch = nil end
 end
 
+-- Which node and beam each snapshot entry is, by name and by the part it comes from (BeamNG numbers them in load
+-- order, so another config numbers them differently). A node: 'name|part'; a beam: 'node1|node2|part'.
+local function nodeKeys()
+  local out = {}
+  for _, n in pairs(v.data.nodes) do
+    if type(n) == 'table' and n.cid then out[n.cid + 1] = tostring(n.name) .. '|' .. tostring(n.partOrigin) end
+  end
+  return out
+end
+local function beamKeys()
+  local out = {}
+  for _, b in pairs(v.data.beams) do
+    local n1 = type(b) == 'table' and b.id1 and v.data.nodes[b.id1]
+    local n2 = n1 and b.id2 and v.data.nodes[b.id2]
+    if type(n1) == 'table' and type(n2) == 'table' and b.cid then
+      out[b.cid + 1] = tostring(n1.name) .. '|' .. tostring(n2.name) .. '|' .. tostring(b.partOrigin)
+    end
+  end
+  return out
+end
+local function sameKeys(saved, now)
+  if type(saved) ~= 'table' then return true end   -- an older snapshot: the counts are all there is to check
+  for i, k in pairs(now) do if saved[i] ~= k then return false end end
+  return true
+end
+
+-- After a parts change (Jan, 2026-11-26: a swap must not mend the other parts): the saved deformation goes back onto
+-- every node and beam the new build still has from the same part. Swapped parts stay new. The powertrain and other
+-- lua state of the old build are not loaded (they belong to its parts), so only the body's damage carries over.
+function M.partialLoad(state)
+  local keys = state.cargoEarthKeys
+  local nodeCid, beamCid = {}, {}
+  for i, k in pairs(nodeKeys()) do nodeCid[k] = i - 1 end
+  for i, k in pairs(beamKeys()) do beamCid[k] = i - 1 end
+  local moved = 0
+  for i, node in pairs(state.nodes) do
+    local cid = nodeCid[keys.nodes[tonumber(i)] or false]
+    if cid then
+      obj:setNodePosition(cid, vec3(node[1]))
+      if #node > 1 then obj:setNodeMass(cid, node[2]) end
+      moved = moved + 1
+    end
+  end
+  for i, beam in pairs(state.beams) do
+    local cid = beamCid[keys.beams[tonumber(i)] or false]
+    if cid then
+      obj:setBeamLength(cid, beam[1])
+      if beam[2] == true then obj:breakBeam(cid) end
+      if beam[3] > 0 and beamstate.onBeamDeformed then beamstate.onBeamDeformed(cid, beam[3]) end
+    end
+  end
+  obj:commitLoad()
+  return moved
+end
+
 function M.run(action, path, token)
   local ok = pcall(function()
     if action == 'capture' then
@@ -114,11 +169,15 @@ function M.run(action, path, token)
       for _, node in pairs(state.nodes) do node[1] = (rotation * vec3(node[1])):toTable() end
       state.cargoEarthLocalNodes = true
       state.cargoEarthLatches = latchStates()
+      state.cargoEarthKeys = { nodes = nodeKeys(), beams = beamKeys() }
       assert(jsonWriteFile(path, state, false) ~= false)
     else
       local state = assert(jsonReadFile(path), 'Snapshot unavailable')
       assert(state.format == 'v2' and state.cargoEarthLocalNodes and state.vehicleDirectory == v.data.vehicleDirectory)
-      assert(state.nodeCount == tableSizeC(v.data.nodes) and state.beamCount == tableSizeC(v.data.beams), 'Vehicle parts changed')
+      local keys = type(state.cargoEarthKeys) == 'table' and state.cargoEarthKeys or nil
+      local same = state.nodeCount == tableSizeC(v.data.nodes) and state.beamCount == tableSizeC(v.data.beams)
+        and (not keys or (sameKeys(keys.nodes, nodeKeys()) and sameKeys(keys.beams, beamKeys())))
+      assert(same or (keys and type(keys.nodes) == 'table' and type(keys.beams) == 'table'), 'Vehicle parts changed')
       local rotation = quatFromDir(obj:getDirectionVector(), obj:getDirectionVectorUp())
       for _, node in pairs(state.nodes) do node[1] = (rotation * vec3(node[1])):toTable() end
       assert(jsonWriteFile(path, state, false) ~= false)
@@ -131,7 +190,7 @@ function M.run(action, path, token)
         if was and CLOSED[was] then shut[name] = true end
         keep[name] = was == 'broken' or s == 'broken'
       end
-      beamstate.load(path)
+      if same then beamstate.load(path) else M.partialLoad(state) end
       relatch = { left = M.RELATCH_S, since = 0, shut = shut, tries = {}, reset = {} }
       for _, c in ipairs(latches()) do
         if not keep[c.name] and c.reset and release(c) then relatch.reset[c.name] = true relatch.releasing = M.RELEASE_S end
