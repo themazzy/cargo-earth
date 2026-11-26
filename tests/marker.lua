@@ -155,6 +155,18 @@ for _, phase in ipairs({ 'delivery', 'pickup' }) do
 end
 debugDrawer.drawLineInstance, debugDrawer.drawCylinder, debugDrawer.drawTextAdvanced = real, function() end, function() end
 
+-- BeamNG 0.40.6: drawTriSolid takes a packed colour number and throws on a ColorF (beamng.log, 2026-11-26)
+local packedTris, threw = 0, 0
+color = function(r, g, b, a) return r * 16777216 + g * 65536 + b * 256 + a end
+debugDrawer.drawTriSolid = function(_, _, _, _, col)
+  if type(col) ~= 'number' then threw = threw + 1 error("bad argument #4 to 'drawTriSolid' (number expected, got userdata)") end
+  packedTris = packedTris + 1
+end
+marker.reset()
+marker.draw(car, house, 'delivery', true, 30, false, 0)
+assert(packedTris == 40 and threw == 0, 'the ring is filled with a packed colour: ' .. packedTris .. ', ' .. threw)
+color = nil
+
 castRayStatic, vec3, ColorF, ColorI, String = saved.castRayStatic, saved.vec3, saved.ColorF, saved.ColorI, saved.String
 debugDrawer, map = saved.debugDrawer, saved.map
 package.loaded['cargoEarth/earth'], package.loaded['cargoEarth/marker'] = saved.earth, saved.marker

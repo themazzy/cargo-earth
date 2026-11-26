@@ -49,6 +49,31 @@ local function paint(c, alpha)
   return col
 end
 
+-- Filled triangles: BeamNG 0.40.6's debugDrawer:drawTriSolid takes a packed colour number (the game's color(r, g, b, a)),
+-- older builds a ColorF. With a ColorF the call threw, so the ring was never filled and nothing after it was drawn
+-- (beamng.log: "bad argument #4 to 'drawTriSolid' (number expected, got userdata)"). The first call finds which one works.
+local triColour   -- 'packed' or 'colorF' once known
+local packs = {}
+local function packed(c, alpha)
+  local byColour = packs[c]
+  if not byColour then byColour = {} packs[c] = byColour end
+  local n = byColour[alpha]
+  if not n then
+    n = color(math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5),
+      math.floor(alpha * 255 + 0.5))
+    byColour[alpha] = n
+  end
+  return n
+end
+local function tri(a, b, c3, c, alpha)
+  if triColour == 'packed' then return debugDrawer:drawTriSolid(a, b, c3, packed(c, alpha)) end
+  if triColour == nil and type(color) == 'function' then
+    if pcall(debugDrawer.drawTriSolid, debugDrawer, a, b, c3, packed(c, alpha)) then triColour = 'packed' return end
+  end
+  triColour = 'colorF'
+  debugDrawer:drawTriSolid(a, b, c3, paint(c, alpha))
+end
+
 local function distance(x, y, p)
   return math.sqrt((x - p.x)^2 + (y - p.y)^2)
 end
@@ -283,7 +308,7 @@ local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
   end
   local outer, inner = cache.outer, cache.inner
   if not outer then return end
-  local outline, fill = paint(c, 1), paint(c, inZone and 0.85 or 0.55)
+  local outline, alpha = paint(c, 1), inZone and 0.85 or 0.55
   for i = 1, RING_SEGMENTS do
     local j = i % RING_SEGMENTS + 1
     if debugDrawer.drawLineInstance then
@@ -295,8 +320,8 @@ local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
   if debugDrawer.drawTriSolid then
     for i = 1, RING_SEGMENTS do
       local j = i % RING_SEGMENTS + 1
-      debugDrawer:drawTriSolid(inner[i], outer[i], outer[j], fill)
-      debugDrawer:drawTriSolid(inner[i], outer[j], inner[j], fill)
+      tri(inner[i], outer[i], outer[j], c, alpha)
+      tri(inner[i], outer[j], inner[j], c, alpha)
     end
   end
 end
@@ -306,8 +331,8 @@ local function drawPickup(p, stop, inZone, now)
   local x, y, roadZ = pickupPosition(p, stop, now)
   if not x then x, y = earth.worldXY(p, stop.g) end
   if not (x and p.z) then return end
-  drawRing(pickup, p, x, y, roadZ, M.PICKUP_RADIUS, COLORS.pickup, inZone, now)
   drawBeacon(pickup, p, x, y, 'Pick up: ' .. (stop.n or ''), COLORS.pickup, inZone, now)
+  drawRing(pickup, p, x, y, roadZ, M.PICKUP_RADIUS, COLORS.pickup, inZone, now)
 end
 
 -- The drop-off: a ring on the ground near by, and a beacon from afar (a freight yard's ring used to show only within
@@ -328,8 +353,8 @@ local function drawDelivery(p, stop, radius, inZone, now)
     x, y, roadZ = yardPosition(delivery, p, stop, now)
     if not x then return end
   end
-  drawRing(delivery, p, x, y, roadZ, radius, COLORS.delivery, inZone, now)
   drawBeacon(delivery, p, x, y, 'Deliver: ' .. (stop.n or ''), COLORS.delivery, inZone, now)
+  drawRing(delivery, p, x, y, roadZ, radius, COLORS.delivery, inZone, now)
 end
 
 local function drawDepotPickup(p, stop, radius, inZone, now)
@@ -470,6 +495,6 @@ end
 
 M.roadEdge, M.groundZ, M.surfaceZ, M.columnHits = roadEdge, groundZ, surfaceZ, columnHits
 
-function M.reset() pickup, delivery, depot, poles, areas, warned = {}, {}, {}, {}, {}, false end
+function M.reset() pickup, delivery, depot, poles, areas, warned, triColour = {}, {}, {}, {}, {}, false, nil end
 
 return M
