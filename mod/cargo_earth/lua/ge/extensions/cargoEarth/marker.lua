@@ -6,7 +6,15 @@ local M = {}
 M.PICKUP_RADIUS = 5    -- metres from the centre of the roadside pickup
 local RING_RANGE = 250
 M.PICKUP_RANGE = RING_RANGE
-M.FAR_KM = 6         -- draw distance for the freight pickup beacon
+M.FAR_KM = 6         -- draw distance for the beacon over every stop
+-- Freight yards (helper depots, fuel depots, parts suppliers) come as Overture place points: the middle of a site or
+-- a building, often far from any road. A yard point with a road within YARD_KEEP_M keeps its spot (its zone reaches
+-- the road); else the zone moves to the edge of the nearest road up to YARD_SEARCH_M away, where the GPS ends too.
+-- The search starts YARD_FIND_M out (the road graph streams in ahead of the car) and settles within the ring range.
+M.YARD_KEEP_M = 20
+M.YARD_SEARCH_M = 400
+M.YARD_FIND_M = 1500
+M.SETTLE_M = 100      -- a roadside spot stays put once the car is this close
 
 local CURB_OFFSET = 3.5
 local RING_SEGMENTS = 20
@@ -25,7 +33,7 @@ local COLORS = {
 local pickup, delivery, depot = {}, {}, {}
 local depotDirections = {}
 for i = 1, 8 do depotDirections[i] = { math.cos(math.pi * i / 4), math.sin(math.pi * i / 4) } end
-local warned = false
+local warned = {}   -- each distinct draw error is logged once
 local ringDirections = {}
 for i = 1, RING_SEGMENTS do
   local angle = 2 * math.pi * i / RING_SEGMENTS
@@ -40,6 +48,31 @@ local function paint(c, alpha)
   local col = byColour[alpha]
   if not col then col = ColorF(c[1], c[2], c[3], alpha) byColour[alpha] = col end
   return col
+end
+
+-- Filled triangles: BeamNG 0.40.6's debugDrawer:drawTriSolid takes a packed colour number (the game's color(r, g, b, a)),
+-- older builds a ColorF. With a ColorF the call threw, so the ring was never filled and nothing after it was drawn
+-- (beamng.log: "bad argument #4 to 'drawTriSolid' (number expected, got userdata)"). The first call finds which one works.
+local triColour   -- 'packed' or 'colorF' once known
+local packs = {}
+local function packed(c, alpha)
+  local byColour = packs[c]
+  if not byColour then byColour = {} packs[c] = byColour end
+  local n = byColour[alpha]
+  if not n then
+    n = color(math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5),
+      math.floor(alpha * 255 + 0.5))
+    byColour[alpha] = n
+  end
+  return n
+end
+local function tri(a, b, c3, c, alpha)
+  if triColour == 'packed' then return debugDrawer:drawTriSolid(a, b, c3, packed(c, alpha)) end
+  if triColour == nil and type(color) == 'function' then
+    if pcall(debugDrawer.drawTriSolid, debugDrawer, a, b, c3, packed(c, alpha)) then triColour = 'packed' return end
+  end
+  triColour = 'colorF'
+  debugDrawer:drawTriSolid(a, b, c3, paint(c, alpha))
 end
 
 local function distance(x, y, p)
@@ -140,8 +173,10 @@ local function roadsidePosition(cache, p, stop, now, range)
     or jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000 > range + 80 then return nil end
   local x, y = earth.worldXY(p, stop.g)
   if not (x and p.z) then return nil end
-  if cache.x then return cache.x, cache.y, cache.roadZ end
-  if distance(x, y, p) > range then return x, y end
+  -- The road is looked up again every second until the car is within SETTLE_M of it: a road found while the streets
+  -- near the stop were still streaming in (another street further off) gives way to the nearer one.
+  if cache.x and (cache.locked or now < cache.nextRoad) then return cache.x, cache.y, cache.roadZ end
+  if distance(x, y, p) > range then return cache.x or x, cache.y or y, cache.roadZ end
   local doorX, doorY
   if stop.d then doorX, doorY = earth.worldXY(p, stop.d) end
   doorX, doorY = doorX or x, doorY or y
@@ -151,18 +186,63 @@ local function roadsidePosition(cache, p, stop, now, range)
     cache.nextRoad = now + REFRESH_S
     -- a point that is already a curb (apart from its door) looks close by; a bare address point looks further
     local search = gap < 1 and 80 or 15
-    local z = p.z
-    if search == 80 then z = surfaceZ(x, y, nil, p.z + 30, 150) or z end
+    -- the road is searched at the stop's ground, not the car's height (a car on a bridge would find the bridge)
+    local z = surfaceZ(x, y, nil, p.z + 30, 150) or p.z
     local ok, rx, ry, rz = pcall(roadEdge, x, y, z, doorX, doorY, search)
     if ok and rx then
-      cache.x, cache.y, cache.roadZ = rx, ry, rz
-      cache.nextGround = 0
-      return rx, ry, rz
+      if not cache.x or (rx - cache.x)^2 + (ry - cache.y)^2 > 1 then
+        cache.x, cache.y, cache.roadZ = rx, ry, rz
+        cache.outer, cache.cz, cache.beaconZ, cache.nextGround = nil, nil, nil, 0
+      end
+      if distance(rx, ry, p) <= M.SETTLE_M then cache.locked = true end
+      return cache.x, cache.y, cache.roadZ
     end
   end
+  if cache.x then return cache.x, cache.y, cache.roadZ end
   -- While roads stream in, use the known curb, nudged towards the address.
   local fraction = gap > 0 and math.min(1, CURB_OFFSET / gap) or 0
   return x + dx * fraction, y + dy * fraction
+end
+
+-- A freight yard's stop point in world x, y (and the road's z when it moved to a road), cached in `cache`.
+local function yardPosition(cache, p, stop, now)
+  local x, y = earth.worldXY(p, stop.g)
+  if not (x and p.z) then return nil end
+  if cache.locked or now < cache.nextRoad or distance(x, y, p) > M.YARD_FIND_M
+    or not (map and map.findClosestRoad and map.getMap and vec3) then
+    return cache.x or x, cache.y or y, cache.roadZ
+  end
+  cache.nextRoad = now + REFRESH_S
+  local z = surfaceZ(x, y, nil, p.z + 300, 1000) or p.z
+  local ok, rx, ry, rz = pcall(roadEdge, x, y, z, x, y, M.YARD_SEARCH_M)
+  local found = ok and rx ~= nil
+  local moved = found and math.sqrt((rx - x)^2 + (ry - y)^2) > M.YARD_KEEP_M
+  local nx, ny = moved and rx or nil, moved and ry or nil
+  if nx ~= cache.x or ny ~= cache.y then
+    -- another spot: the ring and the beacon find their ground again
+    cache.x, cache.y, cache.roadZ = nx, ny, moved and rz or nil
+    cache.outer, cache.cz, cache.beaconZ, cache.nextGround = nil, nil, nil, 0
+  end
+  -- close by, the roads around the yard are all streamed in: the spot stays
+  if found and distance(cache.x or x, cache.y or y, p) <= RING_RANGE then cache.locked = true end
+  return cache.x or x, cache.y or y, cache.roadZ
+end
+
+-- A tall beacon over the stop, seen from FAR_KM away, with its name. Its foot is the ring's ground when known.
+local function drawBeacon(cache, p, x, y, label, c, inZone, now, ground)
+  if distance(x, y, p) > M.FAR_KM * 1000 then return end
+  if ground then
+    cache.beaconZ = ground
+  elseif cache.cz and cache.cx == x and cache.cy == y then
+    cache.beaconZ = cache.cz
+  elseif now >= (cache.nextBeacon or 0) then
+    cache.nextBeacon = now + REFRESH_S
+    cache.beaconZ = surfaceZ(x, y, cache.roadZ, (cache.roadZ or p.z) + 500, 2000) or cache.beaconZ
+  end
+  local z = cache.beaconZ or p.z
+  debugDrawer:drawCylinder(vec3(x, y, z), vec3(x, y, z + BEACON_M), BEACON_R, paint(c, inZone and 0.75 or 0.45))
+  debugDrawer:drawTextAdvanced(vec3(x, y, z + 4), String(label), ColorF(1, 1, 1, 1), true, false,
+    ColorI(math.floor(c[1] * 160), math.floor(c[2] * 160), math.floor(c[3] * 160), 220))
 end
 
 local function pickupPosition(p, stop, now)
@@ -215,7 +295,9 @@ local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
     -- every second until the ring stands, then only now and then (late ground tiles still lift it)
     cache.nextGround = now + (cache.outer and GROUND_AGAIN_S or REFRESH_S)
     local ref = roadZ or roadZNear(x, y, p.z)
-    local z = ref and (surfaceZ(x, y, ref, ref + 4, 12) or ref) or surfaceZ(x, y, nil, p.z + 30, 150)
+    -- the column reaches 12 m above and below the road: a yard or a kerb on a bank above the road is still found
+    -- (the surface nearest the road wins, so a roof or a bridge over the stop is not)
+    local z = ref and (surfaceZ(x, y, ref, ref + 12, 24) or ref) or surfaceZ(x, y, nil, p.z + 30, 150)
     if not z and distance(x, y, p) <= 50 then z = surfaceZ(p.x, p.y, p.z - 0.5, p.z + 2, 12) end
     if z then
       local outer, inner = {}, {}
@@ -235,7 +317,7 @@ local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
   end
   local outer, inner = cache.outer, cache.inner
   if not outer then return end
-  local outline, fill = paint(c, 1), paint(c, inZone and 0.85 or 0.55)
+  local outline, alpha = paint(c, 1), inZone and 0.85 or 0.55
   for i = 1, RING_SEGMENTS do
     local j = i % RING_SEGMENTS + 1
     if debugDrawer.drawLineInstance then
@@ -247,19 +329,25 @@ local function drawRing(cache, p, x, y, roadZ, radius, c, inZone, now)
   if debugDrawer.drawTriSolid then
     for i = 1, RING_SEGMENTS do
       local j = i % RING_SEGMENTS + 1
-      debugDrawer:drawTriSolid(inner[i], outer[i], outer[j], fill)
-      debugDrawer:drawTriSolid(inner[i], outer[j], inner[j], fill)
+      tri(inner[i], outer[i], outer[j], c, alpha)
+      tri(inner[i], outer[j], inner[j], c, alpha)
     end
   end
 end
 
 local function drawPickup(p, stop, inZone, now)
+  if not (p.lat and p.lon and stop.g) or jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) > M.FAR_KM then return end
   local x, y, roadZ = pickupPosition(p, stop, now)
-  if x then drawRing(pickup, p, x, y, roadZ, M.PICKUP_RADIUS, COLORS.pickup, inZone, now) end
+  if not x then x, y = earth.worldXY(p, stop.g) end
+  if not (x and p.z) then return end
+  drawBeacon(pickup, p, x, y, 'Pick up: ' .. (stop.n or ''), COLORS.pickup, inZone, now)
+  drawRing(pickup, p, x, y, roadZ, M.PICKUP_RADIUS, COLORS.pickup, inZone, now)
 end
 
+-- The drop-off: a ring on the ground near by, and a beacon from afar (a freight yard's ring used to show only within
+-- the ring range of the yard's point, which can lie deep in a site, so nothing showed where the road ends).
 local function drawDelivery(p, stop, radius, inZone, now)
-  if not (p.lat and p.lon and stop.g) or jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000 > RING_RANGE then return end
+  if not (p.lat and p.lon and stop.g) or jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) > M.FAR_KM then return end
   local x, y = earth.worldXY(p, stop.g)
   if not (x and p.z) then return end
   if not matches(delivery, stop, p) or delivery.radius ~= radius then
@@ -270,7 +358,11 @@ local function drawDelivery(p, stop, radius, inZone, now)
   if M.roadside(stop) then
     local rx, ry, rz = roadsidePosition(delivery, p, stop, now, RING_RANGE)
     if rx then x, y, roadZ = rx, ry, rz end
+  else
+    x, y, roadZ = yardPosition(delivery, p, stop, now)
+    if not x then return end
   end
+  drawBeacon(delivery, p, x, y, 'Deliver: ' .. (stop.n or ''), COLORS.delivery, inZone, now)
   drawRing(delivery, p, x, y, roadZ, radius, COLORS.delivery, inZone, now)
 end
 
@@ -279,12 +371,19 @@ local function drawDepotPickup(p, stop, radius, inZone, now)
   local x, y = earth.worldXY(p, stop.g)
   if not (x and p.z) or distance(x, y, p) > M.FAR_KM * 1000 then return end
   if not matches(depot, stop, p) then depot = newCache(stop, p) end
+  local roadZ
   if M.roadside(stop) then   -- a taxi passenger or a broken-down car waits by the road, not in the house
-    local rx, ry = roadsidePosition(depot, p, stop, now, RING_RANGE)
-    if rx then x, y = rx, ry end
+    local rx, ry, rz = roadsidePosition(depot, p, stop, now, RING_RANGE)
+    if rx then x, y, roadZ = rx, ry, rz end
+  else
+    local yx, yy, yz = yardPosition(depot, p, stop, now)
+    if yx ~= depot.drawnX or yy ~= depot.drawnY then depot.nextGround, depot.z = 0, nil end
+    depot.drawnX, depot.drawnY = yx, yy
+    if not yx then return end
+    x, y, roadZ = yx, yy, yz
   end
   if now >= depot.nextGround then
-    local ref = distance(x, y, p) <= RING_RANGE and roadZNear(x, y, p.z) or nil
+    local ref = distance(x, y, p) <= RING_RANGE and (roadZ or roadZNear(x, y, p.z)) or nil
     depot.z = surfaceZ(x, y, ref, (ref or p.z) + 500, 2000) or depot.z
     depot.cx, depot.cy, depot.cz, depot.slopeX, depot.slopeY = x, y, nil, 0, 0
     if ref and depot.z then
@@ -296,12 +395,8 @@ local function drawDepotPickup(p, stop, radius, inZone, now)
   end
   local z = depot.z or p.z
   local c = COLORS.pickup
-  local base = vec3(x, y, z)
-  debugDrawer:drawCylinder(base, vec3(x, y, z + BEACON_M), BEACON_R, ColorF(c[1], c[2], c[3], inZone and 0.75 or 0.45))
-  debugDrawer:drawCylinder(base, vec3(x, y, z + 0.15), radius, ColorF(c[1], c[2], c[3], inZone and 0.28 or 0.16))
-  local label = 'Pick up: ' .. (stop.n or '')
-  debugDrawer:drawTextAdvanced(vec3(x, y, z + 4), String(label), ColorF(1, 1, 1, 1), true, false,
-    ColorI(math.floor(c[1] * 160), math.floor(c[2] * 160), math.floor(c[3] * 160), 220))
+  debugDrawer:drawCylinder(vec3(x, y, z), vec3(x, y, z + 0.15), radius, paint(c, inZone and 0.28 or 0.16))
+  drawBeacon(depot, p, x, y, 'Pick up: ' .. (stop.n or ''), c, inZone, now, z)
 end
 
 -- How far the car sits above (+) or below (-) the ground of the stop's ring, in metres, or nil while that ground
@@ -332,8 +427,8 @@ function M.draw(p, stop, phase, courier, radius, inZone, now)
   else
     ok, err = pcall(drawDepotPickup, p, stop, radius, inZone, now)
   end
-  if not ok and not warned then
-    warned = true
+  if not ok and not warned[tostring(err)] then
+    warned[tostring(err)] = true
     if log then log('W', 'cargoEarth', 'stop marker draw failed: ' .. tostring(err)) end
   end
 end
@@ -368,8 +463,8 @@ end
 function M.drawCameras(p, list, now)
   if not (p and p.lat and list and #list > 0 and debugDrawer and vec3 and ColorF) then return end
   local ok, err = pcall(drawCameras, p, list, now)
-  if not ok and not warned then
-    warned = true
+  if not ok and not warned[tostring(err)] then
+    warned[tostring(err)] = true
     if log then log('W', 'cargoEarth', 'camera marker draw failed: ' .. tostring(err)) end
   end
 end
@@ -401,14 +496,14 @@ end
 function M.drawArea(p, key, g, radius, label, now)
   if not (p and debugDrawer and vec3 and ColorF) then return end
   local ok, err = pcall(drawArea, p, key, g, radius, label, now)
-  if not ok and not warned then
-    warned = true
+  if not ok and not warned[tostring(err)] then
+    warned[tostring(err)] = true
     if log then log('W', 'cargoEarth', 'area marker draw failed: ' .. tostring(err)) end
   end
 end
 
 M.roadEdge, M.groundZ, M.surfaceZ, M.columnHits = roadEdge, groundZ, surfaceZ, columnHits
 
-function M.reset() pickup, delivery, depot, poles, areas, warned = {}, {}, {}, {}, {}, false end
+function M.reset() pickup, delivery, depot, poles, areas, warned, triColour = {}, {}, {}, {}, {}, {}, nil end
 
 return M

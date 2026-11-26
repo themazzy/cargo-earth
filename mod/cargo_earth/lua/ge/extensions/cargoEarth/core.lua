@@ -1842,12 +1842,23 @@ function M.busOffer(id)
   end
 end
 
+-- Metres from the car to a bus or coach stop: its own point, or its ring where that was moved to the road (a coach
+-- station's point is the middle of the station, up to the roadside search away from the ring).
+function M.busStopMeters(p, stop)
+  local meters = jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000
+  local side = marker.roadsideDistance and marker.roadsideDistance(p, S.job and S.job.to)
+  if side and S.job.to and S.job.to.g and S.job.to.g[1] == stop.g[1] and S.job.to.g[2] == stop.g[2] then
+    meters = math.min(meters, side)
+  end
+  return meters
+end
+
 -- The phone and upper overlay share this stop state and the boarding clock.
 function M.busStopInfo()
   local j, p = S.job, earth.pose()
   if not (j and j.bus and validLocation(p)) then return nil end
   local stop = j.bus.stops[j.bus.at]
-  local meters = jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000
+  local meters = M.busStopMeters(p, stop)
   local inside = meters <= rules(j).arriveM
   local parked = not p.camera and (p.speed or 0) <= M.STOP_SPEED and garage.inOwnCar(M.G, S.career.garage)
   local d = S.busDwell
@@ -2058,9 +2069,8 @@ function M.busTick(p, dt)
   if not (j and j.bus) or d.job ~= j or j.bus.at ~= d.at then S.busDwell = nil return end
   -- The assigned vehicle was verified when the doors opened. Read its id each frame
   -- without fetching a full garage vehicle description or building the phone state.
-  local g = j.bus.stops[d.at].g
   if not validLocation(p) or p.camera or (p.speed or 0) > M.STOP_SPEED or d.vehicle ~= M.G.playerId()
-    or jobs.km(p.lat, p.lon, g[1], g[2]) * 1000 > rules(j).arriveM then
+    or M.busStopMeters(p, j.bus.stops[d.at]) > rules(j).arriveM then
     M.interruptBoarding()
     return
   end
