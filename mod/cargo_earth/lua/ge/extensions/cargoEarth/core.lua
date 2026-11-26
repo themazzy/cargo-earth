@@ -1992,9 +1992,9 @@ end
 
 function M.onCargoEarthBusDoors(id, token, open, initial)
   local w = S.busWatch
-  if not w or w.id ~= id or w.token ~= token or w.job ~= S.job or M.G.playerId() ~= id
-    or not garage.inOwnCar(M.G, S.career.garage) or earth.status() ~= 'ok' or type(open) ~= 'boolean' then return end
-  S.busDoorsOpen = open
+  if not w or w.id ~= id or w.token ~= token or w.job ~= S.job or type(open) ~= 'boolean' then return end
+  S.busDoorsOpen = open   -- kept even while the world loads: the watcher reports each change only once
+  if M.G.playerId() ~= id or not garage.inOwnCar(M.G, S.career.garage) or earth.status() ~= 'ok' then return end
   if initial == true and not open then return end   -- first look at closed doors: a phone press may be on its way
   if open then M.busDoors(true)
   elseif S.busDwell then

@@ -3687,6 +3687,19 @@ test('the native bus doors and phone share boarding; closing early cancels witho
   assert(s.busDwell, 'an initial closed snapshot keeps boarding')
   core.onCargoEarthBusDoors(watched.id, watched.token, false)
   assert(not s.busDwell)
+  -- doors closed while the world was loading: the close still counts, so no boarding with closed doors later
+  core.onCargoEarthBusDoors(watched.id, watched.token, true)
+  core.onCargoEarthBusDoors(watched.id, watched.token, false)
+  pose.speed = 5
+  core.onCargoEarthBusDoors(watched.id, watched.token, true)
+  local earthMod = require('cargoEarth/earth')
+  local realStatus = earthMod.status
+  earthMod.status = function() return 'World loading' end
+  core.onCargoEarthBusDoors(watched.id, watched.token, false)
+  earthMod.status = realStatus
+  pose.speed = 0
+  core.onUpdate(core.BUS_DOOR_RETRY_S + 0.1, 0)
+  assert(not s.busDwell, 'a close reported while Earth was loading is remembered')
   core.onCargoEarthBusDoors(watched.id + 1, watched.token, true)
   assert(not s.busDwell, 'another bus cannot start this boarding timer')
   core.onCargoEarthBusDoors(watched.id, watched.token, true)
