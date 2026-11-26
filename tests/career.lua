@@ -4342,6 +4342,75 @@ test('snapshot capture rejects late results after a paid repair and retries a lo
   assert(g.car.physicalDamage and writes == 1)
 end)
 
+test('the dash phone moves behind the wheel, and goes back when the car has no dash there', function()
+  local core = fresh()
+  local dash = require('cargoEarth/dash')
+  dash.store = { read = function() return nil end, write = function() end }
+  dash.load()
+  local function car(xs)
+    local nodes, cid = {}, 0
+    for _, x in ipairs(xs) do
+      for _, z in ipairs({ 0.87, 0.99 }) do
+        nodes[cid] = { cid = cid, name = 'dsh' .. cid, pos = { x = x, y = -0.457, z = z }, group = { [0] = 'dash' } }
+        cid = cid + 1
+      end
+    end
+    return { nodes = nodes, cameras = { onboard = { { name = 'driver', x = -0.316, y = 0.1, z = 1.25 } } } }
+  end
+  local function copy(t) local o = {} for k, x in pairs(t) do o[k] = type(x) == 'table' and copy(x) or x end return o end
+  local respawns, local_respawn = {}, nil
+  local v = { id = 9, model = 'pigeon', config = { partsTree = { children = {} } }, data = { vdata = car({ -0.6, -0.4, -0.2, 0, 0.2 }) } }
+  core.G.vehicle = function() return v end
+  core.G.respawnPlayer = function(edit)
+    local config = copy(v.config)
+    edit(config)
+    respawns[#respawns + 1] = config
+    v.config = config
+  end
+  core.settingsDo('dash', 'on')
+  assert(#respawns == 1 and dash.spot('pigeon').where == 'middle')
+  local st = core.settingsDo('dash', 'wheel').dash
+  assert(st.where == 'wheel' and st.placed and not st.error and #respawns == 2, 'measured and moved: ' .. tostring(st.error))
+  assert(math.abs(dash.spot('pigeon').centre.x + 0.316) < 1e-6, 'in line with the driver')
+  core.settingsDo('dash', 'middle')
+  assert(dash.where() == 'middle' and #respawns == 3)
+  -- another car of the same model, fitted in the middle, is rebuilt when the player gets into it after a move
+  local first = v
+  local other = { id = 12, model = 'pigeon', config = copy(v.config), data = v.data }
+  dash.partCar(9) dash.partCar(12)
+  core.settingsDo('dash', 'wheel')
+  assert(#respawns == 4 and core.dashStale[12] and not core.dashStale[9])
+  v = other
+  core.onVehicleSwitched()
+  advance(core, 4)
+  assert(#respawns == 5 and not core.dashStale[12], 'the other car got the phone behind the wheel too')
+  advance(core, 4)
+  assert(#respawns == 5, 'only once')
+  v = first
+  core.settingsDo('dash', 'middle')
+  dash.forget()
+  local base = #respawns
+  assert(#respawns == base)
+  -- a car that may not be reloaded (damaged): the setting stays where the phone still is
+  core.G.respawnPlayer, local_respawn = function() error('no respawn') end, core.G.respawnPlayer
+  st = core.settingsDo('dash', 'wheel').dash
+  assert(st.error and dash.where() == 'middle' and not core.dashWhereBack, 'kept in the middle: ' .. tostring(dash.where()))
+  core.G.respawnPlayer = local_respawn
+  -- a car whose dash is only in the middle: it is reloaded once to be measured, then the phone goes back
+  v = { id = 11, model = 'covet', config = { partsTree = { children = {} } }, data = { vdata = car({ 0, 0.2 }) } }
+  core.settingsDo('dash', 'on')
+  local n = #respawns
+  assert(dash.spot('covet') and dash.spot('covet').where == 'middle', 'placed in the middle')
+  core.settingsDo('dash', 'wheel')
+  assert(#respawns == n + 1, 'reloaded to be measured')
+  core.onVehicleSpawned(11)
+  advance(core, 4)
+  advance(core, 4)
+  st = core.settingsState().dash
+  assert(dash.where() == 'middle' and st.placed and st.error, 'back in the middle, with the reason: ' .. tostring(st.error))
+  assert(#respawns > n and dash.treeHasPhone(respawns[#respawns].partsTree), 'the phone is back on the car')
+end)
+
 test('Settings puts the phone on the dash of the car you drive, and each new car gets it', function()
   local core = fresh()
   local dash = require('cargoEarth/dash')

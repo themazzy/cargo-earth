@@ -177,13 +177,20 @@ local function hasWord(groups, words)
   return false
 end
 
+-- Where on the dash the phone stands: 'middle' (in front of the driver, toward the middle of the car) or 'wheel'
+-- (straight ahead of the driver, above the gauges behind the steering wheel)
+M.WHERE = { middle = true, wheel = true }
+local function whereOf(w) return M.WHERE[w] and w or 'middle' end
+
 -- Where the phone goes in a car: in front of the driver, toward the middle of the car (so left- and right-hand drive
--- both work), standing on the dash near its back edge, below the driver's eyes. nodes: M.nodesOf, eye: M.eyeOf.
--- Returns spot = { v, eye, centre, group, ref, x, y } (ref/x/y: { name, pos }, the click grid's frame) or nil, why.
-function M.findSpot(nodes, eye)
+-- both work), or straight ahead of the driver behind the wheel (where = 'wheel'), standing on the dash near its back
+-- edge, below the driver's eyes. nodes: M.nodesOf, eye: M.eyeOf.
+-- Returns spot = { v, where, eye, centre, group, ref, x, y } (ref/x/y: { name, pos }, the click grid's frame) or nil, why.
+function M.findSpot(nodes, eye, where)
   eye = pos(eye)
+  where = whereOf(where)
   if not eye then return nil, 'This car has no driver camera.' end
-  local x0 = eye.x * 0.15
+  local x0 = where == 'wheel' and eye.x or eye.x * 0.15
   local function around(width, keep)
     local out = {}
     for _, n in ipairs(nodes) do
@@ -261,7 +268,8 @@ function M.findSpot(nodes, eye)
   end
   if not yn or yScore < 0.3 then return nil, 'The dashboard of this car could not be found.' end
   local function keep(n) return { name = n.name, pos = n.pos } end
-  return { v = M.SPOT_VERSION, eye = eye, centre = centre, group = group, ref = keep(ref), x = keep(xn), y = keep(yn) }
+  return { v = M.SPOT_VERSION, where = where, eye = eye, centre = centre, group = group, ref = keep(ref), x = keep(xn),
+    y = keep(yn) }
 end
 
 ------------------------------------------------------------------------------------------ the part
@@ -475,8 +483,9 @@ end
 
 ------------------------------------------------------------------------------------------ settings
 
--- { on = bool, spots = { [model] = spot }, nudge = { [model] = { x, y, z } } }
-local cfg = { on = false, spots = {}, nudge = {} }
+-- { on = bool, where = 'middle' | 'wheel', spots = { [key] = spot }, nudge = { [key] = { x, y, z } } }
+-- key: the model for the middle of the dash, 'wheel:<model>' behind the wheel
+local cfg = { on = false, where = 'middle', spots = {}, nudge = {} }
 M.store = {
   read = function() return jsonReadFile and jsonReadFile(M.FILE) or nil end,
   write = function(t) if jsonWriteFile then jsonWriteFile(M.FILE, t, true) end end,
@@ -485,7 +494,7 @@ M.store = {
 function M.load()
   local ok, t = pcall(M.store.read)
   t = ok and type(t) == 'table' and t or {}
-  cfg = { on = t.on == true, spots = {}, nudge = {} }
+  cfg = { on = t.on == true, where = whereOf(t.where), spots = {}, nudge = {} }
   for model, s in pairs(type(t.spots) == 'table' and t.spots or {}) do
     if type(s) == 'table' and s.v == M.SPOT_VERSION and pos(s.eye) and pos(s.centre) and type(s.group) == 'string' then
       local ok2 = true
@@ -493,7 +502,7 @@ function M.load()
         if type(s[k]) ~= 'table' or type(s[k].name) ~= 'string' or not pos(s[k].pos) then ok2 = false end
       end
       if ok2 then
-        cfg.spots[model] = { v = s.v, eye = pos(s.eye), centre = pos(s.centre), group = s.group,
+        cfg.spots[model] = { v = s.v, where = whereOf(s.where), eye = pos(s.eye), centre = pos(s.centre), group = s.group,
           ref = { name = s.ref.name, pos = pos(s.ref.pos) }, x = { name = s.x.name, pos = pos(s.x.pos) },
           y = { name = s.y.name, pos = pos(s.y.pos) } }
       end
@@ -507,17 +516,38 @@ local function save() pcall(M.store.write, cfg) end
 function M.isOn() return cfg.on end
 cfg_on = M.isOn
 function M.setOn(on) cfg.on = on and true or false save() end
-function M.spot(model) return model and cfg.spots[model] or nil end
-function M.setSpot(model, spot) if model then cfg.spots[model] = spot save() end end
-function M.nudgeOf(model) return clampNudge(model and cfg.nudge[model]) end
+function M.where() return cfg.where end
+-- the key a model's spot and nudges are kept under, for a place (default: where the phone stands now): the model for
+-- the middle, 'wheel:<model>' behind the wheel. Each place keeps its own, so a failed move leaves the other as it was.
+local function nkey(model, where)
+  return model and ((where or cfg.where) == 'wheel' and 'wheel:' .. model or model) or nil
+end
+-- moves the phone to the middle of the dash or behind the wheel, in every car; each car is measured again for it.
+-- Nudges are kept for each place apart. Returns true when it changed.
+function M.setWhere(w)
+  if not M.WHERE[w] or w == cfg.where then return false end
+  cfg.where = w
+  save()
+  return true
+end
+
+-- the measured spot of this model, for where the phone stands now (each place has its own)
+function M.spot(model)
+  local s = model and cfg.spots[nkey(model)]
+  return s and whereOf(s.where) == cfg.where and s or nil
+end
+function M.setSpot(model, spot)
+  if model and type(spot) == 'table' then cfg.spots[nkey(model, whereOf(spot.where))] = spot save() end
+end
+function M.nudgeOf(model) return clampNudge(model and cfg.nudge[nkey(model)]) end
 
 -- moves the phone of this model by one step along axis ('x' = left, 'y' = back toward the driver, 'z' = up), or puts
 -- it back where it was measured (axis 'reset'). Returns true when it moved.
 function M.nudge(model, axis, dir)
   if not model then return false end
   if axis == 'reset' then
-    local had = cfg.nudge[model] ~= nil
-    cfg.nudge[model] = nil
+    local had = cfg.nudge[nkey(model)] ~= nil
+    cfg.nudge[nkey(model)] = nil
     save()
     return had
   end
@@ -526,7 +556,7 @@ function M.nudge(model, axis, dir)
   local before = n[axis]
   n[axis] = math.max(-M.NUDGE_MAX, math.min(M.NUDGE_MAX, round(before + (tonumber(dir) or 0) * M.NUDGE_STEP, 3)))
   if n[axis] == before then return false end
-  cfg.nudge[model] = n
+  cfg.nudge[nkey(model)] = n
   save()
   return true
 end
@@ -534,7 +564,7 @@ end
 -- the part for a car of this model, or nil when the switch is off or the car is not measured yet
 function M.partFor(model)
   local spot = cfg.on and M.spot(model)
-  return spot and M.buildPart(spot, cfg.nudge[model]) or nil
+  return spot and M.buildPart(spot, cfg.nudge[nkey(model)]) or nil
 end
 
 ------------------------------------------------------------------------------------------ the parts tree
@@ -588,7 +618,7 @@ function M.install(io)
   local w = { io = io, orig = orig, enabled = true, hooks = {} }
   local function active(ioCtx)
     local model = modelOf(ioCtx)
-    return w.enabled and model and cfg.on and cfg.spots[model] and model or nil
+    return w.enabled and model and cfg.on and M.spot(model) and model or nil
   end
   w.getPartWrapper = function(ioCtx, partName, ...)
     if not w.enabled then return orig.getPart(ioCtx, partName, ...) end
@@ -656,13 +686,19 @@ function M.partCar(id) if id then partCars[id] = true end end
 -- the car is being respawned (maybe without the part) or removed: its new controller registers again if the part is there
 function M.dropCar(id) if id then partCars[id] = nil end end
 function M.isPartCar(id) return partCars[id] == true end
+function M.partCarIds()
+  local out = {}
+  for id in pairs(partCars) do out[#out + 1] = id end
+  table.sort(out)
+  return out
+end
 
 -- for the phone's Settings. v: the player's car as gamecar describes it (model, id, config) or nil.
 function M.state(v)
-  local out = { on = cfg.on, car = v ~= nil and v.model ~= nil }
+  local out = { on = cfg.on, where = cfg.where, car = v ~= nil and v.model ~= nil }
   if not out.car then return out end
   out.model = v.model
-  out.placed = cfg.spots[v.model] ~= nil
+  out.placed = M.spot(v.model) ~= nil
   out.fitted = M.treeHasPhone(type(v.config) == 'table' and v.config.partsTree or v.tree)
   out.running = M.isPartCar(v.id)
   local n = M.nudgeOf(v.model)
