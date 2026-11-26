@@ -38,7 +38,10 @@ runtime trigger boxes never ended up in the right place (beamng.log showed their
   The measured spot is saved per model in `settings/cargoEarth/dash.json` with the switch and the nudges.
 * **Screen:** the vehicle controller `cargoEarthPhone` opens a vehicle web view (`@cargo_earth_phone`) with
   `vehicles/common/cargo_earth_phone/phone.html`. That page loads the same `CargoEarthPhone` app as the flat
-  phone, so every screen and button is the same. The screen material shows the web view as its texture.
+  phone, so every screen and button is the same. The screen material is set up like the game's own screens
+  (the UTV's gauges and navigation screen): the web view is only its emissive map (`emissive: true`,
+  `emissiveIntensityNits` 700, stock screens use 500) over near-black glass, so the cabin's light doesn't wash it out.
+  It glows but casts no light into the cabin; a real light would need an extra dynamic light per car.
 * **Calls:** the page has no `bngApi`; `dash.js` stands in for it and sends each call through
   `beamng.sendEngineLua` to `cargoEarth_core.dashCall`, which only runs the phone app's own call shapes
   (`dashAllowed`) and sends the answer back to the page through the car.
