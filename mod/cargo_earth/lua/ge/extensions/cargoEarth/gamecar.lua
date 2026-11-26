@@ -58,7 +58,9 @@ function M.watchFuel(id, token)
   local v = getObjectByID and getObjectByID(id)
   if not v then return false end
   v:queueLuaCommand(string.format(
-    'extensions.load("cargoEarth_fuel"); if extensions.cargoEarth_fuel then extensions.cargoEarth_fuel.watch(%d) end', token))
+    'extensions.load("cargoEarth_fuel"); if extensions.cargoEarth_fuel then extensions.cargoEarth_fuel.watch(%d) end '
+    -- the door latch watch (cargoEarth/vehicleState) rides along with the career car
+    .. 'extensions.load("cargoEarth_vehicleState")', token))
   return true
 end
 

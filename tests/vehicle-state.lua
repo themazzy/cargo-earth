@@ -101,7 +101,22 @@ do
   assert(impulses.doorsRear == 'attached', 'a door saved hanging open (an older broken save) is pushed shut')
   for _ = 1, 40 do state.updateGFX(0.1) end
   assert(resets.doorsRear == 1)
+  -- later (a contract taken, player report 2026-11-26): the controller says attached, but a pair is 30 cm apart
   rear.state = 'attached'
+  resets, detached = {}, {}
+  obj.nodeLength = function(_, a, b) return (a == 41 and b == 51) and 0.3 or 0.005 end
+  state.updateGFX(0.5)
+  assert(#detached == 0, 'one look is not enough')
+  state.updateGFX(0.5)
+  assert(#detached == 2 and not resets.doorsRear, 'a loose latch is let go first')
+  state.updateGFX(0.5)
+  assert(resets.doorsRear == 1, 'then reset, so a click shuts the door again')
+  rear.state = 'attached'
+  obj.nodeLength = function() return 0.005 end
+  resets, detached = {}, {}
+  for _ = 1, 10 do state.updateGFX(0.5) end
+  assert(#detached == 0 and not resets.doorsRear, 'a latched door is left alone')
+  obj.nodeLength = nil
   tableFromHeaderTable, obj.detachCoupler, v.data.doorsRear, beamstate.nodeNameMap = savedTFHT, nil, nil, nil
 end
 beamstate.load = load
