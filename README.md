@@ -2,7 +2,7 @@
 
 A career layer for **BeamNG.drive on BeamNG.Earth**. Deliver food, haul freight, work company contracts and build a garage at an address you choose.
 
-**Early development · mod 0.11.0 · helper 0.11.0**
+**Early development · mod 0.12.0 · helper 0.12.0**
 
 [Download the mod and helper (latest release)](https://github.com/themazzy/cargo-earth/releases/latest) · [Landing page](website/index.html) · [Payout statistics](docs/research/payout-statistics-0.3.5/README.md)
 
@@ -63,7 +63,8 @@ Pick **Food delivery**, **Freight**, **Taxi** or **Bus** on the phone's offline 
 - Insure your own cars: a weekly premium from the car's value, claims pay the repair minus 10 %, reckless crashes are
   covered half or refused, and a write-off gets a free tow home. See [insurance](docs/INSURANCE.md).
 - Stuck or wrecked by a map bug? The phone's **Unstuck** button repairs the car in place for free (once every 5 min).
-- The phone's **Map** tab shows a live heading-up map with the GPS route and your stops. See [live map](docs/LIVE_MAP.md).
+- The phone's **Map** tab shows a live heading-up street map (OpenStreetMap, through the helper) with the GPS route,
+  your stops, turn directions, lanes and your speed against the limit. See [live map](docs/LIVE_MAP.md).
 - Set a home garage where you park, grow it from a small to an extra large garage and build rooms (workshop, fuel tank, rest room) for bonuses at home. A home is never required.
 - If a car you own came from a vehicle mod you have since removed, the career still loads: another of your cars (or a
   stand-in Pigeon) takes its place until the mod is back.
@@ -90,7 +91,7 @@ Pick **Food delivery**, **Freight**, **Taxi** or **Bus** on the phone's offline 
   reopens on the page you left. Settings and Radio work before a saved career is loaded.
 - **Radio:** real internet radio stations of the region you drive in, played through the helper.
 - **Dash phone:** a phone holder on the dashboard of any car with the same app, side buttons for the main actions and a
-  per-car position. Made for VR, also fine on a monitor. See [dash phone](docs/DASH_PHONE.md).
+  per-car position (behind the wheel or on the center console). Made for VR, also fine on a monitor. See [dash phone](docs/DASH_PHONE.md).
 - When a new version is out, the phone says so with a link to the release.
 
 **Settings → Jobs** has separate saved distance profiles for food, taxi, parts runs, parcel rounds, each tow class,
@@ -145,7 +146,7 @@ Options, from a command prompt in the download folder (for example `CargoEarthSe
 | Option | What it does |
 | --- | --- |
 | `-user-folder "D:\BeamNG\user"` | Use this BeamNG user folder when it is not found automatically |
-| `-version 0.11.0` | Install a specific release instead of the latest |
+| `-version 0.12.0` | Install a specific release instead of the latest |
 | `-mod-only`, `-helper-only` | Install only one part |
 | `-skip-python` | Don't install the helper's Python libraries |
 | `-zip <file>`, `-helper <file>` | Use files you already downloaded |
@@ -226,9 +227,9 @@ node tools/payout-stats.cjs
 
 Both installers share the Go program in `installer/`. From that folder, build with `GOOS=windows GOARCH=amd64 go build -o CargoEarthSetup.exe .` or `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o CargoEarthSetup-linux-x86_64 .`. Run installer checks with `go test ./...` and `go vet ./...`.
 
-To publish a release, create a GitHub release with a tag such as `v0.11.0` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
+To publish a release, create a GitHub release with a tag such as `v0.12.0` and attach the mod ZIP and `cargo_earth_helper_*.py`. The Windows and Linux installer workflows build `CargoEarthSetup.exe` and `CargoEarthSetup-linux-x86_64` from the release tag and attach them to that release. Both also support manual runs with a release tag (the tag must contain the installer source). Pull requests touching the installer run checks and upload installer artifacts without publishing release assets.
 
-`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.11.0 notes](docs/CAREER_0.11.0.md), [0.10.4 notes](docs/CAREER_0.10.4.md), [0.10.3 notes](docs/CAREER_0.10.3.md), [0.10.2 notes](docs/CAREER_0.10.2.md), [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
+`npm test` uses Fengari to check Lua and isolated game adapters; it is not a substitute for in-game driving tests. See [0.12.0 notes](docs/CAREER_0.12.0.md), [0.11.0 notes](docs/CAREER_0.11.0.md), [0.10.4 notes](docs/CAREER_0.10.4.md), [0.10.3 notes](docs/CAREER_0.10.3.md), [0.10.2 notes](docs/CAREER_0.10.2.md), [0.10.1 notes](docs/CAREER_0.10.1.md), [0.10.0 notes](docs/CAREER_0.10.0.md), [0.9.1 notes](docs/CAREER_0.9.1.md), [0.9.0 notes](docs/CAREER_0.9.0.md), [0.8.7 notes](docs/CAREER_0.8.7.md), [0.8.6 notes](docs/CAREER_0.8.6.md), [0.8.0 notes](docs/CAREER_0.8.0.md), [0.7.0 notes](docs/CAREER_0.7.0.md), [0.6.0 notes](docs/CAREER_0.6.0.md), [0.5.0 notes](docs/CAREER_0.5.0.md), [0.4.0 notes](docs/CAREER_0.4.0.md), [0.3.5 notes](docs/CAREER_0.3.5.md), [code/storage review](docs/reviews/2026-11-11-code-and-storage-review.md) and the [statistics methodology](docs/research/payout-statistics-0.3.5/README.md).
 
 ## Current limits
 
