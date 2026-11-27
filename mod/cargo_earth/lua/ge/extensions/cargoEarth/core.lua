@@ -286,6 +286,8 @@ end
 
 local function freightOptions(tier)
   local o = {}
+  -- a box truck with a drawbar trailer keeps the box truck's job settings (the sliders edit that profile)
+  if tier == 'drawbar' then tier = 'rigid' end
   for k, v in pairs(S.opts) do o[k] = v end
   local range = o.freightRanges and o.freightRanges[tier] or {}
   o.minKm = range.minKm or (tier == 'semi' and o.minKm or nil)
