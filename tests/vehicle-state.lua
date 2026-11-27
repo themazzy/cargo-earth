@@ -165,6 +165,25 @@ do
   file.cargoEarthKeys = nil
   beamstate.save, beamstate.load, beamstate.onBeamDeformed = saved.beamstateSave or beamstate.save, load, nil
 end
+-- busted tyres on loading (player report 2026-11-27): the saved shape is raised until no wheel node is below where
+-- it stands now, so no tyre lands inside the ground
+do
+  local now = { [0] = 0.30, [1] = 0.30, [2] = 1.0 }   -- two wheel nodes on the ground, one body node
+  obj.getNodePosition = function(_, cid) return { z = now[cid] } end
+  state.wheelSet = { [0] = true, [1] = true }
+  local snap = { nodes = { {{0, 0, 0.30}}, {{0, 0, 0.18}}, {{0, 0, 0.9}} } }   -- one wheel 12 cm lower than now
+  local lift = state.liftOffGround(snap, function(i) return i - 1 end)
+  assert(math.abs(lift - 0.15) < 1e-6, 'raised by the deepest wheel plus 3 cm: ' .. lift)
+  assert(math.abs(snap.nodes[2][1][3] - 0.33) < 1e-6 and math.abs(snap.nodes[3][1][3] - 1.05) < 1e-6, 'the whole car moves')
+  snap = { nodes = { {{0, 0, 0.40}}, {{0, 0, 0.35}}, {{0, 0, -3}} } }   -- wheels above the ground; a body node low
+  assert(state.liftOffGround(snap, function(i) return i - 1 end) == 0 and snap.nodes[1][1][3] == 0.40,
+    'wheels already clear: nothing moves (body nodes do not count)')
+  snap = { nodes = { {{0, 0, -5}} } }
+  assert(math.abs(state.liftOffGround(snap, function(i) return i - 1 end) - 1.53) < 1e-6, 'never more than 1.5 m')
+  snap = { nodes = { {{0, 0, -5}} } }
+  assert(state.liftOffGround(snap, function() return nil end) == 0, 'a node the build no longer has is skipped')
+  obj.getNodePosition, state.wheelSet = nil, {}
+end
 file.nodeCount=2
 state.run('restore','snapshot.json',3)
 assert(calls==3 and message:find('false'), 'a different vehicle structure must reject the snapshot')
