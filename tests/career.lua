@@ -5153,6 +5153,13 @@ test('free play: taxi, freight with any truck, bus and coach in any car; your ca
   assert(c.garage.car == nil and not c.garage.started and c.play == 'free', 'free play keeps no car and no career')
   -- the Companies page allows contract starts in free play
   assert(core.placesState().canContract)
+  -- a reload during a free play shift: the save starts free play again and your own vehicle comes back
+  core.busSelect(s.busBoard[1].id)
+  core.busDepotTick(pose, 2)
+  assert(c.employment and vehicle.model == 'citybus')
+  core.freshFree(copy(c))
+  advance(core, 1)
+  assert(not s.career.employment and vehicle.model == 'lansdale', 'the company bus goes after a reload')
 end)
 
 test('first run asks free play or career; free play keeps nothing when a career starts', function()

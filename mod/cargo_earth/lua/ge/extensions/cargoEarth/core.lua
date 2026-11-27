@@ -834,6 +834,13 @@ end
 
 -- No career running: the start screen with the player's settings (from: a career or save to take them from).
 function M.freshFree(from)
+  -- a free play shift left open (the game or the mod reloaded): its company vehicle goes, the player's own comes back
+  local shift = type(from) == 'table' and from.employment
+  local held = type(shift) == 'table' and type(shift.personalGarage) == 'table' and shift.personalGarage.car
+  if type(held) == 'table' and held.freePlay and type(held.model) == 'string' then
+    local lent = type(from.garage) == 'table' and type(from.garage.car) == 'table' and from.garage.car.model
+    S.freeRestore = { car = held, lent = lent }
+  end
   local fresh = { money = 0, delivered = 0, km = 0, history = {}, garage = garage.new(), backupAt = 0 }
   for _, k in ipairs(M.KEEP_ON_START) do fresh[k] = type(from) == 'table' and from[k] or nil end
   S.slot = nil
@@ -6279,9 +6286,24 @@ end
 M.dashTick = dashTick
 function M.dashCheckSoon() dashCheckAt = dashClock + M.DASH_CHECK_S end
 
+-- After a reload during a free play shift: once a vehicle is there, swap the company vehicle back to the player's own.
+-- Any other vehicle (the game spawned its default car) is left alone.
+function M.freeRestoreTick()
+  local r = S.freeRestore
+  if not r or S.pendingCareer or S.career.employment then return end
+  local v = M.G.vehicle and M.G.vehicle()
+  if not v or not v.model then return end
+  S.freeRestore = nil
+  if not r.lent or v.model ~= r.lent then return end
+  local ok, why = spawnCareerCar({ car = r.car })
+  if ok then say('Your company shift ended with the reload. Your own vehicle is back.', 8)
+  else problem('W', 'Free play vehicle not restored: ' .. tostring(why)) end
+end
+
 function M.onUpdate(dtReal, dtSim)
   require('cargoEarth/damage').tick(dtReal)
   dashTick(dtReal)
+  M.freeRestoreTick()
   if S.pendingCareer then
     stopForceWatch()
     updateResume(dtReal)
