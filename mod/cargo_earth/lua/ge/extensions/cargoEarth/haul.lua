@@ -247,7 +247,15 @@ function M.setSteps(job, n)
   local fill = M.fill(f)
   local after = M.loadPay(f.tier, job.km, fill, job.loadFactor or 1)
   local rep = tonumber(job.reputationPay) or 1
-  job.pay = math.max(5, job.pay + math.floor((after - before) * rep / 5 + 0.5) * 5)
+  local change = after - before
+  if job.resupply and job.resupplyBonus then
+    -- the fuel station's per-litre bonus follows the amount delivered too
+    local resupply = require('cargoEarth/resupply')
+    local extra = math.floor(amount * resupply.PER_LITRE / 5 + 0.5) * 5
+    change = change + extra - job.resupplyBonus
+    job.resupplyBonus = extra
+  end
+  job.pay = math.max(5, job.pay + math.floor(change * rep / 5 + 0.5) * 5)
   job.loadFill, job.loadBonus = fill, (job.loadBonus or 0) + (after - before)
   if job.litres and f.kind == 'fluid' then job.litres = amount end
   return true

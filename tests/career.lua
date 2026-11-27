@@ -2850,6 +2850,14 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
     assert(out == row.id and row.place == 'out' and row.hitched and row.canPark, tostring(tp.msg))
     tp = core.trailerDo('park', row.id)
     assert(out == nil and tp.list[1].place == 'home', tostring(tp.msg))
+    -- a job in progress on it (after a reload it stands where it was): it may be taken again, other ones not
+    s.job, s.trailerOffersWait = { id = 'j', haul = { pool = row.id, tier = 'semi', kind = 'parcel' } }, nil
+    tp = core.trailerState()
+    assert(tp.list[1].canTake, 'the job\'s own trailer can be taken')
+    tp = core.trailerDo('takeOut', row.id)
+    assert(out == row.id and tp.list[1].place == 'out' and not s.trailerOffersWait, tostring(tp.msg))
+    s.job = nil
+    tp = core.trailerDo('park', row.id)
     -- not without a tow hitch
     vehicle.slotPartMap = { body = 'pigeon' }
     tp = core.trailerState()
@@ -3071,6 +3079,10 @@ test('a tractor gets resupply offers among its freight jobs', function()
   assert(job and job.resupplyBonus > 0 and job.to.n == 'Test pump' and not job.special, 'a resupply job is offered')
   assert(job.haul.pool == 1 and job.haul.trailerName == pool.byId.tanker.name and job.haul.amount > haul.tiers.semi.bulk,
     'it goes in your tanker, as much as it takes')
+  -- a smaller load: the station's per-litre bonus shrinks with it
+  local bonus, pay = job.resupplyBonus, job.pay
+  assert(haul.setSteps(job, 1) and job.litres == 1000 and job.resupplyBonus == math.floor(1000 * resupply.PER_LITRE / 5 + 0.5) * 5)
+  assert(job.resupplyBonus < bonus and job.pay < pay - (bonus - job.resupplyBonus) + 5)
 end)
 
 local tow = require('cargoEarth/tow')

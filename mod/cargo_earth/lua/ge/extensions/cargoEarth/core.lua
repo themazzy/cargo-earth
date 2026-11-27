@@ -326,6 +326,7 @@ local function workFreight(job, unload)
   end
   local G, id, data = M.G, v.id, v.data
   if tier == 'semi' then
+    if job.haul.pool then trailers.adoptPool(job.haul.pool, 'pool') end   -- your own trailer (taken out again after a reload)
     id = trailers.id()
     if not id or not trailers.coupled(v.id) then
       S.freightStatus = id and 'Couple the assigned trailer.' or 'Restore the assigned trailer.'
@@ -5690,7 +5691,22 @@ function M.spawnTrailer(atPickup)
   end
   if j.haul then
     if trailers.id() then return end
-    if j.haul.pool then say('This load goes on your own trailer: bring it on the hitch.', 4) return end
+    if j.haul.pool then
+      -- your own trailer: taken out again where it stands (after a reload it was left where it was last seen)
+      local rigs = require('cargoEarth/rigs')
+      if rigs.coupled(M) then say('Your trailer is on the hitch.', 4) return end
+      local t = require('cargoEarth/trailerpool').find(S.career, j.haul.pool)
+      if not t then say('Your trailer for this load is gone. Cancel the job.', 6) return end
+      if t.place == 'out' and trailers.poolVid(t.id) then
+        local ok = rigs.act(M, 'hitch', t.id)
+        say(ok and 'Hitching your trailer…' or 'Back up to your trailer first.', 4)
+        return
+      end
+      local ok, msg = rigs.act(M, 'takeOut', t.id, j.haul.bulk and 'bulk' or nil)
+      say(msg, 6)
+      if ok then j.trailerRequested = true saveCareer() end
+      return
+    end
     if not atPickup and S.phase ~= 'toDelivery' and not j.trailerRequested then return end
     local v, tier = freightCarrier()
     if not v or tier ~= 'semi' or (p.speed or 0) > M.STOP_SPEED then

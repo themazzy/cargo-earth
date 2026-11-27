@@ -65,7 +65,9 @@ local function takeOut(core, t, bulk)
   local S, c = core.state(), core.state().career
   local e = pool.entry(t)
   local p = pose()
-  if S.job then return false, 'Finish your current job first.' end
+  -- the trailer a job in progress needs (after a reload it stands where it was): it may be taken again
+  local forJob = S.job and S.job.haul and S.job.haul.pool == t.id
+  if S.job and not forJob then return false, 'Finish your current job first.' end
   if c.employment then return false, 'Company work uses the company\'s trailer.' end
   if p and (p.speed or 0) > core.STOP_SPEED then return false, 'Stop first.' end
   if t.place == 'home' and where(c, p) ~= 'home' then return false, 'Drive home to take it out.' end
@@ -89,8 +91,10 @@ local function takeOut(core, t, bulk)
   t.from, t.place, t.bulk = t.place, 'out', bulk
   if p then t.at = { n = t.at and t.at.n or 'Out with you', g = { p.lat, p.lon } } end
   last[t.id] = nil
-  S.offers, S.offerStats, S.offeredAt, S.phone.incoming = {}, nil, { lat = 0, lon = 0 }, nil
-  S.trailerOffersWait = true   -- offers again once it is on the hitch (core.trailerOffersTick)
+  if not forJob then
+    S.offers, S.offerStats, S.offeredAt, S.phone.incoming = {}, nil, { lat = 0, lon = 0 }, nil
+    S.trailerOffersWait = true   -- offers again once it is on the hitch (core.trailerOffersTick)
+  end
   return true, string.format('Putting your %s on the hitch%s.', t.name:lower(), bulk and ' with bulk boxes' or '')
 end
 
@@ -307,7 +311,7 @@ function M.state(core)
       local g = c.home and c.home.g
       row.fetch = g and pool.fetchCost(jobs.km(t.at.g[1], t.at.g[2], g[1], g[2])) or nil
     end
-    row.canTake = not S.job and not c.employment and not row.needs and (
+    row.canTake = (not S.job or (S.job.haul and S.job.haul.pool == t.id)) and not c.employment and not row.needs and (
       (t.place == 'home' and at == 'home') or (t.place == 'hq' and at == 'hq') or (t.place == 'left' and row.near)) or nil
     row.canPark = t.place == 'out' and at ~= nil or nil
     local factor = serviceFactor(core, t)
