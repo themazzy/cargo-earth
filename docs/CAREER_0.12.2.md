@@ -23,6 +23,7 @@ kept. Requires BeamNG.Earth 1.9.0-beta or newer.
   found the bridge), and rings on a bank above or below the road are found.
 
 ## Free play
-- Taxi, freight, bus and coach work in free play, in any suitable vehicle (before, free play was food delivery only).
+- Taxi, freight, tow, bus and coach work now start in free play ("Just drive") with the vehicle you sit in. Before,
+  only food delivery worked there; taxi said to use your own passenger vehicle. Company contracts start too.
 - A company shift in free play stays in the free play save instead of starting a new career slot.
 - Reloading during a free play company shift gives your own vehicle back.
