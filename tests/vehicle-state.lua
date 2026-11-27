@@ -154,6 +154,15 @@ do
   assert(not setPos[0] and not setPos[3], 'the new box stays new')
   assert(setLen[1] == 1.5 and broke[1] and deformed[1] == 0.4, 'the body beam keeps its damage')
   assert(not setLen[0] and not broke[0], 'the new part beam is untouched')
+  -- raised off the ground (Codex on #216): the new box is raised with the kept body, so nothing stretches
+  setPos = {}
+  obj.getNodePosition = function(_, cid) return { x = cid, y = 0, z = 5 } end
+  state.partialLoad({ cargoEarthKeys = file.cargoEarthKeys, nodes = { {{1,1,1}} }, beams = {} }, 0.2)
+  assert(setPos[1] and setPos[1].x == 1, 'the kept node goes where saved')
+  assert(setPos[0] and math.abs(setPos[0].z - 5.2) < 1e-6 and setPos[3] and math.abs(setPos[3].z - 5.2) < 1e-6,
+    'the new part nodes rise by the lift')
+  assert(setPos[2] and math.abs(setPos[2].z - 5.2) < 1e-6, 'a node with no saved row rises with the car')
+  obj.getNodePosition = nil
   -- the same build again is a full load
   v.data.nodes, v.data.beams = index(nodesOld), index(beamsOld)
   state.run('capture','snapshot.json',8)

@@ -191,18 +191,27 @@ end
 -- After a parts change (Jan, 2026-11-26: a swap must not mend the other parts): the saved deformation goes back onto
 -- every node and beam the new build still has from the same part. Swapped parts stay new. The powertrain and other
 -- lua state of the old build are not loaded (they belong to its parts), so only the body's damage carries over.
-function M.partialLoad(state)
+-- lift: how far the saved shape was raised (M.liftOffGround); the new parts are raised with it, so nothing stretches.
+function M.partialLoad(state, lift)
   local keys = state.cargoEarthKeys
   local nodeCid, beamCid = {}, {}
   for i, k in pairs(nodeKeys()) do nodeCid[k] = i - 1 end
   for i, k in pairs(beamKeys()) do beamCid[k] = i - 1 end
-  local moved = 0
+  local moved, set = 0, {}
   for i, node in pairs(state.nodes) do
     local cid = nodeCid[keys.nodes[tonumber(i)] or false]
     if cid then
       obj:setNodePosition(cid, vec3(node[1]))
       if #node > 1 then obj:setNodeMass(cid, node[2]) end
-      moved = moved + 1
+      moved, set[cid] = moved + 1, true
+    end
+  end
+  if (lift or 0) > 0 then
+    for _, cid in pairs(nodeCid) do
+      if not set[cid] then
+        local ok, now = pcall(function() return obj:getNodePosition(cid) end)
+        if ok and now and type(now.z) == 'number' then obj:setNodePosition(cid, vec3({ now.x, now.y, now.z + lift })) end
+      end
     end
   end
   for i, beam in pairs(state.beams) do
@@ -296,7 +305,7 @@ function M.run(action, path, token)
         if was and CLOSED[was] then shut[name] = true end
         keep[name] = was == 'broken' or s == 'broken'
       end
-      if same then beamstate.load(path) else M.partialLoad(state) end
+      if same then beamstate.load(path) else M.partialLoad(state, lift) end
       relatch = { left = M.RELATCH_S, since = 0, shut = shut, tries = {}, reset = {} }
       for _, c in ipairs(latches()) do
         if not keep[c.name] and c.reset and release(c) then relatch.reset[c.name] = true relatch.releasing = M.RELEASE_S end
