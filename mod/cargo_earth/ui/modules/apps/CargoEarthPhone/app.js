@@ -1966,6 +1966,8 @@ angular.module('beamng.apps')
             '<div class="cep-pills"><span>{{ t.place === "home" ? "At home" : t.place === "hq" ? "At the headquarters" : t.place === "out" ? (t.hitched ? "On your hitch" : "Out, not hitched") : t.place === "driver" ? "With a driver" : (t.at || "Left somewhere") }}</span>' +
               '<span>{{ fmt.int(t.km) }} km</span><span>{{ fmt.int(t.condition * 100) }} %</span><span ng-if="t.bulk">Bulk boxes</span>' +
               '<span ng-if="t.km_away !== undefined && !t.near">{{ t.km_away }} km away</span></div>' +
+            '<div class="cep-sub" ng-if="t.carries">{{ t.carries }}</div>' +
+            '<div class="cep-sub" ng-if="t.loaded">Loaded: {{ t.loaded }}</div>' +
             '<div class="cep-sub" ng-if="t.needs">{{ t.needs }}</div>' +
             '<div class="cep-sub" ng-if="t.repair > 0" style="color:var(--tomato)">Damage: {{ fmt.money(t.repair) }} of repairs</div>' +
             '<div class="cep-sub" ng-if="t.upkeep && t.upkeep.due > 0" style="color:var(--tomato)">Service due ({{ fmt.money(t.serviceCost || t.upkeep.dueCost) }})</div>' +
@@ -1990,7 +1992,8 @@ angular.module('beamng.apps')
           '<div class="cep-card" ng-repeat="n in tp.shop track by n.id">' +
             '<div class="cep-keyval"><strong style="white-space:normal">{{ n.name }}</strong><strong style="white-space:nowrap">{{ fmt.money(n.price) }}</strong></div>' +
             '<div class="cep-pills"><span>{{ n.pulls === "semi" ? "Tractor" : "Tow hitch" }}</span><span ng-if="n.boxes">{{ n.boxes }} cargo boxes</span>' +
-              '<span ng-if="n.tankL">{{ fmt.int(n.tankL) }} L</span><span ng-if="n.payload">{{ fmt.int(n.payload / 1000) }} t</span></div>' +
+              '<span ng-if="n.payload">{{ fmt.kg(n.payload) }}</span></div>' +
+            '<div class="cep-sub" ng-if="n.carries">{{ n.carries }}</div>' +
             '<button class="cep-sm go" style="margin-top:6px" ng-disabled="!n.can" ng-click="tdo(\'buyNew\', n.id)">Buy new</button></div>' +
         '</div>' +
         '<div ng-if="g && g.started && gview === \'cars\' && !g.parts" class="cep-scroll cep-market-list">' +
@@ -2491,10 +2494,10 @@ angular.module('beamng.apps')
             '</div><div class="cep-pills" ng-if="s.active.slots"><span>{{ s.active.slots }} slot{{ s.active.slots > 1 ? "s" : "" }}</span></div>' +
             '<ul class="cep-order-items"><li ng-repeat="item in s.active.items"><b>{{ item.qty }}×</b>{{ item.name }}</li></ul></div>' +
           '<div class="cep-sub" ng-if="!s.active.items.length && s.active.count === 1">{{ s.active.cargo }}</div>' +
-          '<div class="cep-card" ng-if="s.active.route"><div class="cep-label">Parcel route</div>' +
-            '<div class="cep-pills"><span>Stop {{ s.active.route.at }} of {{ s.active.route.count }}</span><span>{{ s.active.route.left }} parcels on board</span></div>' +
+          '<div class="cep-card" ng-if="s.active.route"><div class="cep-label">{{ s.active.route.fill ? "Stops on the way" : "Parcel route" }}</div>' +
+            '<div class="cep-pills"><span>Stop {{ s.active.route.at }} of {{ s.active.route.count }}</span><span>{{ s.active.route.fill ? fmt.kg(s.active.route.kg) + " on board" : s.active.route.left + " parcels on board" }}</span></div>' +
             '<ul class="cep-order-items"><li ng-repeat="st in s.active.route.stops track by $index" ng-style="{opacity: st.done ? 0.45 : 1, fontWeight: st.current ? 700 : 400}">' +
-              '<b>{{ st.done ? "✓" : st.slots + "×" }}</b>{{ st.name }}<small class="cep-badge" ng-if="!st.done">{{ fmt.kg(st.kg) }}</small></li></ul></div>' +
+              '<b>{{ st.done ? "✓" : (s.active.route.fill ? "" : st.slots + "×") }}</b>{{ st.name }}<small class="cep-badge" ng-if="!st.done">{{ fmt.kg(st.kg) }}</small></li></ul></div>' +
           '<div class="cep-sub" ng-if="s.active.freight && !s.active.route">{{ fmt.freight(s.active.freight) }}</div>' +
           '<div class="cep-sub" ng-if="s.active.freightStatus">{{ s.active.freightStatus }}</div>' +
           '<div class="cep-row cep-load" ng-if="s.active.load" aria-label="How much to load">' +
@@ -2502,6 +2505,10 @@ angular.module('beamng.apps')
             '<span class="cep-sub" style="flex:1;text-align:center">{{ fmt.load(s.active.load) }}</span>' +
             '<button class="cep-sm" ng-disabled="s.active.load.n >= s.active.load.max" ng-click="act(\'loadSteps\', s.active.load.n + 1)" aria-label="Load more">+</button>' +
             '<button class="cep-sm ghost" ng-disabled="s.active.load.n >= s.active.load.max" ng-click="act(\'loadSteps\', s.active.load.max)">Full</button></div>' +
+          '<div class="cep-card" ng-if="s.active.fill"><div class="cep-label">Fill up the rest</div>' +
+            '<div class="cep-row" ng-repeat="f in s.active.fill track by $index" style="align-items:center">' +
+              '<span class="cep-sub" style="flex:1;white-space:normal">{{ f.slots / 100 }} boxes to {{ f.to.n }} · +{{ f.detourKm }} km</span>' +
+              '<button class="cep-sm go" ng-click="act(\'fillUp\', $index + 1)">+{{ fmt.money(f.pay) }}</button></div></div>' +
           '<div class="cep-card" ng-if="s.bus && s.bus.line"><div class="cep-label"><span class="cep-busref" ng-style="badge(s.bus.line.colour, s.bus.line.textColour)">{{ s.bus.line.ref || (s.bus.line.coach ? "Coach" : "Bus") }}</span> ' +
             '</div><div class="cep-pills"><span>Stop {{ s.bus.line.at }} of {{ s.bus.line.count }}</span><span>{{ s.bus.line.onBoard }} of {{ s.bus.line.capacity }} on board</span></div>' +
             '<ul class="cep-order-items"><li ng-repeat="st in s.bus.line.next track by $index" ng-style="{fontWeight: st.current ? 700 : 400}">' +
@@ -3042,11 +3049,13 @@ angular.module('beamng.apps')
         return (kg < 10 ? Math.round(kg * 10) / 10 : Math.round(kg)).toLocaleString('cs-CZ') + ' kg'
       }
       scope.fmt.freight = function (load) {
+        if (load.kind === 'load') return (load.what || 'Load') + ', ' + scope.fmt.kg(load.kg)
         return scope.fmt.int(load.amount) + (load.kind === 'parcel' ? ' slots' : ' L') + ', ' + scope.fmt.int(load.kg) + ' kg'
       }
       // the load picker: "8 of 16 boxes", "10 of 34 × 1,000 L"
       scope.fmt.load = function (l) {
         if (!l) return ''
+        if (l.kind === 'load') return (l.what || 'Load ' + l.n) + (l.kg ? ', ' + scope.fmt.kg(l.kg) : '') + ' (' + l.n + ' of ' + l.max + ')'
         if (l.kind === 'parcel') return l.n + ' of ' + l.max + ' boxes'
         if (l.kind === 'dryBulk') return l.n + ' of ' + l.max + ' bulk boxes'
         return scope.fmt.int(l.n * 1000) + ' of ' + scope.fmt.int(l.max * 1000) + ' L'

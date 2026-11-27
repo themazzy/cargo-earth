@@ -268,8 +268,9 @@ function M.steps(freight)
   if not freight then return nil end
   local unit = require('cargoEarth/trailerpool').unitOf(freight.kind)
   local most = freight.most or freight.amount
-  return { unit = unit, n = math.max(1, math.ceil((freight.amount or 0) / unit - 1e-6)), max = math.max(1, math.ceil(most / unit - 1e-6)),
-    kind = freight.kind }
+  local n = math.max(1, math.ceil((freight.amount or 0) / unit - 1e-6))
+  return { unit = unit, n = n, max = math.max(1, math.ceil(most / unit - 1e-6)), kind = freight.kind,
+    what = freight.loadWhat and freight.loadWhat[n] or nil, kg = freight.kg }
 end
 
 -- Change a job's load to n steps: its amount, weight, fill and pay change; what was added on top of the load pay

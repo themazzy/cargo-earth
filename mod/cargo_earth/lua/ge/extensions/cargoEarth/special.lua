@@ -24,7 +24,7 @@ local function round5(x) return math.floor(x / 5 + 0.5) * 5 end
 -- The special loads this job could be (freight only: not parcel routes, not meals).
 function M.candidates(job, tier)
   local out = {}
-  if type(job) ~= 'table' or job.route or job.kind == 'food' or not job.haul then return out end
+  if type(job) ~= 'table' or (job.route and not job.route.fill) or job.kind == 'food' or not job.haul then return out end
   local kind = job.haul.kind
   -- on a trailer of your own (2026-11-27): chilled needs the insulated box (or a food tanker), oversize a flatbed
   local family = job.haul.pool and job.haul.family or nil

@@ -1,4 +1,4 @@
-# Own trailers (part 1 of 3)
+# Own trailers (parts 1 and 2 of 3)
 
 Jan, 2026-11-27: owning trailers is the core of freight. Decisions:
 
@@ -38,3 +38,21 @@ Jan, 2026-11-27: owning trailers is the core of freight. Decisions:
 - The +12 % firm-trailer bonus is gone (owning the trailer is now the requirement).
 
 Not yet tested in game: spawning the configs (box layouts, aggregate boxes), the hitch, damage readings, and loading a pool trailer at the pickup.
+
+## What part 2 adds
+
+- **Stock loads as cargo** (decision 1). Coils, pipes, planks, marble, logs, hay bales and shipping containers are BeamNG's own load parts, not cargo containers. A job for one swaps your trailer, at the pickup, to the stock config that has the load on it (for example `flatbed/48ft_coil.pc`), spawned again behind you and put back on the hitch. At the drop it is swapped back to the empty config. The load picker steps through the stock loads, lightest first (3 coils or 2 big coils; 8, 12 or 16 logs). A container's stock Load Weight tuning value is the amount, in 2 t steps.
+  - Flatbed 48 ft: steel coils, steel pipes, planks (and its boxes).
+  - New: Flatbed 53 ft (coils, pipes, planks) and Flatbed 32 ft (a coil, a marble block, pipes, planks).
+  - New: Log trailer 40 ft (logs, about 820 kg each), Container chassis 40 ft and 20 ft (containers).
+  - Pay for a stock load goes by its weight: fill = kg / the class's weight limit.
+- **Insulated box (reefer)**, the EU 3-axle box with 18 Cargo Box XL. Chilled food is only offered to it (no other trailer, van or box truck gets it). On your own trailers, the chilled special only rolls on the reefer or the food tanker, and oversize only on a flatbed.
+- **Food tanker**, the EU milk tanker (22,500 L): milk. The fuel tanker takes no milk and the food tanker no fuel.
+- **Trailers behind a car, SUV, van or box truck.** With one of your hitch trailers coupled, the board is the trailer's (class "Car and trailer": 8 t reference load, base 150, 14 CZK per km, fuel allowance 4 CZK per km, available from the start):
+  - Tilt decks: the car trailer (22 ft) takes hay, the new 30 ft tilt deck hay, the new 40 ft tilt deck planks.
+  - **Home deliveries** with the new utility trailer, large utility trailer and enclosed cargo trailer: a store near you sends a sofa, two armchairs or planks to a real address 1.5 to 8 km away. Pay 180 + 16 CZK per road km, at least 300. Stores whose names sound like furniture or building supplies are asked first.
+- **Fill up the rest.** At the pickup, before loading, a box load of your own (box trailer, reefer, or flatbed with boxes) with room left shows up to three extra consignments of the same cargo to other workplaces on the way (at most 15 % detour). Each is a stop before the main drop, at most two per job. A fill-up pays its own load part (rate × km × 0.6 × its fill) plus a 100 CZK stop fee, so a light main load plus fill-ups pays about like a full load. Once one is booked, the amount stays.
+- Catalogue: farms now also ship logs and hay; factories and industrial estates take lumber; concrete works and industrial estates take stone blocks.
+- Garage → Trailers shows what each trailer carries and what is loaded on it.
+
+Not yet tested in game (part 2): spawning the loaded stock configs and the swap back to empty, the 16-log config, the container Load Weight, the EU box and tanker configs (their cargo box and tank parts), the tilt deck and utility trailer configs, and the hitch after a swap.

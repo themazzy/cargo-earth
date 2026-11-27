@@ -14,6 +14,7 @@ M.KINDS = {
   van = { max = 0.15, full = 40 },
   rigid = { max = 0.20, full = 40 },
   semi = { max = 0.25, full = 40 },
+  trailer = { max = 0.15, full = 40 },   -- a trailer of your own behind a car (tilt decks, home deliveries)
 }
 
 -- The work kind a job counts toward (nil: none).
@@ -24,7 +25,7 @@ function M.kind(job)
   if job.bus then return 'bus' end
   if job.tow then return 'tow' end
   if job.partsRun then return 'parts' end
-  if job.route then return 'parcel' end
+  if job.route and not job.route.fill then return 'parcel' end
   local tier = job.haul and job.haul.tier
   if tier and M.KINDS[tier] then return tier end
   return nil

@@ -368,7 +368,7 @@ local function workFreight(job, unload)
     state.readAt = S.clock + 0.65
     G.readCargoBoxes(id, function(rows) if S.freightLoad == state then state.rows = rows end end)
   end
-  S.freightStatus = unload and (job.route and 'Unloading parcels…' or 'Unloading freight…') or 'Loading freight…'
+  S.freightStatus = unload and (job.route and not job.route.fill and 'Unloading parcels…' or 'Unloading freight…') or 'Loading freight…'
   if not state.rows then return false end
   if not state.plan then
     state.plan = haul.plan(state.rows, job.haul)
@@ -1035,6 +1035,18 @@ function M.partsOffers(p, room, range)
   return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p), range)
 end
 
+-- Fill up the rest (cargoEarth/fillup): extra consignments for the job's free room, worked out once per load amount.
+function M.fillOffers(j)
+  local fillup = require('cargoEarth/fillup')
+  if not (j and S.idx and fillup.can(j)) then return nil end
+  local key = (j.haul.amount or 0) .. ':' .. #(j.route and j.route.stops or {})
+  if not (j.fillOffers and j.fillOffersKey == key) then
+    j.fillOffers = fillup.offers(j, S.idx.acceptors[j.cargo], haul.tiers[j.haul.tier], jobs.ROAD_FACTOR)
+    j.fillOffersKey = key
+  end
+  return #j.fillOffers > 0 and j.fillOffers or nil
+end
+
 -- Home deliveries for the utility or cargo trailer on your hitch (cargoEarth/homedeliv): from the nearest stores.
 function M.homeOffers(p, rig)
   local hd = require('cargoEarth/homedeliv')
@@ -1510,8 +1522,10 @@ local function finishPickup()
     return
   elseif j.haul then
     if j.haul.pool then
-      -- your own trailer carries it: it has to be on your hitch here
-      if not trailers.poolCoupled(j.haul.pool, M.G.playerId and M.G.playerId() or -1) then
+      -- your own trailer carries it: it has to be on your hitch here (a stock load being put on spawns it again and
+      -- couples it: cargoEarth/rigs.loadWork waits for that)
+      local swapping = S.freightLoad and S.freightLoad.load and S.freightLoad.job == j and S.freightLoad.command == 'load'
+      if not swapping and not trailers.poolCoupled(j.haul.pool, M.G.playerId and M.G.playerId() or -1) then
         S.freightStatus = 'Couple your trailer.'
         S.stopT = -6
         say('Bring your trailer on the hitch to load.', 4)
@@ -1670,8 +1684,13 @@ local function finishDelivery(force)
       local droppedKg = math.floor(served.slots * j.haul.density + 0.5)
       S.phone.dropped = { kg = droppedKg, left = math.floor(cargo.onBoard(S.orders) + 0.5),
         untilT = S.clock + M.PHONE.doneShowS }
-      say(string.format('%d parcels (%d kg) left at %s. Next stop %d of %d: %s.', served.slots, droppedKg, served.n,
-        j.route.at, #j.route.stops, j.to.n), 6)
+      if j.route.fill then
+        say(string.format('%d boxes (%d kg) left at %s. Next stop %d of %d: %s.', math.floor(served.slots / 100 + 0.5),
+          droppedKg, served.n, j.route.at, #j.route.stops, j.to.n), 6)
+      else
+        say(string.format('%d parcels (%d kg) left at %s. Next stop %d of %d: %s.', served.slots, droppedKg, served.n,
+          j.route.at, #j.route.stops, j.to.n), 6)
+      end
       S.stopT, S.dist, S.roadM, S.etaS = 0, nil, nil, nil
       gpsToTarget()
       saveCareer()
@@ -1712,7 +1731,7 @@ local function finishDelivery(force)
   -- Tips from private customers (meals and parcel routes) go only by what they can see: how soon the order came and
   -- the state it arrived in. How it was driven on the way is not theirs to know.
   local tip, tipWhy = 0, nil
-  if j.kind == 'food' or j.route or j.taxi then
+  if j.kind == 'food' or (j.route and not j.route.fill) or j.taxi then
     local fast = food.tip(j.kind == 'food' and j.pay or math.floor(j.pay * M.PARCEL_TIP_SHARE), minutes, j.minutes)
     local intact = condition >= 100 and math.floor(j.pay * M.INTACT_TIP / 5 + 0.5) * 5 or 0
     tip = fast + intact
@@ -3221,8 +3240,9 @@ function M.phoneState()
     out.active = { phase = S.phase, kind = j.kind or 'cargo', cargo = j.cargoName, items = j.items, from = place(j.from), to = place(j.to),
         orderType = j.orderType, handling = cargo.supports(j) and cargo.handling(j) or nil,
       freight = j.haul, freightStatus = S.freightStatus, route = j.route and parcel.state(j),
-      load = j.haul and j.haul.pool and not j.home and S.phase == 'toPickup' and not (S.freightLoad and S.freightLoad.job == j)
+      load = j.haul and j.haul.pool and not j.home and not j.route and S.phase == 'toPickup' and not (S.freightLoad and S.freightLoad.job == j)
         and haul.steps(j.haul) or nil,
+      fill = S.phase == 'toPickup' and not (S.freightLoad and S.freightLoad.job == j) and M.fillOffers(j) or nil,
       canRestoreTrailer = j.trailer and ((not j.tow and not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested))
         or reloadFee ~= nil) or nil,
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
@@ -3396,8 +3416,21 @@ function M.phoneAction(a, orderId)
     local j = ph.incoming and ph.incoming.job or (S.job and S.phase == 'toPickup' and S.job) or nil
     if j and j == S.job and S.freightLoad and S.freightLoad.job == j then
       say('Loading has started: the amount stays.', 4)
+    elseif j and j.route and j.route.fill then
+      say('The fill-ups are booked: the amount stays.', 4)
     elseif j and j.haul and j.haul.pool and not j.home and haul.setSteps(j, orderId) then
       if j == S.job then saveCareer() end
+    end
+  elseif a == 'fillUp' then
+    -- Fill up the rest: an extra consignment of the same cargo to a stop on the way (cargoEarth/fillup)
+    local j = S.job
+    local list = j and S.phase == 'toPickup' and not (S.freightLoad and S.freightLoad.job == j) and M.fillOffers(j) or nil
+    local offer = list and list[tonumber(orderId) or 0]
+    if offer then
+      require('cargoEarth/fillup').add(j, offer)
+      j.fillOffers = nil
+      say(string.format('Booked: %d more boxes for %s, %d CZK more.', math.floor(offer.slots / 100 + 0.5), offer.to.n, offer.pay), 5)
+      saveCareer()
     end
   elseif a == 'towLoad' then
     M.towLoad()

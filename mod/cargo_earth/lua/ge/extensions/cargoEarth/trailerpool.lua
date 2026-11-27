@@ -30,7 +30,7 @@ M.CATALOGUE = {
     price = 5000, pulls = 'semi', size = 'l', len = 17 },
   { id = 'flatbed48', family = 'flatbed', name = 'Flatbed 48 ft', model = 'flatbed', base = 'vehicles/flatbed/48ft_double.pc',
     parts = { flatbed_load_F = 'flatbed_load_F_cargo_load_box_8XL', flatbed_load_M = 'flatbed_load_M_cargo_load_box_16XL',
-      flatbed_load_R = 'flatbed_load_R_cargo_load_box_8XL' }, boxes = 32, payload = 20000,
+      flatbed_load_R = 'flatbed_load_R_cargo_load_box_8XL' }, boxes = 32, payload = 21000,
     price = 4800, pulls = 'semi', size = 'l', len = 16, tow = 'flatbed',
     loads = {
       steel_coils = { { pc = 'vehicles/flatbed/48ft_coil.pc', kg = 15780, what = '3 steel coils' },
