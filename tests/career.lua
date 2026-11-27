@@ -6388,3 +6388,31 @@ test('own trailers part 2: a second fill-up is measured on the booked route (Cod
   local second = fillup.offers(job, { north, south }, haul.tiers.semi, 1.3)
   assert(#second == 0, 'both together go over the detour limit')
 end)
+
+test('own trailers part 3: drawbar trailers behind a box truck, drivers paid by trailer', function()
+  local pool = require('cargoEarth/trailerpool')
+  local haul = require('cargoEarth/haul')
+  local rigs = require('cargoEarth/rigs')
+  assert(rigs.hasPintle({ slotPartMap = { a = 'md_pintle_hitch' } }) and not rigs.hasPintle({ slotPartMap = { a = 'pintle_delete' } }), 'pintle')
+  assert(not haul.allowed({}, 'drawbar') and haul.allowed({ hauls = { van = 99, rigid = 0 } }, 'drawbar'), 'drawbar with the box truck')
+  local rig = { id = 4, entry = pool.byId.drawbar_box }
+  local f = haul.freight('drawbar', 'pallets_general', nil, rig)
+  assert(f and f.kind == 'parcel' and f.amount == 1000, 'drawbar box: 10 boxes')
+  local job = { cargo = 'pallets_general', cargoName = 'Pallets', km = 60, pickupKm = 2 }
+  assert(haul.prepare(job, 'drawbar', nil, { cargo = { pallets_general = { pay = 1 } } }, rig) and job.trailer == 'box')
+  local pipes = haul.freight('drawbar', 'steel_beams', nil, { id = 5, entry = pool.byId.drawbar_flatbed })
+  assert(pipes and pipes.kind == 'load' and pipes.kg == 10000, 'drawbar flatbed pipes')
+  -- hired drivers: the best-paying free trailer first, and its family sets the pay
+  local fleet = require('cargoEarth/fleet')
+  local career = { trailers = { seq = 3, list = {
+    { id = 1, cat = 'box48', place = 'hq' }, { id = 2, cat = 'tanker', place = 'hq' }, { id = 3, cat = 'drawbar_box', place = 'hq' } } } }
+  local semi, rigid = { model = 'us_semi', vclass = 'semi' }, { model = 'md_series', vclass = 'rigid' }
+  local used = {}
+  local base = fleet.netFor({ speed = 1, wage = 0 }, 'semi', 1)
+  local t2 = pool.find(career, 2)
+  used[t2] = semi
+  assert(fleet.trailerPay(semi, used) == fleet.FAMILY_PAY.tanker and fleet.FAMILY_PAY.tanker > 1, 'tanker pays more')
+  used[pool.find(career, 3)] = rigid
+  assert(fleet.trailerPay(rigid, used) == fleet.DRAWBAR_PAY, 'drawbar pay')
+  assert(fleet.trailerPay({}, used) == 1 and base > 0, 'no trailer')
+end)

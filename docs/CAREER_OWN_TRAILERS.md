@@ -1,4 +1,4 @@
-# Own trailers (parts 1 and 2 of 3)
+# Own trailers (parts 1 to 3)
 
 Jan, 2026-11-27: owning trailers is the core of freight. Decisions:
 
@@ -56,3 +56,12 @@ Not yet tested in game: spawning the configs (box layouts, aggregate boxes), the
 - Garage → Trailers shows what each trailer carries and what is loaded on it.
 
 Not yet tested in game (part 2): spawning the loaded stock configs and the swap back to empty, the 16-log config, the container Load Weight, the EU box and tanker configs (their cargo box and tank parts), the tilt deck and utility trailer configs, and the hitch after a swap.
+
+## What part 3 adds
+
+- **Drawbar trailers for box trucks.** New: Drawbar box trailer (EU 2-axle, 10 Cargo Box XL, 9 t) and Drawbar flatbed (10 boxes, or steel pipes 10 t or planks 8.4 t as stock loads). They need a box truck with a pintle hook: a part named "pintle" on the truck, and the game's couplers decide in the end. With one coupled, the box truck's board is the trailer's (class "Box truck and trailer": 9 t reference load, base 250, 22 CZK per km, fuel allowance 11 CZK per km, open with the box truck). The load goes in the trailer.
+- **Hired drivers' pay by trailer family.** A tractor driver takes the best-paying free trailer parked at home or at the headquarters: box 1.0, log 1.05, flatbed and container 1.1, reefer and food tanker 1.15, fuel tanker 1.2 times the shift's pay. A box truck driver takes a free drawbar trailer when there is one and earns 1.45 times as much with it. That trailer wears with the driver's km.
+- **The tipper stays out.** The frameless dump has no native cargo container and its Additional Modification slot is empty in every stock config, so dry bulk keeps using the 16 aggregate boxes in a box trailer.
+- **Doubles (two trailers on a dolly)** are left for later: they chain four vehicles and load two trailers at once, on top of the hitch and swap code that has not been run in game yet.
+
+Not yet tested in game (part 3): whether the stock box trucks have a pintle hook, the drawbar trailers' configs and their hitch.

@@ -321,6 +321,7 @@ end
 function M.tierFits(tier, h)
   if not tier or not h then return false end
   if h.tier == 'trailer' then return tier ~= 'semi' end
+  if h.tier == 'drawbar' then return tier == 'rigid' end
   return tier == h.tier
 end
 
@@ -1176,9 +1177,10 @@ function M.generate()
     local vtier = tier
     if tier and tier ~= 'semi' and not M.freePlay() and not S.career.employment then
       local r = require('cargoEarth/rigs').haulRig(M)
-      if r and r.entry.pulls == 'hitch' then tier, rig = 'trailer', r end
+      if r and r.entry.pulls == 'hitch' then tier, rig = 'trailer', r
+      elseif r and r.entry.pulls == 'pintle' and tier == 'rigid' then tier, rig = 'drawbar', r end
     end
-    if tier and not S.noRig and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or tier == 'trailer' or rows) then
+    if tier and not S.noRig and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or tier == 'trailer' or tier == 'drawbar' or rows) then
       -- an ordinary car or an SUV takes no company freight board: its own small work comes below
       local offers, stats = {}, nil
       if not haul.SMALL[tier] then

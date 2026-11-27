@@ -167,15 +167,36 @@ end
 
 -- A trailer of yours for a hired tractor driver: one parked at the headquarters or at home (the pool is shared with
 -- you, cargoEarth/trailerpool), that can haul freight and needs no repair. used: trailers already taken this round.
-local HAULS = { box = true, tanker = true, flatbed = true }
-local function trailerFor(career, used)
+-- What a shift earns with each trailer family (2026-11-27, own trailers part 3): the box trailer is the reference;
+-- a flatbed, a reefer or a tanker earns more (heavier or fussier cargo). A drawbar trailer behind a box truck about
+-- doubles what the box truck carries.
+M.FAMILY_PAY = { box = 1, reefer = 1.15, flatbed = 1.1, log = 1.05, container = 1.1, tanker = 1.2, foodtanker = 1.15 }
+M.DRAWBAR_PAY = 1.45
+local function trailerFor(career, used, pulls)
   local pool = require('cargoEarth/trailerpool')
+  local best, bestPay
   for _, t in ipairs(type(career) == 'table' and pool.list(career) or {}) do
     local e = pool.entry(t)
-    if (t.place == 'hq' or t.place == 'home') and e and HAULS[e.family] and (t.repair or 0) <= 0 and not used[t] then
-      return t
+    if (t.place == 'hq' or t.place == 'home') and e and M.FAMILY_PAY[e.family] and e.pulls == pulls
+      and (t.repair or 0) <= 0 and not used[t] then
+      local pay = M.FAMILY_PAY[e.family]
+      if not bestPay or pay > bestPay then best, bestPay = t, pay end   -- the best-paying free trailer goes first
     end
   end
+  return best
+end
+
+-- The pay factor of the trailer a car took this round (1 without one).
+function M.trailerPay(car, used)
+  local pool = require('cargoEarth/trailerpool')
+  for t, by in pairs(used or {}) do
+    if by == car then
+      local e = pool.entry(t)
+      if e and e.pulls == 'pintle' then return M.DRAWBAR_PAY end
+      return e and M.FAMILY_PAY[e.family] or 1
+    end
+  end
+  return 1
 end
 
 -- What a shift of this driver in a vehicle of this kind brings in after the wage (an estimate, without incidents).
@@ -194,9 +215,12 @@ local function blocked(car, career, used, driver)
   if (kind == 'car' or kind == 'suv' or kind == 'van') and car.boxCount == 0 then return 'boxes' end
   if garage.parkedRepairCost(car) > 0 then return 'repair' end
   if kind == 'semi' then
-    local t = trailerFor(career, used)
+    local t = trailerFor(career, used, 'semi')
     if not t then return 'trailer' end
     used[t] = car
+  elseif kind == 'rigid' then
+    local t = trailerFor(career, used, 'pintle')   -- a drawbar trailer when one is free (optional)
+    if t then used[t] = car end
   end
 end
 
@@ -216,7 +240,7 @@ function M.advance(g, dt, factor, career, rnd)
         driver.elapsed = elapsed - shifts * M.SHIFT_S
         local tier = upkeep.tier(car)
         for _ = 1, shifts do
-          local net = M.net(driver, car, factor)
+          local net = M.net(driver, car, (tonumber(factor) or 1) * M.trailerPay(car, used))
           local km = M.KM[tier] * driver.speed
           driver.earned, driver.km, driver.shifts = (driver.earned or 0) + net, (driver.km or 0) + km, (driver.shifts or 0) + 1
           car.km = (car.km or 0) + km
