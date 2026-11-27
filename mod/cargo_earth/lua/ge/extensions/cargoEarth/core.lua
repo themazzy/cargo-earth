@@ -1132,8 +1132,7 @@ function M.generate()
     local ownRig = tier == 'semi' and not M.freePlay() and not S.career.employment
     local rig = ownRig and require('cargoEarth/rigs').haulRig(M) or nil
     S.noRig = ownRig and not rig or nil
-    if S.noRig then tier = nil end
-    if tier and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or rows) then
+    if tier and not S.noRig and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or rows) then
       -- an ordinary car or an SUV takes no company freight board: its own small work comes below
       local offers, stats = {}, nil
       if not haul.SMALL[tier] then

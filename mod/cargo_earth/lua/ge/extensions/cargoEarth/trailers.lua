@@ -734,8 +734,9 @@ function M.adoptPool(poolId, model)
   local vid = M.poolVid(poolId)
   if not vid then return false end
   if id == vid then return true end
+  local wanted = hitchWanted and hitchWanted[2] == vid and hitchWanted or nil   -- its hitch is still being tried
   M.remove()
-  id, adopted = vid, model or 'pool'
+  id, adopted, hitchWanted = vid, model or 'pool', wanted
   return true
 end
 
