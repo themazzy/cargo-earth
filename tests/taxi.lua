@@ -40,6 +40,9 @@ assert(#taxi.offers(near, sights, 50, 14, nil, function(from) return from[2] ~= 
 local fallback = taxi.offers(near, function() return {{id = 'far', n = 'Airport', g = {50.04, 14.004}}} end,
   50, 14, function(n) return n end, nil, nil, 1)[1]
 assert(fallback and fallback.taxi.pickupEstimated and math.abs(fallback.taxi.pickupRoadKm - fallback.pickupKm * 1.3) < 1e-9)
+local shown = taxi.info(fallback).pickupRoadKm
+assert(shown == math.floor(shown * 10 + 0.5) / 10 and math.abs(shown - fallback.taxi.pickupRoadKm) <= 0.05,
+  'the phone gets the pickup road distance to 0.1 km, not a raw float')
 
 local addresses = {}
 for i = 1, 1000 do addresses[i] = {50, 14.001, 50, 14.001, 'Address ' .. i} end
