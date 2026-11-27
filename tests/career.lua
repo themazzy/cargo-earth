@@ -5146,6 +5146,7 @@ test('free play: taxi, freight with any truck, bus and coach in any car; your ca
   assert(c.employment and c.garage.car.model == 'citybus' and vehicle.model == 'citybus', 'the company bus is handed over')
   assert(c.employment.personalGarage.car.freePlay and c.employment.personalGarage.car.model == 'lansdale')
   assert(core.freePlay(), 'still free play during the shift')
+  assert(s.slot == nil and not require('cargoEarth/saves').isCareer(c), 'a free play shift makes no career save slot')
   core.phoneAction('busEnd')
   advance(core, 6)
   assert(not c.employment and vehicle.model == 'lansdale', 'your own vehicle is back')
