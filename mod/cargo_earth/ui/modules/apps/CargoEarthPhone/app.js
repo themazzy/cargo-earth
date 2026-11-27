@@ -1991,7 +1991,7 @@ angular.module('beamng.apps')
           '<div class="cep-label" ng-if="tp.shop.length">New trailers</div>' +
           '<div class="cep-card" ng-repeat="n in tp.shop track by n.id">' +
             '<div class="cep-keyval"><strong style="white-space:normal">{{ n.name }}</strong><strong style="white-space:nowrap">{{ fmt.money(n.price) }}</strong></div>' +
-            '<div class="cep-pills"><span>{{ n.pulls === "semi" ? "Tractor" : "Tow hitch" }}</span><span ng-if="n.boxes">{{ n.boxes }} cargo boxes</span>' +
+            '<div class="cep-pills"><span>{{ n.pulls === "semi" ? "Tractor" : n.pulls === "pintle" ? "Box truck, pintle hook" : "Tow hitch" }}</span><span ng-if="n.boxes">{{ n.boxes }} cargo boxes</span>' +
               '<span ng-if="n.payload">{{ fmt.kg(n.payload) }}</span></div>' +
             '<div class="cep-sub" ng-if="n.carries">{{ n.carries }}</div>' +
             '<button class="cep-sm go" style="margin-top:6px" ng-disabled="!n.can" ng-click="tdo(\'buyNew\', n.id)">Buy new</button></div>' +

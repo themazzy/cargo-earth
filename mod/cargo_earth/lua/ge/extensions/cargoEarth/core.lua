@@ -286,6 +286,8 @@ end
 
 local function freightOptions(tier)
   local o = {}
+  -- a box truck with a drawbar trailer keeps the box truck's job settings (the sliders edit that profile)
+  if tier == 'drawbar' then tier = 'rigid' end
   for k, v in pairs(S.opts) do o[k] = v end
   local range = o.freightRanges and o.freightRanges[tier] or {}
   o.minKm = range.minKm or (tier == 'semi' and o.minKm or nil)
@@ -321,6 +323,7 @@ end
 function M.tierFits(tier, h)
   if not tier or not h then return false end
   if h.tier == 'trailer' then return tier ~= 'semi' end
+  if h.tier == 'drawbar' then return tier == 'rigid' end
   return tier == h.tier
 end
 
@@ -1176,9 +1179,10 @@ function M.generate()
     local vtier = tier
     if tier and tier ~= 'semi' and not M.freePlay() and not S.career.employment then
       local r = require('cargoEarth/rigs').haulRig(M)
-      if r and r.entry.pulls == 'hitch' then tier, rig = 'trailer', r end
+      if r and r.entry.pulls == 'hitch' then tier, rig = 'trailer', r
+      elseif r and r.entry.pulls == 'pintle' and tier == 'rigid' then tier, rig = 'drawbar', r end
     end
-    if tier and not S.noRig and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or tier == 'trailer' or rows) then
+    if tier and not S.noRig and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or tier == 'trailer' or tier == 'drawbar' or rows) then
       -- an ordinary car or an SUV takes no company freight board: its own small work comes below
       local offers, stats = {}, nil
       if not haul.SMALL[tier] then
@@ -1242,6 +1246,8 @@ function M.generate()
           if factor ~= 1 then
             offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor
           end
+          -- the van or box truck pulling the trailer still earns its own unlock progress
+          if offer.haul and vtier ~= tier then offer.haul.unlockTier = vtier end
           S.offers[#S.offers + 1] = offer
         end
       end
@@ -1766,7 +1772,7 @@ local function finishDelivery(force)
     local experience = require('cargoEarth/experience')
     experience.add(c, experience.kind(j))
   end
-  local truckUnlock = j.haul and haul.complete(c, j.haul.tier)
+  local truckUnlock = j.haul and haul.complete(c, j.haul.unlockTier or j.haul.tier)
   local today = os.date('%Y-%m-%d')
   if type(c.today) ~= 'table' or c.today.date ~= today then c.today = { date = today, earned = 0, count = 0 } end
   if not j.companyShift then c.today.earned = c.today.earned + pay + tip end

@@ -26,14 +26,22 @@ end
 
 local function playerId(core) return core.G.playerId and core.G.playerId() or -1 end
 
--- What kind of hitch the player's vehicle has: 'semi' (fifth wheel), 'hitch' (a tow hitch), or nil.
+-- A pintle hook among the vehicle's parts (drawbar trailers; the game's couplers decide in the end).
+function M.hasPintle(vehicle)
+  for _, part in pairs(type(vehicle) == 'table' and vehicle.slotPartMap or {}) do
+    local name = type(part) == 'string' and part:lower() or ''
+    if name:find('pintle', 1, true) and not name:find('delete', 1, true) and not name:find('cover', 1, true) then return true end
+  end
+  return false
+end
+
+-- What the player's vehicle can pull: { semi = fifth wheel, hitch = a tow hitch, pintle = a pintle hook }, and the vehicle.
 local function rigOf(core)
   local v = core.G.vehicle and core.G.vehicle()
-  if not v then return nil end
+  if not v then return {}, nil end
   local tier = haul.carrier(v)
-  if tier == 'semi' then return 'semi', v end
-  if tow.hasHitch(v) then return 'hitch', v end
-  return nil, v
+  if tier == 'semi' then return { semi = true }, v end
+  return { hitch = tow.hasHitch(v) or nil, pintle = (tier == 'rigid' and M.hasPintle(v)) or nil }, v
 end
 M.rigOf = rigOf
 
@@ -59,12 +67,10 @@ function M.spotPoint(c, place)
   if place == 'hq' then return c.firm and c.firm.hq and c.firm.hq.g end
 end
 
-local function canPull(rig, e)
-  if e.pulls == 'semi' then return rig == 'semi' end
-  return rig == 'hitch'
-end
+local function canPull(rig, e) return type(rig) == 'table' and rig[e.pulls] == true end
 
-local function needsText(e) return e.pulls == 'semi' and 'Needs a tractor' or 'Needs a tow hitch' end
+local NEEDS = { semi = 'Needs a tractor', hitch = 'Needs a tow hitch', pintle = 'Needs a box truck with a pintle hook' }
+local function needsText(e) return NEEDS[e.pulls] or 'Needs a tow hitch' end
 
 -- The config a trailer is spawned with: its stock load on it when it carries one (t.load), else empty.
 function M.configOf(t, e, bulk)
@@ -109,7 +115,7 @@ local function takeOut(core, t, bulk)
   if t.place == 'out' then return false, 'It is already out.' end
   local rig = rigOf(core)
   if not garage.inOwnCar(core.G, S.career.garage) then return false, 'Sit in your own vehicle first.' end
-  if not canPull(rig, e) then return false, e.pulls == 'semi' and 'This trailer needs a tractor.' or 'This trailer needs a vehicle with a tow hitch.' end
+  if not canPull(rig, e) then return false, 'This trailer ' .. needsText(e):lower() .. '.' end
   for _, other in ipairs(pool.list(c)) do
     if other.place == 'out' and trailers.poolCoupled(other.id, playerId(core)) then return false, 'Park the trailer you have first.' end
   end

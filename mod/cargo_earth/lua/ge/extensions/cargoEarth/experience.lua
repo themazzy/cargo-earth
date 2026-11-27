@@ -14,7 +14,8 @@ M.KINDS = {
   van = { max = 0.15, full = 40 },
   rigid = { max = 0.20, full = 40 },
   semi = { max = 0.25, full = 40 },
-  trailer = { max = 0.15, full = 40 },   -- a trailer of your own behind a car (tilt decks, home deliveries)
+  trailer = { max = 0.15, full = 40 },
+  drawbar = { max = 0.20, full = 40 },   -- a box truck with a drawbar trailer of your own   -- a trailer of your own behind a car (tilt decks, home deliveries)
 }
 
 -- The work kind a job counts toward (nil: none).

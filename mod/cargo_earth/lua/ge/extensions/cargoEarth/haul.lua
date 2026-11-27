@@ -13,6 +13,10 @@ M.tiers = {
   suv = { name = 'SUV or pickup', minKm = 5, maxKm = 40, base = 70, rate = 10, speed = 40, slack = 12, kg = 400, parcel = 48 },
   -- a trailer of your own behind a car, an SUV, a van or a box truck (tilt decks: hay and planks), 2026-11-27: the board
   -- is the trailer's. Its pay is measured against a 8 t load, so a 30 ft tilt deck of hay pays about like a food hour.
+  -- a box truck with a drawbar trailer of your own (a pintle hook): the load goes in the trailer, so the reference load
+  -- is the trailer's
+  drawbar = { name = 'Box truck and trailer', minKm = 12, maxKm = 150, base = 250, rate = 22, speed = 50, slack = 20,
+    kg = 9000, parcel = 1000, bulk = 8000 },
   trailer = { name = 'Car and trailer', minKm = 5, maxKm = 80, base = 150, rate = 14, speed = 45, slack = 15, kg = 8000, parcel = 0 },
 }
 M.SEMI_BULK_L = 12800   -- the dry-bulk trailer's 16 aggregate boxes of 800 L
@@ -22,7 +26,7 @@ M.SMALL = { car = true, suv = true }   -- these tiers take no board of company f
 -- so trucks are the reward for progressing without making cars nearly free.
 -- A loaner runs on the company's fuel card. In your own vehicle you buy the fuel, so the job pays this much
 -- more per road km (about 9, 22 and 32 L/100 km of diesel).
-M.FUEL_ALLOWANCE = { car = 1, suv = 2, van = 3, rigid = 8, semi = 12, trailer = 4 }
+M.FUEL_ALLOWANCE = { car = 1, suv = 2, van = 3, rigid = 8, semi = 12, trailer = 4, drawbar = 11 }
 M.VAN_GOAL, M.RIGID_GOAL = 3, 5   -- 2026-11-18 (Jan: the first own truck took far too long): was 5, 10
 M.loaners = {
   van = { model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', label = 'van' },
@@ -62,11 +66,13 @@ end
 
 function M.allowed(career, tier)
   if tier == 'trailer' then return true end   -- car trailers from the start
+  if tier == 'drawbar' then tier = 'rigid' end   -- drawbar trailers with the box truck
   local unlocked = M.state(career).unlocked
   return tier == 'van' or M.SMALL[tier] == true or tier == 'rigid' and unlocked ~= 'van' or tier == 'semi' and unlocked == 'semi'
 end
 
 function M.complete(career, tier)
+  if tier == 'drawbar' then tier = 'rigid' end   -- a box truck's haul, whatever it pulls
   if not M.tiers[tier] then return end
   local previous = M.state(career).unlocked
   career.hauls = career.hauls or {}
@@ -241,7 +247,7 @@ function M.prepare(job, tier, rows, idx, rig, amount)
   if freight.kind == 'load' then
     job.cargoName = string.format('%s (%s)', job.cargoName or job.cargo, freight.what)
   end
-  if tier == 'semi' or tier == 'trailer' then
+  if tier == 'semi' or tier == 'trailer' or tier == 'drawbar' then
     freight.trailerName = rig and rig.entry.name or (freight.kind == 'fluid' and 'Tanker' or freight.kind == 'dryBulk' and 'Aggregate box trailer' or 'Box trailer')
   end
   if rig then freight.pool, freight.bulk, freight.family = rig.id, rig.bulk or nil, rig.entry.family end
