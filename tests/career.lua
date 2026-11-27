@@ -5111,6 +5111,57 @@ test('freight without a van of your own lists company contracts and no loaner; a
   assert(s.career.employment and s.job, 'the company van and the first delivery come with the contract')
 end)
 
+test('free play: taxi, freight with any truck, bus and coach in any car; your car comes back after a bus shift', function()
+  local core, s = fresh()
+  local garage, haulM = require('cargoEarth/garage'), require('cargoEarth/haul')
+  s.career.garage = garage.new()
+  s.career.play = 'free'
+  vehicle.model, vehicle.bodyStyle = 'lansdale', 'Minivan'
+  s.fidx = food.index({restaurants = {}, cats = {}, tile = 0.05}, everywhere)
+  s.autoIdx = fuel.index()
+  fuel.addArea(s.autoIdx, 'taxi', sightRows())
+  -- taxi: a vanilla car with seats goes online without a career
+  core.setMode('taxi')
+  freeSeats, s.freeSeats = 6, nil
+  assert(core.taxiState(true).eligible, core.taxiState().hint)
+  core.phoneAction('online')
+  assert(s.phone.online, 'free play taxi goes online')
+  core.phoneAction('offline')
+  freeSeats = nil
+  -- freight: the car you sit in is the carrier, and trucks need nothing unlocked
+  assert(haulM.allowed(s.career, 'semi') and haulM.state(s.career).free, 'free play opens every vehicle class')
+  core.setMode('trucking')
+  advance(core, 2)
+  assert(core.phoneState().trucking.carrier, 'the free play car counts as a carrier')
+  -- bus: the company bus replaces the free play car, which comes back after the shift
+  core.setMode('bus')
+  s.busIdx = bus.index()
+  bus.set(s.busIdx, busData())
+  s.busBoard = bus.board(s.busIdx, pose.lat, pose.lon)
+  pose.lat, pose.lon, pose.speed = 50.0005, 14.0005, 0
+  core.busSelect(s.busBoard[1].id)
+  assert(s.busDepot, 'a line can be chosen in free play')
+  core.busDepotTick(pose, 2)
+  local c = s.career
+  assert(c.employment and c.garage.car.model == 'citybus' and vehicle.model == 'citybus', 'the company bus is handed over')
+  assert(c.employment.personalGarage.car.freePlay and c.employment.personalGarage.car.model == 'lansdale')
+  assert(core.freePlay(), 'still free play during the shift')
+  assert(s.slot == nil and not require('cargoEarth/saves').isCareer(c), 'a free play shift makes no career save slot')
+  core.phoneAction('busEnd')
+  advance(core, 6)
+  assert(not c.employment and vehicle.model == 'lansdale', 'your own vehicle is back')
+  assert(c.garage.car == nil and not c.garage.started and c.play == 'free', 'free play keeps no car and no career')
+  -- the Companies page allows contract starts in free play
+  assert(core.placesState().canContract)
+  -- a reload during a free play shift: the save starts free play again and your own vehicle comes back
+  core.busSelect(s.busBoard[1].id)
+  core.busDepotTick(pose, 2)
+  assert(c.employment and vehicle.model == 'citybus')
+  core.freshFree(copy(c))
+  advance(core, 1)
+  assert(not s.career.employment and vehicle.model == 'lansdale', 'the company bus goes after a reload')
+end)
+
 test('first run asks free play or career; free play keeps nothing when a career starts', function()
   local core, s = fresh()
   local garage = require('cargoEarth/garage')

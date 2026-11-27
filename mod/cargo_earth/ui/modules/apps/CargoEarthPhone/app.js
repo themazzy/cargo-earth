@@ -1744,7 +1744,7 @@ angular.module('beamng.apps')
             '<div class="cep-sub" ng-if="places.shift.error">{{ places.shift.error }}</div>' +
           '</div>' +
           '<div ng-if="!places.shift"><button class="cep-sm ghost" ng-disabled="places.busy" ng-click="pdo(\'refreshCompanies\')">Find company contracts</button>' +
-            '<div class="cep-sub" ng-if="!places.started">Start your career in Garage first.</div>' +
+            '<div class="cep-sub" ng-if="!places.canContract">Start your career in Garage first.</div>' +
             '<div class="cep-empty cep-sub" ng-if="!places.companies.length">No contracts nearby yet. Try again in a moment or somewhere else.</div>' +
             '<div class="cep-card" ng-repeat="company in places.companies track by company.id">' +
               '<div class="cep-name" style="white-space:normal">{{ company.name }}</div>' +
@@ -1752,7 +1752,7 @@ angular.module('beamng.apps')
               '<div class="cep-keyval"><span class="cep-sub">Wages</span><strong>about {{ fmt.money(company.wages) }}</strong></div>' +
               '<div class="cep-sub">Reputation {{ company.reputation }} / 100</div>' +
               '<button class="cep-sm ghost" ng-disabled="places.busy" ng-click="pdo(\'companyGps\', company.id)">Route to yard</button>' +
-              '<button class="cep-btn go" ng-disabled="places.busy || !places.started || !company.atYard" ng-click="pdo(\'startCompany\', company.id)">' +
+              '<button class="cep-btn go" ng-disabled="places.busy || !places.canContract || !company.atYard" ng-click="pdo(\'startCompany\', company.id)">' +
                 '{{ company.atYard ? "Start" : "Park at the yard to start" }}</button>' +
               '<div class="cep-sub" ng-if="company.van && !company.independentUnlocked">Your own van: at 20 reputation.</div>' +
               '<button class="cep-btn ghost" ng-if="company.van && company.independentUnlocked" ng-disabled="places.busy || !company.atYard" ng-click="pdo(\'startIndependent\', company.id)">' +
