@@ -2036,7 +2036,7 @@ end
 -- A taxi's passengers, seated in the car (BeamNG's seat occupants, real weight); 0 empties the seats again.
 function M.taxiSeats(n, seed)
   local ok, shown = false, nil
-  if M.G.carPassengers then ok, shown = pcall(M.G.carPassengers, n, seed or 'taxi') end
+  if M.G.carPassengers then ok, shown = pcall(M.G.carPassengers, n, seed or 'taxi', M.freePlay()) end
   S.taxiSeated = (n > 0 or not ok or shown ~= 0) and { n = n, seed = seed, at = S.clock + 5 } or nil
   return ok and shown or nil
 end
