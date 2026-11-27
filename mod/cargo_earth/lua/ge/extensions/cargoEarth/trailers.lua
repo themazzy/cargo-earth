@@ -721,6 +721,12 @@ function M.parkPool(poolId)
   o:delete()
 end
 
+-- A career ends or another one is loaded: every trailer of yours that is out goes (the save keeps where it was).
+function M.clearPool()
+  for pid in pairs(pool) do M.parkPool(pid) end
+  pool = {}
+end
+
 -- The game's damage number of your trailer, or nil.
 function M.poolDamage(poolId)
   local vid = M.poolVid(poolId)

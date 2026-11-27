@@ -718,6 +718,7 @@ local function pauseCareer(captured)
   fuelWatch, fuelPending, gamePump = nil, nil, nil
   if earth.status() == 'ok' then earth.gpsClear() end
   trailers.remove()
+  trailers.clearPool()   -- your own trailers that are out (the save says where they stand)
   marker.reset()
   return true
 end
@@ -736,6 +737,7 @@ function M.restartCareer(word)
     clearFreight()
     releaseStorage()
     trailers.remove()
+    trailers.clearPool()   -- your own trailers that are out (the save says where they stand)
     if earth.status() == 'ok' then earth.gpsClear() end
     marker.reset()
   end
@@ -6610,6 +6612,7 @@ function M.onExtensionUnloaded()
   S.pauseSaving, S.replacementSaving = nil, nil
   if not S.pendingCareer and S.career.savedAt then saveCareer(true) end
   trailers.remove()
+  trailers.clearPool()   -- your own trailers that are out (the save says where they stand)
 end
 
 return M

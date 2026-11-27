@@ -196,6 +196,7 @@ end
 
 -- After a career is loaded: the trailers that were out are where they were last seen.
 function M.onLoad(c)
+  trailers.clearPool()   -- none of another career's (or this one's last session's) trailers stay in the world
   pool.restore(c)
   for _, t in ipairs(c.trailers.list) do
     if t.place == 'out' then
