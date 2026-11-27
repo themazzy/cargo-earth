@@ -72,6 +72,7 @@ function M.allowed(career, tier)
 end
 
 function M.complete(career, tier)
+  if tier == 'drawbar' then tier = 'rigid' end   -- a box truck's haul, whatever it pulls
   if not M.tiers[tier] then return end
   local previous = M.state(career).unlocked
   career.hauls = career.hauls or {}

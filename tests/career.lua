@@ -6402,6 +6402,9 @@ test('own trailers part 3: drawbar trailers behind a box truck, drivers paid by 
   assert(haul.prepare(job, 'drawbar', nil, { cargo = { pallets_general = { pay = 1 } } }, rig) and job.trailer == 'box')
   local pipes = haul.freight('drawbar', 'steel_beams', nil, { id = 5, entry = pool.byId.drawbar_flatbed })
   assert(pipes and pipes.kind == 'load' and pipes.kg == 10000, 'drawbar flatbed pipes')
+  local prog = { hauls = { van = 99, rigid = 0 } }
+  haul.complete(prog, 'drawbar')
+  assert(prog.hauls.rigid == 1 and not prog.hauls.drawbar, 'drawbar hauls count toward the tractor unlock')
   -- hired drivers: the best-paying free trailer first, and its family sets the pay
   local fleet = require('cargoEarth/fleet')
   local career = { trailers = { seq = 3, list = {

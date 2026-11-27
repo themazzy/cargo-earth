@@ -1246,6 +1246,8 @@ function M.generate()
           if factor ~= 1 then
             offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor
           end
+          -- the van or box truck pulling the trailer still earns its own unlock progress
+          if offer.haul and vtier ~= tier then offer.haul.unlockTier = vtier end
           S.offers[#S.offers + 1] = offer
         end
       end
@@ -1770,7 +1772,7 @@ local function finishDelivery(force)
     local experience = require('cargoEarth/experience')
     experience.add(c, experience.kind(j))
   end
-  local truckUnlock = j.haul and haul.complete(c, j.haul.tier)
+  local truckUnlock = j.haul and haul.complete(c, j.haul.unlockTier or j.haul.tier)
   local today = os.date('%Y-%m-%d')
   if type(c.today) ~= 'table' or c.today.date ~= today then c.today = { date = today, earned = 0, count = 0 } end
   if not j.companyShift then c.today.earned = c.today.earned + pay + tip end
