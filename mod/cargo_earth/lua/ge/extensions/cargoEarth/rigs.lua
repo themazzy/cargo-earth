@@ -172,7 +172,7 @@ function M.tick(core, dt)
               end
             end
           end
-        elseif dist and dist > M.LEAVE_M and not (S.job and S.job.haul and S.job.haul.pool == t.id) then
+        elseif dist and dist > M.LEAVE_M and not (S.job and ((S.job.haul and S.job.haul.pool == t.id) or trailers.id() == vid)) then
           leave(core, t, p and { lat = t.at and t.at.g and t.at.g[1] or p.lat, lon = t.at and t.at.g and t.at.g[2] or p.lon })
           core.sayText(string.format('Your %s stays %s.', t.name:lower(), t.place == 'left' and 'where you left it' or
             (t.place == 'home' and 'at home' or 'at the headquarters')), 5)
