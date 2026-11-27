@@ -6373,3 +6373,18 @@ test('own trailers part 2: Fill up the rest adds stops on the way and keeps the 
   -- not for tankers, home deliveries or company work
   assert(not fillup.can({ haul = { kind = 'fluid', pool = 1, family = 'tanker', amount = 1, most = 9999 } }), 'no tanker fill-ups')
 end)
+
+test('own trailers part 2: a second fill-up is measured on the booked route (Codex)', function()
+  local fillup = require('cargoEarth/fillup')
+  local haul = require('cargoEarth/haul')
+  local job = { cargo = 'consumer_goods', from = { id = 'a', n = 'A', g = { 50.0, 14.0 } }, to = { id = 'b', n = 'B', g = { 50.0, 15.4 } },
+    km = 130, minutes = 160, pay = 1500, loadFactor = 1,
+    haul = { tier = 'semi', kind = 'parcel', amount = 400, most = 1600, density = 7, space = 1600, kg = 2800, pool = 1, family = 'box' } }
+  -- 25 km north and south of the middle: each alone is within 15 %, both together are not
+  local north, south = { id = 'n', n = 'North', g = { 50.225, 14.7 } }, { id = 's', n = 'South', g = { 49.775, 14.7 } }
+  local first = fillup.offers(job, { north, south }, haul.tiers.semi, 1.3)
+  assert(#first == 2, 'each alone fits: ' .. #first)
+  fillup.add(job, first[1])
+  local second = fillup.offers(job, { north, south }, haul.tiers.semi, 1.3)
+  assert(#second == 0, 'both together go over the detour limit')
+end)

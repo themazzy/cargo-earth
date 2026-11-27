@@ -64,13 +64,29 @@ function M.offers(job, acceptors, tierRow, roadFactor)
   if slots > room then slots = math.floor(room / M.STEP) * M.STEP end
   if slots < M.STEP then return {} end
   local h = job.haul
+  -- the stops already booked, in order, and where a new one would go (as M.add puts it: nearest the pickup first)
+  local booked = {}
+  for _, s in ipairs(job.route and job.route.stops or {}) do if not s.main then booked[#booked + 1] = s.g end end
+  local function length(points)
+    local total, here = 0, from
+    for _, g in ipairs(points) do total, here = total + km(here, g), g end
+    return total + km(here, main)
+  end
+  local now = length(booked)
   local list = {}
   for _, d in ipairs(acceptors or {}) do
     if type(d) == 'table' and type(d.g) == 'table' and not taken[tostring(d.id)] then
       local a, b = km(from, d.g), km(d.g, main)
-      local extra = a + b - direct
-      if a > 0.5 and b > 0.5 and extra <= direct * M.MAX_DETOUR then
-        list[#list + 1] = { d = d, a = a, extra = extra }
+      local points, put = {}, false
+      for _, g in ipairs(booked) do
+        if not put and km(from, g) > a then points[#points + 1], put = d.g, true end
+        points[#points + 1] = g
+      end
+      if not put then points[#points + 1] = d.g end
+      local after = length(points)
+      -- the whole route with it stays within the detour limit of the direct trip; its own share is what it adds
+      if a > 0.5 and b > 0.5 and after - direct <= direct * M.MAX_DETOUR then
+        list[#list + 1] = { d = d, a = a, extra = after - now }
       end
     end
   end

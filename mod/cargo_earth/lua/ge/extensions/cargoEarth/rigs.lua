@@ -438,6 +438,8 @@ function M.loadWork(core, job, unload)
     return false
   end
   if state.command == command and S.clock < (state.sentAt or 0) + M.SWAP_WAIT_S then return false end
+  -- the load comes on or off only with the trailer on your hitch here (no paid drop with the trailer left behind)
+  if not trailers.poolCoupled(t.id, playerId(core)) then S.freightStatus = 'Couple your trailer.' return false end
   local ok, why = M.swapLoad(core, t, job.cargo, want)
   state.command, state.sentAt = command, S.clock
   S.freightStatus = ok and (unload and 'Unloading…' or 'Loading…') or ('The load could not be put on: ' .. why)
