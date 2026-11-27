@@ -265,9 +265,13 @@ function M.sweepCargo()
   if not asked then S.sweepWanted = nil end
 end
 
+-- Free play ("Just drive"): no career was started, so work comes in whatever vehicle the player sits in. During a
+-- company shift the free play garage waits in the shift (personalGarage), so it is asked there.
+function M.freePlay() return haul.freePlay(S.career) end
+
 local function freightCarrier()
   local g = S.career.garage
-  if not g.started or g.pendingUsed or not garage.inOwnCar(M.G, g) then return end
+  if not (g.started or M.freePlay()) or g.pendingUsed or not garage.inOwnCar(M.G, g) then return end
   local v = M.G.vehicle()
   local tier = haul.carrier(v)
   if tier and g.car then g.car.vclass, g.car.bodyStyle = tier, v.bodyStyle end
@@ -1948,8 +1952,9 @@ function M.taxiState(fresh)
   local v, tier = freightCarrier()
   local out = { eligible = false }
   local passenger = tier == 'car' or tier == 'suv' or tier == 'van'
-  if not v or S.career.garage.car.loaner then
-    out.hint = 'Use your own passenger vehicle for taxi work.'
+  local own = S.career.garage.car
+  if not v or own and own.loaner then
+    out.hint = M.freePlay() and 'Taxi work needs a car, SUV or passenger van.' or 'Use your own passenger vehicle for taxi work.'
   elseif not passenger or not haul.configClass(v.model, v.bodyStyle) then
     out.hint = 'Taxi work needs a car, SUV or passenger van with passenger seats.'
   else
@@ -2665,7 +2670,7 @@ function M.placesState()
   local c, p = S.career, earth.pose()
   local out = { home = c.home,
     companies = {}, msg = S.placesMsg, status = earth.status(), busy = S.job ~= nil or S.parts ~= nil,
-    started = c.garage.started, blocked = S.pendingCareer ~= nil, last = c.lastContract,
+    started = c.garage.started, canContract = c.garage.started or M.freePlay() or nil, blocked = S.pendingCareer ~= nil, last = c.lastContract,
     discovery = helper.status() }
   if c.home then
     local pg = c.employment and c.employment.personalGarage or c.garage
@@ -2725,6 +2730,7 @@ local function companyReturn(aborted, here)
     local ok, why = spawnCareerCar(personal)
     if not ok then return false, why .. ' Your wages are saved; retry returning your car.' end
   end
+  if personal.car and personal.car.freePlay then personal.car = nil end   -- free play keeps no car of its own
   c.garage, c.employment = personal, nil
   S.mode = M.RULES[shift.previousMode] and shift.previousMode or 'courier'
   S.opts, S.offeredAt, S.odometerPose = S.optsByMode[S.mode], nil, nil
@@ -2737,7 +2743,10 @@ end
 local function companyStart(id, independent)
   local c, g, p = S.career, S.career.garage, earth.pose()
   if c.employment or S.job or S.parts or g.preview or g.pendingUsed then return false, 'Finish your current work or vehicle preview first.' end
-  if not g.started or not g.car or not garage.inOwnCar(M.G, g) then return false, 'Start your career and drive your own car to the company yard.' end
+  local free = M.freePlay()
+  if not free and (not g.started or not g.car or not garage.inOwnCar(M.G, g)) then
+    return false, 'Start your career and drive your own car to the company yard.'
+  end
   if earth.status() ~= 'ok' or not p or p.camera or (p.speed or 0) > M.STOP_SPEED then return false, 'Park at the company yard first.' end
   local offer
   for _, row in ipairs(S.companyBoard or {}) do if row.id == id then offer = row break end end
@@ -2747,9 +2756,19 @@ local function companyStart(id, independent)
   if jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) * 1000 > radius then
     return false, 'Drive to the company yard, then park to start.'
   end
-  if not garage.remember(M.G, g) then return false, 'Could not save your car configuration.' end
-  local damage = M.G.damage and M.G.damage()
-  if damage then garage.trackDamage(g, damage) end
+  local snapshot
+  if free then
+    -- free play: the vehicle the player came in is put back after the shift (it is no career car: nothing is owed)
+    local v = M.G.vehicle and M.G.vehicle()
+    local config = v and v.model and M.G.captureConfig and M.G.captureConfig(v)
+    if not config then return false, 'Could not save your vehicle configuration.' end
+    snapshot = { model = v.model, config = config, name = v.model, freePlay = true }
+    if independent then return false, 'Independent contracts are part of the career.' end
+  else
+    if not garage.remember(M.G, g) then return false, 'Could not save your car configuration.' end
+    local damage = M.G.damage and M.G.damage()
+    if damage then garage.trackDamage(g, damage) end
+  end
   local want = offer.tier or 'van'
   if want ~= 'bus' and not haul.allowed(c, want) then return false, 'Unlock the ' .. haul.tiers[want].name:lower() .. ' first.' end
   if independent then
@@ -2786,13 +2805,18 @@ local function companyStart(id, independent)
     km = 0, condition = 1, loaner = true, company = true }
   local ok, why = employment.begin(c, offer, g, companyGarage, S.mode)
   if not ok then return false, why end
+  if snapshot then g.car = snapshot end
   c.garage = companyGarage
   c.location = { lat = p.lat, lon = p.lon }
   -- Commit the personal-car snapshot before any spawn can replace it.
   S.skipCapture = true
   local saved = saveCareer()
   S.skipCapture = nil
-  if not saved then c.garage, c.employment = g, nil return false, S.saveError end
+  if not saved then
+    if snapshot then g.car = nil end
+    c.garage, c.employment = g, nil
+    return false, S.saveError
+  end
   releaseStorage()
   local spawned, err = spawnCareerCar(companyGarage)
   if not spawned then
@@ -2818,7 +2842,7 @@ end
 function M.busSelect(id)
   if S.mode ~= 'bus' or S.job or S.career.employment then return end
   local g = S.career.garage
-  if not g.started or not garage.inOwnCar(M.G, g) then
+  if not (g.started or M.freePlay()) or not garage.inOwnCar(M.G, g) then
     S.contractMsg = {text = 'Choose a line while driving your own career car.', at = S.clock}
     return
   end

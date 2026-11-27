@@ -41,12 +41,19 @@ local fluid = { milk = 1.03, fuel = 0.83, chemicals = 1.25 }
 local dryBulk = { gravel = 1.8, sand = 1.6, grain = 0.75, wood_chips = 0.35, fertilizer = 0.9,
   plastics = 0.6, animal_feed = 0.65, malt = 0.6, cement = 1.45 }
 
+-- Free play ("Just drive", no career started): every vehicle class is open, nothing has to be unlocked.
+function M.freePlay(career)
+  local g = career.employment and career.employment.personalGarage or career.garage
+  return career.play == 'free' and not (type(g) == 'table' and g.started)
+end
+
 function M.state(career)
   local h = career.hauls or {}
   local van, rigid = h.van or 0, h.rigid or 0
-  local unlocked = van >= M.VAN_GOAL and (rigid >= M.RIGID_GOAL and 'semi' or 'rigid') or 'van'
+  local free = M.freePlay(career)
+  local unlocked = (free or van >= M.VAN_GOAL) and ((free or rigid >= M.RIGID_GOAL) and 'semi' or 'rigid') or 'van'
   return { van = van, rigid = rigid, semi = h.semi or 0, unlocked = unlocked, label = M.tiers[unlocked].name,
-    vanGoal = M.VAN_GOAL, rigidGoal = M.RIGID_GOAL }
+    vanGoal = M.VAN_GOAL, rigidGoal = M.RIGID_GOAL, free = free or nil }
 end
 
 function M.allowed(career, tier)
