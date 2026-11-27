@@ -109,7 +109,10 @@ end
 local function park(core, t)
   local S, c = core.state(), core.state().career
   if t.place ~= 'out' then return false, 'It is not out with you.' end
-  if S.job and S.job.haul and S.job.haul.pool == t.id then return false, 'It is carrying your job\'s load. Deliver it first.' end
+  local vid = trailers.poolVid(t.id)
+  if S.job and ((S.job.haul and S.job.haul.pool == t.id) or (vid and trailers.id() == vid)) then
+    return false, 'Your job is using it. Finish the job first.'
+  end
   local at = where(c, pose())
   if not at then return false, 'Drive home (or to your headquarters) to park it.' end
   local h, hq = pool.spots(c, home)
@@ -180,7 +183,9 @@ function M.tick(core, dt)
           local before = last[t.id]
           last[t.id] = damage
           if before and damage > before then
-            t.repair = math.min(round5(pool.value(t) * garage.REPAIR_CAP), (t.repair or 0) + round5((damage - before) * garage.REPAIR_PER_DAMAGE))
+            -- kept unrounded, so many small scrapes add up as one big knock would
+            t.damageOwed = (tonumber(t.damageOwed) or t.repair or 0) + (damage - before) * garage.REPAIR_PER_DAMAGE
+            t.repair = math.min(round5(pool.value(t) * garage.REPAIR_CAP), round5(t.damageOwed))
           end
         end
       end
@@ -282,7 +287,7 @@ function M.act(core, name, a, b)
         if (c.money or 0) < cost then ok, msg = false, string.format('Not enough money (%d CZK needed).', cost)
         else
           economy.post(c, -cost, 'trailer', economy.nextId(c, 'trailer'), 'Repair of ' .. t.name:lower())
-          t.repair = 0
+          t.repair, t.damageOwed = 0, nil
           ok, msg = true, string.format('%s repaired for %d CZK.', t.name, cost)
         end
       end
