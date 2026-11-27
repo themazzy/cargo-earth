@@ -51,5 +51,5 @@ The helper's area cache is format 6: areas carry `autos` rows `[id, lat, lon, na
 Every driver holds a car licence (cars, SUVs, vans); some also hold a truck licence (box trucks), and some of those an
 articulated one (tractors). Each truck licence adds to the wage. A driver also knows one kind of vehicle best and
 brings in 15 % more in it. A driver can only be hired for a vehicle their licence covers, and waits when the vehicle
-is not fit for its work: a car, an SUV or a van without cargo boxes, a tractor without one of the firm's trailers.
+is not fit for its work: a car, an SUV or a van without cargo boxes, a tractor without one of your trailers parked at home or at the headquarters.
 Drivers hired before licences keep the licence for the vehicle they already drive.

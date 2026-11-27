@@ -143,57 +143,113 @@ function M.capacity(rows, kind)
   return total
 end
 
-function M.freight(tier, id, rows)
+-- rig: the player's own trailer behind a tractor (cargoEarth/trailerpool entry + bulk mode), or nil for the trailer the
+-- company or free play assigns. amount: the load picker's choice (parcel slots or litres), or nil for as much as fits.
+function M.freight(tier, id, rows, rig, amount)
   local kind, density = material(tier, id)
   if not kind then return end
   local t = M.tiers[tier]
   local nominal = kind == 'parcel' and t.parcel or t.bulk
-  -- The assigned dry-bulk trailer has an 800 L aggregate box in each of its 16 box slots (cargoEarth/trailers).
-  local capacity = tier == 'semi' and (kind == 'dryBulk' and M.SEMI_BULK_L or nominal) or M.capacity(rows, kind)
-  local amount = math.min(nominal, capacity, math.floor(t.kg / density))
-  if amount < (kind == 'parcel' and 8 or 100) then return end
-  return { tier = tier, kind = kind, amount = amount, kg = math.floor(amount * density + 0.5), density = density }
+  local kgCap = t.kg
+  -- the space the pay is measured against: the class's (your own trailer can be smaller or bigger than that)
+  local tierSpace = nominal or 0
+  if tier == 'semi' and kind == 'dryBulk' and not rig then tierSpace = math.min(tierSpace, M.SEMI_BULK_L) end
+  local capacity
+  if rig then
+    local pool = require('cargoEarth/trailerpool')
+    if not pool.carries(rig.entry, kind, id, rig.bulk) then return end
+    capacity = pool.capacity(rig.entry, kind, rig.bulk)
+    nominal = capacity
+    kgCap = rig.entry.payload or kgCap
+  else
+    -- The assigned dry-bulk trailer has an 800 L aggregate box in each of its 16 box slots (cargoEarth/trailers).
+    capacity = tier == 'semi' and (kind == 'dryBulk' and M.SEMI_BULK_L or nominal) or M.capacity(rows, kind)
+  end
+  local most = math.min(nominal, capacity, math.floor(kgCap / density))
+  if most < (kind == 'parcel' and 8 or 100) then return end
+  local n = most
+  if amount then n = math.max(1, math.min(most, math.floor(tonumber(amount) or most))) end
+  return { tier = tier, kind = kind, amount = n, most = most, space = tierSpace, kgCap = kgCap,
+    kg = math.floor(n * density + 0.5), density = density }
 end
 
-function M.options(tier, source, rows)
+function M.options(tier, source, rows, rig)
   local t, o = M.tiers[tier], {}
   for k, v in pairs(source or {}) do o[k] = v end
   o.requireValidatedSites = tier ~= 'van'
   o.minKm = math.max(0.5, math.min(800, o.minKm or t.minKm))
   o.maxKm = math.max(o.minKm, math.min(800, o.maxKm or t.maxKm))
-  o.allowCargo = function(id) return M.freight(tier, id, rows) ~= nil end
+  o.allowCargo = function(id) return M.freight(tier, id, rows, rig) ~= nil end
   return o
 end
 
--- Load pay (Jan, 2026-11-18): the distance pay x (0.75 + 0.25 x fill). A full load pays the distance pay, a light one
--- down to 75 % of it. Jobs load as much as the vehicle and its tier allow, so a bigger vehicle in the tier earns more.
-M.LOAD_PAY = { 0.75, 0.25 }
+-- Load pay (Jan, 2026-11-27, own trailers): a fixed part for the trip plus a part that follows how full you load,
+-- pay = (base + rate x km x (0.4 + 0.6 x fill)) x the cargo's factor. A full load pays the distance pay, a half load
+-- about 70 % of it. fill = the share of the class's weight limit or of its space, whichever is higher, so light, bulky
+-- cargo still pays for the room it takes; above a full class load (a big trailer of your own) it counts half, up to 1.3.
+M.LOAD_PAY = { 0.4, 0.6 }
 function M.fill(freight)
   local t = freight and M.tiers[freight.tier]
   if not t then return 1 end
-  local space = freight.kind == 'parcel' and t.parcel or t.bulk or 0
-  if freight.tier == 'semi' and freight.kind == 'dryBulk' then space = math.min(space, M.SEMI_BULK_L) end
+  local space = freight.space or (freight.kind == 'parcel' and t.parcel or t.bulk or 0)
+  if not freight.space and freight.tier == 'semi' and freight.kind == 'dryBulk' then space = math.min(space, M.SEMI_BULK_L) end
   local share = math.max((freight.kg or 0) / t.kg, space > 0 and (freight.amount or 0) / space or 0)
-  return math.floor(math.max(0, math.min(1, share)) * 100 + 0.5) / 100
+  if share > 1 then share = 1 + (share - 1) / 2 end   -- a bigger trailer than the class's earns more, at half the rate
+  return math.floor(math.max(0, math.min(1.3, share)) * 100 + 0.5) / 100
 end
 
-function M.prepare(job, tier, rows, idx)
-  local freight = M.freight(tier, job.cargo, rows)
+-- The pay for a load: the distance pay scaled by fill (see above). factor: the cargo's pay factor (and dangerous goods).
+function M.loadPay(tier, km, fill, factor)
+  local t = M.tiers[tier]
+  return math.floor((t.base + t.rate * km * (M.LOAD_PAY[1] + M.LOAD_PAY[2] * fill)) * (factor or 1) / 5 + 0.5) * 5
+end
+
+function M.prepare(job, tier, rows, idx, rig, amount)
+  local freight = M.freight(tier, job.cargo, rows, rig, amount)
   if not freight then return false end
   job.haul, job.kind, job.tonnes = freight, 'cargo', freight.kg / 1000
   local t = M.tiers[tier]
-  local factor = idx.cargo[job.cargo].pay or 1
-  local pay = (t.base + t.rate * job.km) * factor * (job.adr and 1.15 or 1)
-  -- a fuller load pays more: fill = the share of the tier's weight limit or its space, whichever is higher
+  local factor = (idx.cargo[job.cargo].pay or 1) * (job.adr and 1.15 or 1)
   local fill = M.fill(freight)
-  local base = math.floor(pay / 5 + 0.5) * 5
-  job.pay = math.floor(pay * (M.LOAD_PAY[1] + M.LOAD_PAY[2] * fill) / 5 + 0.5) * 5
-  job.loadFill, job.loadBonus = fill, job.pay - base
+  local base = math.floor((t.base + t.rate * job.km) * factor / 5 + 0.5) * 5
+  job.pay = M.loadPay(tier, job.km, fill, factor)
+  job.loadFill, job.loadBonus, job.loadFactor = fill, job.pay - base, factor
   job.minutes = math.floor((job.km + 1.3 * job.pickupKm) / t.speed * 60 + t.slack + 0.5)
   job.trailer = tier == 'semi' and (freight.kind == 'fluid' and 'tanker' or 'box') or nil
   if tier == 'semi' then
-    freight.trailerName = freight.kind == 'fluid' and 'Tanker' or freight.kind == 'dryBulk' and 'Aggregate box trailer' or 'Box trailer'
+    freight.trailerName = rig and rig.entry.name or (freight.kind == 'fluid' and 'Tanker' or freight.kind == 'dryBulk' and 'Aggregate box trailer' or 'Box trailer')
   end
+  if rig then freight.pool, freight.bulk = rig.id, rig.bulk or nil end
+  return true
+end
+
+-- The load picker: one step of the amount (a box, a bulk box, 1,000 L) and the steps that fit. nil without a load.
+function M.steps(freight)
+  if not freight then return nil end
+  local unit = require('cargoEarth/trailerpool').unitOf(freight.kind)
+  local most = freight.most or freight.amount
+  return { unit = unit, n = math.max(1, math.ceil((freight.amount or 0) / unit - 1e-6)), max = math.max(1, math.ceil(most / unit - 1e-6)),
+    kind = freight.kind }
+end
+
+-- Change a job's load to n steps: its amount, weight, fill and pay change; what was added on top of the load pay
+-- (fuel allowance, special cargo, resupply, reputation) stays. Returns true when it changed.
+function M.setSteps(job, n)
+  local f = job and job.haul
+  local st = M.steps(f)
+  if not st then return false end
+  n = math.max(1, math.min(st.max, math.floor(tonumber(n) or st.n)))
+  local amount = math.min(f.most or f.amount, n * st.unit)
+  if amount == f.amount then return false end
+  local before = M.loadPay(f.tier, job.km, M.fill(f), job.loadFactor or 1)
+  f.amount, f.kg = amount, math.floor(amount * f.density + 0.5)
+  job.tonnes = f.kg / 1000
+  local fill = M.fill(f)
+  local after = M.loadPay(f.tier, job.km, fill, job.loadFactor or 1)
+  local rep = tonumber(job.reputationPay) or 1
+  job.pay = math.max(5, job.pay + math.floor((after - before) * rep / 5 + 0.5) * 5)
+  job.loadFill, job.loadBonus = fill, (job.loadBonus or 0) + (after - before)
+  if job.litres and f.kind == 'fluid' then job.litres = amount end
   return true
 end
 

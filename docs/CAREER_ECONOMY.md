@@ -16,7 +16,7 @@ Lua pay rules; distances, speeds and fuel burn are estimates). Car prices follow
 | Company box truck contract | 3 van hauls | 860 |
 | Company tractor contract | 5 box truck hauls | 910 |
 | Box truck freight | own box truck, 3 van hauls | 1,150 |
-| Tractor freight | own tractor, 5 box truck hauls (firm trailer +12 %) | 1,370-1,580 |
+| Tractor freight | own tractor and own trailer, 5 box truck hauls (pay follows the load: a full 48 ft box = distance pay) | 1,370-1,580 |
 | Fuel tanker runs | own tractor | 1,720 |
 
 Hired drivers bring in, after wage, incidents and wear: about 100 CZK an hour in a car, 300 in a van, 500 in a box

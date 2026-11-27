@@ -6,10 +6,11 @@ local economy = require('cargoEarth/economy')
 local M = { RADIUS = 60, ADDRESS_RADIUS = 100, CAPACITY = 3 }
 
 M.LEVELS = {
-  { name = 'Small garage', cars = 3, rooms = 1, cost = 0 },
-  { name = 'Medium garage', cars = 4, rooms = 2, cost = 2500 },
-  { name = 'Large garage', cars = 6, rooms = 3, cost = 6000 },
-  { name = 'Extra large garage', cars = 8, rooms = 4, cost = 12000 },
+  -- trailers: trailer spots (Jan, 2026-11-27: the basic home has one; trailers need a home)
+  { name = 'Small garage', cars = 3, rooms = 1, cost = 0, trailers = 1 },
+  { name = 'Medium garage', cars = 4, rooms = 2, cost = 2500, trailers = 2 },
+  { name = 'Large garage', cars = 6, rooms = 3, cost = 6000, trailers = 3 },
+  { name = 'Extra large garage', cars = 8, rooms = 4, cost = 12000, trailers = 5 },
 }
 M.ROOMS = {
   { id = 'workshop', name = 'Workshop', cost = 1500, factor = 0.7,
@@ -18,6 +19,8 @@ M.ROOMS = {
     text = 'Fill up or charge at home for 20 % less than at a station' },
   { id = 'rest', name = 'Rest room', cost = 500,
     text = 'Park at home for 3 minutes to get Rested: +10 % pay for the next hour' },
+  { id = 'yard', name = 'Trailer yard', cost = 1500, spots = 2,
+    text = 'Room for 2 more trailers at home' },
 }
 local roomById = {}
 for _, r in ipairs(M.ROOMS) do roomById[r.id] = r end
@@ -103,7 +106,8 @@ function M.upgrade(c, debt)
   pay(c, nextLevel.cost, nextLevel.name)
   h.level = h.level + 1
   h.capacity = math.max(h.capacity, nextLevel.cars)
-  return true, string.format('Upgraded to %s: room for %d cars and %d rooms.', nextLevel.name, nextLevel.cars, nextLevel.rooms)
+  return true, string.format('Upgraded to %s: room for %d cars, %d trailers and %d rooms.', nextLevel.name, nextLevel.cars,
+    nextLevel.trailers, nextLevel.rooms)
 end
 
 function M.build(c, id, debt)
@@ -146,6 +150,13 @@ function M.restedPay(c, amount)
   return amount + extra, extra
 end
 
+-- Trailer spots at home: the step's, plus the Trailer yard room's.
+function M.trailerSpots(c)
+  local level = M.level(c)
+  if not level then return 0 end
+  return (level.trailers or 0) + (M.has(c, 'yard') and roomById.yard.spots or 0)
+end
+
 -- Everything the home screen shows.
 function M.state(c, p, debt)
   local h = M.restore(c)
@@ -154,9 +165,13 @@ function M.state(c, p, debt)
   local out = { name = h.name, town = h.town, level = h.level, levelName = cur.name, cars = h.capacity,
     slots = cur.rooms, used = roomCount(h), here = M.near(c, p), rooms = {},
     rested = M.rested(c) and math.ceil((c.restedLeft or 0) / 60) or nil,
-    resting = c.restingT and math.max(1, math.ceil((M.REST_S - c.restingT) / 60)) or nil }
+    resting = c.restingT and math.max(1, math.ceil((M.REST_S - c.restingT) / 60)) or nil,
+    trailerSpots = M.trailerSpots(c), trailersHere = 0 }
+  for _, t in ipairs(type(c.trailers) == 'table' and type(c.trailers.list) == 'table' and c.trailers.list or {}) do
+    if type(t) == 'table' and t.place == 'home' then out.trailersHere = out.trailersHere + 1 end
+  end
   if nextLevel then
-    out.next = { name = nextLevel.name, cars = nextLevel.cars, rooms = nextLevel.rooms, cost = nextLevel.cost,
+    out.next = { name = nextLevel.name, cars = nextLevel.cars, rooms = nextLevel.rooms, cost = nextLevel.cost, trailers = nextLevel.trailers,
       can = (debt or 0) <= 0 and (c.money or 0) >= nextLevel.cost }
   end
   for i, r in ipairs(M.ROOMS) do

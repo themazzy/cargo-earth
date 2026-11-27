@@ -2795,13 +2795,19 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   s.driverTick = fleet.SHIFT_S
   advance(core, 1)
   assert(truck.driver.waiting == 'trailer' and c.money == money, 'no trailer: no shift')
-  hq = core.hqDo('buyTrailer', 'dryvan')
-  assert(#hq.trailers == 1 and firm.ownsTrailer(c, 'dryvan'), tostring(hq.msg))
+  -- your own trailers (they need a home): one parked at home or at the headquarters serves a hired driver too
+  local homeRules = require('cargoEarth/home')
+  assert(homeRules.claim(c, { lat = pose.lat, lon = pose.lon, speed = 0 }))
+  local tp = core.trailerDo('buyNew', 'box48')
+  assert(#tp.list == 1 and tp.list[1].place == 'home' and c.accounts.history[1].category == 'trailer', tostring(tp.msg))
+  hq = core.hqState()
+  assert(#hq.trailers == 0 and hq.trailerYard == 6, 'the yard lists only trailers parked there')
   money = c.money
   s.driverTick = fleet.SHIFT_S
   advance(core, 1)
   local net = fleet.net(truck.driver, truck, 1)
   assert(not truck.driver.waiting and c.money == money + net and truck.km > 0, 'a shift with the trailer')
+  assert(c.trailers.list[1].km > 0, 'the trailer wears with the driver\'s kilometres')
   -- an accident: the truck waits at the headquarters until it is repaired
   core.random = function(a, b) if a then return b and a or 1 end return 0 end
   s.driverTick = fleet.SHIFT_S
@@ -2817,34 +2823,39 @@ test('the firm buys trucks and trailers; skilled drivers work them and wait for 
   upkeep.ensure(truck).oil = 900
   hq = core.hqDo('service', truck.fleetId)
   assert(truck.service.oil == 0, tostring(hq.msg))
-  -- the trailer sells back for half
+  -- a trailer sells back by its value
   money = c.money
-  core.hqDo('sellTrailer', hq.trailers[1].id)
-  assert(c.money == money + firm.TRAILERS[1].price / 2 and #firm.trailers(c) == 0)
-  -- a tow trailer of the firm's is taken out here and goes on your hitch (Jan: how do I get my own trailer?)
+  local quote = core.trailerState().list[1].sellFor
+  tp = core.trailerDo('sell', c.trailers.list[1].id)
+  assert(c.money == money + quote and #tp.list == 0, tostring(tp.msg))
+  -- a car trailer of yours is taken out at home and goes on your hitch; it is parked there again
   local tr = require('cargoEarth/trailers')
-  local saved = { tr.takeOwn, tr.ownOut, tr.putAwayOwn }
+  local names = { 'takePool', 'poolCoupled', 'poolVid', 'parkPool', 'poolDistance', 'poolDamage' }
+  local saved = {}
+  for _, n in ipairs(names) do saved[n] = tr[n] end
   local out = nil
-  tr.takeOwn = function(kind) out = kind return true end
-  tr.ownOut = function() return out and 5 or nil end
-  tr.putAwayOwn = function() out = nil end
+  tr.takePool = function(id) out = id return true end
+  tr.poolCoupled = function(id) return out == id end
+  tr.poolVid = function(id) return out == id and 77 or nil end
+  tr.parkPool = function() out = nil end
+  tr.poolDistance = function() return 5 end
+  tr.poolDamage = function() return nil end
   local ok, err = pcall(function()
-    c.money = c.money + 5000
     vehicle.slotPartMap = { body = 'pigeon', hitch = 'pigeon_tow_hitch' }
-    hq = core.hqDo('buyTrailer', 'smalltrailer')
-    local row = hq.trailers[#hq.trailers]
-    assert(row.tow and row.canTake and not row.out, 'a tow trailer can be taken out: ' .. tostring(hq.msg) .. ' ' .. tostring(row.needs))
-    hq = core.hqDo('takeTrailer', row.id)
-    row = hq.trailers[#hq.trailers]
-    assert(out == 'smalltrailer' and row.out and not row.canTake, tostring(hq.msg))
-    hq = core.hqDo('leaveTrailer', row.id)
-    assert(out == nil and not hq.trailers[#hq.trailers].out, 'left in the yard')
+    tp = core.trailerDo('buyNew', 'smalltrailer')
+    local row = tp.list[1]
+    assert(row and row.place == 'home' and row.canTake, 'it can be taken out at home: ' .. tostring(tp.msg) .. ' ' .. tostring(row and row.needs))
+    tp = core.trailerDo('takeOut', row.id)
+    row = tp.list[1]
+    assert(out == row.id and row.place == 'out' and row.hitched and row.canPark, tostring(tp.msg))
+    tp = core.trailerDo('park', row.id)
+    assert(out == nil and tp.list[1].place == 'home', tostring(tp.msg))
     -- not without a tow hitch
     vehicle.slotPartMap = { body = 'pigeon' }
-    hq = core.hqState()
-    assert(not hq.trailers[#hq.trailers].canTake and hq.trailers[#hq.trailers].needs == 'Needs a tow hitch')
+    tp = core.trailerState()
+    assert(not tp.list[1].canTake and tp.list[1].needs == 'Needs a tow hitch')
   end)
-  tr.takeOwn, tr.ownOut, tr.putAwayOwn = saved[1], saved[2], saved[3]
+  for _, n in ipairs(names) do tr[n] = saved[n] end
   assert(ok, err)
 end)
 
@@ -3041,10 +3052,25 @@ test('a tractor gets resupply offers among its freight jobs', function()
   withStation(s, 50.3, 14)
   core.setMode('trucking')
   advance(core, 2)
+  -- your own tractor work needs a trailer of yours on the hitch
+  core.generate()
+  assert(#s.offers == 0 and s.noRig, 'no trailer of yours: no freight')
+  assert(core.freightHint({}, 'semi', nil):find('home garage'), 'trailers need a home')
+  local rigs = require('cargoEarth/rigs')
+  local pool = require('cargoEarth/trailerpool')
+  local haulRig = rigs.haulRig
+  rigs.haulRig = function() return { id = 1, entry = pool.byId.box48 } end
   core.generate()
   local job
   for _, offer in ipairs(s.offers) do if offer.resupply then job = offer end end
+  assert(not job, 'a box trailer takes no fuel')
+  rigs.haulRig = function() return { id = 1, entry = pool.byId.tanker } end
+  core.generate()
+  rigs.haulRig = haulRig
+  for _, offer in ipairs(s.offers) do if offer.resupply then job = offer end end
   assert(job and job.resupplyBonus > 0 and job.to.n == 'Test pump' and not job.special, 'a resupply job is offered')
+  assert(job.haul.pool == 1 and job.haul.trailerName == pool.byId.tanker.name and job.haul.amount > haul.tiers.semi.bulk,
+    'it goes in your tanker, as much as it takes')
 end)
 
 local tow = require('cargoEarth/tow')
@@ -5916,6 +5942,49 @@ test('experience pay grows with each job of a kind, higher for later-unlocked wo
   assert(rows.firm.exp == nil)
 end)
 
+test('your trailers: spots at home, new and used, left and fetched, old firm trailers move in', function()
+  local pool = require('cargoEarth/trailerpool')
+  local homeRules = require('cargoEarth/home')
+  local c = { money = 50000, firm = { trailers = { { id = 1, kind = 'dryvan', name = 'Box trailer' }, { id = 2, kind = 'nope' } } } }
+  pool.restore(c)
+  assert(#c.trailers.list == 1 and c.trailers.list[1].cat == 'box48' and c.trailers.list[1].place == 'hq' and #c.firm.trailers == 0)
+  c.firm, c.trailers = nil, nil
+  assert(not pool.buyNew(c, 'box28', homeRules, 0), 'no home: no trailer')
+  assert(homeRules.claim(c, { lat = 50, lon = 14, speed = 0 }))
+  assert(pool.spots(c, homeRules) == 1, 'the basic home has one trailer spot')
+  assert(pool.buyNew(c, 'box28', homeRules, 0) and c.money == 47000)
+  local ok, msg = pool.buyNew(c, 'tanker', homeRules, 0)
+  assert(not ok and msg:find('No free trailer spot'))
+  c.home.rooms.yard = true
+  assert(pool.spots(c, homeRules) == 3 and pool.buyNew(c, 'tanker', homeRules, 0))
+  -- the used market: every family listed, at the sellers given; a bought one waits at the seller
+  local n = 0
+  local rnd = function() n = n + 1 return (n % 7) / 7 end
+  pool.marketTick(c, 1, rnd, { { n = 'Yard A', g = { 50.1, 14 } } })
+  local fams = {}
+  for _, l in ipairs(c.trailerMarket.list) do fams[pool.byId[l.cat].family] = true
+    assert(l.price >= pool.byId[l.cat].price * 0.4 - 5 and l.price <= pool.byId[l.cat].price and l.seller.n == 'Yard A') end
+  for f in pairs(pool.FAMILIES) do assert(fams[f], 'listed: ' .. f) end
+  local l = c.trailerMarket.list[1]
+  local ok2, _, t = pool.buyUsed(c, l.id, homeRules, 0)
+  assert(ok2 and t.place == 'left' and t.at.n == 'Yard A' and t.paid == l.price and not pool.listing(c, l.id))
+  assert(not pool.room(c, homeRules) and not pool.buyNew(c, 'box28', homeRules, 0), 'every spot is spoken for')
+  -- selling: parked only, never more than it is worth or than you paid
+  assert(not pool.sell(c, t.id), 'not while it stands at the seller')
+  local first = c.trailers.list[1]
+  first.condition = 0.5
+  local ok3, _, price = pool.sell(c, first.id)
+  assert(ok3 and price == pool.value({ cat = 'box28', condition = 0.5, km = 0 }) * pool.SELL_SHARE)
+  assert(pool.fetchCost(1) == 50 and pool.fetchCost(100) == 390)
+  -- nothing broken survives a load
+  c.trailers.list[#c.trailers.list + 1] = { id = 99, cat = 'gone' }
+  c.trailers.list[#c.trailers.list + 1] = { id = 100, cat = 'box28', place = 'left', km = -5, condition = 0/0 }
+  pool.restore(c)
+  local last = c.trailers.list[#c.trailers.list]
+  assert(last.id == 100 and last.place == 'home' and last.km == 0 and last.condition == 1 and last.isTrailer)
+  assert(c.trailers.seq >= 100)
+end)
+
 test('freight pays the distance rate for a full load and less for a light one', function()
   local haul = require('cargoEarth/haul')
   assert(haul.fill({ tier = 'van', kind = 'parcel', amount = 96, kg = 864 }) == 1)
@@ -5928,7 +5997,28 @@ test('freight pays the distance rate for a full load and less for a light one', 
   assert(haul.prepare(full, 'van', rowsFor(96), idx) and full.pay == 150 + 18 * 10 and full.loadBonus == 0)
   local light = { cargo = 'pallets_general', km = 10, pickupKm = 1 }
   assert(haul.prepare(light, 'van', rowsFor(48), idx))
-  assert(light.loadFill == 0.5 and light.pay == math.floor(330 * 0.875 / 5 + 0.5) * 5 and light.loadBonus == light.pay - 330)
+  -- the trip part stays, the distance part follows the load: 150 + 180 x (0.4 + 0.6 x 0.5)
+  assert(light.loadFill == 0.5 and light.pay == 275 and light.loadBonus == light.pay - 330, tostring(light.pay))
+  -- your own trailer: a bigger one carries and earns more (above a full class load at half the rate, up to 1.3)
+  local pool = require('cargoEarth/trailerpool')
+  local sidx = { cargo = { pallets_general = { pay = 1 } } }
+  local function own(cat)
+    local job = { cargo = 'pallets_general', km = 100, pickupKm = 1 }
+    assert(haul.prepare(job, 'semi', nil, sidx, { id = 7, entry = pool.byId[cat] }))
+    return job
+  end
+  local small, mid, big = own('box28'), own('box48'), own('box53')
+  assert(small.haul.amount == 600 and mid.haul.amount == 1600 and big.haul.amount > 1600, big.haul.amount)   -- (by its payload)
+  assert(mid.loadFill == 1 and mid.pay == haul.loadPay('semi', 100, 1, 1) and small.pay < mid.pay and big.pay > mid.pay)
+  assert(big.loadFill <= 1.3 and small.haul.pool == 7 and small.haul.trailerName == pool.byId.box28.name)
+  -- the load picker: steps of one box; a half load pays about 70 % of the distance part
+  local st = haul.steps(mid.haul)
+  assert(st.unit == 100 and st.n == 16 and st.max == 16)
+  local before = mid.pay
+  assert(haul.setSteps(mid, 8) and mid.haul.amount == 800 and mid.loadFill == 0.5 and mid.pay < before)
+  assert(mid.pay == haul.loadPay('semi', 100, 0.5, 1), mid.pay)
+  assert(not haul.setSteps(mid, 8), 'no change')
+  assert(haul.setSteps(mid, 99) and mid.haul.amount == 1600 and mid.pay == before, 'capped at what fits, pay back')
 end)
 
 test('Unstuck fixes the car in place for free (company vehicles too), standing still, once per five minutes', function()

@@ -55,7 +55,7 @@ M.HITCH_TRIES = 120  -- frames to wait for the game to know a new trailer's coup
 local kindOut = nil  -- the tow trailer kind that is out (for its deck)
 local adopted = false  -- the model of the player's own trailer when that is the one out (coupled before the job): never deleted
 local hitchWanted = nil  -- { vehicle id, trailer id, frames left }: couple the trailer that was just spawned
-local ownId = nil   -- the firm's own tow trailer the player took out at the headquarters (a job never deletes it)
+local pool = {}     -- [pool trailer id] = vehicle id: your own trailers that are out (cargoEarth/trailerpool, rigs)
 
 function M.configure(cfg)
   for k, v in pairs((cfg and cfg.trailerModels) or {}) do
@@ -166,7 +166,7 @@ end
 
 -- Is there room behind the player's vehicle for this kind of trailer (no other vehicle, wall or building there)?
 -- True, or false and why.
-function M.roomBehind(kind)
+function M.roomBehind(kind, lenM)
   local veh = getPlayerVehicle and getPlayerVehicle(0)
   if not veh then return false, 'no player vehicle' end
   local dir = veh:getDirectionVector()
@@ -175,12 +175,12 @@ function M.roomBehind(kind)
   dir = dir:normalized()
   local half = 2.4
   pcall(function() half = veh:getSpawnWorldOOBB():getHalfExtents().y end)
-  local len = M.TRAILER_LEN[kind] or 14
+  local len = lenM or M.TRAILER_LEN[kind] or 14
   local pos = veh:getPosition()
   local c = pos - dir * (half + len / 2 + 0.3)
   local skip = { [veh:getID()] = true }
   if id then skip[id] = true end
-  if ownId then skip[ownId] = true end
+  for _, vid in pairs(pool) do skip[vid] = true end
   for _, tid in ipairs(towed) do skip[tid] = true end
   if vehicleIn(c, dir, len / 2, 1.3, skip) then return false, 'another car stands behind you' end
   local eye = vec3(pos.x, pos.y, pos.z + 1)
@@ -650,37 +650,93 @@ function M.ownTowTrailer(kind)
   end
 end
 
--- The firm's own tow trailer of this kind, taken out at the headquarters: spawned behind the player's vehicle and put
--- on its hitch. A job uses it as the player's own (M.adopt) and never deletes it. True, or false and why.
-function M.takeOwn(kind)
+-- ===== Your own trailers (cargoEarth/trailerpool) =====
+-- Spawn your trailer behind the player's vehicle and put it on the hitch. model/config: its stock model and config
+-- (a .pc name or a table); tow: its tow kind, whose model fallbacks are used (the small car trailer). lenM: its length
+-- for the room check. True, or false and why.
+function M.takePool(poolId, model, config, tow, lenM)
   local veh = getPlayerVehicle and getPlayerVehicle(0)
   if not veh then return false, 'no player vehicle' end
-  M.putAwayOwn()
-  local model, config = M.towModel(kind)
-  if not model then return false, 'this game has no ' .. tostring(kind) .. ' trailer' end
-  local room, why = M.roomBehind(kind)
+  if tow then
+    local m, c = M.towModel(tow)
+    if not m then return false, 'this game has no ' .. tostring(tow) .. ' trailer' end
+    if m ~= model or not config then model, config = m, c end
+  end
+  if not M.modelExists(model) then return false, 'this game has no ' .. tostring(model) .. ' trailer' end
+  M.parkPool(poolId)
+  local room, why = M.roomBehind(nil, lenM)
   if not room then return false, why end
   local v, err = spawnBehind(veh, model, config)
   if not v then return false, err end
-  ownId = v:getID()
-  hitchWanted, hitchFailed = { veh:getID(), ownId, M.HITCH_TRIES }, false
+  pool[poolId] = v:getID()
+  hitchWanted, hitchFailed = { veh:getID(), pool[poolId], M.HITCH_TRIES }, false
   return true
 end
 
--- The firm's trailer that is out (its vehicle id), or nil.
-function M.ownOut()
-  if ownId and not scenetree.findObjectById(ownId) then ownId = nil end
-  return ownId
+-- The vehicle id of your trailer that is out, or nil.
+function M.poolVid(poolId)
+  local vid = pool[poolId]
+  if vid and not scenetree.findObjectById(vid) then pool[poolId], vid = nil, nil end
+  return vid
 end
 
--- Leave the firm's trailer at the headquarters (it goes back to the yard).
-function M.putAwayOwn()
-  local o = ownId and scenetree.findObjectById(ownId)
-  if o then
-    if id == ownId then id, adopted, kindOut = nil, false, nil end
-    o:delete()
-  end
-  ownId = nil
+-- Your trailers that are out: { [pool id] = vehicle id }.
+function M.poolOut()
+  local out = {}
+  for pid in pairs(pool) do local vid = M.poolVid(pid) if vid then out[pid] = vid end end
+  return out
+end
+
+-- Is your trailer on the player's hitch?
+function M.poolCoupled(poolId, vehicleId)
+  local vid = M.poolVid(poolId)
+  return vid ~= nil and M.coupledIds(vehicleId, vid)
+end
+
+-- Metres from your trailer to the player's vehicle, or nil.
+function M.poolDistance(poolId)
+  local vid = M.poolVid(poolId)
+  local o = vid and scenetree.findObjectById(vid)
+  local veh = getPlayerVehicle and getPlayerVehicle(0)
+  if not o or not veh then return nil end
+  return (o:getPosition() - veh:getPosition()):length()
+end
+
+-- Put your trailer on the hitch again (it stands near you).
+function M.hitchPool(poolId)
+  local veh = getPlayerVehicle and getPlayerVehicle(0)
+  local vid = M.poolVid(poolId)
+  if not veh or not vid then return false end
+  hitchWanted, hitchFailed = { veh:getID(), vid, M.HITCH_TRIES }, false
+  return true
+end
+
+-- Your trailer goes back into its spot (or is stored where it was left): the vehicle is removed.
+function M.parkPool(poolId)
+  local vid = pool[poolId]
+  pool[poolId] = nil
+  local o = vid and scenetree.findObjectById(vid)
+  if not o then return end
+  if id == vid then removeTowed() id, adopted, kindOut = nil, false, nil end
+  o:delete()
+end
+
+-- The game's damage number of your trailer, or nil.
+function M.poolDamage(poolId)
+  local vid = M.poolVid(poolId)
+  local o = vid and map and map.objects and map.objects[vid]
+  return o and tonumber(o.damage) or nil
+end
+
+-- A freight job uses your trailer that is out as its trailer: the containers are read and loaded there, and the job
+-- never deletes it. True when it is out.
+function M.adoptPool(poolId, model)
+  local vid = M.poolVid(poolId)
+  if not vid then return false end
+  if id == vid then return true end
+  M.remove()
+  id, adopted = vid, model or 'pool'
+  return true
 end
 
 -- Use the player's own coupled trailer for this tow job (it is never deleted). True when there is one.
