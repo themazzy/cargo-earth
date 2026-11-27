@@ -241,22 +241,26 @@ function M.setSteps(job, n)
   n = math.max(1, math.min(st.max, math.floor(tonumber(n) or st.n)))
   local amount = math.min(f.most or f.amount, n * st.unit)
   if amount == f.amount then return false end
-  local before = M.loadPay(f.tier, job.km, M.fill(f), job.loadFactor or 1)
+  -- the pay as offered is the baseline: every amount is priced from it, so going back and forth never drifts
+  if not job.loadPay0 then
+    job.loadPay0, job.pay0, job.resupply0 = M.loadPay(f.tier, job.km, M.fill(f), job.loadFactor or 1), job.pay, job.resupplyBonus
+  end
   f.amount, f.kg = amount, math.floor(amount * f.density + 0.5)
   job.tonnes = f.kg / 1000
   local fill = M.fill(f)
   local after = M.loadPay(f.tier, job.km, fill, job.loadFactor or 1)
   local rep = tonumber(job.reputationPay) or 1
-  local change = after - before
-  if job.resupply and job.resupplyBonus then
+  local change = after - job.loadPay0
+  if job.resupply and job.resupply0 then
     -- the fuel station's per-litre bonus follows the amount delivered too
     local resupply = require('cargoEarth/resupply')
     local extra = math.floor(amount * resupply.PER_LITRE / 5 + 0.5) * 5
-    change = change + extra - job.resupplyBonus
+    change = change + extra - job.resupply0
     job.resupplyBonus = extra
   end
-  job.pay = math.max(5, job.pay + math.floor(change * rep / 5 + 0.5) * 5)
-  job.loadFill, job.loadBonus = fill, (job.loadBonus or 0) + (after - before)
+  job.pay = math.max(5, job.pay0 + math.floor(change * rep / 5 + 0.5) * 5)
+  local base = math.floor((M.tiers[f.tier].base + M.tiers[f.tier].rate * job.km) * (job.loadFactor or 1) / 5 + 0.5) * 5
+  job.loadFill, job.loadBonus = fill, after - base
   if job.litres and f.kind == 'fluid' then job.litres = amount end
   return true
 end

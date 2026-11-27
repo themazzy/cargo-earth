@@ -84,6 +84,7 @@ local function takeOut(core, t, bulk)
   for _, other in ipairs(pool.list(c)) do
     if other.place == 'out' and trailers.poolCoupled(other.id, playerId(core)) then return false, 'Park the trailer you have first.' end
   end
+  if forJob then bulk = S.job.haul.bulk end   -- the job's own layout (boxes or bulk boxes), whatever was pressed
   bulk = bulk and e.bulk or nil
   local model, config = pool.config(e, jsonReadFile, bulk)
   local ok, why = trailers.takePool(t.id, model, config, e.tow, e.len)

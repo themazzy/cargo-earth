@@ -6031,6 +6031,16 @@ test('freight pays the distance rate for a full load and less for a light one', 
   assert(mid.pay == haul.loadPay('semi', 100, 0.5, 1), mid.pay)
   assert(not haul.setSteps(mid, 8), 'no change')
   assert(haul.setSteps(mid, 99) and mid.haul.amount == 1600 and mid.pay == before, 'capped at what fits, pay back')
+  -- with a reputation factor, going back and forth never drifts
+  local rep = own('box48')
+  rep.reputationPay, rep.pay = 0.9, math.floor(rep.pay * 0.9 / 5 + 0.5) * 5
+  local start = rep.pay
+  for _ = 1, 5 do haul.setSteps(rep, 5) haul.setSteps(rep, 6) end
+  local six = rep.pay
+  for _ = 1, 5 do haul.setSteps(rep, 5) haul.setSteps(rep, 6) end
+  assert(rep.pay == six, 'no drift')
+  haul.setSteps(rep, 16)
+  assert(rep.pay == start)
 end)
 
 test('Unstuck fixes the car in place for free (company vehicles too), standing still, once per five minutes', function()

@@ -3182,7 +3182,8 @@ function M.phoneState()
     out.active = { phase = S.phase, kind = j.kind or 'cargo', cargo = j.cargoName, items = j.items, from = place(j.from), to = place(j.to),
         orderType = j.orderType, handling = cargo.supports(j) and cargo.handling(j) or nil,
       freight = j.haul, freightStatus = S.freightStatus, route = j.route and parcel.state(j),
-      load = j.haul and j.haul.pool and S.phase == 'toPickup' and haul.steps(j.haul) or nil,
+      load = j.haul and j.haul.pool and S.phase == 'toPickup' and not (S.freightLoad and S.freightLoad.job == j)
+        and haul.steps(j.haul) or nil,
       canRestoreTrailer = j.trailer and ((not j.tow and not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested))
         or reloadFee ~= nil) or nil,
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
@@ -3354,7 +3355,9 @@ function M.phoneAction(a, orderId)
   elseif a == 'loadSteps' then
     -- the load picker (your own trailer): on the offer, or at the pickup before it is loaded
     local j = ph.incoming and ph.incoming.job or (S.job and S.phase == 'toPickup' and S.job) or nil
-    if j and j.haul and j.haul.pool and haul.setSteps(j, orderId) then
+    if j and j == S.job and S.freightLoad and S.freightLoad.job == j then
+      say('Loading has started: the amount stays.', 4)
+    elseif j and j.haul and j.haul.pool and haul.setSteps(j, orderId) then
       if j == S.job then saveCareer() end
     end
   elseif a == 'towLoad' then
