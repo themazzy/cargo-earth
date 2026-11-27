@@ -149,7 +149,8 @@ function M.info(job)
   if type(job) ~= 'table' or type(job.taxi) ~= 'table' then return nil end
   local rules, mode = M.mode(job)
   return { people = job.taxi.people, mode = mode, modeName = rules.name, fare = job.taxi.fare,
-    pickupRoadKm = job.taxi.pickupRoadKm, pickupEstimated = job.taxi.pickupEstimated, boardingError = job.taxi.boardingError }
+    pickupRoadKm = type(job.taxi.pickupRoadKm) == 'number' and math.floor(job.taxi.pickupRoadKm * 10 + 0.5) / 10 or nil,
+    pickupEstimated = job.taxi.pickupEstimated, boardingError = job.taxi.boardingError }
 end
 
 -- What a finished ride pays: fare after lateness and comfort, and the tip. fare: the ride's offered pay, minutes taken

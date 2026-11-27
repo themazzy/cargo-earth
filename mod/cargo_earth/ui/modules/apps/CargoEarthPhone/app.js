@@ -1377,7 +1377,14 @@ angular.module('beamng.apps')
     return (neg ? '−' : '') + m + ':' + (r < 10 ? '0' : '') + r
   }
   function mins(s) { return s < 60 ? 'under 1 min' : Math.ceil(s / 60) + ' min' }
-  function km(v) { return v === null || v === undefined ? '–' : String(v).replace('.', ',') + ' km' }
+  // any km value from the game: one decimal (whole km from 100 up), so a raw road length never spills out of a pill
+  function km(v) {
+    if (v === null || v === undefined || v === '') return '–'
+    var n = Number(v)
+    if (!isFinite(n)) return '–'
+    n = n >= 100 ? Math.round(n) : Math.round(n * 10) / 10
+    return String(n).replace('.', ',') + ' km'
+  }
 
   return {
     template:
