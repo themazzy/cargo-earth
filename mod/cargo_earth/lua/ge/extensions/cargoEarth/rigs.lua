@@ -53,6 +53,12 @@ local function where(c, p)
   if p and firm.atHq(c, p) then return 'hq' end
 end
 
+-- Where a fetched trailer is brought: home or the headquarters yard (pool.homeFor). nil when neither.
+function M.spotPoint(c, place)
+  if place == 'home' then return c.home and c.home.g end
+  if place == 'hq' then return c.firm and c.firm.hq and c.firm.hq.g end
+end
+
 local function canPull(rig, e)
   if e.pulls == 'semi' then return rig == 'semi' end
   return rig == 'hitch'
@@ -250,7 +256,7 @@ function M.act(core, name, a, b)
       if t.place ~= 'left' then ok, msg = false, 'It is not out anywhere.'
       else
         local place = pool.homeFor(c, home)
-        local g = c.home and c.home.g or (c.firm and c.firm.hq and c.firm.hq.g)
+        local g = M.spotPoint(c, place)
         if not place or not g then ok, msg = false, 'No free trailer spot to bring it to.'
         else
           local cost = pool.fetchCost(jobs.km(t.at.g[1], t.at.g[2], g[1], g[2]))
@@ -309,7 +315,7 @@ function M.state(core)
       local km = jobs.km(p.lat, p.lon, t.at.g[1], t.at.g[2])
       row.km_away = math.floor(km * 10 + 0.5) / 10
       row.near = km * 1000 <= pool.NEAR_M or nil
-      local g = c.home and c.home.g
+      local g = M.spotPoint(c, pool.homeFor(c, home))
       row.fetch = g and pool.fetchCost(jobs.km(t.at.g[1], t.at.g[2], g[1], g[2])) or nil
     end
     row.canTake = (not S.job or (S.job.haul and S.job.haul.pool == t.id)) and not c.employment and not row.needs and (
