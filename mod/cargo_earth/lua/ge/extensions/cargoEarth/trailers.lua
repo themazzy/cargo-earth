@@ -653,8 +653,9 @@ end
 -- ===== Your own trailers (cargoEarth/trailerpool) =====
 -- Spawn your trailer behind the player's vehicle and put it on the hitch. model/config: its stock model and config
 -- (a .pc name or a table); tow: its tow kind, whose model fallbacks are used (the small car trailer). lenM: its length
--- for the room check. True, or false and why.
-function M.takePool(poolId, model, config, tow, lenM)
+-- for the room check; swap: the trailer on the hitch is put back with another config (its stock load on or off), so the
+-- room it stood in is free. True, or false and why.
+function M.takePool(poolId, model, config, tow, lenM, swap)
   local veh = getPlayerVehicle and getPlayerVehicle(0)
   if not veh then return false, 'no player vehicle' end
   if tow then
@@ -664,8 +665,10 @@ function M.takePool(poolId, model, config, tow, lenM)
   end
   if not M.modelExists(model) then return false, 'this game has no ' .. tostring(model) .. ' trailer' end
   M.parkPool(poolId)
-  local room, why = M.roomBehind(nil, lenM)
-  if not room then return false, why end
+  if not swap then
+    local room, why = M.roomBehind(nil, lenM)
+    if not room then return false, why end
+  end
   local v, err = spawnBehind(veh, model, config)
   if not v then return false, err end
   pool[poolId] = v:getID()

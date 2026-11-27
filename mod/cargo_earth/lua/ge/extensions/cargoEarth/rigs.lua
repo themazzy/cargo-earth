@@ -66,6 +66,29 @@ end
 
 local function needsText(e) return e.pulls == 'semi' and 'Needs a tractor' or 'Needs a tow hitch' end
 
+-- The config a trailer is spawned with: its stock load on it when it carries one (t.load), else empty.
+function M.configOf(t, e, bulk)
+  local opt = t.load and pool.loadOptions(e, t.load.cargo)[t.load.n]
+  if opt then return pool.loadConfig(e, opt, jsonReadFile) end
+  return pool.config(e, jsonReadFile, bulk)
+end
+
+-- Put the stock load on the trailer on your hitch, or take it off (n nil): the trailer is spawned again in its loaded
+-- (or empty) stock config and coupled. True, or false and why. The job waits until it is on the hitch again.
+function M.swapLoad(core, t, cargoId, n)
+  local e = pool.entry(t)
+  if not e then return false, 'Unknown trailer.' end
+  local opt = n and pool.loadOptions(e, cargoId)[n]
+  if n and not opt then return false, 'This trailer cannot take that load.' end
+  local was = t.load
+  t.load = opt and { cargo = cargoId, n = n } or nil
+  local model, config = M.configOf(t, e, t.bulk)
+  local ok, why = trailers.takePool(t.id, model, config, nil, e.len, true)
+  if not ok then t.load = was return false, tostring(why) end
+  last[t.id] = nil   -- a new vehicle: its damage number starts again
+  return true
+end
+
 -- Take a parked (or left) trailer: spawned behind you and put on your hitch.
 local function takeOut(core, t, bulk)
   local S, c = core.state(), core.state().career
@@ -92,7 +115,7 @@ local function takeOut(core, t, bulk)
   end
   if forJob then bulk = S.job.haul.bulk end   -- the job's own layout (boxes or bulk boxes), whatever was pressed
   bulk = bulk and e.bulk or nil
-  local model, config = pool.config(e, jsonReadFile, bulk)
+  local model, config = M.configOf(t, e, bulk)
   local ok, why = trailers.takePool(t.id, model, config, e.tow, e.len)
   if not ok then return false, 'Could not get the trailer out: ' .. tostring(why) end
   t.from, t.place, t.bulk = t.place, 'out', bulk
@@ -316,7 +339,9 @@ function M.state(core)
     local row = { id = t.id, name = t.name, place = t.place, km = math.floor(t.km or 0), condition = t.condition,
       repair = t.repair or 0, value = pool.value(t), sellFor = pool.sellQuote(t), bulk = t.bulk, canBulk = e.bulk or nil,
       what = pool.FAMILIES[e.family].name, upkeep = upkeep.state(t, 1), hitched = onHitch and onHitch.id == t.id or nil,
-      at = t.at and t.at.n or nil, needs = not canPull(rig, e) and needsText(e) or nil }
+      at = t.at and t.at.n or nil, needs = not canPull(rig, e) and needsText(e) or nil,
+      loaded = t.load and (pool.loadOptions(e, t.load.cargo)[t.load.n] or {}).what or nil,
+      carries = M.carriesText(e) }
     if t.place == 'left' and p and t.at then
       local km = jobs.km(p.lat, p.lon, t.at.g[1], t.at.g[2])
       row.km_away = math.floor(km * 10 + 0.5) / 10
@@ -335,7 +360,7 @@ function M.state(core)
   end
   for _, e in ipairs(pool.CATALOGUE) do
     out.shop[#out.shop + 1] = { id = e.id, name = e.name, price = e.price, what = pool.FAMILIES[e.family].name,
-      boxes = e.boxes, tankL = e.tankL, payload = e.payload, pulls = e.pulls,
+      boxes = e.boxes, tankL = e.tankL, payload = e.payload, pulls = e.pulls, carries = M.carriesText(e),
       can = c.home ~= nil and out.room and debt <= 0 and (c.money or 0) >= e.price or nil }
   end
   local m = c.trailerMarket
@@ -349,6 +374,26 @@ function M.state(core)
   end
   table.sort(out.used, function(a, b) return (a.away or 1e9) < (b.away or 1e9) end)
   return out
+end
+
+-- What a trailer carries, for the phone: "Boxes, coils, pipes, planks".
+local LOAD_NAMES = { steel_coils = 'steel coils', steel_beams = 'steel pipes', lumber = 'planks', stone_blocks = 'marble',
+  logs = 'logs', containers = 'containers', hay = 'hay bales', furniture = 'furniture' }
+local LOAD_ORDER = { 'steel_coils', 'steel_beams', 'lumber', 'stone_blocks', 'logs', 'containers', 'hay', 'furniture' }
+function M.carriesText(e)
+  local out = {}
+  local fam = pool.FAMILIES[e.family] or {}
+  if (e.boxes or 0) > 0 then out[#out + 1] = string.format('%d cargo boxes', e.boxes) end
+  if e.bulk then out[#out + 1] = 'dry bulk' end
+  if e.tankL then out[#out + 1] = string.format('%d L tank', e.tankL) end
+  if fam.chilled then out[#out + 1] = 'chilled food' end
+  for _, id in ipairs(LOAD_ORDER) do
+    if #pool.loadOptions(e, id) > 0 then out[#out + 1] = LOAD_NAMES[id] end
+  end
+  if fam.home then out[#out + 1] = 'home deliveries' end
+  if e.tow then out[#out + 1] = 'tow jobs' end
+  local text = table.concat(out, ', ')
+  return text:sub(1, 1):upper() .. text:sub(2)
 end
 
 -- The trailer you pull for your own semi jobs: its catalogue entry and bulk mode, as cargoEarth/haul wants it.
@@ -365,6 +410,50 @@ function M.parkedSummary(c)
     if t.place == 'home' or t.place == 'hq' or t.place == 'left' then out[#out + 1] = t.name end
   end
   return out
+end
+
+-- A stock load job at the pickup (unload false) or at the drop (true): the trailer is spawned again in its loaded (or
+-- empty) stock config and the job goes on once it is back on the hitch. True when done. Uses core's freight load state
+-- (S.freightLoad, marked load = true) so the delivery knows unloading has started.
+M.SWAP_WAIT_S = 4
+function M.loadWork(core, job, unload)
+  local S = core.state()
+  local t = pool.find(S.career, job.haul.pool)
+  if not t then S.freightStatus = 'Your trailer for this load is gone.' return false end
+  local state = S.freightLoad
+  if not state or state.job ~= job or not state.load then
+    state = { job = job, load = true }
+    S.freightLoad = state
+  end
+  local command = unload and 'unload' or 'load'
+  if state.command == command .. 'Done' or (not unload and state.command == 'unloadDone') then return true end
+  local want = not unload and job.haul.amount or nil
+  local done = (want == nil and t.load == nil) or (want ~= nil and t.load ~= nil and t.load.cargo == job.cargo and t.load.n == want)
+  if done then
+    if trailers.poolCoupled(t.id, playerId(core)) then
+      state.command, S.freightStatus = command .. 'Done', nil
+      return true
+    end
+    S.freightStatus = (trailers.hitching() or trailers.latching()) and (unload and 'Unloading…' or 'Loading…') or 'Couple your trailer.'
+    return false
+  end
+  if state.command == command and S.clock < (state.sentAt or 0) + M.SWAP_WAIT_S then return false end
+  local ok, why = M.swapLoad(core, t, job.cargo, want)
+  state.command, state.sentAt = command, S.clock
+  S.freightStatus = ok and (unload and 'Unloading…' or 'Loading…') or ('The load could not be put on: ' .. why)
+  return false
+end
+
+-- A stock load job left (cancelled or failed): its load comes off the trailer.
+function M.dropLoad(core, job)
+  local t = job and job.haul and job.haul.pool and pool.find(core.state().career, job.haul.pool)
+  if not (t and t.load) then return end
+  -- on your hitch it is spawned again empty; standing elsewhere, it comes out empty the next time it is taken
+  if t.place == 'out' and trailers.poolCoupled(t.id, playerId(core)) then
+    if not M.swapLoad(core, t, nil, nil) then t.load = nil end
+  else
+    t.load = nil
+  end
 end
 
 return M

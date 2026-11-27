@@ -316,17 +316,27 @@ local function clearFreight()
   end
 end
 
+-- Does the vehicle class fit the job's haul? A trailer job of your own behind a car (tier 'trailer') fits anything but a
+-- tractor; the trailer itself is checked on the hitch.
+function M.tierFits(tier, h)
+  if not tier or not h then return false end
+  if h.tier == 'trailer' then return tier ~= 'semi' end
+  return tier == h.tier
+end
+
 -- A requested bridge update is followed by a new read, so a pickup or drop-off only completes after
 -- BeamNG has moved the physical load. Numeric container IDs are only kept for the current vehicle instance.
 local function workFreight(job, unload)
   local v, tier = freightCarrier()
-  if not v or tier ~= job.haul.tier or (job.haul.model and v.model ~= job.haul.model) then
+  if not v or not M.tierFits(tier, job.haul) or (job.haul.model and v.model ~= job.haul.model) then
     S.freightStatus = 'Use the truck you accepted this haul with.'
     return false
   end
   local G, id, data = M.G, v.id, v.data
-  if tier == 'semi' then
+  if tier == 'semi' or job.haul.pool then
     if job.haul.pool then trailers.adoptPool(job.haul.pool, 'pool') end   -- your own trailer (taken out again after a reload)
+    -- a stock load (coils, logs, planks...): the trailer is swapped to its loaded or empty config (cargoEarth/rigs)
+    if job.haul.kind == 'load' then return require('cargoEarth/rigs').loadWork(M, job, unload) end
     id = trailers.id()
     if not id or not trailers.coupled(v.id) then
       S.freightStatus = id and 'Couple the assigned trailer.' or 'Restore the assigned trailer.'
@@ -1025,6 +1035,21 @@ function M.partsOffers(p, room, range)
   return parts.offers(suppliers, workshops, p.lat, p.lon, room, M.random, roadKmFn(p), range)
 end
 
+-- Home deliveries for the utility or cargo trailer on your hitch (cargoEarth/homedeliv): from the nearest stores.
+function M.homeOffers(p, rig)
+  local hd = require('cargoEarth/homedeliv')
+  local pool = require('cargoEarth/trailerpool')
+  if not (rig and S.idx) then return {} end
+  local stores = {}
+  for _, d in ipairs(S.idx.depots or {}) do
+    if d.g and jobs.inBox(p.lat, p.lon, d.g, hd.NEAR_KM) and hd.isStore(d, S.idx.types) then stores[#stores + 1] = d end
+  end
+  local function near(lat, lon, k) return food.addressesNear(S.fidx, lat, lon, k) end
+  local function loads(id) return pool.homeLoads(rig.entry, id) end
+  local function rnd(n) return n and M.random(n) or M.random() end
+  return hd.offers(stores, near, p.lat, p.lon, loads, rnd)
+end
+
 -- specs: the vehicle's power and weight (tow.weak warns per job)
 local function towOffers(class, p, specs)
   local c = S.career
@@ -1134,7 +1159,14 @@ function M.generate()
     local ownRig = tier == 'semi' and not M.freePlay() and not S.career.employment
     local rig = ownRig and require('cargoEarth/rigs').haulRig(M) or nil
     S.noRig = ownRig and not rig or nil
-    if tier and not S.noRig and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or rows) then
+    -- a trailer of your own behind a car, an SUV, a van or a box truck: the board is the trailer's (tilt decks: hay and
+    -- planks; utility and cargo trailers: home deliveries)
+    local vtier = tier
+    if tier and tier ~= 'semi' and not M.freePlay() and not S.career.employment then
+      local r = require('cargoEarth/rigs').haulRig(M)
+      if r and r.entry.pulls == 'hitch' then tier, rig = 'trailer', r end
+    end
+    if tier and not S.noRig and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or tier == 'trailer' or rows) then
       -- an ordinary car or an SUV takes no company freight board: its own small work comes below
       local offers, stats = {}, nil
       if not haul.SMALL[tier] then
@@ -1182,10 +1214,15 @@ function M.generate()
           end
         end
       end
+      -- home deliveries from stores to real addresses: a utility or cargo trailer of your own
+      if tier == 'trailer' and S.fidx then
+        for _, offer in ipairs(M.homeOffers(p, rig)) do offers[#offers + 1] = offer end
+      end
       for _, offer in ipairs(offers) do
-        if offer.route or offer.partsRun or offer.taxi or haul.prepare(offer, tier, rows, S.idx, rig) then
+        if offer.route or offer.partsRun or offer.taxi or (offer.home and haul.homeLoad(offer, rig))
+          or (not offer.home and haul.prepare(offer, tier, rows, S.idx, rig)) then
           if offer.resupply then resupply.bonus(offer)
-          elseif not offer.route and not offer.taxi then special.roll(offer, tier, M.random) end
+          elseif not offer.route and not offer.taxi and not offer.home then special.roll(offer, tier, M.random) end
           if ownTruck then
             offer.fuelAllowance = math.floor(offer.km * haul.FUEL_ALLOWANCE[tier] / 5 + 0.5) * 5
             offer.pay = offer.pay + offer.fuelAllowance
@@ -1199,7 +1236,7 @@ function M.generate()
       S.offerStats = stats
     end
     -- tow jobs: broken-down cars at real addresses, for a vehicle with a tow hitch or a tractor
-    local class = v and tow.class(tier, tow.hasHitch(v))
+    local class = v and tow.class(vtier, tow.hasHitch(v))
     if class and S.fidx and garage.inOwnCar(M.G, S.career.garage) then
       for _, offer in ipairs(towOffers(class, p, v.specs)) do S.offers[#S.offers + 1] = offer end
     end
@@ -1363,10 +1400,10 @@ local function takeJob(j)
   elseif j.haul then
     local v, tier = freightCarrier()
     local store = v and refreshStorage()
-    if tier ~= j.haul.tier or not haul.allowed(S.career, tier) then
+    if not M.tierFits(tier, j.haul) or not haul.allowed(S.career, j.haul.tier) then
       say('Use a truck with the equipment for this haul.', 4) return
     end
-    if tier ~= 'semi' and not haul.plan(store and store.rows, j.haul) then
+    if tier ~= 'semi' and not j.haul.pool and not haul.plan(store and store.rows, j.haul) then
       say('This haul needs more free space in compatible containers.', 4) return
     end
     j.haul.model = v.model
@@ -1584,6 +1621,7 @@ end
 -- An order leaves the list; the next stop takes over, or the courier is free again.
 local function dropOrder(j)
   if j.haul then clearFreight() end
+  if j.haul and j.haul.kind == 'load' then require('cargoEarth/rigs').dropLoad(M, j) end
   if j.taxi then M.taxiSeats(0) end
   -- a tow job's trailer and the car(s) on it or waiting by the road go with it
   if j.tow then trailers.removeTow() end
@@ -2539,7 +2577,7 @@ local function incomingInfo(inc)
     pickupKm = r1(j.pickupKm), km = r1(j.km), pay = j.pay, minutes = j.minutes, adr = j.adr or false,
     special = special.info(j), resupplyBonus = j.resupplyBonus, litres = j.litres, tow = tow.info(j),
     taxi = require('cargoEarth/taxi').info(j),
-    load = j.haul and j.haul.pool and haul.steps(j.haul) or nil,
+    load = j.haul and j.haul.pool and not j.home and haul.steps(j.haul) or nil,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
     fuelAllowance = j.fuelAllowance, carBonus = j.carBonus, carRate = j.carRate, expBonus = j.expBonus, expRate = j.expRate, loadFill = j.loadFill, loadBonus = j.loadBonus,
@@ -3183,7 +3221,7 @@ function M.phoneState()
     out.active = { phase = S.phase, kind = j.kind or 'cargo', cargo = j.cargoName, items = j.items, from = place(j.from), to = place(j.to),
         orderType = j.orderType, handling = cargo.supports(j) and cargo.handling(j) or nil,
       freight = j.haul, freightStatus = S.freightStatus, route = j.route and parcel.state(j),
-      load = j.haul and j.haul.pool and S.phase == 'toPickup' and not (S.freightLoad and S.freightLoad.job == j)
+      load = j.haul and j.haul.pool and not j.home and S.phase == 'toPickup' and not (S.freightLoad and S.freightLoad.job == j)
         and haul.steps(j.haul) or nil,
       canRestoreTrailer = j.trailer and ((not j.tow and not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested))
         or reloadFee ~= nil) or nil,
@@ -3200,7 +3238,7 @@ function M.phoneState()
       leftS = math.floor(left + 0.5), arriveM = radius, stop = stopInfo(),
       pickupLeftS = S.phase == 'toPickup' and food.pickupMinutes(j)
         and math.floor(food.pickupMinutes(j) * 60 - M.elapsed(j) + 0.5) or nil,
-      cancelAsk = S.phone.cancelAskUntil ~= nil and S.clock <= S.phone.cancelAskUntil, trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or S.idx and S.idx.trailers[j.trailer] or j.trailer) or nil,
+      cancelAsk = S.phone.cancelAskUntil ~= nil and S.clock <= S.phone.cancelAskUntil, trailer = j.trailer and ((j.tow and tow.CLASSES[j.tow.class].name) or (j.haul and j.haul.trailerName) or S.idx and S.idx.trailers[j.trailer] or j.trailer) or nil,
       trailerM = j.trailerSpawned and trailers.distanceToPlayer() and math.floor(trailers.distanceToPlayer()) or nil,
       cancelFee = rules(j).cancelFee, count = #S.orders, carrying = carrying, orders = {},
       canHandover = M.canHandover() or nil, handoverPickup = S.phase == 'toPickup' or nil,
@@ -3358,7 +3396,7 @@ function M.phoneAction(a, orderId)
     local j = ph.incoming and ph.incoming.job or (S.job and S.phase == 'toPickup' and S.job) or nil
     if j and j == S.job and S.freightLoad and S.freightLoad.job == j then
       say('Loading has started: the amount stays.', 4)
-    elseif j and j.haul and j.haul.pool and haul.setSteps(j, orderId) then
+    elseif j and j.haul and j.haul.pool and not j.home and haul.setSteps(j, orderId) then
       if j == S.job then saveCareer() end
     end
   elseif a == 'towLoad' then

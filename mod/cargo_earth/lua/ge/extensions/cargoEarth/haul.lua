@@ -11,6 +11,9 @@ M.tiers = {
   -- distances bound the settings' range filter; the jobs themselves come from cargoEarth/parcel and cargoEarth/parts.
   car = { name = 'Car', minKm = 2, maxKm = 15, base = 40, rate = 8, speed = 35, slack = 10, kg = 150, parcel = 24 },
   suv = { name = 'SUV or pickup', minKm = 5, maxKm = 40, base = 70, rate = 10, speed = 40, slack = 12, kg = 400, parcel = 48 },
+  -- a trailer of your own behind a car, an SUV, a van or a box truck (tilt decks: hay and planks), 2026-11-27: the board
+  -- is the trailer's. Its pay is measured against a 8 t load, so a 30 ft tilt deck of hay pays about like a food hour.
+  trailer = { name = 'Car and trailer', minKm = 5, maxKm = 80, base = 150, rate = 14, speed = 45, slack = 15, kg = 8000, parcel = 0 },
 }
 M.SEMI_BULK_L = 12800   -- the dry-bulk trailer's 16 aggregate boxes of 800 L
 M.SMALL = { car = true, suv = true }   -- these tiers take no board of company freight
@@ -19,7 +22,7 @@ M.SMALL = { car = true, suv = true }   -- these tiers take no board of company f
 -- so trucks are the reward for progressing without making cars nearly free.
 -- A loaner runs on the company's fuel card. In your own vehicle you buy the fuel, so the job pays this much
 -- more per road km (about 9, 22 and 32 L/100 km of diesel).
-M.FUEL_ALLOWANCE = { car = 1, suv = 2, van = 3, rigid = 8, semi = 12 }
+M.FUEL_ALLOWANCE = { car = 1, suv = 2, van = 3, rigid = 8, semi = 12, trailer = 4 }
 M.VAN_GOAL, M.RIGID_GOAL = 3, 5   -- 2026-11-18 (Jan: the first own truck took far too long): was 5, 10
 M.loaners = {
   van = { model = 'van', key = 'h15_vanster', name = 'H-Series cargo van', label = 'van' },
@@ -36,6 +39,7 @@ M.loaners = {
 local parcel = {
   pallets_general = 9, consumer_goods = 7, electronics = 6, furniture = 7, car_parts = 11,
   glassware = 8, food_dry = 8, beer = 11, bricks = 14,
+  food_chilled = 8,   -- only in an insulated box (cargoEarth/trailerpool CHILLED_ONLY)
 }
 local fluid = { milk = 1.03, fuel = 0.83, chemicals = 1.25 }
 local dryBulk = { gravel = 1.8, sand = 1.6, grain = 0.75, wood_chips = 0.35, fertilizer = 0.9,
@@ -57,6 +61,7 @@ function M.state(career)
 end
 
 function M.allowed(career, tier)
+  if tier == 'trailer' then return true end   -- car trailers from the start
   local unlocked = M.state(career).unlocked
   return tier == 'van' or M.SMALL[tier] == true or tier == 'rigid' and unlocked ~= 'van' or tier == 'semi' and unlocked == 'semi'
 end
@@ -122,7 +127,11 @@ function M.carrier(vehicle)
   return kind or M.bodyClass(vehicle.model, vehicle.bodyStyle)
 end
 
-local function material(tier, id)
+local function material(tier, id, rig)
+  local pool = require('cargoEarth/trailerpool')
+  -- a stock load part (coils, logs, planks, a container...): only on a trailer of your own that takes it
+  if rig and pool.carries(rig.entry, 'load', id) then return 'load', 1 end
+  if pool.CHILLED_ONLY[id] and not (rig and pool.carries(rig.entry, 'parcel', id)) then return end
   if parcel[id] then return 'parcel', parcel[id] end
   if tier == 'van' or M.SMALL[tier] then return end
   if fluid[id] then return 'fluid', fluid[id] end
@@ -146,9 +155,20 @@ end
 -- rig: the player's own trailer behind a tractor (cargoEarth/trailerpool entry + bulk mode), or nil for the trailer the
 -- company or free play assigns. amount: the load picker's choice (parcel slots or litres), or nil for as much as fits.
 function M.freight(tier, id, rows, rig, amount)
-  local kind, density = material(tier, id)
+  local kind, density = material(tier, id, rig)
   if not kind then return end
   local t = M.tiers[tier]
+  if kind == 'load' then
+    -- whole stock loads: the picker's step is one of them (lightest first), its weight is the load part's
+    local opts = require('cargoEarth/trailerpool').loadOptions(rig.entry, id)
+    local kgs, whats = {}, {}
+    for i, o in ipairs(opts) do kgs[i], whats[i] = o.kg, o.what end
+    local most = #opts
+    local n = most
+    if amount then n = math.max(1, math.min(most, math.floor(tonumber(amount) or most))) end
+    return { tier = tier, kind = 'load', amount = n, most = most, space = 0, kgCap = rig.entry.payload or t.kg,
+      kg = kgs[n], density = 1, loadKg = kgs, loadWhat = whats, what = whats[n] }
+  end
   local nominal = kind == 'parcel' and t.parcel or t.bulk
   local kgCap = t.kg
   -- the space the pay is measured against: the class's (your own trailer can be smaller or bigger than that)
@@ -165,6 +185,7 @@ function M.freight(tier, id, rows, rig, amount)
     -- The assigned dry-bulk trailer has an 800 L aggregate box in each of its 16 box slots (cargoEarth/trailers).
     capacity = tier == 'semi' and (kind == 'dryBulk' and M.SEMI_BULK_L or nominal) or M.capacity(rows, kind)
   end
+  if not nominal then return end
   local most = math.min(nominal, capacity, math.floor(kgCap / density))
   if most < (kind == 'parcel' and 8 or 100) then return end
   local n = most
@@ -216,10 +237,29 @@ function M.prepare(job, tier, rows, idx, rig, amount)
   job.loadFill, job.loadBonus, job.loadFactor = fill, job.pay - base, factor
   job.minutes = math.floor((job.km + 1.3 * job.pickupKm) / t.speed * 60 + t.slack + 0.5)
   job.trailer = tier == 'semi' and (freight.kind == 'fluid' and 'tanker' or 'box') or nil
-  if tier == 'semi' then
+  if rig then job.trailer = rig.entry.family end   -- your own (its name is freight.trailerName)
+  if freight.kind == 'load' then
+    job.cargoName = string.format('%s (%s)', job.cargoName or job.cargo, freight.what)
+  end
+  if tier == 'semi' or tier == 'trailer' then
     freight.trailerName = rig and rig.entry.name or (freight.kind == 'fluid' and 'Tanker' or freight.kind == 'dryBulk' and 'Aggregate box trailer' or 'Box trailer')
   end
-  if rig then freight.pool, freight.bulk = rig.id, rig.bulk or nil end
+  if rig then freight.pool, freight.bulk, freight.family = rig.id, rig.bulk or nil, rig.entry.family end
+  return true
+end
+
+-- A home delivery (cargoEarth/homedeliv) on your utility or cargo trailer: its goods are the trailer's stock load
+-- number job.pick. False when the trailer cannot take them.
+function M.homeLoad(job, rig)
+  local opts = rig and require('cargoEarth/trailerpool').homeLoads(rig.entry, job.cargo) or {}
+  local o = opts[job.pick]
+  if not o then return false end
+  local kgs, whats = {}, {}
+  for i, x in ipairs(opts) do kgs[i], whats[i] = x.kg, x.what end
+  job.haul = { tier = 'trailer', kind = 'load', amount = job.pick, most = #opts, space = 0, kgCap = rig.entry.payload,
+    kg = o.kg, density = 1, loadKg = kgs, loadWhat = whats, what = o.what, pool = rig.id, family = rig.entry.family,
+    trailerName = rig.entry.name }
+  job.tonnes, job.trailer = o.kg / 1000, rig.entry.family
   return true
 end
 
@@ -246,6 +286,12 @@ function M.setSteps(job, n)
     job.loadPay0, job.pay0, job.resupply0 = M.loadPay(f.tier, job.km, M.fill(f), job.loadFactor or 1), job.pay, job.resupplyBonus
   end
   f.amount, f.kg = amount, math.floor(amount * f.density + 0.5)
+  if f.kind == 'load' and f.loadKg then
+    f.kg = f.loadKg[amount] or f.kg
+    local what = f.loadWhat and f.loadWhat[amount]
+    if what and f.what and job.cargoName then job.cargoName = job.cargoName:gsub('%(' .. f.what:gsub('%p', '%%%0') .. '%)$', '(' .. what .. ')') end
+    f.what = what or f.what
+  end
   job.tonnes = f.kg / 1000
   local fill = M.fill(f)
   local after = M.loadPay(f.tier, job.km, fill, job.loadFactor or 1)
