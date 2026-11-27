@@ -6267,3 +6267,124 @@ test('insurance: bought standing in your own car, a crash is covered, a write-of
   advance(core, 2)
   assert(g.repair == 0 and (g.car.insCover or 0) == 0 and s.insTow == nil, 'repair stays paid')
 end)
+
+test('own trailers part 2: stock loads, chilled only in the reefer, milk only in the food tanker', function()
+  local pool = require('cargoEarth/trailerpool')
+  local haul = require('cargoEarth/haul')
+  local e = pool.byId.flatbed48
+  local coils = pool.loadOptions(e, 'steel_coils')
+  assert(#coils == 2 and coils[1].kg < coils[2].kg, 'coil loads lightest first')
+  assert(pool.carries(e, 'load', 'steel_coils') and not pool.carries(e, 'load', 'logs'), 'flatbed takes coils, not logs')
+  local rig = { id = 7, entry = e }
+  local f = haul.freight('semi', 'steel_coils', nil, rig)
+  assert(f and f.kind == 'load' and f.amount == 2 and f.kg == 20720, 'full coil load: ' .. tostring(f and f.kg))
+  local job = { cargo = 'steel_coils', cargoName = 'Steel coils', km = 100, pickupKm = 5 }
+  local idx = { cargo = { steel_coils = { pay = 1.25 } } }
+  assert(haul.prepare(job, 'semi', nil, idx, rig), 'prepared')
+  assert(job.haul.pool == 7 and job.haul.family == 'flatbed' and job.cargoName:find('big steel coils', 1, true), job.cargoName)
+  local full = job.pay
+  assert(haul.setSteps(job, 1) and job.haul.kg == 15780 and job.pay < full and job.cargoName:find('%(3 steel coils%)'), job.cargoName)
+  assert(haul.setSteps(job, 2) and job.pay == full, 'back to full pays the same')
+  -- boxes still work on the flatbed
+  assert(haul.freight('semi', 'pallets_general', nil, rig).kind == 'parcel', 'pallets in boxes')
+  -- containers: Load Weight in 2 t steps up to the payload
+  local c = pool.loadOptions(pool.byId.container40, 'containers')
+  assert(c[1].kg == 2000 and c[#c].kg == 26740 and c[1].vars['$loadWeight'] == 2000, 'container steps')
+  local model, cfg = pool.loadConfig(pool.byId.container40, c[3], function() return { parts = {}, vars = { a = 1 } } end)
+  assert(model == 'containerTrailer' and cfg.vars['$loadWeight'] == 6000 and cfg.vars.a == 1, 'load weight set')
+  -- logs: 16 logs add parts to the 12-log config
+  local logs = pool.loadOptions(pool.byId.logs40, 'logs')
+  local _, l16 = pool.loadConfig(pool.byId.logs40, logs[3], function() return { parts = { log_F1 = 'log_load' } } end)
+  assert(#logs == 3 and l16.parts.log_F8 == 'log_load', '16 logs')
+  -- chilled food: the insulated box only
+  assert(not haul.freight('semi', 'food_chilled', nil, { id = 1, entry = pool.byId.box48 }), 'no chilled in a dry box')
+  assert(not haul.freight('van', 'food_chilled', { { id = 1, cargoTypes = { 'parcel' }, capacity = 96 } }), 'no chilled in a van')
+  assert(haul.freight('semi', 'food_chilled', nil, { id = 1, entry = pool.byId.reefer }).amount == 1800, 'reefer: 18 boxes')
+  assert(haul.freight('semi', 'milk', nil, { id = 1, entry = pool.byId.foodtanker }).amount == 22500, 'food tanker: milk')
+  assert(not haul.freight('semi', 'milk', nil, { id = 1, entry = pool.byId.tanker }), 'no milk in a fuel tanker')
+  assert(not haul.freight('semi', 'fuel', nil, { id = 1, entry = pool.byId.foodtanker }), 'no fuel in a food tanker')
+  -- special cargo by trailer: no chilled on a dry box, no oversize off a flatbed
+  local special = require('cargoEarth/special')
+  local function has(list, k) for _, x in ipairs(list) do if x == k then return true end end end
+  local dry = { cargo = 'beer', haul = { kind = 'parcel', pool = 1, family = 'box' } }
+  assert(not has(special.candidates(dry, 'semi'), 'chilled') and has(special.candidates(dry, 'semi'), 'fragile'), 'dry box')
+  local cold = { cargo = 'beer', haul = { kind = 'parcel', pool = 1, family = 'reefer' } }
+  assert(has(special.candidates(cold, 'semi'), 'chilled'), 'reefer can be chilled')
+  local big = { cargo = 'furniture', haul = { kind = 'parcel', pool = 1, family = 'box' } }
+  assert(not has(special.candidates(big, 'semi'), 'oversize'), 'oversize needs a flatbed')
+  -- every catalogue entry has what the market and the phone need
+  for _, x in ipairs(pool.CATALOGUE) do
+    assert(pool.FAMILIES[x.family] and x.price > 0 and x.payload > 0 and x.size and x.len and x.pulls, x.id)
+  end
+end)
+
+test('own trailers part 2: a tilt deck behind a car, home deliveries and pay', function()
+  local pool = require('cargoEarth/trailerpool')
+  local haul = require('cargoEarth/haul')
+  local hd = require('cargoEarth/homedeliv')
+  assert(haul.allowed({}, 'trailer'), 'car trailers from the start')
+  local rig = { id = 3, entry = pool.byId.tiltdeck30 }
+  local f = haul.freight('trailer', 'hay', nil, rig)
+  assert(f and f.kind == 'load' and f.kg == 3840, 'hay on the 30 ft tilt deck')
+  assert(not haul.freight('trailer', 'pallets_general', nil, rig), 'no boxes on the tilt deck')
+  local job = { cargo = 'hay', cargoName = 'Hay bales', km = 40, pickupKm = 3 }
+  assert(haul.prepare(job, 'trailer', nil, { cargo = { hay = { pay = 0.9 } } }, rig))
+  assert(job.pay >= 400 and job.pay <= 700 and job.trailer == 'tiltdeck', 'tilt deck pay ' .. job.pay)
+  -- utility trailers: home deliveries only, not the freight board
+  local u = pool.byId.utility_large
+  assert(not pool.carries(u, 'load', 'lumber') and #pool.homeLoads(u, 'lumber') == 2, 'utility: home deliveries')
+  local stores = { { id = 's1', n = 'Furniture World', g = { 50.0, 14.0 }, t = 'ce:stream:shop' },
+    { id = 's2', n = 'Grocer', g = { 50.001, 14.0 }, t = 'ce:stream:shop' } }
+  assert(hd.isStore(stores[1]) and not hd.isStore({ t = 'ce:stream:yard' }), 'stores')
+  local addr = { { 50.03, 14.0, 50.0301, 14.0, 'Main street 1', 'Town' }, { 50.0001, 14.0, 50.0001, 14.0, 'Too near', 'Town' } }
+  local seq = 0
+  local function rnd(n) seq = seq + 1 return n and 1 or 0.5 end
+  local offers = hd.offers(stores, function() return addr end, 50.0, 14.0, function(id) return pool.homeLoads(u, id) end, rnd)
+  assert(#offers == 2 and offers[1].from.id == 's1' and offers[1].to.n == 'Main street 1', 'furniture store first')
+  local o = offers[1]
+  assert(o.home and o.pay >= hd.MIN_PAY and o.cargo == 'furniture' and o.pick == 1, 'home offer')
+  assert(haul.homeLoad(o, { id = 5, entry = u }) and o.haul.kind == 'load' and o.haul.pool == 5 and o.haul.tier == 'trailer', 'home haul')
+  assert(not haul.homeLoad({ cargo = 'furniture', pick = 1 }, { id = 5, entry = pool.byId.tiltdeck30 }), 'tilt deck has no sofa')
+end)
+
+test('own trailers part 2: Fill up the rest adds stops on the way and keeps the main drop last', function()
+  local fillup = require('cargoEarth/fillup')
+  local haul = require('cargoEarth/haul')
+  local job = { cargo = 'consumer_goods', from = { id = 'a', n = 'A', g = { 50.0, 14.0 } }, to = { id = 'b', n = 'B', g = { 50.0, 15.0 } },
+    km = 95, minutes = 120, pay = 1500, loadFactor = 1,
+    haul = { tier = 'semi', kind = 'parcel', amount = 800, most = 1600, density = 7, space = 1600, kg = 5600, pool = 1, family = 'box' } }
+  assert(fillup.can(job) and fillup.room(job) == 800, 'room for fill-ups')
+  local acc = { { id = 'c', n = 'Near the way', g = { 50.01, 14.5 } }, { id = 'd', n = 'Far off', g = { 50.6, 14.5 } },
+    { id = 'b', n = 'B', g = { 50.0, 15.0 } }, { id = 'e', n = 'Close to A', g = { 50.0, 14.2 } } }
+  local offers = fillup.offers(job, acc, haul.tiers.semi, 1.3)
+  local ids = {} for _, o in ipairs(offers) do ids[#ids + 1] = o.to.id .. ":" .. o.slots .. ":" .. o.detourKm end
+  assert(#offers == 2 and offers[1].slots == 400, "two along the way: " .. table.concat(ids, " "))
+  local before = job.pay
+  assert(fillup.add(job, offers[2]))   -- the one close to A
+  assert(fillup.add(job, offers[1]))
+  local r = job.route
+  assert(r.fill and #r.stops == 3 and r.stops[1].id == 'e' and r.stops[2].id == 'c' and r.stops[3].main, 'stops in order')
+  assert(job.haul.amount == 1600 and job.to.id == 'e' and job.pay == before + offers[1].pay + offers[2].pay, 'load and pay')
+  assert(not fillup.can(job), 'no room left')
+  -- a light main load plus fill-ups pays about what a full load would
+  local full = haul.loadPay('semi', 95, 1, 1)
+  local half = haul.loadPay('semi', 95, 0.5, 1)
+  assert(math.abs((half + offers[1].pay + offers[2].pay) - full) < full * 0.35, 'fill-ups top a half load up')
+  -- not for tankers, home deliveries or company work
+  assert(not fillup.can({ haul = { kind = 'fluid', pool = 1, family = 'tanker', amount = 1, most = 9999 } }), 'no tanker fill-ups')
+end)
+
+test('own trailers part 2: a second fill-up is measured on the booked route (Codex)', function()
+  local fillup = require('cargoEarth/fillup')
+  local haul = require('cargoEarth/haul')
+  local job = { cargo = 'consumer_goods', from = { id = 'a', n = 'A', g = { 50.0, 14.0 } }, to = { id = 'b', n = 'B', g = { 50.0, 15.4 } },
+    km = 130, minutes = 160, pay = 1500, loadFactor = 1,
+    haul = { tier = 'semi', kind = 'parcel', amount = 400, most = 1600, density = 7, space = 1600, kg = 2800, pool = 1, family = 'box' } }
+  -- 25 km north and south of the middle: each alone is within 15 %, both together are not
+  local north, south = { id = 'n', n = 'North', g = { 50.225, 14.7 } }, { id = 's', n = 'South', g = { 49.775, 14.7 } }
+  local first = fillup.offers(job, { north, south }, haul.tiers.semi, 1.3)
+  assert(#first == 2, 'each alone fits: ' .. #first)
+  fillup.add(job, first[1])
+  local second = fillup.offers(job, { north, south }, haul.tiers.semi, 1.3)
+  assert(#second == 0, 'both together go over the detour limit')
+end)

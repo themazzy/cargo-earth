@@ -128,7 +128,7 @@ function M.state(job)
   local r = job.route
   if not r then return nil end
   local density = job.haul and job.haul.density or M.DENSITY
-  local out = { at = r.at, count = #r.stops, left = M.left(job, true), stops = {} }
+  local out = { at = r.at, count = #r.stops, left = M.left(job, true), stops = {}, fill = r.fill or nil }
   out.kg = math.floor(out.left * density + 0.5)
   for i, s in ipairs(r.stops) do
     out.stops[i] = { name = s.n, town = s.town, slots = s.slots, kg = math.floor(s.slots * density + 0.5),

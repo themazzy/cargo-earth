@@ -280,6 +280,13 @@
    "tonnes": 22,
    "pay": 1.15,
    "adr": false
+  },
+  "hay": {
+   "name": "Hay bales",
+   "trailer": "flatbed",
+   "tonnes": 8,
+   "pay": 0.9,
+   "adr": false
   }
  },
  "types": {
@@ -318,7 +325,8 @@
     "plastics",
     "chemicals",
     "pallets_general",
-    "machinery"
+    "machinery",
+    "lumber"
    ]
   },
   "automotive": {
@@ -425,12 +433,15 @@
     "grain",
     "sugar_beet",
     "milk",
-    "livestock"
+    "livestock",
+    "logs",
+    "hay"
    ],
    "accepts": [
     "fertilizer",
     "animal_feed",
-    "machinery"
+    "machinery",
+    "hay"
    ]
   },
   "quarry": {
@@ -464,7 +475,8 @@
    "accepts": [
     "gravel",
     "sand",
-    "cement"
+    "cement",
+    "stone_blocks"
    ]
   },
   "glassworks": {
@@ -541,7 +553,9 @@
    "accepts": [
     "pallets_general",
     "steel_beams",
-    "plastics"
+    "plastics",
+    "lumber",
+    "stone_blocks"
    ]
   }
  }
