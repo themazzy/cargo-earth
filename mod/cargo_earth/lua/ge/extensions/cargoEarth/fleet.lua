@@ -1,8 +1,8 @@
 -- Hired drivers: people with a speed, a level of care, the licences they hold, a kind of vehicle they know best and a
 -- wage, each driving one of the firm's parked vehicles. A driver only takes a vehicle their licence covers, and the
--- vehicle has to be fit for its work (a car, an SUV or a van needs cargo boxes, a tractor one of the firm's trailers).
+-- vehicle has to be fit for its work (a car, an SUV or a van needs cargo boxes, a tractor one of your parked trailers).
 -- Their runs are simulated while the career is active (10-minute shifts of play). What a shift brings in depends on
--- the vehicle (a car does small jobs, a tractor long hauls and needs one of the firm's trailers), the driver's speed
+-- the vehicle (a car does small jobs, a tractor long hauls and needs one of your parked trailers), the driver's speed
 -- and the dispatch office; the wage is paid out of it. Careless drivers wear the vehicle faster and have more
 -- incidents; an incident or a breakdown leaves the vehicle waiting for a repair at the headquarters.
 -- Pure rules: no game calls here.
@@ -165,9 +165,16 @@ function M.release(g, id)
   return true, string.format('%s has left. %s is available to drive.', name, car.name)
 end
 
-local function trailerFor(f, kind, used)
-  for _, t in ipairs(type(f) == 'table' and f.trailers or {}) do
-    if t.kind == kind and not used[t] then return t end
+-- A trailer of yours for a hired tractor driver: one parked at the headquarters or at home (the pool is shared with
+-- you, cargoEarth/trailerpool), that can haul freight and needs no repair. used: trailers already taken this round.
+local HAULS = { box = true, tanker = true, flatbed = true }
+local function trailerFor(career, used)
+  local pool = require('cargoEarth/trailerpool')
+  for _, t in ipairs(type(career) == 'table' and pool.list(career) or {}) do
+    local e = pool.entry(t)
+    if (t.place == 'hq' or t.place == 'home') and e and HAULS[e.family] and (t.repair or 0) <= 0 and not used[t] then
+      return t
+    end
   end
 end
 
@@ -180,16 +187,16 @@ end
 function M.net(driver, car, factor) return M.netFor(driver, upkeep.tier(car), factor) end
 
 -- Why a driver cannot work right now, or nil. used: trailers already taken this round.
-local function blocked(car, f, used, driver)
+local function blocked(car, career, used, driver)
   local kind = upkeep.tier(car)
   if not M.licensed(driver, kind) then return 'licence' end
   -- a car, an SUV or a van needs cargo boxes (known once you have driven it: boxCount 0 means none fitted)
   if (kind == 'car' or kind == 'suv' or kind == 'van') and car.boxCount == 0 then return 'boxes' end
   if garage.parkedRepairCost(car) > 0 then return 'repair' end
   if kind == 'semi' then
-    local t = trailerFor(f, 'dryvan', used) or trailerFor(f, 'tanker', used) or trailerFor(f, 'flatbed', used)
+    local t = trailerFor(career, used)
     if not t then return 'trailer' end
-    used[t] = true
+    used[t] = car
   end
 end
 
@@ -198,12 +205,11 @@ end
 function M.advance(g, dt, factor, career, rnd)
   rnd = rnd or math.random
   local income, events, used = 0, {}, {}
-  local f = career and career.firm
   if dt <= 0 then return income, events end
   for _, car in ipairs(g.parked or {}) do
     local driver = M.restore(car.driver, upkeep.tier(car))
     if driver then
-      driver.waiting = blocked(car, f, used, driver)
+      driver.waiting = blocked(car, career, used, driver)
       if not driver.waiting then
         local elapsed = (driver.elapsed or 0) + dt
         local shifts = math.floor(elapsed / M.SHIFT_S)
@@ -215,6 +221,9 @@ function M.advance(g, dt, factor, career, rnd)
           driver.earned, driver.km, driver.shifts = (driver.earned or 0) + net, (driver.km or 0) + km, (driver.shifts or 0) + 1
           car.km = (car.km or 0) + km
           upkeep.wear(car, km, 2 - driver.care)
+          for t, by in pairs(used) do
+            if by == car then t.km = (t.km or 0) + km upkeep.wear(t, km, 2 - driver.care) end   -- your trailer wears too
+          end
           income = income + net
           local careless = (2 - driver.care) * (2 - driver.care)
           if rnd() < M.INCIDENT * careless then

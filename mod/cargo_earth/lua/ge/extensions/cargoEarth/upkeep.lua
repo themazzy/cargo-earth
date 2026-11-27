@@ -16,7 +16,9 @@ M.ITEMS = {
   { id = 'brakes', name = 'Brakes', every = 1600, cost = 175,
     breakdown = 'The worn brakes overheated: the car is not safe to drive.' },
 }
-M.TIER_COST = { car = 1, suv = 1.15, van = 1.3, rigid = 2.4, semi = 3.2 }  -- bigger vehicles cost more to service
+M.TIER_COST = { car = 1, suv = 1.15, van = 1.3, rigid = 2.4, semi = 3.2,  -- bigger vehicles cost more to service
+  -- your own trailers (cargoEarth/trailerpool): tyres and brakes only, by size
+  trailer_s = 0.4, trailer_m = 1.2, trailer_l = 1.8 }
 M.SOON = 0.85            -- a service shows as soon due from this share of its interval
 M.PER_KM = 0.004         -- breakdown chance per km for each whole interval overdue (half overdue: 0.2 % per km)
 M.MAX_CHANCE = 0.5
@@ -27,6 +29,11 @@ M.STARTER_WEAR = { oil = 0.6, tyres = 0.5, brakes = 0.4 }   -- a beat-up starter
 local byId = {}
 for _, it in ipairs(M.ITEMS) do byId[it.id] = it end
 M.byId = byId
+-- A trailer has no engine: no oil change.
+local TRAILER_ITEMS = {}
+for _, it in ipairs(M.ITEMS) do if it.id ~= 'oil' then TRAILER_ITEMS[#TRAILER_ITEMS + 1] = it end end
+local function items(car) return (type(car) == 'table' and car.isTrailer) and TRAILER_ITEMS or M.ITEMS end
+M.items = items
 
 local function round5(x) return math.floor(x / 5 + 0.5) * 5 end
 
@@ -47,11 +54,11 @@ function M.ensure(car)
   if type(car.service) ~= 'table' then
     car.service = {}
     local used = math.max(0, math.min(0.9, 1 - (tonumber(car.condition) or 1)))
-    for _, it in ipairs(M.ITEMS) do
+    for _, it in ipairs(items(car)) do
       car.service[it.id] = (car.starter and M.STARTER_WEAR[it.id] or used) * it.every
     end
   end
-  for _, it in ipairs(M.ITEMS) do
+  for _, it in ipairs(items(car)) do
     local v = tonumber(car.service[it.id])
     car.service[it.id] = (v and v == v and v >= 0) and v or 0
   end
@@ -62,13 +69,13 @@ end
 function M.wear(car, km, factor)
   if not car or not km or km <= 0 then return end
   local s = M.ensure(car)
-  for _, it in ipairs(M.ITEMS) do s[it.id] = s[it.id] + km * (factor or 1) end
+  for _, it in ipairs(items(car)) do s[it.id] = s[it.id] + km * (factor or 1) end
 end
 
 -- How many intervals overdue, all items together (0 = nothing overdue).
 function M.overdue(car)
   local s, sum = M.ensure(car), 0
-  for _, it in ipairs(M.ITEMS) do sum = sum + math.max(0, s[it.id] / it.every - 1) end
+  for _, it in ipairs(items(car)) do sum = sum + math.max(0, s[it.id] / it.every - 1) end
   return sum
 end
 
@@ -79,7 +86,7 @@ end
 -- The item that fails in a breakdown: the most overdue one.
 function M.worst(car)
   local s, best, bestShare = M.ensure(car), nil, 0
-  for _, it in ipairs(M.ITEMS) do
+  for _, it in ipairs(items(car)) do
     local share = s[it.id] / it.every
     if share > bestShare then best, bestShare = it, share end
   end
@@ -96,7 +103,7 @@ end
 function M.state(car, factor)
   local s = M.ensure(car)
   local out = { items = {}, due = 0, dueCost = 0 }
-  for _, it in ipairs(M.ITEMS) do
+  for _, it in ipairs(items(car)) do
     local share = s[it.id] / it.every
     local row = { id = it.id, name = it.name, share = math.floor(share * 100 + 0.5) / 100, due = share >= 1,
       soon = share >= M.SOON, cost = M.cost(car, it.id, factor), kmLeft = math.max(0, math.floor(it.every - s[it.id])) }

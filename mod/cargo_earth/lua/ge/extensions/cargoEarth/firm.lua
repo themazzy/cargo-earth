@@ -40,8 +40,7 @@ M.VEHICLES = {
   { id = 'semi', model = 'us_semi', key = 'tc82_base', name = 'T-Series tractor', fallback = 5250,
     text = 'Articulated freight; a hired driver needs one of your trailers' },
 }
--- The firm's own trailers: a hired tractor driver needs one, and your own articulated jobs pay TRAILER_BONUS more
--- when the freight fits one of them (no trailer hire).
+-- The firm's old trailers (before 2026-11-27): kept only to move old saves into your trailers (cargoEarth/trailerpool).
 M.TRAILERS = {
   { id = 'dryvan', name = 'Box trailer', price = 4500, text = 'Parcels, pallets and dry bulk' },
   { id = 'tanker', name = 'Tanker trailer', price = 6000, text = 'Milk, fuel and chemicals' },
@@ -49,57 +48,8 @@ M.TRAILERS = {
   { id = 'cartrailer', name = 'Car trailer', price = 2500, text = 'Tow jobs behind a car with a tow hitch. Take it out here, so you need not borrow one' },
   { id = 'smalltrailer', name = 'Small car trailer', price = 1200, text = 'Light tow jobs for small cars only. Take it out here, so you need not borrow one' },
 }
-M.TRAILER_BONUS = 0.12
-M.TRAILER_MAX = 6
 local trailerById = {}
 for _, t in ipairs(M.TRAILERS) do trailerById[t.id] = t end
-
--- The trailer kind a freight load travels in.
-function M.trailerKind(freightKind)
-  return freightKind == 'fluid' and 'tanker' or 'dryvan'
-end
-
-function M.trailers(c)
-  local f = c.firm
-  if not f then return {} end
-  if type(f.trailers) ~= 'table' then f.trailers = {} end
-  return f.trailers
-end
-
-function M.ownsTrailer(c, kind)
-  for _, t in ipairs(M.trailers(c)) do if t.kind == kind then return true end end
-  return false
-end
-
-function M.buyTrailer(c, id, debt)
-  local f, t = c.firm, trailerById[id]
-  if not f then return false, 'Start a firm first.' end
-  if not t then return false, 'Unknown trailer.' end
-  if not f.hq then return false, 'Choose the headquarters first.' end
-  if (debt or 0) > 0 then return false, 'Pay your debt first.' end
-  local list = M.trailers(c)
-  if #list >= M.TRAILER_MAX then return false, 'The yard has no room for more trailers.' end
-  if (c.money or 0) < t.price then return false, string.format('Not enough money (%d CZK needed).', t.price) end
-  if not economy.post(c, -t.price, 'firm', economy.nextId(c, 'firm'), t.name) then return false, 'The payment failed.' end
-  f.trailerSeq = (f.trailerSeq or 0) + 1
-  list[#list + 1] = { id = f.trailerSeq, kind = t.id, name = t.name }
-  f.spent = (f.spent or 0) + t.price
-  return true, t.name .. ' bought. It waits in the yard.'
-end
-
--- Trailers sell back for half.
-function M.sellTrailer(c, id)
-  local list = M.trailers(c)
-  for i, t in ipairs(list) do
-    if t.id == id then
-      local price = math.floor((trailerById[t.kind] and trailerById[t.kind].price or 0) / 2 / 5 + 0.5) * 5
-      table.remove(list, i)
-      economy.post(c, price, 'firm', economy.nextId(c, 'firm'), 'Sold ' .. t.name)
-      return true, string.format('%s sold for %d CZK.', t.name, price)
-    end
-  end
-  return false, 'That trailer is not in the yard.'
-end
 
 -- prices: id -> CZK from the game's vehicle values (garage), or nil for the fallback.
 function M.vehicleOffer(id, prices)

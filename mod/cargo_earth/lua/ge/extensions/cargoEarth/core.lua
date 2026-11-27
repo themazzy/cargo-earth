@@ -155,6 +155,7 @@ local function say(text, seconds)
   earth.notify(text, seconds or 6)
   log('I', 'cargoEarth', text)
 end
+M.sayText = say   -- for cargoEarth/rigs
 
 local function releaseStorage()
   local storage = S.storage
@@ -325,6 +326,7 @@ local function workFreight(job, unload)
   end
   local G, id, data = M.G, v.id, v.data
   if tier == 'semi' then
+    if job.haul.pool then trailers.adoptPool(job.haul.pool, 'pool') end   -- your own trailer (taken out again after a reload)
     id = trailers.id()
     if not id or not trailers.coupled(v.id) then
       S.freightStatus = id and 'Couple the assigned trailer.' or 'Restore the assigned trailer.'
@@ -530,6 +532,7 @@ local function loadCareer(c)
   rating.restore(c)
   records.restore(c)
   firm.restore(c)
+  require('cargoEarth/rigs').onLoad(c)   -- your own trailers: migrated from the firm, the ones out are left where they were
   if type(c.garage) ~= 'table' then c.garage = garage.new() end
   garage.retireLoaners(c.garage)
   if c.employment and type(c.employment.personalGarage) == 'table' then garage.retireLoaners(c.employment.personalGarage) end
@@ -715,6 +718,7 @@ local function pauseCareer(captured)
   fuelWatch, fuelPending, gamePump = nil, nil, nil
   if earth.status() == 'ok' then earth.gpsClear() end
   trailers.remove()
+  trailers.clearPool()   -- your own trailers that are out (the save says where they stand)
   marker.reset()
   return true
 end
@@ -733,6 +737,7 @@ function M.restartCareer(word)
     clearFreight()
     releaseStorage()
     trailers.remove()
+    trailers.clearPool()   -- your own trailers that are out (the save says where they stand)
     if earth.status() == 'ok' then earth.gpsClear() end
     marker.reset()
   end
@@ -1076,17 +1081,12 @@ local function towOffers(class, p, specs)
   for _, offer in ipairs(out) do
     if factor ~= 1 then offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor end
     if offer.tow and tow.weak(offer.tow.class, specs) then offer.tow.weak = true end
-    if offer.tow then kind = tow.CLASSES[offer.tow.class].trailer end
-    if firm.ownsTrailer(c, kind) then
-      offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
-      offer.pay = offer.pay + offer.trailerBonus
-    end
   end
   return out
 end
 
 function M.generate()
-  -- the firm's trailer is still being hitched: no offers until it is on (M.trailerOffersTick)
+  -- your trailer is still being hitched: no offers until it is on (M.trailerOffersTick)
   if S.trailerOffersWait then S.offers, S.offerStats = {}, nil S.offeredAt = S.offeredAt or { lat = 0, lon = 0 } return end
   if not modeReady() or S.mode == 'bus' then S.offers, S.offerStats = {}, nil return end   -- bus lines: no ringing
   local p = earth.pose()
@@ -1130,11 +1130,15 @@ function M.generate()
     local store = v and refreshStorage()
     local rows = store and store.rows
     S.offers, S.offerStats = {}, nil
-    if tier and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or rows) then
+    -- your own tractor work runs on your own trailer (Jan, 2026-11-27: owning trailers is the core of freight; no hiring)
+    local ownRig = tier == 'semi' and not M.freePlay() and not S.career.employment
+    local rig = ownRig and require('cargoEarth/rigs').haulRig(M) or nil
+    S.noRig = ownRig and not rig or nil
+    if tier and not S.noRig and haul.allowed(S.career, tier) and (tier == 'semi' or tier == 'car' or rows) then
       -- an ordinary car or an SUV takes no company freight board: its own small work comes below
       local offers, stats = {}, nil
       if not haul.SMALL[tier] then
-        local o = haul.options(tier, freightOptions(tier), rows)
+        local o = haul.options(tier, freightOptions(tier), rows, rig)
         offers, stats = jobs.generate(S.idx, o, p.lat, p.lon)
         S.offerSearch = { nearKm = o.nearKm, minKm = o.minKm, maxKm = o.maxKm }
       end
@@ -1142,7 +1146,7 @@ function M.generate()
       local factor = rating.freightPay(S.career)
       local ownTruck = S.career.garage.car and not S.career.garage.car.loaner
       -- tanker runs to real fuel stations
-      if tier == 'semi' and S.fuelIdx and S.opts.adr ~= false then
+      if tier == 'semi' and S.fuelIdx and S.opts.adr ~= false and (not rig or require('cargoEarth/trailerpool').carries(rig.entry, 'fluid', 'fuel')) then
         local within = function(lat, lon, a, b) return fuel.within(S.fuelIdx, lat, lon, 'fuel', a, b) end
         local range = M.jobOptions('fuel')
         for _, offer in ipairs(resupply.offers(S.idx, p.lat, p.lon, within, M.random, nil, range.nearKm, range)) do
@@ -1179,7 +1183,7 @@ function M.generate()
         end
       end
       for _, offer in ipairs(offers) do
-        if offer.route or offer.partsRun or offer.taxi or haul.prepare(offer, tier, rows, S.idx) then
+        if offer.route or offer.partsRun or offer.taxi or haul.prepare(offer, tier, rows, S.idx, rig) then
           if offer.resupply then resupply.bonus(offer)
           elseif not offer.route and not offer.taxi then special.roll(offer, tier, M.random) end
           if ownTruck then
@@ -1188,11 +1192,6 @@ function M.generate()
           end
           if factor ~= 1 then
             offer.pay, offer.reputationPay = math.floor(offer.pay * factor / 5 + 0.5) * 5, factor
-          end
-          -- your firm's own trailer: no trailer hire to pay
-          if tier == 'semi' and offer.haul and firm.ownsTrailer(S.career, firm.trailerKind(offer.haul.kind)) then
-            offer.trailerBonus = math.floor(offer.pay * firm.TRAILER_BONUS / 5 + 0.5) * 5
-            offer.pay = offer.pay + offer.trailerBonus
           end
           S.offers[#S.offers + 1] = offer
         end
@@ -1473,7 +1472,16 @@ local function finishPickup()
     saveCareer()
     return
   elseif j.haul then
-    if j.haul.tier == 'semi' and not trailers.id() then
+    if j.haul.pool then
+      -- your own trailer carries it: it has to be on your hitch here
+      if not trailers.poolCoupled(j.haul.pool, M.G.playerId and M.G.playerId() or -1) then
+        S.freightStatus = 'Couple your trailer.'
+        S.stopT = -6
+        say('Bring your trailer on the hitch to load.', 4)
+        return
+      end
+      trailers.adoptPool(j.haul.pool, 'pool')
+    elseif j.haul.tier == 'semi' and not trailers.id() then
       M.spawnTrailer(true)
       return
     end
@@ -2531,7 +2539,7 @@ local function incomingInfo(inc)
     pickupKm = r1(j.pickupKm), km = r1(j.km), pay = j.pay, minutes = j.minutes, adr = j.adr or false,
     special = special.info(j), resupplyBonus = j.resupplyBonus, litres = j.litres, tow = tow.info(j),
     taxi = require('cargoEarth/taxi').info(j),
-    trailerBonus = j.trailerBonus,
+    load = j.haul and j.haul.pool and haul.steps(j.haul) or nil,
     farPickup = j.farPickup or 0, batch = false, premium = j.premium, reputationPay = j.reputationPay,
     route = j.route and parcel.state(j),
     fuelAllowance = j.fuelAllowance, carBonus = j.carBonus, carRate = j.carRate, expBonus = j.expBonus, expRate = j.expRate, loadFill = j.loadFill, loadBonus = j.loadBonus,
@@ -2588,6 +2596,9 @@ function M.freightHint(v, tier, rows)
     return 'Fit cargo boxes in the bed or boot for parts runs, or take a contract.'
   elseif not haul.allowed(S.career, tier) then
     return 'This truck unlocks after completing the earlier stage.'
+  elseif tier == 'semi' and S.noRig then
+    if not S.career.home then return 'Your tractor needs a trailer of your own, and trailers need a home garage: set one first.' end
+    return 'Hitch one of your trailers (Menu → Garage → Trailers), or buy one there.'
   elseif tier ~= 'semi' and not rows then
     return 'Checking fitted cargo containers…'
   elseif tier == 'van' and haul.capacity(rows, 'parcel') < 8 then
@@ -3172,6 +3183,8 @@ function M.phoneState()
     out.active = { phase = S.phase, kind = j.kind or 'cargo', cargo = j.cargoName, items = j.items, from = place(j.from), to = place(j.to),
         orderType = j.orderType, handling = cargo.supports(j) and cargo.handling(j) or nil,
       freight = j.haul, freightStatus = S.freightStatus, route = j.route and parcel.state(j),
+      load = j.haul and j.haul.pool and S.phase == 'toPickup' and not (S.freightLoad and S.freightLoad.job == j)
+        and haul.steps(j.haul) or nil,
       canRestoreTrailer = j.trailer and ((not j.tow and not trailers.id() and (S.phase == 'toDelivery' or j.trailerRequested))
         or reloadFee ~= nil) or nil,
         cargoCondition = cargo.supports(j) and S.phase == 'toDelivery' and cargo.condition(j) or nil,
@@ -3340,6 +3353,14 @@ function M.phoneAction(a, orderId)
     selectDelivery(orderId)
   elseif a == 'restoreTrailer' then
     M.spawnTrailer()
+  elseif a == 'loadSteps' then
+    -- the load picker (your own trailer): on the offer, or at the pickup before it is loaded
+    local j = ph.incoming and ph.incoming.job or (S.job and S.phase == 'toPickup' and S.job) or nil
+    if j and j == S.job and S.freightLoad and S.freightLoad.job == j then
+      say('Loading has started: the amount stays.', 4)
+    elseif j and j.haul and j.haul.pool and haul.setSteps(j, orderId) then
+      if j == S.job then saveCareer() end
+    end
   elseif a == 'towLoad' then
     M.towLoad()
   elseif a == 'towHitch' then
@@ -4747,6 +4768,7 @@ local function serviceSpot()
     if station and km * 1000 <= fuel.STATION_RADIUS then return station.n or 'the fuel station', 1 end
   end
 end
+M.serviceSpot = serviceSpot   -- for cargoEarth/rigs
 -- id: a parked vehicle's fleet id (it is at the headquarters), or nil for the car you drive; item: one, or nil for
 -- all that are due.
 local function garageService(id, item)
@@ -5222,33 +5244,17 @@ function M.hqState()
     out.shop[#out.shop + 1] = { id = offer.id, name = offer.name, text = offer.text, price = offer.price,
       can = out.free > 0 and (c.money or 0) >= offer.price and (g.debt or 0) <= 0 }
   end
-  out.trailerShop = {}
-  for _, t in ipairs(firm.TRAILERS) do
-    out.trailerShop[#out.trailerShop + 1] = { id = t.id, name = t.name, text = t.text, price = t.price,
-      can = (c.money or 0) >= t.price and (g.debt or 0) <= 0 and #firm.trailers(c) < firm.TRAILER_MAX }
-  end
+  -- your trailers in the yard (the shared pool: Garage → Trailers buys, takes out and parks them)
   out.trailers = {}
-  local semiDrivers = 0
-  for _, b in ipairs(out.bays) do if b.driver and b.tier == 'semi' then semiDrivers = semiDrivers + 1 end end
-  -- tow trailers can be taken out at the headquarters and hitched to your own vehicle (M.hqDo takeTrailer)
-  local pose = earth.status() == 'ok' and earth.pose() or nil
-  local atHq = firm.atHq(c, pose)
-  local v, tier = freightCarrier()
-  local rig = v and garage.inOwnCar(M.G, g) and tow.class(tier, tow.hasHitch(v)) or nil
-  local outId = trailers.ownOut() and S.ownTrailer or nil
-  local hauled = 0
-  for _, t in ipairs(firm.trailers(c)) do
-    local towClass = (t.kind == 'cartrailer' and 'light') or (t.kind == 'smalltrailer' and 'small') or nil
-    local busy = nil
-    if not towClass then hauled = hauled + 1 busy = hauled <= semiDrivers or nil end
-    if t.kind == 'flatbed' then towClass = 'heavy' end
-    out.trailers[#out.trailers + 1] = { id = t.id, name = t.name, kind = t.kind, busy = busy,
-      tow = towClass ~= nil or nil, out = outId == t.id or nil,
-      canTake = towClass ~= nil and not busy and outId == nil and atHq and S.job == nil and tow.fits(rig, towClass) or nil,
-      needs = towClass and not tow.fits(rig, towClass) and (towClass == 'heavy' and 'Needs a tractor' or 'Needs a tow hitch') or nil }
+  local pool = require('cargoEarth/trailerpool')
+  local _, yard = pool.spots(c, home)
+  for _, t in ipairs(pool.list(c)) do
+    if t.place == 'hq' or t.place == 'driver' then
+      out.trailers[#out.trailers + 1] = { id = t.id, name = t.name, condition = t.condition, repair = t.repair or 0 }
+    end
   end
-  out.atHq = atHq or nil
-  out.trailerBonus = math.floor(firm.TRAILER_BONUS * 100 + 0.5)
+  out.trailerYard = yard
+  out.atHq = firm.atHq(c, earth.status() == 'ok' and earth.pose() or nil) or nil
   out.workshopFactor = workshop
   local parts, kinds = 0, 0
   out.parts = { items = {} }
@@ -5265,7 +5271,27 @@ function M.hqState()
   return out
 end
 
--- The firm's trailer taken out at the headquarters: once its hitch has latched (or given up), offers are made again.
+-- Your own trailers (cargoEarth/rigs): the Garage's Trailers page and its buttons.
+function M.trailerState()
+  if S.pendingCareer or not S.career.garage.started then return { none = true } end
+  return require('cargoEarth/rigs').state(M)
+end
+
+-- name: buyNew (a = catalogue id), buyUsed (a = listing id), takeOut (a = id, b = 'bulk'), park, hitch, fetch, service,
+-- repair, sell (a = id). Returns the page.
+function M.trailerDo(name, a, b)
+  if S.pendingCareer then return M.trailerState() end
+  local ok, msg = require('cargoEarth/rigs').act(M, name, a, b)
+  S.trailerMsg = msg
+  if ok then
+    say(msg)
+    economy.reconcile(S.career, 'trailer', msg)
+    saveCareer()
+  end
+  return M.trailerState()
+end
+
+-- Your trailer was just taken out: once its hitch has latched (or given up), offers are made again.
 function M.trailerOffersTick()
   if trailers.hitching() or trailers.latching() then return end
   S.trailerOffersWait = nil
@@ -5307,46 +5333,11 @@ function M.hqDo(name, a, b)
     local allowed = { repair = true, switchCar = true, hireDriver = true, releaseDriver = true, refuel = true, paydebt = true,
       service = true, repairParked = true }
     if allowed[name] then S.firmMsg = M.garageDo(name, a, b).msg
-    elseif name == 'takeTrailer' or name == 'leaveTrailer' then
-      local c = S.career
-      local ok, msg = false, 'Unknown action'
-      local pose = earth.status() == 'ok' and earth.pose() or nil
-      local t = nil
-      for _, row in ipairs(firm.trailers(c)) do if row.id == tonumber(a) then t = row end end
-      if S.job then ok, msg = false, 'Finish your current job first.'
-      elseif not firm.atHq(c, pose) then ok, msg = false, 'Drive to your headquarters first.'
-      elseif name == 'leaveTrailer' then
-        trailers.putAwayOwn()
-        S.ownTrailer, ok, msg = nil, true, 'Trailer left in the yard.'
-      elseif not t then ok, msg = false, 'That trailer is not in the yard.'
-      else
-        local v, tier = freightCarrier()
-        local towClass = (t.kind == 'cartrailer' and 'light') or (t.kind == 'smalltrailer' and 'small') or (t.kind == 'flatbed' and 'heavy') or nil
-        if not towClass then ok, msg = false, 'Only tow trailers can be taken out.'
-        elseif not (v and garage.inOwnCar(M.G, personalGarage()) and tow.fits(tow.class(tier, tow.hasHitch(v)), towClass)) then
-          ok, msg = false, towClass == 'heavy' and 'The flatbed trailer needs a tractor.' or 'This trailer needs your own car with a tow hitch.'
-        else
-          ok, msg = trailers.takeOwn(t.kind)
-          if ok then
-            S.ownTrailer, msg = t.id, string.format('Putting your %s on the hitch. Tow jobs now skip borrowing one.', t.name:lower())
-            -- offers are made again with your trailer once it is on the hitch (M.trailerOffersTick); until then
-            -- none are shown, so no offer still asks to borrow one
-            S.offers, S.offerStats, S.offeredAt, S.phone.incoming = {}, nil, { lat = 0, lon = 0 }, nil
-            S.trailerOffersWait = true
-          else msg = 'Could not get the trailer out: ' .. tostring(msg) end
-        end
-      end
-      S.firmMsg = msg
-      if ok then say(msg) end
-    elseif name == 'buyVehicle' or name == 'buyTrailer' or name == 'sellTrailer' then
+    elseif name == 'buyVehicle' then
       local c, g = S.career, personalGarage()
       local ok, msg = false, 'Unknown action'
       if c.employment then ok, msg = false, 'End company work first.'
       elseif not (c.firm and c.firm.hq) then ok, msg = false, 'Choose the headquarters first.'
-      elseif name == 'buyTrailer' then ok, msg = firm.buyTrailer(c, a, g.debt)
-      elseif name == 'sellTrailer' then
-        ok, msg = firm.sellTrailer(c, tonumber(a))
-        if ok and S.ownTrailer == tonumber(a) then trailers.putAwayOwn() S.ownTrailer = nil end
       else
         local v = firm.vehicleOffer(a)
         if v then
@@ -5704,6 +5695,22 @@ function M.spawnTrailer(atPickup)
   end
   if j.haul then
     if trailers.id() then return end
+    if j.haul.pool then
+      -- your own trailer: taken out again where it stands (after a reload it was left where it was last seen)
+      local rigs = require('cargoEarth/rigs')
+      if rigs.coupled(M) then say('Your trailer is on the hitch.', 4) return end
+      local t = require('cargoEarth/trailerpool').find(S.career, j.haul.pool)
+      if not t then say('Your trailer for this load is gone. Cancel the job.', 6) return end
+      if t.place == 'out' and trailers.poolVid(t.id) then
+        local ok = rigs.act(M, 'hitch', t.id)
+        say(ok and 'Hitching your trailer…' or 'Back up to your trailer first.', 4)
+        return
+      end
+      local ok, msg = rigs.act(M, 'takeOut', t.id, j.haul.bulk and 'bulk' or nil)
+      say(msg, 6)
+      if ok then j.trailerRequested = true saveCareer() end
+      return
+    end
     if not atPickup and S.phase ~= 'toDelivery' and not j.trailerRequested then return end
     local v, tier = freightCarrier()
     if not v or tier ~= 'semi' or (p.speed or 0) > M.STOP_SPEED then
@@ -6341,6 +6348,7 @@ function M.onUpdate(dtReal, dtSim)
   if S.clock >= (S.radioSyncAt or 0) then S.radioSyncAt = S.clock + 0.5 M.radioSync() end -- the UI page went away: the helper plays
   local worldReady = earth.status() == 'ok'
   local activeDt = careerClock.advance(S.career, dtReal, dtSim, worldReady and not S.parts)
+  if worldReady and S.career.trailers then require('cargoEarth/rigs').tick(M, math.max(0, dtSim or dtReal or 0)) end
   S.workTick = (S.workTick or 0) + activeDt
   local pose = activeDt > 0 and earth.pose() or nil
   if S.busDwell then
@@ -6604,6 +6612,7 @@ function M.onExtensionUnloaded()
   S.pauseSaving, S.replacementSaving = nil, nil
   if not S.pendingCareer and S.career.savedAt then saveCareer(true) end
   trailers.remove()
+  trailers.clearPool()   -- your own trailers that are out (the save says where they stand)
 end
 
 return M
