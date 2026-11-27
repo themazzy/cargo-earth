@@ -124,7 +124,79 @@ assert(marker.roadsideDistance(car, depotStop) == nil, 'a freight yard is not mo
 assert(marker.roadside(house) and not marker.roadside(depotStop), 'only yards keep their own point')
 debugDrawer.drawLineInstance = real
 
+-- A freight yard whose point lies deep in its site, 150 m from the street (y = 0): the zone and its ring move to the
+-- street's edge on the yard's side once the car is near, the stop counts there, and a beacon shows it from afar.
+local deep = { g = { 50, 14, x = 0, y = 150 }, n = 'Big warehouse', t = 'warehouse' }
+local beacons, labels = 0, {}
+debugDrawer.drawCylinder = function(_, a, b) if b.z - a.z > 30 then beacons = beacons + 1 end end
+debugDrawer.drawTextAdvanced = function(_, _, text) labels[#labels + 1] = text end
+local farCar = { lat = 50, lon = 14.02, x = 1400, y = -2, z = 100.8, anchorLat = 50, anchorLon = 14 }
+for _, phase in ipairs({ 'delivery', 'pickup' }) do
+  marker.reset()
+  beacons, labels, outer = 0, {}, nil
+  debugDrawer.drawLineInstance = function(_, a) outer = outer or {}; outer[#outer + 1] = a end
+  marker.draw(farCar, deep, phase, false, 35, false, 0)
+  assert(beacons == 1, phase .. ': a beacon shows the yard from 1.4 km')
+  assert(labels[1] == (phase == 'delivery' and 'Deliver: ' or 'Pick up: ') .. 'Big warehouse', tostring(labels[1]))
+  local near = { lat = 50, lon = 14, x = 60, y = -2, z = 100.8, anchorLat = 50, anchorLon = 14 }
+  marker.draw(near, deep, phase, false, 35, false, 2)
+  local at = { lat = 50, lon = 14, x = 0, y = 3, z = 100.8, anchorLat = 50, anchorLon = 14 }
+  local d = marker.roadsideDistance(at, deep)
+  assert(d and d < 1, phase .. ': the yard zone stands at the street, where the road ends: ' .. tostring(d))
+  assert(not marker.offLevel(at, deep), phase .. ': a truck at the street is level with the moved zone')
+  if phase == 'delivery' then
+    local sx, sy = 0, 0
+    outer = nil
+    marker.draw(near, deep, phase, false, 35, false, 4)
+    for _, pt in ipairs(outer) do sx, sy = sx + pt.x, sy + pt.y end
+    assert(math.abs(sx / #outer) < 0.1 and math.abs(sy / #outer - 3.5) < 0.1,
+      string.format('the delivery ring stands at the street: %.1f, %.1f', sx / #outer, sy / #outer))
+  end
+end
+debugDrawer.drawLineInstance, debugDrawer.drawCylinder, debugDrawer.drawTextAdvanced = real, function() end, function() end
+
+-- Roads still streaming: the first road found is a street 60 m off; once the near street streams in the ring moves
+-- there, and once the car is close it stays.
+local streets = { { y = -60 } }
+map = { findClosestRoad = function(pos)
+    local best
+    for i, st in ipairs(streets) do if not best or math.abs(pos.y - st.y) < math.abs(pos.y - streets[best].y) then best = i end end
+    return 'a' .. best, 'b' .. best
+  end,
+  getMap = function()
+    local nodes = {}
+    for i, st in ipairs(streets) do
+      nodes['a' .. i], nodes['b' .. i] = { pos = vec3(-50, st.y, 100) }, { pos = vec3(50, st.y, 100) }
+    end
+    return { nodes = nodes }
+  end }
+local late = { g = { 50, 14, x = 0, y = 20 }, n = 'Late street' }
+marker.reset()
+local farAway = { lat = 50, lon = 14, x = 200, y = -2, z = 100.8, anchorLat = 50, anchorLon = 14 }
+marker.draw(farAway, late, 'delivery', true, 30, false, 0)
+assert(marker.roadsideDistance({ x = 0, y = -56.5, anchorLat = 50, anchorLon = 14 }, late) < 0.1, 'first: the far street')
+streets[2] = { y = 0 }
+marker.draw(farAway, late, 'delivery', true, 30, false, 2)
+assert(marker.roadsideDistance({ x = 0, y = 3.5, anchorLat = 50, anchorLon = 14 }, late) < 0.1, 'then the near street')
+local close = { lat = 50, lon = 14, x = 20, y = 0, z = 100.8, anchorLat = 50, anchorLon = 14 }
+marker.draw(close, late, 'delivery', true, 30, false, 4)
+streets[3] = { y = 10 }
+marker.draw(close, late, 'delivery', true, 30, false, 6)
+assert(marker.roadsideDistance({ x = 0, y = 3.5, anchorLat = 50, anchorLon = 14 }, late) < 0.1, 'close by, the spot stays')
+
+-- BeamNG 0.40.6: drawTriSolid takes a packed colour number and throws on a ColorF (beamng.log, 2026-11-26)
+local packedTris, threw = 0, 0
+color = function(r, g, b, a) return r * 16777216 + g * 65536 + b * 256 + a end
+debugDrawer.drawTriSolid = function(_, _, _, _, col)
+  if type(col) ~= 'number' then threw = threw + 1 error("bad argument #4 to 'drawTriSolid' (number expected, got userdata)") end
+  packedTris = packedTris + 1
+end
+marker.reset()
+marker.draw(car, house, 'delivery', true, 30, false, 0)
+assert(packedTris == 40 and threw == 0, 'the ring is filled with a packed colour: ' .. packedTris .. ', ' .. threw)
+color = nil
+
 castRayStatic, vec3, ColorF, ColorI, String = saved.castRayStatic, saved.vec3, saved.ColorF, saved.ColorI, saved.String
 debugDrawer, map = saved.debugDrawer, saved.map
 package.loaded['cargoEarth/earth'], package.loaded['cargoEarth/marker'] = saved.earth, saved.marker
-print('Stop rings: ground under roofs, trees and pylons; zone column 4.5 m up, 3.5 m down; houses moved to the roadside')
+print('Stop rings: ground under roofs, trees and pylons; zone column 4.5 m up, 3.5 m down; houses moved to the roadside; deep yards moved to their road, beacons from afar, late streets')

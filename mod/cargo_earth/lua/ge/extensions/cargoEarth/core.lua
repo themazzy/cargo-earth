@@ -5,7 +5,7 @@
 -- Everything is clicked on the phone (the UI app): orders, the garage and the settings. The debug window opens from
 -- the phone's settings (or the console: extensions.cargoEarth_core.toggleWindow()). No key bindings.
 local M = {}
-M.VERSION = '0.12.1'      -- the mod's version (package.json has the same; the support report shows it)
+M.VERSION = '0.12.2'      -- the mod's version (package.json has the same; the support report shows it)
 M.CAMERAS_PAUSED = true  -- temporarily suspended: no downloads, alerts, fines or lost stars
 M.dependencies = { 'ui_imgui' }
 
@@ -265,9 +265,13 @@ function M.sweepCargo()
   if not asked then S.sweepWanted = nil end
 end
 
+-- Free play ("Just drive"): no career was started, so work comes in whatever vehicle the player sits in. During a
+-- company shift the free play garage waits in the shift (personalGarage), so it is asked there.
+function M.freePlay() return haul.freePlay(S.career) end
+
 local function freightCarrier()
   local g = S.career.garage
-  if not g.started or g.pendingUsed or not garage.inOwnCar(M.G, g) then return end
+  if not (g.started or M.freePlay()) or g.pendingUsed or not garage.inOwnCar(M.G, g) then return end
   local v = M.G.vehicle()
   local tier = haul.carrier(v)
   if tier and g.car then g.car.vclass, g.car.bodyStyle = tier, v.bodyStyle end
@@ -830,6 +834,13 @@ end
 
 -- No career running: the start screen with the player's settings (from: a career or save to take them from).
 function M.freshFree(from)
+  -- a free play shift left open (the game or the mod reloaded): its company vehicle goes, the player's own comes back
+  local shift = type(from) == 'table' and from.employment
+  local held = type(shift) == 'table' and type(shift.personalGarage) == 'table' and shift.personalGarage.car
+  if type(held) == 'table' and held.freePlay and type(held.model) == 'string' then
+    local lent = type(from.garage) == 'table' and type(from.garage.car) == 'table' and from.garage.car.model
+    S.freeRestore = { car = held, lent = lent }
+  end
   local fresh = { money = 0, delivered = 0, km = 0, history = {}, garage = garage.new(), backupAt = 0 }
   for _, k in ipairs(M.KEEP_ON_START) do fresh[k] = type(from) == 'table' and from[k] or nil end
   S.slot = nil
@@ -1842,12 +1853,23 @@ function M.busOffer(id)
   end
 end
 
+-- Metres from the car to a bus or coach stop: its own point, or its ring where that was moved to the road (a coach
+-- station's point is the middle of the station, up to the roadside search away from the ring).
+function M.busStopMeters(p, stop)
+  local meters = jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000
+  local side = marker.roadsideDistance and marker.roadsideDistance(p, S.job and S.job.to)
+  if side and S.job.to and S.job.to.g and S.job.to.g[1] == stop.g[1] and S.job.to.g[2] == stop.g[2] then
+    meters = math.min(meters, side)
+  end
+  return meters
+end
+
 -- The phone and upper overlay share this stop state and the boarding clock.
 function M.busStopInfo()
   local j, p = S.job, earth.pose()
   if not (j and j.bus and validLocation(p)) then return nil end
   local stop = j.bus.stops[j.bus.at]
-  local meters = jobs.km(p.lat, p.lon, stop.g[1], stop.g[2]) * 1000
+  local meters = M.busStopMeters(p, stop)
   local inside = meters <= rules(j).arriveM
   local parked = not p.camera and (p.speed or 0) <= M.STOP_SPEED and garage.inOwnCar(M.G, S.career.garage)
   local d = S.busDwell
@@ -1937,8 +1959,9 @@ function M.taxiState(fresh)
   local v, tier = freightCarrier()
   local out = { eligible = false }
   local passenger = tier == 'car' or tier == 'suv' or tier == 'van'
-  if not v or S.career.garage.car.loaner then
-    out.hint = 'Use your own passenger vehicle for taxi work.'
+  local own = S.career.garage.car
+  if not v or own and own.loaner then
+    out.hint = M.freePlay() and 'Taxi work needs a car, SUV or passenger van.' or 'Use your own passenger vehicle for taxi work.'
   elseif not passenger or not haul.configClass(v.model, v.bodyStyle) then
     out.hint = 'Taxi work needs a car, SUV or passenger van with passenger seats.'
   else
@@ -2013,7 +2036,7 @@ end
 -- A taxi's passengers, seated in the car (BeamNG's seat occupants, real weight); 0 empties the seats again.
 function M.taxiSeats(n, seed)
   local ok, shown = false, nil
-  if M.G.carPassengers then ok, shown = pcall(M.G.carPassengers, n, seed or 'taxi') end
+  if M.G.carPassengers then ok, shown = pcall(M.G.carPassengers, n, seed or 'taxi', M.freePlay()) end
   S.taxiSeated = (n > 0 or not ok or shown ~= 0) and { n = n, seed = seed, at = S.clock + 5 } or nil
   return ok and shown or nil
 end
@@ -2058,9 +2081,8 @@ function M.busTick(p, dt)
   if not (j and j.bus) or d.job ~= j or j.bus.at ~= d.at then S.busDwell = nil return end
   -- The assigned vehicle was verified when the doors opened. Read its id each frame
   -- without fetching a full garage vehicle description or building the phone state.
-  local g = j.bus.stops[d.at].g
   if not validLocation(p) or p.camera or (p.speed or 0) > M.STOP_SPEED or d.vehicle ~= M.G.playerId()
-    or jobs.km(p.lat, p.lon, g[1], g[2]) * 1000 > rules(j).arriveM then
+    or M.busStopMeters(p, j.bus.stops[d.at]) > rules(j).arriveM then
     M.interruptBoarding()
     return
   end
@@ -2655,7 +2677,7 @@ function M.placesState()
   local c, p = S.career, earth.pose()
   local out = { home = c.home,
     companies = {}, msg = S.placesMsg, status = earth.status(), busy = S.job ~= nil or S.parts ~= nil,
-    started = c.garage.started, blocked = S.pendingCareer ~= nil, last = c.lastContract,
+    started = c.garage.started, canContract = c.garage.started or M.freePlay() or nil, blocked = S.pendingCareer ~= nil, last = c.lastContract,
     discovery = helper.status() }
   if c.home then
     local pg = c.employment and c.employment.personalGarage or c.garage
@@ -2715,6 +2737,7 @@ local function companyReturn(aborted, here)
     local ok, why = spawnCareerCar(personal)
     if not ok then return false, why .. ' Your wages are saved; retry returning your car.' end
   end
+  if personal.car and personal.car.freePlay then personal.car = nil end   -- free play keeps no car of its own
   c.garage, c.employment = personal, nil
   S.mode = M.RULES[shift.previousMode] and shift.previousMode or 'courier'
   S.opts, S.offeredAt, S.odometerPose = S.optsByMode[S.mode], nil, nil
@@ -2727,7 +2750,10 @@ end
 local function companyStart(id, independent)
   local c, g, p = S.career, S.career.garage, earth.pose()
   if c.employment or S.job or S.parts or g.preview or g.pendingUsed then return false, 'Finish your current work or vehicle preview first.' end
-  if not g.started or not g.car or not garage.inOwnCar(M.G, g) then return false, 'Start your career and drive your own car to the company yard.' end
+  local free = M.freePlay()
+  if not free and (not g.started or not g.car or not garage.inOwnCar(M.G, g)) then
+    return false, 'Start your career and drive your own car to the company yard.'
+  end
   if earth.status() ~= 'ok' or not p or p.camera or (p.speed or 0) > M.STOP_SPEED then return false, 'Park at the company yard first.' end
   local offer
   for _, row in ipairs(S.companyBoard or {}) do if row.id == id then offer = row break end end
@@ -2737,9 +2763,19 @@ local function companyStart(id, independent)
   if jobs.km(p.lat, p.lon, offer.yard.g[1], offer.yard.g[2]) * 1000 > radius then
     return false, 'Drive to the company yard, then park to start.'
   end
-  if not garage.remember(M.G, g) then return false, 'Could not save your car configuration.' end
-  local damage = M.G.damage and M.G.damage()
-  if damage then garage.trackDamage(g, damage) end
+  local snapshot
+  if free then
+    -- free play: the vehicle the player came in is put back after the shift (it is no career car: nothing is owed)
+    local v = M.G.vehicle and M.G.vehicle()
+    local config = v and v.model and M.G.captureConfig and M.G.captureConfig(v)
+    if not config then return false, 'Could not save your vehicle configuration.' end
+    snapshot = { model = v.model, config = config, name = v.model, freePlay = true }
+    if independent then return false, 'Independent contracts are part of the career.' end
+  else
+    if not garage.remember(M.G, g) then return false, 'Could not save your car configuration.' end
+    local damage = M.G.damage and M.G.damage()
+    if damage then garage.trackDamage(g, damage) end
+  end
   local want = offer.tier or 'van'
   if want ~= 'bus' and not haul.allowed(c, want) then return false, 'Unlock the ' .. haul.tiers[want].name:lower() .. ' first.' end
   if independent then
@@ -2776,13 +2812,18 @@ local function companyStart(id, independent)
     km = 0, condition = 1, loaner = true, company = true }
   local ok, why = employment.begin(c, offer, g, companyGarage, S.mode)
   if not ok then return false, why end
+  if snapshot then g.car = snapshot end
   c.garage = companyGarage
   c.location = { lat = p.lat, lon = p.lon }
   -- Commit the personal-car snapshot before any spawn can replace it.
   S.skipCapture = true
   local saved = saveCareer()
   S.skipCapture = nil
-  if not saved then c.garage, c.employment = g, nil return false, S.saveError end
+  if not saved then
+    if snapshot then g.car = nil end
+    c.garage, c.employment = g, nil
+    return false, S.saveError
+  end
   releaseStorage()
   local spawned, err = spawnCareerCar(companyGarage)
   if not spawned then
@@ -2808,7 +2849,7 @@ end
 function M.busSelect(id)
   if S.mode ~= 'bus' or S.job or S.career.employment then return end
   local g = S.career.garage
-  if not g.started or not garage.inOwnCar(M.G, g) then
+  if not (g.started or M.freePlay()) or not garage.inOwnCar(M.G, g) then
     S.contractMsg = {text = 'Choose a line while driving your own career car.', at = S.clock}
     return
   end
@@ -6245,9 +6286,24 @@ end
 M.dashTick = dashTick
 function M.dashCheckSoon() dashCheckAt = dashClock + M.DASH_CHECK_S end
 
+-- After a reload during a free play shift: once a vehicle is there, swap the company vehicle back to the player's own.
+-- Any other vehicle (the game spawned its default car) is left alone.
+function M.freeRestoreTick()
+  local r = S.freeRestore
+  if not r or S.pendingCareer or S.career.employment then return end
+  local v = M.G.vehicle and M.G.vehicle()
+  if not v or not v.model then return end
+  S.freeRestore = nil
+  if not r.lent or v.model ~= r.lent then return end
+  local ok, why = spawnCareerCar({ car = r.car })
+  if ok then say('Your company shift ended with the reload. Your own vehicle is back.', 8)
+  else problem('W', 'Free play vehicle not restored: ' .. tostring(why)) end
+end
+
 function M.onUpdate(dtReal, dtSim)
   require('cargoEarth/damage').tick(dtReal)
   dashTick(dtReal)
+  M.freeRestoreTick()
   if S.pendingCareer then
     stopForceWatch()
     updateResume(dtReal)

@@ -20,7 +20,13 @@ local function blank() return { v = 1, next = 1, slots = {} } end
 function M.isCareer(c, legacy)
   if type(c) ~= 'table' then return false end
   local g = type(c.garage) == 'table' and c.garage or {}
-  if g.started or c.employment then return true end
+  -- a company shift is career work, except a free play one: the company garage is started, but the player's own
+  -- garage (held in the shift) is not
+  local shift = c.employment
+  if shift and c.play == 'free' and type(shift) == 'table' and type(shift.personalGarage) == 'table' then
+    return shift.personalGarage.started == true
+  end
+  if g.started or shift then return true end
   return legacy == true and c.play ~= 'free' and ((tonumber(c.delivered) or 0) > 0 or type(c.home) == 'table' or type(c.firm) == 'table')
 end
 
