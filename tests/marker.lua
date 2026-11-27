@@ -55,9 +55,30 @@ assert(not marker.offLevel(p, stop), 'a car at the stop counts')
 local far = { lat = 50, lon = 14, x = -25, y = 10, z = ground(-25, 10) + 1, anchorLat = 50, anchorLon = 14 }
 assert(not marker.offLevel(far, stop), 'the slope across the ring is allowed for')
 local bridge = { lat = 50, lon = 14, x = 5, y = 0, z = ground(5, 0) + 7, anchorLat = 50, anchorLon = 14 }
+local plain = surfaces
+-- a deck 6.2 m over the ground at x = 5 (the car on it), and a road in a cut 6.8 m under it at x = -5
+surfaces = function(x, y)
+  local list = plain(x, y)
+  if math.abs(x - 5) < 2 then list[#list + 1] = ground(x, y) + 6.2 end
+  if math.abs(x + 5) < 2 then list[#list + 1] = ground(x, y) - 6.8 end
+  return list
+end
 assert(marker.offLevel(bridge, stop), 'a bridge over the stop does not count')
-local under = { lat = 50, lon = 14, x = 5, y = 0, z = ground(5, 0) - 6, anchorLat = 50, anchorLon = 14 }
+local under = { lat = 50, lon = 14, x = -5, y = 0, z = ground(-5, 0) - 6, anchorLat = 50, anchorLon = 14 }
 assert(marker.offLevel(under, stop), 'a road under the stop does not count')
+surfaces = plain
+-- the ring's ground measured wrong (player report 2026-11-27, a drop-off in a forest): the car stands on the only
+-- ground there is, so it is on the stop's level and counts
+marker.reset()
+marker.draw(p, stop, 'delivery', true, 30, false, 0)
+local floor = surfaces
+surfaces = function() return { 92 } end
+local parked = { lat = 50, lon = 14, x = 2, y = 0, z = 92.8, anchorLat = 50, anchorLon = 14 }
+assert(marker.heightGap(parked, stop) < -3.5, 'the ring stands 8 m above the car')
+assert(not marker.offLevel(parked, stop), 'with no other level at the car, it counts')
+surfaces = floor
+marker.reset()
+marker.draw(p, stop, 'delivery', true, 30, false, 0)
 assert(marker.heightGap(p, { g = { 50, 14, x = 1, y = 1 } }) == nil, 'another stop has no height yet')
 
 -- a steep street (15 %): the first ring point is a whole radius from the centre, and a sloping depot yard
@@ -83,7 +104,10 @@ marker.draw(steep, yard, 'pickup', false, 35, false, 0)
 local truck = { lat = 50, lon = 14, x = 30, y = 0, z = ground(30, 0) + 0.8, anchorLat = 50, anchorLon = 14 }
 assert(not marker.offLevel(truck, yard), 'uphill in a sloping depot yard counts: ' .. tostring(marker.heightGap(truck, yard)))
 truck.z = truck.z + 6
+local slope = surfaces
+surfaces = function(x, y) local list = slope(x, y) list[#list + 1] = ground(x, y) + 5.3 return list end
 assert(marker.offLevel(truck, yard), 'a bridge over the yard does not count')
+surfaces = slope
 
 
 -- A customer's address point inside a house 20 m from the street (y = 0): the ring stands at the street's edge on

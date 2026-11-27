@@ -412,9 +412,38 @@ function M.heightGap(p, stop)
   end
 end
 
+-- A car outside that column only misses the stop when the stop's level really is there at the car: a surface under it
+-- (the car is on a bridge over the stop's road) or over it (the car is on a road under it). With only its own ground
+-- in the column, the car is on the stop's ground and the ring's height was measured wrong (player report, 2026-11-27:
+-- parked 2 m from a drop-off in a Kerala forest, and the order never finished). Looked up again every half second.
+M.OTHER_LEVEL_M = 1.5     -- another surface must be this much nearer the stop's ground than the car's own
+M.LEVEL_RECHECK_S = 0.5
+local levelSeen = {}
+local function otherLevelAt(p, ground)
+  local key = string.format('%.0f|%.0f|%.0f|%.1f', p.x, p.y, p.z, ground)
+  local now = os.clock()
+  if levelSeen.key == key and now < levelSeen.untilT then return levelSeen.result end
+  local top = math.max(p.z, ground) + 6
+  local hits = columnHits(p.x, p.y, top, top - math.min(p.z, ground) + 12)
+  local own
+  for _, z in ipairs(hits) do   -- top first: the first surface at or under the car is the one it stands on
+    if z <= p.z + 0.3 then own = z break end
+  end
+  local result = own == nil   -- nothing under the car (ground not streamed in): as before, it does not count
+  if own then
+    local ownGap = math.abs(own - ground)
+    for _, z in ipairs(hits) do
+      if math.abs(z - own) > 2 and math.abs(z - ground) < ownGap - M.OTHER_LEVEL_M then result = true break end
+    end
+  end
+  levelSeen = { key = key, untilT = now + M.LEVEL_RECHECK_S, result = result }
+  return result
+end
+
 function M.offLevel(p, stop)
   local gap = M.heightGap(p, stop)
-  return gap ~= nil and (gap > M.LEVEL_ABOVE or gap < -M.LEVEL_BELOW)
+  if gap == nil or (gap <= M.LEVEL_ABOVE and gap >= -M.LEVEL_BELOW) then return false end
+  return otherLevelAt(p, p.z - gap)
 end
 
 function M.draw(p, stop, phase, courier, radius, inZone, now)
@@ -504,6 +533,6 @@ end
 
 M.roadEdge, M.groundZ, M.surfaceZ, M.columnHits = roadEdge, groundZ, surfaceZ, columnHits
 
-function M.reset() pickup, delivery, depot, poles, areas, warned, triColour = {}, {}, {}, {}, {}, {}, nil end
+function M.reset() pickup, delivery, depot, poles, areas, warned, triColour, levelSeen = {}, {}, {}, {}, {}, {}, nil, {} end
 
 return M

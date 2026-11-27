@@ -154,6 +154,15 @@ do
   assert(not setPos[0] and not setPos[3], 'the new box stays new')
   assert(setLen[1] == 1.5 and broke[1] and deformed[1] == 0.4, 'the body beam keeps its damage')
   assert(not setLen[0] and not broke[0], 'the new part beam is untouched')
+  -- raised off the ground (Codex on #216): the new box is raised with the kept body, so nothing stretches
+  setPos = {}
+  obj.getNodePosition = function(_, cid) return { x = cid, y = 0, z = 5 } end
+  state.partialLoad({ cargoEarthKeys = file.cargoEarthKeys, nodes = { {{1,1,1}} }, beams = {} }, 0.2)
+  assert(setPos[1] and setPos[1].x == 1, 'the kept node goes where saved')
+  assert(setPos[0] and math.abs(setPos[0].z - 5.2) < 1e-6 and setPos[3] and math.abs(setPos[3].z - 5.2) < 1e-6,
+    'the new part nodes rise by the lift')
+  assert(setPos[2] and math.abs(setPos[2].z - 5.2) < 1e-6, 'a node with no saved row rises with the car')
+  obj.getNodePosition = nil
   -- the same build again is a full load
   v.data.nodes, v.data.beams = index(nodesOld), index(beamsOld)
   state.run('capture','snapshot.json',8)
@@ -164,6 +173,25 @@ do
   tableSizeC = function(t) return #t end
   file.cargoEarthKeys = nil
   beamstate.save, beamstate.load, beamstate.onBeamDeformed = saved.beamstateSave or beamstate.save, load, nil
+end
+-- busted tyres on loading (player report 2026-11-27): the saved shape is raised until no wheel node is below where
+-- it stands now, so no tyre lands inside the ground
+do
+  local now = { [0] = 0.30, [1] = 0.30, [2] = 1.0 }   -- two wheel nodes on the ground, one body node
+  obj.getNodePosition = function(_, cid) return { z = now[cid] } end
+  state.wheelSet = { [0] = true, [1] = true }
+  local snap = { nodes = { {{0, 0, 0.30}}, {{0, 0, 0.18}}, {{0, 0, 0.9}} } }   -- one wheel 12 cm lower than now
+  local lift = state.liftOffGround(snap, function(i) return i - 1 end)
+  assert(math.abs(lift - 0.15) < 1e-6, 'raised by the deepest wheel plus 3 cm: ' .. lift)
+  assert(math.abs(snap.nodes[2][1][3] - 0.33) < 1e-6 and math.abs(snap.nodes[3][1][3] - 1.05) < 1e-6, 'the whole car moves')
+  snap = { nodes = { {{0, 0, 0.40}}, {{0, 0, 0.35}}, {{0, 0, -3}} } }   -- wheels above the ground; a body node low
+  assert(state.liftOffGround(snap, function(i) return i - 1 end) == 0 and snap.nodes[1][1][3] == 0.40,
+    'wheels already clear: nothing moves (body nodes do not count)')
+  snap = { nodes = { {{0, 0, -5}} } }
+  assert(math.abs(state.liftOffGround(snap, function(i) return i - 1 end) - 1.53) < 1e-6, 'never more than 1.5 m')
+  snap = { nodes = { {{0, 0, -5}} } }
+  assert(state.liftOffGround(snap, function() return nil end) == 0, 'a node the build no longer has is skipped')
+  obj.getNodePosition, state.wheelSet = nil, {}
 end
 file.nodeCount=2
 state.run('restore','snapshot.json',3)

@@ -191,18 +191,27 @@ end
 -- After a parts change (Jan, 2026-11-26: a swap must not mend the other parts): the saved deformation goes back onto
 -- every node and beam the new build still has from the same part. Swapped parts stay new. The powertrain and other
 -- lua state of the old build are not loaded (they belong to its parts), so only the body's damage carries over.
-function M.partialLoad(state)
+-- lift: how far the saved shape was raised (M.liftOffGround); the new parts are raised with it, so nothing stretches.
+function M.partialLoad(state, lift)
   local keys = state.cargoEarthKeys
   local nodeCid, beamCid = {}, {}
   for i, k in pairs(nodeKeys()) do nodeCid[k] = i - 1 end
   for i, k in pairs(beamKeys()) do beamCid[k] = i - 1 end
-  local moved = 0
+  local moved, set = 0, {}
   for i, node in pairs(state.nodes) do
     local cid = nodeCid[keys.nodes[tonumber(i)] or false]
     if cid then
       obj:setNodePosition(cid, vec3(node[1]))
       if #node > 1 then obj:setNodeMass(cid, node[2]) end
-      moved = moved + 1
+      moved, set[cid] = moved + 1, true
+    end
+  end
+  if (lift or 0) > 0 then
+    for _, cid in pairs(nodeCid) do
+      if not set[cid] then
+        local ok, now = pcall(function() return obj:getNodePosition(cid) end)
+        if ok and now and type(now.z) == 'number' then obj:setNodePosition(cid, vec3({ now.x, now.y, now.z + lift })) end
+      end
     end
   end
   for i, beam in pairs(state.beams) do
@@ -215,6 +224,44 @@ function M.partialLoad(state)
   end
   obj:commitLoad()
   return moved
+end
+
+-- The saved shape goes onto a car that already stands on the ground here. The wheels in that shape sit where they sat
+-- when it was saved: on another road, with the suspension compressed over a bump, or on a kerb. Put on uneven ground
+-- (a forest floor, a kerb), a wheel would land inside the ground and the tyre burst as the physics pushed it out
+-- (player report, 2026-11-27: busted tyres on loading a career). So the whole saved shape is raised until no wheel
+-- node is lower than it is now, plus a little: the car then drops those few centimetres onto its wheels.
+M.LIFT_CLEAR_M, M.LIFT_MAX_M = 0.03, 1.5
+M.wheelSet = {}
+local function wheelNodes()
+  local out = {}
+  for _, wd in pairs(type(wheels) == 'table' and type(wheels.wheels) == 'table' and wheels.wheels or {}) do
+    for _, list in ipairs({ wd.nodes, wd.treadNodes }) do
+      for _, cid in pairs(type(list) == 'table' and list or {}) do
+        if type(cid) == 'number' then out[cid] = true end
+      end
+    end
+  end
+  return out
+end
+
+-- cidOf(i): the car's node for the snapshot's i-th node (nil when the build no longer has it). Returns the lift.
+function M.liftOffGround(state, cidOf)
+  local lift = 0
+  for i, node in pairs(state.nodes) do
+    local cid = cidOf(tonumber(i))
+    if cid and M.wheelSet[cid] then
+      local ok, now = pcall(function() return obj:getNodePosition(cid) end)
+      local saved = type(node[1]) == 'table' and node[1][3]
+      if ok and now and type(now.z) == 'number' and type(saved) == 'number' then lift = math.max(lift, now.z - saved) end
+    end
+  end
+  if lift <= 0 then return 0 end
+  lift = math.min(lift, M.LIFT_MAX_M) + M.LIFT_CLEAR_M
+  for _, node in pairs(state.nodes) do
+    if type(node[1]) == 'table' and type(node[1][3]) == 'number' then node[1][3] = node[1][3] + lift end
+  end
+  return lift
 end
 
 function M.run(action, path, token)
@@ -237,6 +284,17 @@ function M.run(action, path, token)
       assert(same or (keys and type(keys.nodes) == 'table' and type(keys.beams) == 'table'), 'Vehicle parts changed')
       local rotation = quatFromDir(obj:getDirectionVector(), obj:getDirectionVectorUp())
       for _, node in pairs(state.nodes) do node[1] = (rotation * vec3(node[1])):toTable() end
+      local cidOf
+      if same then
+        cidOf = function(i) return i - 1 end
+      else
+        local nodeCid = {}
+        for i, k in pairs(nodeKeys()) do nodeCid[k] = i - 1 end
+        cidOf = function(i) return nodeCid[keys.nodes[i] or false] end
+      end
+      M.wheelSet = wheelNodes()
+      local lift = M.liftOffGround(state, cidOf)
+      if lift > 0.05 and log then log('I', 'cargoEarth', string.format('saved damage put back %.2f m higher, so no wheel lands in the ground', lift)) end
       assert(jsonWriteFile(path, state, false) ~= false)
       -- Which latches should be shut: as saved, or (an older snapshot) as the freshly spawned car has them. A latch
       -- that was open when saved stays open (it latches again when the door is pushed shut); one broken stays broken.
@@ -247,7 +305,7 @@ function M.run(action, path, token)
         if was and CLOSED[was] then shut[name] = true end
         keep[name] = was == 'broken' or s == 'broken'
       end
-      if same then beamstate.load(path) else M.partialLoad(state) end
+      if same then beamstate.load(path) else M.partialLoad(state, lift) end
       relatch = { left = M.RELATCH_S, since = 0, shut = shut, tries = {}, reset = {} }
       for _, c in ipairs(latches()) do
         if not keep[c.name] and c.reset and release(c) then relatch.reset[c.name] = true relatch.releasing = M.RELEASE_S end

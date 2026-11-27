@@ -2399,6 +2399,12 @@ local function tick(dt)
   -- the stop zone is only a few metres tall: on a bridge over the stop (or a road under it) it doesn't count
   local d = target()
   S.offLevel = (d and marker.offLevel and not S.job.bus and marker.offLevel(p, d)) or nil
+  -- one line per stop in beamng.log when the car is at a stop but on another level (for player reports)
+  if S.offLevel and S.dist and S.dist <= arrivalRadius(S.job) and S.offLevelLogged ~= d then
+    S.offLevelLogged = d
+    log('I', 'cargoEarth', string.format('at %s but %.1f m off its level: it does not count here', tostring(d.n),
+      marker.heightGap(p, d) or 0))
+  end
   -- the road distance of the GPS route, for the phone and window (arrival still uses the straight distance)
   local rt = earth.route()
   if rt and not rt.planning and type(rt.remaining) == 'number' and rt.remaining >= 0 then
