@@ -105,6 +105,19 @@ assert(G.carPassengers(7, 'ride') == nil, 'a refused dummy spawn is not reported
 failAdd = false
 assert(G.carPassengers(7, 'ride') == 7 and G.carPassengers(0) == 0)
 assert(seats[1].occupantType == 'player', 'the driver is untouched')
+-- Free play: a car the mod did not spawn takes passengers, and they leave it after the player switched cars.
+local freeCar = {getID = function() return 51 end}
+G.clearOwnership()
+player = freeCar
+assert(G.carPassengers(3, 'ride') == nil, 'without free play an unowned car takes no passengers')
+assert(G.carPassengers(3, 'ride', true) == 3 and next(weights) ~= nil, 'free play seats passengers in the car driven')
+player = other
+assert(G.carPassengers(3, 'ride', true) == nil, 'free play passengers do not move to another car')
+assert(G.carPassengers(0) == 0 and next(weights) == nil, 'free play passengers leave the car they boarded')
+player, failAdd = freeCar, true
+assert(G.carPassengers(3, 'ride', true) == nil, 'a free play boarding that fails halfway is reported')
+failAdd = false
+assert(G.carPassengers(0) == 0 and next(weights) == nil, 'a half-done free play boarding can still be emptied')
 be, extensions, getPlayerVehicle = saved.be, saved.extensions, saved.getPlayerVehicle
 core_vehicle_manager, gameplay_seatOccupants = saved.core_vehicle_manager, saved.gameplay_seatOccupants
 package.loaded['cargoEarth/gamecar'] = saved.gamecar

@@ -367,13 +367,25 @@ function M.busPassengers(n, seed)
 end
 
 -- A taxi's passengers in the player's own car: n people (0 empties the seats). They board only while the player drives
--- the career car; emptying always works on the career car, even after the player switched to another one. Returns how
--- many sit, or nil when the car has no seat system (most mod cars) or is not the career car.
-function M.carPassengers(n, seed)
+-- the career car, or (anyCar: free play) whatever car the player drives; once seated they stay in that car. Emptying
+-- works on the car they boarded, even after the player switched to another one or a boarding failed halfway. Returns how many sit, or nil when the car has no seat system (most mod
+-- cars) or may not take passengers.
+local seatedId
+function M.carPassengers(n, seed, anyCar)
   local so, v = seatSystem(), playerVeh()
-  if not (so and so.getSeats and so.setDummyOccupant and ownedId) then return nil end
-  if n > 0 and not (v and v:getID() == ownedId) then return nil end
-  local id = ownedId
+  if not (so and so.getSeats and so.setDummyOccupant) then return nil end
+  local id
+  if n > 0 then
+    id = v and v:getID()
+    if not id or (id ~= ownedId and not anyCar) then return nil end
+    -- Passengers stay in the car they boarded: another car the player switched to takes nobody.
+    if seatedId and seatedId ~= id and (not getObjectByID or getObjectByID(seatedId)) then return nil end
+    seatedId = id   -- known before any seat changes, so a half-done boarding can still be emptied
+  else
+    id = seatedId or ownedId
+    if not id then return nil end
+    if id ~= ownedId and getObjectByID and not getObjectByID(id) then seatedId = nil return 0 end
+  end
   if so.usesSeatSystem and not so.usesSeatSystem(id) then return nil end
   local okSeats, seats = pcall(so.getSeats, id)
   if not okSeats or type(seats) ~= 'table' then return nil end
@@ -387,6 +399,7 @@ function M.carPassengers(n, seed)
     local ok, result = pcall(so.setDummyOccupant, id, seatId, occupants.PASSENGER_KG)
     if not ok or result == false then return nil end
   end
+  if n == 0 then seatedId = nil end
   return plan.shown
 end
 

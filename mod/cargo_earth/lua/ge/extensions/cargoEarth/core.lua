@@ -5,7 +5,7 @@
 -- Everything is clicked on the phone (the UI app): orders, the garage and the settings. The debug window opens from
 -- the phone's settings (or the console: extensions.cargoEarth_core.toggleWindow()). No key bindings.
 local M = {}
-M.VERSION = '0.12.1'      -- the mod's version (package.json has the same; the support report shows it)
+M.VERSION = '0.12.2'      -- the mod's version (package.json has the same; the support report shows it)
 M.CAMERAS_PAUSED = true  -- temporarily suspended: no downloads, alerts, fines or lost stars
 M.dependencies = { 'ui_imgui' }
 
@@ -2036,7 +2036,7 @@ end
 -- A taxi's passengers, seated in the car (BeamNG's seat occupants, real weight); 0 empties the seats again.
 function M.taxiSeats(n, seed)
   local ok, shown = false, nil
-  if M.G.carPassengers then ok, shown = pcall(M.G.carPassengers, n, seed or 'taxi') end
+  if M.G.carPassengers then ok, shown = pcall(M.G.carPassengers, n, seed or 'taxi', M.freePlay()) end
   S.taxiSeated = (n > 0 or not ok or shown ~= 0) and { n = n, seed = seed, at = S.clock + 5 } or nil
   return ok and shown or nil
 end
